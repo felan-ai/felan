@@ -47,7 +47,8 @@ export function parseStoredRequestRecord(value: unknown): StoredRequestRecord {
   try { raw = JSON.parse(record.payload); } catch { throw new ProtocolValidationError('invalid_request', 'Invalid stored command identity'); }
   if (raw === null || typeof raw !== 'object') throw new ProtocolValidationError('invalid_request', 'Invalid stored command identity');
   const request = parseClientEnvelope({ ...raw, v: 1, id: record.id });
-  if (!OPERATION_CATALOG[request.op].mutation || request.session !== record.session || canonicalRequestPayload(request) !== record.payload) {
+  if (OPERATION_CATALOG[request.op].storage !== 'durable' || !OPERATION_CATALOG[request.op].mutation
+    || request.session !== record.session || canonicalRequestPayload(request) !== record.payload) {
     throw new ProtocolValidationError('invalid_request', 'Invalid durable command identity');
   }
   if (record.state.phase === 'terminal') {

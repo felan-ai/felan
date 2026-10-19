@@ -1,10 +1,17 @@
 # Extension catalog
 
 Felan publishes portable packages under `@felan-ai/*`. The local daemon composes
-the source-controlled built-ins listed here; the TUI presents them and can additionally load explicitly
-requested local Pi extension files or directories with `--extension`/`-e`, plus
-optional standard Pi directories through `piExtensions`.
-It does not install arbitrary npm packages or load Pi project settings.
+the source-controlled built-ins listed here; the TUI presents them. Local
+clients can supply additive external extension paths with `--extension`/`-e`;
+remote creates cannot. The host's `piExtensions.user` and `piExtensions.project`
+opt-ins apply to every new root, including ACP, headless, web-created and
+imported sessions. Children load their root's external extension paths, with
+worker tool allowlists still limiting active tools.
+
+Only the creating TUI prompts for project folder trust. Other creators skip
+undecided folders without saving a decision and load already-trusted folders.
+The host does not install arbitrary npm packages or load Pi project settings.
+The separate `piExtensions.llamaCpp` opt-in remains root-only for any client.
 
 ## Composition layers
 

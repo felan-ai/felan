@@ -515,7 +515,10 @@ export class SessionProjection {
 }
 
 type MessageEntry = Extract<SessionEntry, { type: 'message' | 'custom_message' | 'compaction' | 'branch_summary' }>;
-function isMessageEntry(entry: SessionEntry): entry is MessageEntry { return entry.type === 'message' || entry.type === 'custom_message' || entry.type === 'compaction' || entry.type === 'branch_summary'; }
+// Custom messages marked hidden are model context only (memory, guidance); clients and publication never receive them.
+function isMessageEntry(entry: SessionEntry): entry is MessageEntry {
+  return entry.type === 'message' || entry.type === 'custom_message' && entry.display || entry.type === 'compaction' || entry.type === 'branch_summary';
+}
 export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Origin): Message {
   const raw = entry.type === 'compaction' ? { role: 'system' as const, content: entry.summary }
     : entry.type === 'branch_summary' ? { role: 'system' as const, content: entry.summary } : entry.type === 'custom_message' ? { role: 'custom' as const, content: entry.content, customType: entry.customType, details: entry.details } : entry.message;
@@ -543,9 +546,9 @@ export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Or
       excludeFromContext: raw.excludeFromContext ?? false, ...(raw.fullOutputPath ? { fullOutputPath: raw.fullOutputPath } : {}) };
     content.splice(0, content.length, { type: 'text', text: raw.output });
   }
-  if (display && (details === undefined || details !== null && typeof details === 'object' && !Array.isArray(details))) {
-    details = { ...(details as Record<string, unknown> | undefined), [MESSAGE_DISPLAY_KEY]: display };
-  }
+  // Tool results keep their own details on the tool_result part, so non-object details are replaced to carry display metadata.
+  if (display) details = details !== null && typeof details === 'object' && !Array.isArray(details)
+    ? { ...details, [MESSAGE_DISPLAY_KEY]: display } : { [MESSAGE_DISPLAY_KEY]: display };
   return parseSchema(MessageSchema, { id, entryId: entry.id, ...(entry.parentId ? { parentEntryId: entry.parentId } : {}),
     role: raw.role === 'toolResult' ? 'tool' : ['user', 'assistant', 'system', 'custom'].includes(raw.role) ? raw.role : 'custom',
     content, timestamp: Math.max(0, Date.parse(entry.timestamp) || 0),

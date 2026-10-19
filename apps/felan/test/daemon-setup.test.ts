@@ -139,7 +139,7 @@ it('reports authentication requirements before creating a session or starting a 
   const f = await fixture(); const client = await f.client();
   vi.spyOn(f.root.runtime.session.modelRuntime, 'getAvailable').mockResolvedValue([]);
   const before = f.registry.list().length;
-  expect(await client.request('sessions.create', { cwd: f.cwd, source: 'tui' })).toMatchObject({ outcome: 'rejected', error: { code: 'authentication_required' } });
+  expect(await client.request('sessions.create', { cwd: f.cwd })).toMatchObject({ outcome: 'rejected', error: { code: 'authentication_required' } });
   expect(f.registry.list()).toHaveLength(before);
   await client.attach(f.root.sessionId);
   expect(await client.request('prompt', { text: 'do not dispatch' }, { session: f.root.sessionId }))

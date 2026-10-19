@@ -30,8 +30,8 @@ Local settings parsing, keychain credentials, model defaults, HTTP bootstrap,
 system prompt loading, folder trust and authentication workers belong to
 `@felan-ai/felan` providers, not the daemon package.
 
-The old `./daemon-profile` export is removed. Daemon 0.2.0 and protocol 0.2.0
-are coordinated incompatible-minor releases with Agent Core 0.13.0.
+The old `./daemon-profile` export is removed. Daemon 0.1.0 and protocol 0.2.0
+are coordinated with Agent Core 0.13.0.
 They are not published by local verification. New npm packages still require
 the manual 0.0.0 bootstrap and trusted-publisher setup in the
 [release procedure](../../docs/releasing.md).

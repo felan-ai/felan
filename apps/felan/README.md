@@ -18,7 +18,7 @@ All session execution goes through the exact installed daemon package;
 `resolveInstalledDaemonEntrypoint()` does not assume the launch cwd. The former
 profile exports are removed. Providers use `@felan-ai/daemon/provider` and
 `@felan-ai/daemon/session-runtime`. The coordinated breaking releases are
-Felan 0.30.0, daemon 0.2.0 and Agent Core 0.13.0.
+Felan 0.30.0, daemon 0.1.0 and Agent Core 0.13.0.
 
 ### Configured services
 
@@ -89,6 +89,7 @@ felan [options] [message]
 --provider <name>   Select a headless model provider
 --model <name>      Select a headless model or provider/model reference
 --thinking <level>  Select headless thinking: off|minimal|low|medium|high|xhigh|max
+-e, --extension <path>  Load an external extension (repeatable; interactive TUI only)
 -c, --continue     Continue the most recent session for this directory
 -r, --resume       Pick a session to resume
 --session <id>     Resume a specific session
@@ -288,23 +289,32 @@ extension state under `$FELAN_AGENT_DIR/storage/agent`.
 
 The local host loads source-controlled Felan Code built-ins, Felan-owned
 settings and prompt appends, explicit Felan Code agents and Agent Skills, the
-Agent Core-selected cwd instruction file, and local Pi extensions explicitly
-provided with repeatable `--extension`/`-e` flags for the interactive root TUI.
-`piExtensions.user` and `piExtensions.project` can additionally load
-`~/.pi/agent/extensions` and trusted `<cwd>/.pi/extensions`. Ambient Pi
+Agent Core-selected cwd instruction file, and external extensions explicitly
+provided by local clients with repeatable, additive `--extension`/`-e` flags.
+Remote creates cannot supply explicit paths. The host's `piExtensions.user`
+and `piExtensions.project` settings, both off by default, load
+`~/.pi/agent/extensions` and trusted `<cwd>/.pi/extensions` for every new root:
+TUI, ACP, headless/print mode, web-created and imported sessions. Ambient Pi
 packages, prompts, themes, project settings, and package resources remain
 filtered.
 
 Set `piExtensions.llamaCpp: true` in Felan's global settings to opt into Pi's
-bundled llama.cpp integration for interactive root sessions. It is independent
-of the external `pi-llama` package, does not install or start a router, and
-does not enable other Pi built-ins. After restarting, connect to an existing
+bundled llama.cpp integration for root sessions of any client, not children.
+It is independent of the external `pi-llama` package, does not install or start
+a router, and does not enable other Pi built-ins. After restarting, connect to an existing
 llama.cpp router with `/login llama.cpp`, manage models with `/llama`, and
 select one with `/model`.
 
-These Pi extensions execute with the current user's permissions. They are not
-installed from network/package sources and are not loaded in headless, ACP, or
-subagent sessions. Project directories ask for Felan folder trust before load.
+External extension paths are fixed at creation. Resume and clone/fork retain
+saved paths; adopting an unindexed transcript on attach loads no external
+extensions. Children, including subagents and workers, load their root's
+external extension paths; worker tool allowlists still limit active tools.
+
+Only the creating TUI prompts for project folder trust. ACP, headless and web
+creates skip undecided folders without saving a decision and load folders
+already trusted directly or through a parent. External extensions execute with
+the current user's permissions in all these sessions; they are not installed
+from network/package sources.
 
 When launched inside Herdr, the TUI reports its Felan Code lifecycle and session
 identity through Herdr's inherited local socket environment. This is TUI-only

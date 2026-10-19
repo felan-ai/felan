@@ -71,3 +71,15 @@ it('keeps slash command completion and rejects an aborted request', async () => 
   const abort = new AbortController(); abort.abort();
   expect(await provider.getSuggestions(['/'], 0, 1, { signal: abort.signal })).toBeNull();
 });
+
+it('completes remote commands and share modes without suggesting credentials', async () => {
+  const controller = { snapshot: { cwd: tmpdir(), catalog: { commands: [] } } } as unknown as TuiSessionController;
+  const provider = createCommandAutocomplete(controller); const options = { signal: new AbortController().signal };
+  expect((await provider.getSuggestions(['/remo'], 0, 5, options))?.items).toContainEqual(expect.objectContaining({ value: 'remote' }));
+  expect((await provider.getSuggestions(['/remote '], 0, 8, options))?.items.map(item => item.value)).toEqual([
+    'status', 'on', 'off', 'login', 'logout', 'share all', 'share on-request', 'open', 'close',
+  ]);
+  const suggestions = await provider.getSuggestions(['/remote share o'], 0, 15, options);
+  expect(suggestions?.items).toEqual([{ value: 'share on-request', label: 'share on-request' }]);
+  expect(provider.applyCompletion(['/remote share o'], 0, 15, suggestions!.items[0]!, suggestions!.prefix)).toMatchObject({ lines: ['/remote share on-request'] });
+});

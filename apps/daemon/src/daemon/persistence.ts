@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { DaemonOwnership } from './ownership.js';
 import { assertPathIdentity, pathIdentity, pathInside, pinPathAncestry, storeDirectory, type PathIdentity } from './target.js';
@@ -72,16 +72,37 @@ export interface ControlChanges {
   readonly deletes: readonly (readonly [ControlTable, string])[];
 }
 
+export interface RemoteDatabase {
+  assertCurrent(): void;
+  readonly rebuilt: boolean;
+  record(kind: string, id: string): string | undefined;
+  records(kind: string): { id: string; data: string }[];
+  putRecord(kind: string, id: string, data: string): void;
+  deleteRecord(kind: string, id: string): void;
+  outbox(session: string, after?: number, limit?: number): { seq: number; bytes: number; data: string }[];
+  insertOutbox(session: string, seq: number, bytes: number, data: string): void;
+  deleteOutbox(session: string, through?: number): void;
+  transaction<T>(fn: () => T): T;
+}
+
 const DATABASE = 'control.sqlite';
-const FORMAT = '2';
+const FORMAT = '1';
 const SIDECARS = ['-wal', '-shm', '-journal'] as const;
 // NORMAL avoids per-commit flushes; remaining syncs, including checkpoints, retain macOS F_FULLFSYNC.
 const PRAGMAS = 'PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON; PRAGMA busy_timeout = 1000';
 /** SQLite primary result codes that describe the environment, not the file's contents. */
 const SQLITE_TRANSIENT = new Set([3 /* PERM */, 5 /* BUSY */, 6 /* LOCKED */, 7 /* NOMEM */, 8 /* READONLY */, 10 /* IOERR */, 13 /* FULL */, 14 /* CANTOPEN */]);
-const LEGACY_MIGRATED = 'migrated-to-v2.json';
+const REMOTE_SCHEMA = `
+  CREATE TABLE IF NOT EXISTS remote_records (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (kind, id)) STRICT;
+  CREATE TABLE IF NOT EXISTS remote_outbox (session TEXT NOT NULL, seq INTEGER NOT NULL, bytes INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (session, seq)) STRICT;
+`;
 
-type Statements = Record<ControlTable, { upsert: StatementSync; remove: StatementSync; rows: StatementSync }> & { putMeta: StatementSync; meta: StatementSync };
+type Statements = Record<ControlTable, { upsert: StatementSync; remove: StatementSync; rows: StatementSync }> & {
+  putMeta: StatementSync; meta: StatementSync;
+  record: StatementSync; records: StatementSync; putRecord: StatementSync; deleteRecord: StatementSync;
+  outbox: StatementSync;
+  insertOutbox: StatementSync; deleteOutbox: StatementSync;
+};
 
 let sqlite: typeof import('node:sqlite') | undefined;
 /** Loads node:sqlite on first use so clients that import daemon modules never load it. */
@@ -102,7 +123,7 @@ function loadSqlite(): typeof import('node:sqlite') {
  * The control store's SQLite database. A commit writes only the rows that changed, in one
  * synchronous-NORMAL WAL transaction, after rechecking ownership and the pinned file identities.
  */
-export class ControlDatabase {
+export class ControlDatabase implements RemoteDatabase {
   readonly directory: string;
   private readonly path: string;
   private readonly initialization: string;
@@ -114,6 +135,10 @@ export class ControlDatabase {
   private poisoned = false;
   private closed = false;
   private storeId!: string;
+  private wasRebuilt = false;
+  private inTransaction = false;
+
+  get rebuilt(): boolean { return this.wasRebuilt; }
 
   constructor(readonly owner: DaemonOwnership, directory: string, private readonly fault?: (boundary: PersistenceBoundary) => void) {
     this.directory = owner.assertOwnsPath(directory);
@@ -124,6 +149,7 @@ export class ControlDatabase {
     catch (error) {
       this.release(); owner.assertCurrent();
       if (!integrityFailure(error)) throw unreadable(error);
+      this.wasRebuilt = true;
       // Unusable control state is moved aside and rebuilt; transcripts remain the durable session record.
       try { renameSync(this.directory, `${this.directory}.corrupt-${Date.now()}`); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       try { unlinkSync(this.initialization); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
@@ -137,6 +163,9 @@ export class ControlDatabase {
     try { initialized = this.readFile(this.initialization); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
     if (initialized === undefined) {
+      // A crash between quarantining the directory and recreating its initialization must not erase evidence of journal loss.
+      try { if (readdirSync(dirname(this.directory)).some(name => name.startsWith(`${basename(this.directory)}.corrupt-`))) this.wasRebuilt = true; }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       try { if (readdirSync(this.directory).length !== 0) throw new Error('unregistered control state'); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       this.storeId = randomUUID();
@@ -160,6 +189,7 @@ export class ControlDatabase {
         this.quarantineFiles();
       }
     }
+    if (initialized !== undefined) this.wasRebuilt = true;
     this.create();
   }
   /**
@@ -187,6 +217,10 @@ export class ControlDatabase {
       if (meta.get('format') !== FORMAT || meta.get('storeId') !== this.storeId) throw new DatabaseIntegrityError();
       // Rows without the state metadata cannot be validated against their namespace; never resurrect them under a new one.
       if (!meta.has('namespace') && CONTROL_TABLES.some(table => db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() !== undefined)) throw new DatabaseIntegrityError();
+      this.wasRebuilt = meta.get('remoteRebuilt') === 'true';
+      this.pin = pathIdentity(this.path);
+      db.exec(`BEGIN IMMEDIATE; ${REMOTE_SCHEMA}`);
+      this.assertCurrent(); db.exec('COMMIT'); this.assertCurrent();
       this.statements = prepareStatements(db);
     } catch (error) {
       // Past opening the file, a non-environmental SQLite error means the schema is not this format's.
@@ -203,9 +237,10 @@ export class ControlDatabase {
     const db = this.db = new (loadSqlite().DatabaseSync)(this.path);
     db.exec(PRAGMAS);
     db.exec(['BEGIN IMMEDIATE', 'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT',
-      ...CONTROL_TABLES.map(table => `CREATE TABLE ${table} (id TEXT PRIMARY KEY, ord INTEGER NOT NULL, data TEXT NOT NULL) STRICT`)].join('; '));
+      ...CONTROL_TABLES.map(table => `CREATE TABLE ${table} (id TEXT PRIMARY KEY, ord INTEGER NOT NULL, data TEXT NOT NULL) STRICT`), REMOTE_SCHEMA].join('; '));
     this.statements = prepareStatements(db);
     this.statements.putMeta.run('format', FORMAT); this.statements.putMeta.run('storeId', this.storeId);
+    if (this.wasRebuilt) this.statements.putMeta.run('remoteRebuilt', 'true');
     db.exec('COMMIT');
     this.syncDirectory();
     this.pin = pathIdentity(this.path);
@@ -226,23 +261,87 @@ export class ControlDatabase {
     this.disconnect(); this.quarantineFiles(); this.create();
   }
   write(changes: ControlChanges): void {
-    this.assertCurrent();
-    const db = this.db!; const statements = this.statements!;
-    let open = false;
     try {
-      db.exec('BEGIN IMMEDIATE'); open = true;
-      for (const [table, id] of changes.deletes) statements[table].remove.run(id);
-      for (const [table, row] of changes.upserts) statements[table].upsert.run(row.id, row.ord, row.data);
-      statements.putMeta.run('namespace', changes.meta.namespace); statements.putMeta.run('agentDir', changes.meta.agentDir);
-      statements.putMeta.run('clock', String(changes.meta.clock));
-      this.fault?.('before_commit'); this.assertCurrent();
-      db.exec('COMMIT'); open = false;
-      this.fault?.('after_commit'); this.assertCurrent();
-    } catch {
-      if (open) try { db.exec('ROLLBACK'); } catch { /* The handle is fenced below either way. */ }
-      this.poisoned = true;
-      throw new ControlStoreError('storage_failure', 'Control commit failed; outcome is uncertain. Stop admission and reopen only after writers settle.');
-    }
+      this.transaction(() => {
+        const statements = this.statements!;
+        for (const [table, id] of changes.deletes) statements[table].remove.run(id);
+        for (const [table, row] of changes.upserts) statements[table].upsert.run(row.id, row.ord, row.data);
+        statements.putMeta.run('namespace', changes.meta.namespace); statements.putMeta.run('agentDir', changes.meta.agentDir);
+        statements.putMeta.run('clock', String(changes.meta.clock));
+      });
+    } catch { throw this.fence(); }
+  }
+  record(kind: string, id: string): string | undefined {
+    this.assertCurrent();
+    const row = this.statements!.record.get(kind, id) as { data: string } | undefined;
+    this.assertCurrent();
+    return row?.data;
+  }
+  records(kind: string): { id: string; data: string }[] {
+    this.assertCurrent();
+    const rows = this.statements!.records.all(kind) as { id: string; data: string }[];
+    this.assertCurrent();
+    return rows;
+  }
+  putRecord(kind: string, id: string, data: string): void {
+    this.assertTransaction(); this.statements!.putRecord.run(kind, id, data);
+  }
+  deleteRecord(kind: string, id: string): void {
+    this.assertTransaction(); this.statements!.deleteRecord.run(kind, id);
+  }
+  outbox(session: string, after = -1, limit = -1): { seq: number; bytes: number; data: string }[] {
+    this.assertCurrent();
+    if (!Number.isSafeInteger(after) || after < -1 || !Number.isSafeInteger(limit) || limit < -1) throw new ControlStoreError('invalid_request', 'Invalid outbox range.');
+    const rows = this.statements!.outbox.all(session, after, limit) as { seq: number; bytes: number; data: string }[];
+    this.assertCurrent();
+    return rows;
+  }
+  insertOutbox(session: string, seq: number, bytes: number, data: string): void {
+    this.assertTransaction();
+    if (!Number.isSafeInteger(seq) || seq < 0 || !Number.isSafeInteger(bytes) || bytes < 0) throw new ControlStoreError('invalid_request', 'Invalid outbox sequence or byte count.');
+    this.statements!.insertOutbox.run(session, seq, bytes, data);
+  }
+  deleteOutbox(session: string, through = Number.MAX_SAFE_INTEGER): void {
+    this.assertTransaction();
+    if (!Number.isSafeInteger(through) || through < 0) throw new ControlStoreError('invalid_request', 'Invalid outbox sequence.');
+    this.statements!.deleteOutbox.run(session, through);
+  }
+  private assertTransaction(): void {
+    this.assertCurrent();
+    if (!this.inTransaction) throw new ControlStoreError('invalid_request', 'Remote writes require a transaction.');
+  }
+  transaction<T>(fn: () => T): T {
+    this.assertCurrent();
+    if (this.inTransaction) throw new ControlStoreError('invalid_request', 'Nested control transactions are not supported.');
+    const db = this.db!;
+    try { db.exec('BEGIN IMMEDIATE'); }
+    catch { throw new ControlStoreError('storage_failure', 'Control transaction could not begin; retry the operation.'); }
+    this.inTransaction = true;
+    try {
+      let result: T;
+      try {
+        result = fn();
+        if (result && typeof (result as { then?: unknown }).then === 'function') throw new ControlStoreError('invalid_request', 'Control transactions must be synchronous.');
+      } catch (error) {
+        // A callback failure rolled back cleanly leaves a known outcome, so it must not fence the
+        // shared database: one connector write failure would otherwise stop local session recording.
+        try { db.exec('ROLLBACK'); } catch { throw this.fence(); }
+        throw error;
+      }
+      try {
+        this.fault?.('before_commit'); this.assertCurrent();
+        db.exec('COMMIT');
+      } catch {
+        try { db.exec('ROLLBACK'); } catch { /* The handle is fenced below either way. */ }
+        throw this.fence();
+      }
+      try { this.fault?.('after_commit'); this.assertCurrent(); } catch { throw this.fence(); }
+      return result;
+    } finally { this.inTransaction = false; }
+  }
+  private fence(): ControlStoreError {
+    this.poisoned = true;
+    return new ControlStoreError('storage_failure', 'Control commit failed; outcome is uncertain. Stop admission and reopen only after writers settle.');
   }
   assertCurrent(): void {
     if (this.closed || this.poisoned) throw new ControlStoreError('storage_failure', 'Control store is closed or fenced after a failed commit.');
@@ -263,6 +362,7 @@ export class ControlDatabase {
     return new Map((this.statements!.meta.all() as { key: string; value: string }[]).map(row => [row.key, row.value]));
   }
   private quarantineFiles(): void {
+    this.wasRebuilt = true;
     const suffix = `control-corrupt-${Date.now()}-${randomUUID().slice(0, 8)}.sqlite`;
     for (const extension of ['', ...SIDECARS]) {
       try { renameSync(`${this.path}${extension}`, join(this.directory, `${suffix}${extension}`)); }
@@ -288,54 +388,19 @@ function prepareStatements(db: DatabaseSync): Statements {
     remove: db.prepare(`DELETE FROM ${table} WHERE id = ?`),
     rows: db.prepare(`SELECT id, ord, data FROM ${table} ORDER BY ord`),
   }])) as Record<ControlTable, Statements[ControlTable]>;
-  return { ...tables, putMeta: db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'), meta: db.prepare('SELECT key, value FROM meta') };
+  return {
+    ...tables, putMeta: db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'), meta: db.prepare('SELECT key, value FROM meta'),
+    record: db.prepare('SELECT data FROM remote_records WHERE kind = ? AND id = ?'),
+    records: db.prepare('SELECT id, data FROM remote_records WHERE kind = ? ORDER BY id'),
+    putRecord: db.prepare('INSERT INTO remote_records (kind, id, data) VALUES (?, ?, ?) ON CONFLICT(kind, id) DO UPDATE SET data = excluded.data'),
+    deleteRecord: db.prepare('DELETE FROM remote_records WHERE kind = ? AND id = ?'),
+    outbox: db.prepare('SELECT seq, bytes, data FROM remote_outbox WHERE session = ? AND seq > ? ORDER BY seq LIMIT ?'),
+    insertOutbox: db.prepare('INSERT INTO remote_outbox (session, seq, bytes, data) VALUES (?, ?, ?, ?)'),
+    deleteOutbox: db.prepare('DELETE FROM remote_outbox WHERE session = ? AND seq <= ?'),
+  };
 }
 
 class DatabaseIntegrityError extends Error {}
-
-/**
- * Reads a verified version 1 (`control.json`) snapshot without changing it. Undefined when it is absent, already
- * migrated or fails its integrity checks; other read errors fail retryably so the import is not silently skipped.
- */
-export function readLegacyControlState(owner: DaemonOwnership, directory: string): unknown {
-  const canonical = owner.assertOwnsPath(directory);
-  const read = (path: string) => {
-    owner.assertCurrent();
-    const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try { return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(fd))) as Record<string, unknown>; }
-    finally { closeSync(fd); }
-  };
-  try {
-    try { lstatSync(join(canonical, LEGACY_MIGRATED)); return undefined; }
-    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-    const initialization = read(join(owner.target.agentDir, `.control-initialized-${sha256(canonical)}.json`));
-    const format = read(join(canonical, 'format.json')); const envelope = read(join(canonical, 'control.json'));
-    if (initialization.version !== 1 || initialization.directory !== canonical || typeof initialization.storeId !== 'string'
-      || format.version !== 1 || format.storeId !== initialization.storeId || envelope.version !== 1 || envelope.storeId !== initialization.storeId
-      || sha256(JSON.stringify(envelope.data)) !== envelope.digest) return undefined;
-    return envelope.data;
-  } catch (error) {
-    owner.assertCurrent();
-    if (!integrityFailure(error)) throw unreadable(error);
-    return undefined;
-  }
-}
-
-/**
- * Marks a version 1 directory as imported so a later empty store never imports it again; the files stay for
- * downgrade. Does nothing when there is no version 1 snapshot or it is already marked.
- */
-export function markLegacyControlStateMigrated(owner: DaemonOwnership, directory: string): void {
-  const canonical = owner.assertOwnsPath(directory);
-  try { lstatSync(join(canonical, 'control.json')); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error; }
-  let fd: number;
-  try { fd = openSync(join(canonical, LEGACY_MIGRATED), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'EEXIST') return; throw error; }
-  try { writeFileSync(fd, JSON.stringify({ version: 1, format: FORMAT })); fsyncSync(fd); }
-  finally { closeSync(fd); }
-  syncOwnedDirectory(owner, canonical);
-}
 
 /** Corrupt, foreign or substituted state is rebuilt; ownership loss and transient I/O errors must not discard it. */
 function integrityFailure(error: unknown): boolean {

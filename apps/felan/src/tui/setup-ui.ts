@@ -1,8 +1,8 @@
 import type { Theme } from '@earendil-works/pi-coding-agent';
-import { Container, CURSOR_MARKER, Input, Key, SelectList, Text, matchesKey, stripTerminalSequences, fuzzyFilter, type SelectItem, type KeybindingsManager, type TUI } from '@earendil-works/pi-tui';
+import { Container, Input, Key, SelectList, Text, matchesKey, stripTerminalSequences, fuzzyFilter, type SelectItem, type KeybindingsManager, type TUI } from '@earendil-works/pi-tui';
 import type { SetupJob } from '@felan-ai/session-protocol';
 import type { DependencyInstallOption } from '../dependency-onboarding.js';
-import { selectionHint, type TuiDialogHost, type TuiDialogs } from './dialogs.js';
+import { maskedInputLines, selectionHint, type TuiDialogHost, type TuiDialogs } from './dialogs.js';
 import { clientSelectListTheme } from './theme.js';
 
 export interface TerminalSetupUi extends TuiDialogHost {
@@ -72,7 +72,7 @@ export function createSetupUi(tui: TUI, dialogs: TuiDialogs, theme: () => Theme,
       return {
         render: width => {
           const border = colors.fg('border', '─'.repeat(width));
-          return [border, ...content.render(width), ...(secret ? [`${'*'.repeat(Math.min(input.getValue().length, Math.max(0, width - 1)))}${CURSOR_MARKER}`] : []), ...hint.render(width), border];
+          return [border, ...content.render(width), ...(secret ? maskedInputLines(input, width, colors) : []), ...hint.render(width), border];
         },
         invalidate: () => { content.invalidate(); hint.invalidate(); },
         handleInput: data => {

@@ -140,7 +140,7 @@ describe('ordered durable admission', () => {
     const first = admission.submit(request, 'owner', async command => { await gate.promise; return command.dispatch(() => ({ response: accepted(request.id) })); });
     const other = prompt('other', 'other');
     expect(await admission.submit(other, 'owner', command => command.dispatch(() => ({ response: accepted(other.id) })))).toEqual(accepted(other.id));
-    const host: ClientEnvelope = { v: 1, id: requestId(), op: 'sessions.create', params: { cwd: '/fixture', source: 'tui' } };
+    const host: ClientEnvelope = { v: 1, id: requestId(), op: 'sessions.create', params: { cwd: '/fixture' } };
     expect(await admission.submit(host, 'owner', command => command.dispatch(() => ({ response: { v: 1, re: host.id, outcome: 'accepted', result: { sessionId: 'created' } } })))).toMatchObject({ outcome: 'accepted' });
     gate.resolve(); await first;
   });

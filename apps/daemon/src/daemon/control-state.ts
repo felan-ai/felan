@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { Type, type Static, type TSchema } from 'typebox';
-import { AbsolutePathSchema, ClientKindSchema, CounterSchema, IdSchema, InteractionSchema, JsonValueSchema, ModelSchema, PolicySchema, RunSchema, ThinkingSchema, UUID_V7_PATTERN, assertJson, parseSchema, enumOf, text, unboundedText } from '@felan-ai/session-protocol';
+import { AbsolutePathSchema, CounterSchema, IdSchema, InteractionSchema, JsonValueSchema, ModelSchema, PolicySchema, RunSchema, ThinkingSchema, UUID_V7_PATTERN, assertJson, parseSchema, enumOf, text, unboundedText } from '@felan-ai/session-protocol';
 
 export const CONTROL_LIMITS = Object.freeze({
   projections: 256,
@@ -14,8 +14,8 @@ export class ControlStoreError extends Error {
 export const DigestSchema = Type.String({ pattern: '^[a-f0-9]{64}$' });
 export const IdentitySchema = Type.Object({ sha256: DigestSchema, bytes: CounterSchema });
 export const SessionProfileSchema = Type.Object({
-  source: ClientKindSchema, interactiveExtensions: Type.Optional(Type.Boolean()),
   extensionPaths: Type.Optional(Type.Array(AbsolutePathSchema, { uniqueItems: true })),
+  allowedTools: Type.Optional(Type.Array(IdSchema, { minItems: 1, uniqueItems: true })),
   extensionConfigOverrides: Type.Optional(Type.Array(Type.Object({ extensionId: IdSchema, source: text(128, 1),
     values: Type.Record(Type.String(), JsonValueSchema),
   }))),

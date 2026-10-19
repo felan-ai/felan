@@ -1,5 +1,9 @@
 @felan-ai/daemon
 
+The remote connector uses @supabase/supabase-js 2.97.0 from
+https://github.com/supabase/supabase-js under the MIT License.
+Its dependencies retain their upstream licensing terms.
+
 The local daemon ownership adapter uses Koffi 3.3.2 from
 https://github.com/Koromix/koffi under the MIT License.
 Copyright (c) 2026 Niels Martignène <niels.martignene@protonmail.com>.

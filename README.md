@@ -156,8 +156,7 @@ to its package, host boundary, commands, and runtime conditions.
 Felan Code keeps the local host narrow in some places on purpose:
 
 - only source-controlled built-in extensions, explicitly requested local Pi
-  extension paths, and optional standard Pi extension directories are loaded in
-  the interactive TUI;
+  extension paths, and host-enabled standard Pi extension directories are loaded;
 - ambient Pi packages, prompts, themes, project settings, and package resources
   are filtered;
 - model credentials and MCP OAuth tokens belong to the local host;
@@ -169,11 +168,13 @@ Felan Code keeps the local host narrow in some places on purpose:
 Use repeatable `--extension`/`-e` flags to load local Pi extension files or
 directories for the interactive TUI, or set `piExtensions.user` /
 `piExtensions.project` in `$FELAN_AGENT_DIR/settings.json` to opt in to
-`~/.pi/agent/extensions` and trusted `<cwd>/.pi/extensions`. These extensions
-execute with the current user's permissions. Felan does not install
-network/package sources and does not pass them to headless, ACP, or subagent
-sessions. Project directories require a Felan folder-trust prompt stored in
-`$FELAN_AGENT_DIR/trust.json`.
+`~/.pi/agent/extensions` and trusted `<cwd>/.pi/extensions` for all newly created
+root sessions, including ACP, headless and web sessions. Children inherit their
+root's extension paths. These extensions execute with the current user's
+permissions; Felan does not install network/package sources. Only a creating
+TUI that supports selection prompts can ask for folder trust. Other creators
+skip undecided project directories without saving a decision. Trust decisions
+are stored in `$FELAN_AGENT_DIR/trust.json`.
 
 These controls do not sandbox ordinary shell or filesystem operations. Read the
 [runtime and security guide](docs/concepts/runtime-and-security.md) before

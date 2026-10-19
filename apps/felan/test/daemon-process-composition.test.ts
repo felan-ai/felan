@@ -174,7 +174,7 @@ it('runs without felan.usage, owns its launch environment, and completes a share
   const bv = await b.worker.call<ClientView>('connect', { identity: daemon.ready.identity });
   expect(av.identity).toEqual(bv.identity);
   expect(await accepted(a.worker, 'host.status', {})).toMatchObject({ state: 'ready', setupNeeds: [] });
-  const created = await accepted(a.worker, 'sessions.create', { cwd: f.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const created = await accepted(a.worker, 'sessions.create', { cwd: f.directory, model: { provider: 'offline', id: 'fixture' } });
   const session = created.sessionId;
   const aa = await attach(a.worker, session); const ba = await attach(b.worker, session);
   expect(aa.attachment?.id).not.toBe(ba.attachment?.id);
@@ -202,7 +202,7 @@ it('loses a committed acknowledgement, crashes and restarts the daemon, then ret
   const f = await fixture(); const original = await f.daemon('daemon-before-crash');
   const a = await f.client('client-a'); const b = await f.client('client-b');
   await a.worker.call('connect', { identity: original.ready.identity }); await b.worker.call('connect', { identity: original.ready.identity });
-  const { sessionId: session } = await accepted(a.worker, 'sessions.create', { cwd: f.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const { sessionId: session } = await accepted(a.worker, 'sessions.create', { cwd: f.directory, model: { provider: 'offline', id: 'fixture' } });
   await attach(a.worker, session); await attach(b.worker, session);
   const id = newRequestId(); const text = 'one dispatch despite lost acknowledgement';
   await a.worker.call('drop-ack', { requestId: id });
@@ -251,7 +251,7 @@ it('resumes at the transcript tip after a restart that follows an explicit older
   const f = await fixture(); const original = await f.daemon('daemon-before-branch-restart');
   const a = await f.client('client-a'); const b = await f.client('client-b');
   await a.worker.call('connect', { identity: original.ready.identity }); await b.worker.call('connect', { identity: original.ready.identity });
-  const { sessionId: session } = await accepted(a.worker, 'sessions.create', { cwd: f.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const { sessionId: session } = await accepted(a.worker, 'sessions.create', { cwd: f.directory, model: { provider: 'offline', id: 'fixture' } });
   await attach(a.worker, session); await attach(b.worker, session);
   const completedTurns: Started[] = [];
   async function complete(text: string): Promise<SessionSnapshot> {
@@ -312,7 +312,7 @@ it('keeps a real foreground process alive after its client is killed and lets an
   const f = await fixture(); const daemon = await f.daemon('daemon-process-owner');
   const a = await f.client('client-a'); const b = await f.client('client-b');
   await a.worker.call('connect', { identity: daemon.ready.identity }); await b.worker.call('connect', { identity: daemon.ready.identity });
-  const { sessionId: session } = await accepted(a.worker, 'sessions.create', { cwd: f.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const { sessionId: session } = await accepted(a.worker, 'sessions.create', { cwd: f.directory, model: { provider: 'offline', id: 'fixture' } });
   await attach(a.worker, session); await attach(b.worker, session);
   const gate = join(f.directory, 'foreground-gate'); await writeFile(gate, 'hold', { mode: 0o600 });
   const script = `

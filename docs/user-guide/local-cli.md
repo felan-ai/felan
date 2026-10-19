@@ -39,7 +39,7 @@ felan [options] [message]
 --provider <name>   Select a headless model provider
 --model <name>      Select a headless model or provider/model reference
 --thinking <level>  Select headless thinking: off|minimal|low|medium|high|xhigh|max
--e, --extension <path>  Load a local Pi extension (repeatable; interactive TUI only)
+-e, --extension <path>  Load an external extension (repeatable; interactive TUI only)
 -c, --continue     Continue the most recent session for this directory
 -r, --resume       Pick a session to resume
 --session <id>     Resume a specific session
@@ -56,14 +56,27 @@ daemon <action>     Manage the persistent local daemon
 ```
 
 Use `--` before an initial message that begins with a dash. `--extension`/`-e`
-accepts local extension files or directories and can be repeated. Paths are
-resolved against the launch directory and remain active through root session
-replacement, `/cwd`, `/reload`, and `/restart`. Network and package sources are
-rejected. Selected extensions run only in the interactive root TUI, with the
-current user's filesystem and process permissions; they are not passed to
-headless, ACP, or subagent sessions. Optional `piExtensions` settings load Pi's
-standard user and trusted project directories the same way. Unknown options are
-rejected before the TUI starts.
+accepts local external extension files or directories and can be repeated.
+Paths are resolved against the launch directory; network and package sources
+are rejected. Explicit paths are additive and may be supplied only by local
+clients, never remote web creates. Unknown options are rejected before the
+TUI starts.
+
+The host's `piExtensions.user` and `piExtensions.project` settings, both off by
+default, apply to every new root: TUI, ACP, headless/print mode, web-created
+sessions and `session.import`. They load `~/.pi/agent/extensions` and trusted
+`<cwd>/.pi/extensions`, respectively. Only the creating TUI prompts for folder
+trust. Other creators skip a folder without a decision, saving none; folders
+already trusted directly or through a parent load for every creator.
+
+External extension paths are fixed at creation. Resume keeps saved paths;
+`-e` on resume is ignored with a notice. Clone/fork keep the source session's
+paths, and adopting an unindexed transcript on attach loads no external
+extensions. Children, including subagents and workers, load their root's
+external extension paths; worker tool allowlists still limit active tools.
+This code runs with your filesystem and process permissions, including in
+ACP, headless, web-created and child sessions. See
+[Configuration](configuration.md#runtime-resources-and-session-behavior).
 
 ### Native ACP v1
 
@@ -467,11 +480,13 @@ The local host loads:
 - Agent Skills from `~/.agents/skills` and `<workspace>/.agents/skills`; and
 - user Pi theme JSON from `$FELAN_AGENT_DIR/themes`.
 
-Interactive root TUI sessions can additionally load local Pi extension files or
-directories explicitly supplied with repeatable `--extension`/`-e` flags, and
-can opt in to `~/.pi/agent/extensions` and trusted `<cwd>/.pi/extensions` with
-`piExtensions` in `$FELAN_AGENT_DIR/settings.json`. These paths are not loaded
-in headless, ACP, or subagent sessions.
+Local clients can additionally supply external extension files or directories
+with repeatable `--extension`/`-e` flags. Host-wide `piExtensions` settings in
+`$FELAN_AGENT_DIR/settings.json` opt in to `~/.pi/agent/extensions` and trusted
+`<cwd>/.pi/extensions` for every new root, including ACP, headless, web-created
+and imported sessions. Children inherit their root's paths. Only the creating
+TUI prompts for folder trust; other creators skip undecided folders. See
+[Configuration](configuration.md#runtime-resources-and-session-behavior).
 
 Ambient Pi packages, prompts, project settings, themes, skills, and package
 resources stay filtered. Felan Code also does not import Claude, Cursor, Codex, or

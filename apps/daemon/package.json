@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/daemon",
-  "version": "0.2.0",
+  "version": "0.1.0",
   "description": "Felan session daemon with configured service providers",
   "license": "MIT",
   "type": "module",
@@ -32,6 +32,7 @@
     "@earendil-works/pi-coding-agent": "catalog:pi",
     "@felan-ai/agent-core": "workspace:*",
     "@felan-ai/session-protocol": "workspace:*",
+    "@supabase/supabase-js": "2.97.0",
     "koffi": "3.3.2",
     "typebox": "1.1.38"
   },

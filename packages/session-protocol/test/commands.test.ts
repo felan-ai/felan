@@ -68,10 +68,9 @@ describe('complete operation inventory', () => {
     expect(() => parseClientEnvelope({ ...request('host.status'), session: 'wrong' })).toThrow();
     const { session: _session, ...missing } = request('prompt');
     expect(() => parseClientEnvelope(missing)).toThrow();
-    for (const source of ['tui', 'acp', 'headless']) {
-      expect(parseClientEnvelope(request('sessions.create', { cwd: '/fixture', source,
-        interactiveExtensions: true, extensions: ['/fixture/ext.js'] })).params).toMatchObject({ source, interactiveExtensions: true });
-    }
+    const params = { cwd: '/fixture', requirePolicy: 'acp-strict', extensions: ['/fixture/ext.js'] };
+    expect(parseClientEnvelope(request('sessions.create', params)).params).toEqual(params);
+    expect(() => parseClientEnvelope(request('sessions.create', { cwd: '/fixture', extensions: ['relative'] }))).toThrow();
   });
 
   it('requires identity, explicit export destinations and authorized resource IDs', () => {

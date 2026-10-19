@@ -6,6 +6,13 @@ import { SettingsMenu, type SettingsEntry } from './settings-menu.js';
 export interface DialogOptions { signal?: AbortSignal; timeout?: number; placeholder?: string; secret?: boolean;
   initialValue?: string; confirmLabel?: string; secondary?: { key: Keybinding; label: string; select(value: string): void } }
 
+/** A secret input field between separators: one `*` per character and a visible cursor, never the value. */
+export function maskedInputLines(input: Input, width: number, theme: Theme): string[] {
+  const border = theme.fg('border', '─'.repeat(width));
+  const stars = '*'.repeat(Math.min(input.getValue().length, Math.max(0, width - 3)));
+  return [border, `> ${stars}${CURSOR_MARKER}\x1b[7m \x1b[27m`, border];
+}
+
 export function selectionHint(keys = getKeybindings(), confirmLabel = 'select', secondary?: DialogOptions['secondary']): string {
   const display = (action: Keybinding) => keys.getKeys(action).map(key => key === 'up' ? '↑' : key === 'down' ? '↓' : key).join('/') || 'unbound';
   const up = display('tui.select.up'); const down = display('tui.select.down');
@@ -22,12 +29,18 @@ export interface TuiDialogHost {
 
 export class TuiDialogs implements TuiDialogHost {
   private readonly active = new Set<() => void>();
+  private readonly listeners = new Set<() => void>();
+  private secretInputs = 0;
   private closed = false;
   private readonly theme: () => Theme;
   constructor(private readonly tui: TUI, theme?: () => Theme, private readonly inline?: (component: Component) => () => void,
     private readonly inlineHeight?: () => number) {
     const initial = theme ? undefined : defaultClientTheme(); this.theme = theme ?? (() => initial!);
   }
+
+  get secretInputActive(): boolean { return this.secretInputs > 0; }
+  subscribe(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
+  private emit(): void { for (const listener of this.listeners) listener(); }
 
   /** Terminal rows a custom component can use without being clipped where it would currently be shown. */
   viewportHeight(): number {
@@ -80,22 +93,24 @@ export class TuiDialogs implements TuiDialogHost {
     });
   }
 
-  input(title: string, initial = '', options: DialogOptions = {}): Promise<string | undefined> {
-    return this.show<string>(finish => {
+  async input(title: string, initial = '', options: DialogOptions = {}): Promise<string | undefined> {
+    if (options.secret) { this.secretInputs++; this.emit(); }
+    try { return await this.show<string>(finish => {
       const content = new Container(); const input = new Input(options.placeholder ? { placeholder: options.placeholder } : {}); input.setValue(initial); input.focused = true;
       input.onSubmit = value => finish(value); input.onEscape = () => finish(undefined);
       content.addChild(new Text(this.theme().fg('accent', this.theme().bold(stripTerminalSequences(title))), 1, 1));
-      if (options.secret) content.addChild(new Text('Input is hidden. Enter submits; Escape cancels.', 1, 0));
+      if (options.secret) content.addChild(new Text('Input is hidden. Enter submits; Escape cancels.', 1, 1));
       else content.addChild(input);
       return {
         render: width => this.frame(options.secret
-          ? [...content.render(width), `${'*'.repeat(Math.min(input.getValue().length, Math.max(0, width - 1)))}${CURSOR_MARKER}`]
+          ? [...content.render(width), ...maskedInputLines(input, width, this.theme())]
           : content.render(width), width),
         invalidate: () => content.invalidate(),
         handleInput: data => { input.handleInput(data); this.tui.requestRender(); },
         dispose: () => { input.setValue(''); },
       };
-    }, options);
+    }, options); }
+    finally { if (options.secret) { this.secretInputs--; this.emit(); } }
   }
 
   async confirm(title: string, message: string, options: DialogOptions = {}): Promise<boolean> {

@@ -272,7 +272,7 @@ describe('shared session client', () => {
       if (request.op === 'sessions.create' && connection === 0) fake.lose();
       else if (request.op === 'sessions.create') fake.reply(request, { sessionId: 'new' }); else original(request, connection);
     };
-    expect(await client.request('sessions.create', { cwd: '/fixture', source: 'tui' })).toMatchObject({ outcome: 'accepted', result: { sessionId: 'new' } });
+    expect(await client.request('sessions.create', { cwd: '/fixture' })).toMatchObject({ outcome: 'accepted', result: { sessionId: 'new' } });
     const commands = fake.requests.filter(item => item.op === 'sessions.create'); expect(commands[0]).toEqual(commands[1]);
     expect(fake.requests.some(item => item.op === 'attach')).toBe(false);
   });

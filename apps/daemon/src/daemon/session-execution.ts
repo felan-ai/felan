@@ -24,7 +24,6 @@ export interface SessionExtensionContext {
   readonly rootSessionId: string;
   readonly policy: SessionExecutionPolicy;
   readonly extensionPackages: readonly string[];
-  readonly source: 'tui' | 'acp' | 'headless';
   readonly extensionConfigs: ReadonlyMap<string, Readonly<Record<string, ExtensionConfigValue>>>;
   readonly extensionConfigOverrides: readonly ExtensionConfigOverride[];
   readonly scopedModels: NonNullable<CreateAgentCoreSessionOptions['scopedModels']>;

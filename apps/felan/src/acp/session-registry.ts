@@ -48,7 +48,7 @@ export class AcpSessionRegistry {
     return this.#track(async () => {
       const cwd = validateSessionRequest(params);
       const daemon = await this.#connect();
-      const { sessionId } = accepted(await daemon.request('sessions.create', { cwd, source: 'acp', requirePolicy: 'acp-strict' }));
+      const { sessionId } = accepted(await daemon.request('sessions.create', { cwd, requirePolicy: 'acp-strict' }));
       await this.#attach(sessionId, cwd, client);
       return { sessionId };
     });

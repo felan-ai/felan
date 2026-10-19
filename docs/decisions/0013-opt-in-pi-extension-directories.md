@@ -1,9 +1,9 @@
 # ADR 0013: Opt in to Pi extension directories with Felan settings and project trust
 
-> Status: Accepted
+> Status: Accepted; amended by [ADR 0043](0043-apply-external-extension-settings-per-host.md)
 > Date: 2026-09-17
 > Deciders: Felan maintainers
-> Related: [Runtime and security](../concepts/runtime-and-security.md), [Local CLI](../user-guide/local-cli.md)
+> Related: [Runtime and security](../concepts/runtime-and-security.md), [Local CLI](../user-guide/local-cli.md), [ADR 0043](0043-apply-external-extension-settings-per-host.md)
 
 ## Context
 
@@ -21,24 +21,33 @@ surface is filtered.
 
 ## Decision
 
-The local TUI owns an opt-in in Felan global settings with two independent
+Amended by ADR 0043: the original interactive-root restriction is replaced by
+host-wide settings and root-to-child inheritance. Folder trust and the filtered
+Pi resource boundary remain.
+
+The host owns an opt-in in Felan global settings with two independent
 sources: user-home Pi extensions and project-local Pi extensions. Both default
 off. Agent Core keeps receiving an explicit path list and does not grow
 discovery policy.
 
-User-home, when enabled, loads `~/.pi/agent/extensions` for interactive root
-sessions. Those files are already the user's global Pi extensions, so they do
-not require a per-folder prompt.
+User-home, when enabled, loads `~/.pi/agent/extensions` for every newly created
+root session. Those files are already the user's global Pi extensions, so they
+do not require a per-folder prompt.
 
 Project-local, when enabled, loads `<cwd>/.pi/extensions` only after a Pi-style
-trust decision for that folder. A new directory with project extensions asks
-once; the answer is remembered and parent-folder decisions apply as in Pi.
+trust decision for that folder. Only the creating TUI prompts for a new
+directory with project extensions; the answer is remembered and parent-folder
+decisions apply as in Pi. ACP, headless and web creates skip folders without a
+decision, saving none, and load folders already trusted locally.
 Trust is stored under `$FELAN_AGENT_DIR`, not shared with `~/.pi/agent/trust.json`.
 Trusting a folder authorizes those project extension files only. It does not
 load Pi project settings, packages, skills, prompts, or themes.
 
-Headless, ACP, and subagent sessions still do not load these paths. `--extension`
-remains additive.
+The settings apply to TUI, ACP, headless, web-created and imported roots.
+Children inherit the root's external extension paths. `--extension` remains
+additive for local clients; remote creates cannot supply explicit paths.
+Paths are fixed at creation: resume retains saved paths, clone/fork retain the
+source paths, and adoption of an unindexed transcript loads none.
 
 ## Alternatives Considered
 
@@ -60,6 +69,6 @@ remains additive.
   answer; declining keeps the current filter.
 - Felan and Pi trust files stay separate, so a decision in one app does not
   silently change the other.
-- `/cwd` must re-resolve project extensions against the new folder's trust
-  state. Resource-boundary documentation must describe the opt-in and the
-  prompt.
+- `/cwd` creates a new root and resolves project extensions against the new
+  folder's trust state. Resource-boundary documentation must describe the
+  host-wide opt-in and creator-bound prompt.

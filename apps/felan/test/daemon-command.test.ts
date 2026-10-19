@@ -56,7 +56,7 @@ it('starts and restarts the actual daemon with a shared launch environment and r
   const first = new SessionClient({ target, clientVersion: 'fixture', kind: 'tui' }); cleanup.push(async () => first.close()); await first.connect();
   const original = first.identity;
   await runSuccessfully(['start', ...args], io);
-  const created = await first.request('sessions.create', { cwd: directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const created = await first.request('sessions.create', { cwd: directory, model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   const id = created.result.sessionId; await first.attach(id);
   async function environment(client: SessionClient): Promise<string> {

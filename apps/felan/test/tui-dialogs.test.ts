@@ -53,6 +53,9 @@ it('masks secret input and clears it when the dialog completes', async () => {
   const f = fixture(); const result = f.dialogs.input('API key', '', { secret: true });
   f.input('private-test-key');
   expect(f.render()).not.toContain('private-test-key'); expect(f.render()).toContain('*'.repeat('private-test-key'.length));
+  const lines = f.render().split('\n').map(stripTerminalSequences); const field = lines.findIndex(line => line.startsWith('> *'));
+  expect(lines[field]).toBe(`> ${'*'.repeat('private-test-key'.length)} `);
+  expect(lines[field - 1]).toMatch(/^─+$/); expect(lines[field + 1]).toMatch(/^─+$/); expect(f.render()).toContain('\x1b[7m \x1b[27m');
   f.input('\r'); expect(await result).toBe('private-test-key');
   expect(f.render()).not.toContain('*'.repeat('private-test-key'.length));
   f.dialogs.dispose();

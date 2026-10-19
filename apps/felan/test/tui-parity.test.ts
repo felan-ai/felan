@@ -30,7 +30,7 @@ function fixture() {
     { id: 'memory', kind: 'status', key: 'memory', value: { kind: 'text', text: 'Memory: disabled' }, fallback: 'Memory disabled' },
   ] };
   const listeners = new Set<() => void>();
-  const client = { status: 'ready', reconnection: undefined as { attempt: number; retryAt: number } | undefined, capabilities: { daemonVersion: '0.2.0' },
+  const client = { status: 'ready', reconnection: undefined as { attempt: number; retryAt: number } | undefined, capabilities: { daemonVersion: '0.1.0' },
     readAttachment: () => ({ state: { status: 'live', snapshot: current } }),
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; } };
   const controller = { client, get snapshot() { return current; }, get state() { return client.readAttachment().state; },

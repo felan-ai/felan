@@ -25,6 +25,11 @@ export async function forkSession(
 
 export interface RootPreparation { cwd: string; extensionPaths: readonly string[] }
 export interface CommandContext { origin: Origin; signal?: AbortSignal; rootPreparation?: RootPreparation; invalidateAfterResponse?(revisions: Readonly<Record<string, number>>): void }
+export interface RemoteControl {
+  status(): OperationResult<'remote.status'>;
+  configure(params: OperationParams<'remote.configure'>): Promise<OperationResult<'remote.configure'>>;
+  setShared(session: string, shared: boolean): void;
+}
 export interface CommandOptions {
   registry: SessionRegistry;
   configuration: HostConfiguration;
@@ -35,6 +40,8 @@ export interface CommandOptions {
 }
 
 export class SessionCommands {
+  private remote: RemoteControl | undefined;
+  setRemote(remote: RemoteControl): void { this.remote = remote; this.operations.add('session.remote'); }
   readonly operations = new Set<Operation>(['sessions.list', 'sessions.create', 'close', 'prompt', 'steer', 'follow_up', 'cancel', 'set_model', 'set_thinking',
     'compact', 'fork', 'command.invoke', 'session.rename', 'session.tree', 'session.branch.select', 'session.entry.label', 'session.history', 'session.clone', 'shell.execute',
     'config.get', 'config.set', 'processes.list', 'processes.read', 'processes.write', 'processes.stop', 'executions.list', 'executions.read', 'executions.steer', 'executions.cancel',
@@ -47,6 +54,14 @@ export class SessionCommands {
   async read(request: ClientEnvelope, client?: string): Promise<Response> {
     const { registry, configuration } = this.options;
     switch (request.op) {
+      case 'remote.status': {
+        if (!this.remote) throw commandError('unavailable');
+        return accepted(request, this.remote.status());
+      }
+      case 'remote.configure': {
+        if (!this.remote) throw commandError('unavailable');
+        return accepted(request, await this.remote.configure(request.params));
+      }
       case 'host.setup.catalog': {
         if (!this.options.setup) throw commandError('unavailable');
         return accepted(request, await this.options.setup.catalog());
@@ -129,6 +144,11 @@ export class SessionCommands {
     const { request } = command; const { registry, configuration } = this.options;
     const localClient = 'attachment' in context.origin ? context.origin.attachment : undefined;
     switch (request.op) {
+      case 'session.remote': {
+        if (!this.remote) throw commandError('unavailable');
+        command.assertDispatch();
+        return { response: command.dispatch(() => { this.remote!.setShared(request.session, request.params.shared); return accepted(request, {}); }) };
+      }
       case 'ui.action': {
         const execute = registry.prepareUiAction(request.session, request.params);
         command.assertDispatch();
@@ -157,6 +177,7 @@ export class SessionCommands {
         return { response: command.dispatch(open).then(() => accepted(request, {})) };
       }
       case 'sessions.create': {
+        if (request.params.extensions !== undefined && !localClient) throw commandError('forbidden');
         const overrides = request.params.config && Object.keys(request.params.config).length ? configuration.sessionOverrides(request.params.config) : [];
         const model = request.params.model && await this.model(request.params.model);
         if (!request.params.model && !(await this.options.models.getAvailable()).length) throw commandError('authentication_required', 'No model is available. Log in with /login or configure a provider API key.');
@@ -164,8 +185,7 @@ export class SessionCommands {
         if (context.rootPreparation && context.rootPreparation.cwd !== resources.cwd) throw commandError('target_mismatch');
         registry.assertClientSessionDirectory(resources);
         const extensionPaths = context.rootPreparation?.extensionPaths ?? request.params.extensions;
-        if ((request.params.interactiveExtensions || extensionPaths?.length) && !localClient) throw commandError('forbidden');
-        const creation = { interactiveExtensions: request.params.interactiveExtensions === true, cwd: resources.cwd, target: { kind: 'new' as const }, source: request.params.source, clientRoot: true as const,
+        const creation = { cwd: resources.cwd, target: { kind: 'new' as const }, clientRoot: true as const,
           sessionDir: resources.sessionDir, ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } as const } : {}), ...(model ? { model } : {}),
           ...(request.params.thinking ? { thinkingLevel: request.params.thinking } : {}), ...(extensionPaths ? { extensionPaths } : {}),
           ...(overrides.length ? { extensionConfigOverrides: overrides } : {}) };
@@ -193,6 +213,7 @@ export class SessionCommands {
       case 'session.reload': return { response: registry.reloadAdmitted(request.id, request.session).then(() => accepted(request, {})) };
       case 'session.import': {
         const resources = await registry.options.lifecycle.resolveResources({ cwd: request.params.cwd });
+        if (context.rootPreparation && context.rootPreparation.cwd !== resources.cwd) throw commandError('target_mismatch');
         for (const root of resources.writableRoots) registry.options.owner.assertOwnsPath(root);
         registry.assertClientSessionDirectory(resources);
         const prepared = preflight(() => prepareImport(registry.options.owner, request.params.path));
@@ -201,7 +222,8 @@ export class SessionCommands {
           const staged = stageImport(registry.options.owner, resources.sessionDir, request.params.path, prepared);
           try {
             const binding = await registry.create({ cwd: resources.cwd, sessionDir: resources.sessionDir, target: { kind: 'import', sessionFile: staged.path },
-              source: context.origin.kind === 'acp' ? 'acp' : context.origin.kind === 'headless' ? 'headless' : 'tui', clientRoot: true,
+              clientRoot: true,
+              ...(context.rootPreparation ? { extensionPaths: context.rootPreparation.extensionPaths } : {}),
               ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } as const } : {}) });
             return accepted(request, { sessionId: binding.sessionId });
           } finally { staged.dispose(); }

@@ -132,7 +132,7 @@ it('stops the real daemon on the first force command with an attached context vi
     capabilities: [...TERMINAL_UI_CAPABILITIES], interactionKinds: [...TERMINAL_INTERACTION_KINDS] });
   cleanups.push(async () => client.close());
   await client.connect();
-  const created = await client.request('sessions.create', { cwd: root, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const created = await client.request('sessions.create', { cwd: root, model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted');
   if (created.outcome !== 'accepted') throw new Error('Session creation failed');
   const session = created.result.sessionId;

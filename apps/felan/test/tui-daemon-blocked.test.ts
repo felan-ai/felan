@@ -68,7 +68,7 @@ it.each([[true, 'Use /daemon restart force to retry cleanup.'], [false, manual]]
   await f.controller.perform('prompt', { text: 'keep this' }, 'session');
   expect(f.controller.notice).toBe(refusal);
   await vi.waitFor(() => expect(f.controller.notice).toBe(`Daemon refuses new work. ${explanation} ${hint}`));
-  await f.controller.perform('sessions.create', { cwd: '/fixture', source: 'tui' });
+  await f.controller.perform('sessions.create', { cwd: '/fixture' });
   expect(f.controller.notice).toBe(`Daemon refuses new work. ${explanation} ${hint}`);
   expect(f.controller.notes).toHaveLength(1); expect(f.controller.notes[0]?.text).toBe(f.controller.notice);
   expect(f.request.mock.calls.filter(([op]) => op === 'host.status')).toHaveLength(1);
@@ -88,7 +88,7 @@ it('does not run a lifecycle action when the status operation is rejected', asyn
 
 it('replaces the rejection notice only after reconnect verifies the daemon recovered', async () => {
   const f = fixture(); f.request.mockResolvedValueOnce({ outcome: 'rejected', error: { code: 'host_blocked', message: 'blocked' } } as never);
-  await f.controller.perform('sessions.create', { cwd: '/fixture', source: 'tui' });
+  await f.controller.perform('sessions.create', { cwd: '/fixture' });
   await vi.waitFor(() => expect(f.controller.notice).toContain(explanation));
   const notice = f.controller.notice;
   await f.controller.reconnect();

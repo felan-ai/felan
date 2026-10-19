@@ -17,6 +17,7 @@ import { createSetupUi } from './setup-ui.js';
 import { themedClientTerminal } from './theme.js';
 import { reportHerdrPane, type HerdrPane } from './herdr.js';
 import { formatHostBlocked } from '../client/daemon-blocked.js';
+import { remoteHistoryInput } from './remote.js';
 
 export async function runDaemonTerminal(controller: TuiSessionController, options: TuiSessionOptions & {
   initialMessage?: string;
@@ -140,7 +141,13 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       });
       screen.setFooter(footer);
     });
-    interactions = new TerminalInteractions(controller, builtins.presenters, setup);
+    interactions = new TerminalInteractions(controller, builtins.presenters, {
+      get busy() { return setup!.busy || screen.dialogs.secretInputActive; },
+      subscribe(listener) {
+        const unsubscribeSetup = setup!.subscribe(listener); const unsubscribeDialogs = screen.dialogs.subscribe(listener);
+        return () => { unsubscribeSetup(); unsubscribeDialogs(); };
+      },
+    });
     const prompts = interactions;
     if (options.herdr) unsubscribeHerdr = reportHerdrPane(controller, options.herdr, () => prompts.pending());
     const starting = controller.start(options, async listing => {
@@ -152,12 +159,13 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       if (!controller.client.capabilities?.operations.includes('host.status')) return;
       const response = await controller.perform('host.status', {});
       if (response.outcome !== 'accepted') throw new Error(controller.notice);
+      for (const need of response.result.setupNeeds) if (need.code === 'remote') controller.announce(need.message, 'warning');
       const blocked = response.result.state === 'blocked';
       if (!blocked && !response.result.setupNeeds.some(need => need.code === 'provider')) return;
       startupDeferred = true;
       const draft = screen.editor.getExpandedText();
-      if (draft) screen.editor.addToHistory(draft);
-      if (options.initialMessage && options.initialMessage !== draft) screen.editor.addToHistory(options.initialMessage);
+      if (draft) screen.editor.addToHistory(remoteHistoryInput(draft));
+      if (options.initialMessage && options.initialMessage !== draft) screen.editor.addToHistory(remoteHistoryInput(options.initialMessage));
       if (!draft && options.initialMessage) screen.editor.setText(options.initialMessage);
       controller.setNotice(blocked ? formatHostBlocked(response.result.blocked, { client: 'tui' })
         : 'No model is available. Use /login, then /new. Your input is retained in the editor/history and was not sent.', blocked);

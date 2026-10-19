@@ -72,9 +72,8 @@ export interface SessionOpenRequest {
   readonly model?: CreateAgentSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
-  readonly source?: 'tui' | 'acp' | 'headless';
-  readonly interactiveExtensions?: boolean;
   readonly extensionPaths?: readonly string[];
+  readonly allowedTools?: readonly string[];
   readonly worker?: SessionWorkerConfiguration;
 }
 

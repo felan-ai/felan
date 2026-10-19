@@ -311,7 +311,8 @@ export class SessionClient {
     const previous = this.records.get(id);
     const envelope = parseClientEnvelope({ v: 1, id, op, params, ...(session === undefined ? {} : { session }) });
     const canonical = canonicalRequestPayload(envelope);
-    const payload = op === 'host.setup.answer' ? createHash('sha256').update(canonical).digest('hex') : canonical;
+    const payload = op === 'host.setup.answer' || envelope.op === 'remote.configure' && envelope.params.action === 'login'
+      ? createHash('sha256').update(canonical).digest('hex') : canonical;
     if (previous) {
       if (previous.payload !== payload) return Promise.resolve(failure(id, 'rejected', 'request_conflict', 'Request ID already names a different command') as ResponseFor<O>);
       return previous.promise as Promise<ResponseFor<O>>;
@@ -335,6 +336,9 @@ export class SessionClient {
   private transmit(record: Pending) {
     if (record.response || record.timer) return;
     if (this.closed) { this.finish(record, failure(record.envelope.id, 'indeterminate', 'unavailable', 'Client is closed')); return; }
+    if (record.attempts && record.envelope.op === 'remote.configure' && record.envelope.params.action === 'login') {
+      this.finish(record, failure(record.envelope.id, 'indeterminate', 'unavailable', 'Remote login reply was lost. Check /remote status or run /remote login again.')); return;
+    }
     if (record.attempts > this.retries) { this.finish(record, failure(record.envelope.id, 'indeterminate', 'indeterminate', 'No authoritative reply before retry limit')); return; }
     try {
       if (!this.transport) throw new Error('No transport');
@@ -348,17 +352,28 @@ export class SessionClient {
       this.transport.send(record.envelope);
     } catch {
       this.finish(record, failure(record.envelope.id, record.attempts ? 'indeterminate' : 'rejected', 'unavailable', 'Request could not be delivered'));
+    } finally {
+      if (record.envelope.op === 'remote.configure' && record.envelope.params.action === 'login') {
+        // A PAT is sent once, never retained for replay after a disconnect.
+        record.envelope = { ...record.envelope, params: { ...record.envelope.params, token: '' } };
+        record.bytes = encodeFrame(record.envelope).byteLength + (record.response ? encodeFrame(record.response).byteLength : 0);
+      }
     }
   }
 
   private finish(record: Pending, response: Response) {
     clearTimeout(record.timer); record.timer = undefined;
     if (record.response) return;
-    record.response = structuredClone(response); record.resolve(structuredClone(response));
     if (record.envelope.op === 'host.setup.answer') {
       record.envelope = { ...record.envelope, params: { ...record.envelope.params, text: '' } };
       record.bytes = encodeFrame(record.envelope).byteLength;
+    } else if (record.envelope.op === 'remote.configure' && record.envelope.params.action === 'login') {
+      record.envelope = { ...record.envelope, params: { ...record.envelope.params, token: '' } };
+      record.bytes = encodeFrame(record.envelope).byteLength;
+      response = JSON.parse(JSON.stringify(response, (_key, value: unknown) => typeof value === 'string'
+        ? value.replace(/fln_pat_[A-Za-z0-9_-]+/gu, '[redacted]') : value)) as Response;
     }
+    record.response = structuredClone(response); record.resolve(structuredClone(response));
     record.bytes += encodeFrame(response).byteLength;
     const completed = [...this.records].filter(([, item]) => item.response);
     let retainedBytes = [...this.records.values()].reduce((sum, item) => sum + item.bytes, 0);
@@ -571,7 +586,10 @@ export class SessionClient {
     for (const [session, attachment] of this.attachments) this.attachments.set(session, { ...attachment, state: reduceSession(attachment.state, { type: 'disconnected' }) });
     for (const record of this.records.values()) {
       clearTimeout(record.timer); record.timer = undefined;
-      if (record.internal && !record.response) this.finish(record, failure(record.envelope.id, 'indeterminate', 'unavailable', 'Connection lost'));
+      if (!record.response && (record.internal || record.envelope.op === 'remote.configure' && record.envelope.params.action === 'login')) {
+        this.finish(record, failure(record.envelope.id, 'indeterminate', 'unavailable', record.internal ? 'Connection lost'
+          : 'Remote login reply was lost. Check /remote status or run /remote login again.'));
+      }
     }
     // Backoff restarts only after a connection that stayed up longer than the longest delay, so a flapping daemon is not hammered.
     if (wasReady && Date.now() - this.readyAt >= this.maxDelay) this.reconnectCount = 0;

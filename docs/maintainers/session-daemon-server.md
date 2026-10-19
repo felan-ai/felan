@@ -148,8 +148,8 @@ canonical execution state and retry until the reloaded root's parent port
 accepts them; queued executions resume after reload. It does not call Pi's
 in-place reload or reset global providers. Disposed children are unavailable
 until restored because generic restore cannot reproduce their injected
-instructions. Reload inherits restore's headless source and
-external-extension limitations; it does not require the later service split.
+instructions. Reload retains the saved external extension paths regardless of
+the attached client; it does not require the later service split.
 Session model/thinking operations never write global defaults. The later TUI
 preserves interactive default selection through explicit `config.set` calls only
 when `config.get.writable` permits the requested scope. Extension `updateConfig`

@@ -20,7 +20,7 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 
 The local host does not read Pi project settings. Configuration for ambient Pi
 extensions, prompts, packages, themes, or skills is filtered by default. Load a
-local Pi extension explicitly for the interactive root TUI with repeatable
+external extension explicitly from a local client with repeatable
 `--extension`/`-e` flags, or opt in to Pi's standard directories with
 `piExtensions` as described below. Neither path installs network or package
 sources.
@@ -113,10 +113,11 @@ Defaults:
 
 Set `piExtensions.llamaCpp` to `true` in Felan's global `settings.json` to
 enable Pi's bundled llama.cpp provider and model-management commands for
-interactive root sessions. It is off by default and does not enable Pi's other
-built-in extensions or ambient extension discovery. The external Hugging Face
-`pi-llama` package is separate and is not enabled by this setting. Restart or
-resume the interactive session to apply the change.
+root sessions created by any client, but not child sessions. It is off by
+default and does not enable Pi's other built-in extensions or ambient extension
+discovery. The external Hugging Face `pi-llama` package is separate and is not
+enabled by this setting. Restart or
+resume the root session to apply the change.
 
 Felan does not install or start llama.cpp. Start an existing llama.cpp router
 server, then use `/login llama.cpp` to configure its URL and optional API key.
@@ -161,16 +162,30 @@ Felan's integration, not separately loaded extensions.
 
 ### Runtime resources and session behavior
 
-When `piExtensions.user` is `true`, interactive root TUI sessions load
-`~/.pi/agent/extensions`. When `piExtensions.project` is `true`, they load
+External extensions are configured per host, not per session or client.
+`piExtensions.user` loads `~/.pi/agent/extensions`; `piExtensions.project` loads
 `<cwd>/.pi/extensions` only after a Felan folder-trust decision stored in
-`$FELAN_AGENT_DIR/trust.json`. A new folder with project extensions asks once;
-parent-folder decisions apply. Trusting a folder authorizes those extension
-files only. It does not load Pi project settings, packages, skills, prompts, or
-themes. These directories are not loaded in headless, ACP, or subagent sessions.
-`--extension`/`-e` remains additive. Executable extension paths are fixed when a
-session is created. A resumed session keeps its saved paths; `-e` passed while
-resuming is ignored with a notice and applies to new sessions.
+`$FELAN_AGENT_DIR/trust.json`. Both default to `false` and apply to every new
+root: TUI, ACP, headless/print mode, web-created sessions through the remote
+connector, and `session.import`.
+
+Only the TUI creating a session asks about a folder without a trust decision.
+ACP, headless and web creates skip that folder without saving a decision, so a
+later TUI create can still ask. Folders already trusted directly or through a
+parent load for every creator. Trust authorizes those extension files only;
+it does not load Pi project settings, packages, skills, prompts, or themes.
+
+`--extension`/`-e` remains additive for local clients; remote creates cannot
+supply explicit paths. External extension paths are fixed at creation. Resume
+keeps saved paths, clone/fork keep the source session's paths, and adopting an
+existing unindexed transcript on attach loads no external extensions. `-e`
+passed while resuming is ignored with a notice and applies to new sessions.
+Children, including subagents, execution children and workers, load the same
+external extension paths as their root; a worker's tool allowlist still limits
+its active tools.
+
+Enabling these settings runs external extension code with your permissions in
+ACP, headless, web-created and child sessions as well as the TUI.
 
 `builtinExtensions.sessionTitle` controls automatic names for interactive root
 sessions. Disable it to keep the first prompt as the session-picker fallback.

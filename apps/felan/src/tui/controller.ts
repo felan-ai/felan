@@ -86,9 +86,9 @@ export class TuiSessionController {
     if (message) this.addNote(message, 'info', true);
     this.emit();
   }
-  announce(message: string): void {
+  announce(message: string, level: TranscriptNote['level'] = 'info'): void {
     if (this.closed) return;
-    this.addNote(message, 'info', false); this.emit();
+    this.addNote(message, level, false); this.emit();
   }
 
   /** True while startup connects, attaches or creates the first session; the screen does not warn about a missing session then. */
@@ -191,7 +191,7 @@ export class TuiSessionController {
   }
 
   async create(options: TuiSessionOptions): Promise<void> {
-    const result = await this.perform('sessions.create', { cwd: options.cwd, source: 'tui', interactiveExtensions: true,
+    const result = await this.perform('sessions.create', { cwd: options.cwd,
       ...(options.sessionDir ? { sessionDir: options.sessionDir } : {}),
       ...(options.extensions?.length ? { extensions: options.extensions } : {}), ...(options.config ? { config: options.config } : {}) });
     if (result.outcome !== 'accepted') throw new Error(this.notice);

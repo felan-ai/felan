@@ -5,7 +5,7 @@ import type { ModelRuntime } from '@felan-ai/agent-core';
 import { BootstrapHelloSchema, ERROR_CODES, IdSchema, JsonLineDecoder, LIMITS, OPERATION_CATALOG, PresentationEventSchema, UI_CAPABILITIES, canonicalRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse,
   parseSchema, type ClientEnvelope, type Interaction, type Operation, type OperationParams, type OperationResult, type Response } from '@felan-ai/session-protocol';
 import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand, type AdmissionOutcome } from './admission.js';
-import { accepted, commandError, SessionCommands, type RootPreparation } from './commands.js';
+import { accepted, commandError, SessionCommands, type RemoteControl, type RootPreparation } from './commands.js';
 import { SessionFanout } from './fanout.js';
 import { listenLocalIpc, type LocalIpcListener } from './ipc.js';
 import type { SessionRegistry } from './registry.js';
@@ -21,6 +21,8 @@ export interface BrokerDispatchPort {
   dispatch(command: AdmittedCommand, client: { principal: string; kind: Kind; attachment: string;
     interactionKinds: OperationParams<'hello'>['interactionKinds'];
     capabilities?: OperationParams<'hello'>['capabilities'] }): AdmissionOutcome | Promise<AdmissionOutcome>;
+  dispatchRemote?(command: AdmittedCommand, requester: { user: string; command: string;
+    interactionKinds: OperationParams<'hello'>['interactionKinds'] }): AdmissionOutcome | Promise<AdmissionOutcome>;
   connected?(client: BrokerClient): void;
   attached?(attachment: string, session: string): void;
   detached?(attachment: string, session: string): void;
@@ -41,8 +43,9 @@ export interface SessionServerOptions {
   management?: { lifecycle: HostLifecycle; logs(params: OperationParams<'host.logs'>): OperationResult<'host.logs'> };
   setupNeeds?(): OperationResult<'host.status'>['setupNeeds'];
   currentComposition?(): Promise<HostCompositionInfo>;
-  prepareRoot?(params: OperationParams<'sessions.create'>, caller: { id: string; kind: Kind; signal: AbortSignal }): Promise<RootPreparation>;
+  prepareRoot?(request: { cwd: string; extensions?: readonly string[] }, caller: { recipient?: string; signal: AbortSignal }): Promise<RootPreparation>;
 }
+interface RootPreparationWork { payload: string; work: Promise<RootPreparation> }
 interface Attachment { id: string; detach(): void }
 interface Connection {
   id: string;
@@ -67,12 +70,15 @@ export class SessionServer {
   private starting = false;
   private sealed = false;
   private readonly pendingReceives = new Set<Promise<unknown>>();
-  private readonly rootPreparations = new Map<string, { payload: string; work: Promise<RootPreparation> }>();
+  private readonly rootPreparations = new Map<string, RootPreparationWork>();
+  private readonly lifetime = new AbortController();
   private receiveFailure: unknown;
   private unwatch = () => {};
   private unbindCommands = () => {};
   private unbindInvalidation = () => {};
   private unbindBroker = () => {};
+  private remote: RemoteControl | undefined;
+  setRemote(remote: RemoteControl): void { this.remote = remote; this.commands.setRemote(remote); }
   readonly principal: string;
 
   constructor(private readonly options: SessionServerOptions) {
@@ -104,7 +110,7 @@ export class SessionServer {
 
   close(): void {
     if (this.stopped) return;
-    this.stopped = true; this.unwatch(); this.listener?.close();
+    this.stopped = true; this.lifetime.abort(); this.unwatch(); this.listener?.close();
     for (const connection of [...this.connections]) connection.out.close();
     this.unbindCommands(); this.unbindInvalidation(); this.unbindBroker();
   }
@@ -122,6 +128,73 @@ export class SessionServer {
     this.pendingReceives.add(work);
     void work.then(() => this.pendingReceives.delete(work), error => { this.pendingReceives.delete(work); this.receiveFailure ??= error; });
     return work;
+  }
+
+  hasRemoteRequest(id: string): boolean {
+    return this.options.registry.options.store.request(id) !== undefined;
+  }
+
+  submitRemote(request: ClientEnvelope, remote: { user: string; command: string; requireRetained?: boolean;
+    interactionKinds?: OperationParams<'hello'>['interactionKinds'] }): Promise<Response> {
+    return this.trackReceive(this.receiveRemote(request, remote));
+  }
+
+  private async receiveRemote(value: ClientEnvelope, remote: { user: string; command: string; requireRetained?: boolean;
+    interactionKinds?: OperationParams<'hello'>['interactionKinds'] }): Promise<Response> {
+    let admissionAttempt = false;
+    let preparing: RootPreparationWork | undefined; let ownsPreparation = false;
+    try {
+      const request = parseClientEnvelope(value);
+      if (!['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'].includes(request.op)) throw commandError('forbidden');
+      const user = parseSchema(IdSchema, remote.user); const commandId = parseSchema(IdSchema, remote.command);
+      const retained = this.hasRemoteRequest(request.id);
+      if (remote.requireRetained && !retained) throw commandError('indeterminate');
+      if ((this.stopped || this.sealed || this.stopping()) && !retained) throw commandError('busy');
+      if (request.op === 'sessions.create' && request.params.extensions !== undefined) throw commandError('forbidden');
+      if (request.session && !retained) {
+        if (this.options.registry.options.store.findSessionMetadata(request.session)?.deletedAt !== undefined) throw commandError('not_found');
+        await this.options.registry.restore(request.session);
+      }
+      let rootPreparation: RootPreparation | undefined;
+      if (request.op === 'sessions.create' && !retained && this.options.prepareRoot) {
+        ({ preparing, ownsPreparation } = this.startRootPreparation(request, { signal: this.lifetime.signal }));
+        rootPreparation = await preparing.work;
+      }
+      if (remote.requireRetained && !this.hasRemoteRequest(request.id)) throw commandError('indeterminate');
+      admissionAttempt = true;
+      // A user's retries retain their identity across reconnects and token rotation, unlike a connection or host token.
+      return await this.admission.submit(value, `web:${user}`, admitted => {
+        if (this.stopped || this.sealed || this.stopping()) throw commandError('busy');
+        if (request.op === 'interaction.answer') {
+          if (!this.options.broker?.dispatchRemote) throw commandError('unavailable');
+          return this.options.broker.dispatchRemote(admitted, { user, command: commandId, interactionKinds: remote.interactionKinds ?? [] });
+        }
+        return this.commands.prepare(admitted, { origin: { kind: 'web', user, command: commandId }, ...(rootPreparation ? { rootPreparation } : {}) });
+      });
+    } catch (error) {
+      const dispatched = admissionAttempt && this.options.registry.options.store.request(value.id)?.phase === 'dispatch_intent';
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'indeterminate') {
+        return { v: 1, re: value.id, outcome: 'indeterminate', error: { code: 'indeterminate', message: 'The retained remote request is unavailable. Inspect the session before retrying.', retryable: false } };
+      }
+      return rejected(value.id, error, dispatched);
+    } finally {
+      if (ownsPreparation && this.rootPreparations.get(value.id) === preparing) this.rootPreparations.delete(value.id);
+    }
+  }
+
+  private startRootPreparation(request: Extract<ClientEnvelope, { op: 'sessions.create' | 'session.import' }>,
+    caller: { recipient?: string; signal: AbortSignal }): { preparing: RootPreparationWork; ownsPreparation: boolean } {
+    const payload = canonicalRequestPayload(request);
+    const pending = this.rootPreparations.get(request.id);
+    if (pending) {
+      if (pending.payload !== payload) throw commandError('request_conflict');
+      return { preparing: pending, ownsPreparation: false };
+    }
+    if (this.rootPreparations.size >= LIMITS.inflightRequests) throw commandError('request_capacity');
+    const params = { cwd: request.params.cwd, ...(request.op === 'sessions.create' && request.params.extensions !== undefined ? { extensions: request.params.extensions } : {}) };
+    const preparing = { payload, work: this.options.prepareRoot!(params, caller) };
+    this.rootPreparations.set(request.id, preparing);
+    return { preparing, ownsPreparation: true };
   }
 
   async requestManagement(request: Extract<ClientEnvelope, { op: 'host.stop' | 'host.restart' }>): Promise<Response> {
@@ -183,7 +256,7 @@ export class SessionServer {
   private async receive(connection: Connection, frame: unknown): Promise<void> {
     let id: string | undefined; let size = 0; let counted = false; let admissionAttempt = false;
     let rootPreparation: RootPreparation | undefined;
-    let preparing: { payload: string; work: Promise<RootPreparation> } | undefined;
+    let preparing: RootPreparationWork | undefined;
     let ownsPreparation = false;
     const deferred: Array<Readonly<Record<string, number>>> = [];
     const invalidateAfterSend = () => { for (const revisions of deferred.splice(0)) this.invalidate(revisions); };
@@ -227,7 +300,7 @@ export class SessionServer {
       const durable = OPERATION_CATALOG[request.op].storage === 'durable';
       const retained = durable && this.options.registry.options.store.request(request.id) !== undefined;
       if (this.stopping() && !retained
-        && !['host.status', 'host.logs', 'host.stop', 'host.restart', 'cancel', 'close', 'executions.cancel', 'processes.stop', 'interaction.answer', 'detach', 'host.setup.read', 'host.setup.cancel'].includes(request.op)) throw this.stoppingError();
+        && !['host.status', 'remote.status', 'host.logs', 'host.stop', 'host.restart', 'cancel', 'close', 'executions.cancel', 'processes.stop', 'interaction.answer', 'detach', 'host.setup.read', 'host.setup.cancel'].includes(request.op)) throw this.stoppingError();
       if (request.op === 'attach') {
         await this.attach(connection, request); return;
       }
@@ -238,16 +311,9 @@ export class SessionServer {
         this.options.broker?.detached?.(connection.id, request.session);
         connection.out.send(accepted(request, {})); return;
       }
-      if (request.op === 'sessions.create' && !retained && this.options.prepareRoot) {
-        const payload = canonicalRequestPayload(request);
-        preparing = this.rootPreparations.get(request.id);
-        if (preparing && preparing.payload !== payload) throw commandError('request_conflict');
-        if (!preparing) {
-          if (this.rootPreparations.size >= LIMITS.inflightRequests) throw commandError('request_capacity');
-          preparing = { payload, work: this.options.prepareRoot(request.params, { id: connection.id, kind: connection.kind, signal: connection.lifetime.signal }) };
-          this.rootPreparations.set(request.id, preparing);
-          ownsPreparation = true;
-        }
+      if ((request.op === 'sessions.create' || request.op === 'session.import') && !retained && this.options.prepareRoot) {
+        const recipient = connection.kind === 'tui' && connection.interactionKinds.includes('select') ? connection.id : undefined;
+        ({ preparing, ownsPreparation } = this.startRootPreparation(request, { ...(recipient ? { recipient } : {}), signal: connection.lifetime.signal }));
         rootPreparation = await preparing.work;
         if (connection.closed) return;
       }
@@ -268,7 +334,7 @@ export class SessionServer {
       const attachment = request.session && connection.attachments.get(request.session);
       const origin = { kind: connection.kind, attachment: attachment ? attachment.id : connection.id };
       admissionAttempt = true;
-      const response = await this.admission.submit(request, this.principal, !this.available(connection.capabilities).includes(request.op) ? undefined : command => {
+      const response = await this.admission.submit(frame, this.principal, !this.available(connection.capabilities).includes(request.op) ? undefined : command => {
         if ((request.op === 'host.stop' || request.op === 'host.restart') && this.options.management) return this.options.management.lifecycle.prepare(command);
         if (this.stopping() && !safety) throw this.stoppingError();
         if (request.op === 'interaction.answer') return this.options.broker!.dispatch(command, { principal: this.principal, kind: connection.kind!, attachment: connection.id,
@@ -303,6 +369,7 @@ export class SessionServer {
 
   private available(capabilities: readonly string[] = []): Operation[] {
     const operations: Operation[] = ['hello', 'host.status', 'attach', 'detach', ...this.commands.operations];
+    if (this.remote) operations.push('remote.status', 'remote.configure');
     if (this.options.management) operations.push('host.stop', 'host.restart', 'host.logs');
     if (this.options.broker) operations.push('interaction.answer');
     return operations.filter(op => op !== 'ui.action' || capabilities.includes('ui.action'));
@@ -366,7 +433,7 @@ export class SessionServer {
     const { registry } = this.options;
     assertTargetIdentity(registry.options.owner.target, request.params.expected, registry.options.owner.identity);
     if (!registry.options.store.findSessionMetadata(request.session)) {
-      await registry.adopt(request.session, { source: connection.kind!, ...(connection.kind === 'tui' ? { interactiveExtensions: true } : {}),
+      await registry.adopt(request.session, {
         ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } } : {}) });
       if (connection.closed) return;
     }

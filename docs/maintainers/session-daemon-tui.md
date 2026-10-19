@@ -77,16 +77,17 @@ keyboard input, so work per update must not grow with the session's size:
 
 ## Configuration and resources
 
-CLI extension settings use the existing validated wire fields. Creation stores
-session-scoped overrides; attaching with configuration changes uses an admitted
-quiescent reload. These values do not modify global settings and survive idle
+CLI extension-configuration overrides use the existing validated wire fields.
+Creation stores session-scoped overrides; attaching with configuration changes
+uses an admitted quiescent reload. These values do not modify global settings and survive idle
 eviction and recovery. See [ADR 0028](../decisions/0028-retain-session-scoped-launch-options.md).
 
-Executable extension paths are fixed at session creation. Repeating `-e` while
-attaching is rejected explicitly; omit it to retain the existing paths, or
-create a new session for a different path set. This is an intentional difference
-from the former single-process launch path, where there were no other attached
-clients whose executable code could be replaced.
+External extension paths are fixed at session creation. Repeating `-e` while
+resuming is ignored with a notice; create a new session for a different path
+set. Clone/fork retain the source session's paths; adopting an unindexed
+transcript on attach loads no external extensions. This is an intentional
+difference from the former single-process launch path, where there were no
+other attached clients whose executable code could be replaced.
 
 `--daemon-runtime` is an explicit test/CI-only isolated directory selector. It
 is never taken from ambient environment. Normal launch resolves the exact
@@ -108,10 +109,20 @@ clients observing the same session may use different palettes. Theme fields
 are not part of the daemon preference protocol. See
 [ADR 0034](../decisions/0034-keep-themes-local-to-each-client.md).
 
-Project-extension discovery happens in the daemon before creating an
-interactive root. Trust prompts target only the creating TUI. Denial or
-dismissal never approves project code, and disconnect does not transfer that
-decision to another terminal. See [ADR 0031](../decisions/0031-bind-project-trust-to-the-creating-client.md).
+External extension discovery happens through the host provider before creating
+any root, including ACP, headless, web-created and imported sessions.
+`piExtensions.user` and `piExtensions.project` are host settings, not
+per-session flags. Children inherit their root's paths; worker tool allowlists
+still limit active tools. Only local clients may add explicit paths.
+
+Trust prompts target only the creating TUI. Other creators skip project folders
+without a decision, saving none; already-trusted folders load for any creator.
+ACP presents host prompts only through an already-ready session, so prompting
+during its first `session/new` could hang. Headless runs cancel prompts and web
+creates have no local client. Denial or dismissal never approves project code,
+and disconnect does not transfer the decision to another terminal. See
+[ADR 0031](../decisions/0031-bind-project-trust-to-the-creating-client.md) and
+[ADR 0043](../decisions/0043-apply-external-extension-settings-per-host.md).
 
 `/dependencies` and attachment-time onboarding send explicit choices to the
 daemon. Installers never run in the model or terminal process. `/login` also

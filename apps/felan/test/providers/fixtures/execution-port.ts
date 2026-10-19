@@ -19,7 +19,7 @@ export async function executionPort(registry: SessionRegistry, id: string): Prom
   const port = services.extensions.executionPort!({ runtime: binding.agentRuntime, modelRuntime: binding.runtime.session.modelRuntime,
     settingsManager: binding.runtime.session.settingsManager, sessionManager: binding.runtime.session.sessionManager,
     resources: binding.resources, rootSessionId: binding.rootSessionId, policy: registry.getPolicy(id), extensionPackages: [],
-    source: 'headless', extensionConfigs: new Map(), extensionConfigOverrides: [], scopedModels: [], skillPaths: [],
+    extensionConfigs: new Map(), extensionConfigOverrides: [], scopedModels: [], skillPaths: [],
     classifier: binding.agentRuntime.classifier, dynamicThinking: false, services: createFelanServiceRegistry(),
     importExtension: async () => ({ default() {} }),
   });

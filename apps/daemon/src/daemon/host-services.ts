@@ -30,8 +30,8 @@ export interface HostSetup {
 export interface HostServices {
   readonly configuration: HostConfiguration;
   readonly setup: HostSetup;
-  prepareRoot?(params: OperationParams<'sessions.create'>, caller: {
-    id: string; kind: OperationParams<'hello'>['kind']; signal: AbortSignal;
+  prepareRoot?(request: { cwd: string; extensions?: readonly string[] }, caller: {
+    recipient?: string; signal: AbortSignal;
   }): Promise<{ cwd: string; extensionPaths: readonly string[] }>;
 }
 

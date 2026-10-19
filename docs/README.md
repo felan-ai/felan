@@ -96,10 +96,14 @@ The package READMEs are the canonical npm-facing API and development references:
 - [`@felan-ai/ext-tasks`](../packages/ext-tasks/README.md)
 - [`@felan-ai/ext-web-access`](../packages/ext-web-access/README.md)
 
-Felan Code's local application loads source-controlled built-ins and explicitly
-requested local Pi extension paths in interactive root TUI sessions. Optional
-`piExtensions` settings can load Pi's standard user and trusted project
-extension directories. Public extension packages are composition building blocks
+Felan Code's local application loads source-controlled built-ins and external
+extension paths explicitly supplied by local clients. The host's opt-in
+`piExtensions.user` and `piExtensions.project` settings load Pi's standard user
+and trusted project directories for every new root, including ACP, headless,
+web-created and imported sessions; children inherit their root's paths. Only
+the creating TUI prompts for folder trust; other creators skip undecided
+folders, and remote creates cannot supply explicit paths. Public extension
+packages are composition building blocks
 for Felan hosts; they are not ambient plugins automatically discovered by the
 local CLI.
 

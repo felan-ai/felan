@@ -7,6 +7,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, unlink, writeFi
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, parseInteraction } from '@felan-ai/session-protocol';
 import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
@@ -18,6 +19,7 @@ const supported = ['darwin', 'linux'].includes(process.platform);
 const roots: string[] = [];
 const owners: DaemonOwnership[] = [];
 const stores: DaemonControlStore[] = [];
+const databases: ControlDatabase[] = [];
 const children: ChildProcess[] = [];
 const now = 1_800_000_000_000;
 function requestId(timestamp = now): string {
@@ -42,6 +44,7 @@ afterEach(async () => {
     if (child.exitCode === null && child.signalCode === null) { const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited; }
   }
   for (const store of stores.splice(0)) store.close();
+  for (const database of databases.splice(0)) database.close();
   for (const owner of owners.splice(0)) await owner.release();
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true });
 });
@@ -130,6 +133,37 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
       expect(reloaded.session('s').revision).toBeGreaterThanOrEqual(initial);
     });
   }
+  it('fences local writes after a callback failure even when rollback succeeds', async () => {
+    const { store } = await open();
+    execControlDatabase(store.directory, "CREATE TRIGGER reject_session_update BEFORE UPDATE ON sessions BEGIN SELECT RAISE(ABORT, 'injected update failure'); END");
+    expect(() => store.updateSession('s', { title: 'rejected' })).toThrow(/commit failed/);
+    expect(readControlDatabase(store.directory).sessions[0]!.title).toBe('');
+    expect(() => store.admit(prompt(), 'owner')).toThrow(/fenced/);
+  });
+  it('keeps local admission and updates available after a remote callback rolls back', async () => {
+    const { store } = await open();
+    expect(() => store.database.transaction(() => {
+      store.database.putRecord('kind', 'id', 'rolled back');
+      throw new Error('remote callback failure');
+    })).toThrow('remote callback failure');
+    expect(store.database.record('kind', 'id')).toBeUndefined();
+    expect(store.admit(prompt(), 'owner').value.phase).toBe('intent');
+    store.updateSession('s', { title: 'available' }); expect(store.session('s').title).toBe('available');
+  });
+  it.each(['remote', 'local'] as const)('fences only local writes when %s BEGIN is busy', async operation => {
+    const { store } = await open(); const lock = new DatabaseSync(controlDatabasePath(store.directory)); const callback = vi.fn();
+    try {
+      lock.exec('BEGIN IMMEDIATE');
+      if (operation === 'remote') expect(() => store.database.transaction(callback)).toThrow(expect.objectContaining({ code: 'storage_failure', message: expect.stringMatching(/could not begin/) }));
+      else expect(() => store.updateSession('s', { title: 'blocked' })).toThrow(/commit failed/);
+      expect(callback).not.toHaveBeenCalled();
+    } finally { lock.exec('ROLLBACK'); lock.close(); }
+    if (operation === 'local') expect(() => store.admit(prompt(), 'owner')).toThrow(/fenced/);
+    else {
+      expect(store.admit(prompt(), 'owner').value.phase).toBe('intent');
+      store.updateSession('s', { title: 'available' }); expect(store.session('s').title).toBe('available');
+    }
+  });
   it('discards a rejected commit and writes the next one from the committed state', async () => {
     const { owner, store } = await open(); const revision = store.session('s').revision;
     const valid = vi.spyOn(store as unknown as { validSession(): boolean }, 'validSession').mockReturnValueOnce(false);
@@ -178,68 +212,110 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
   });
 });
 
-describe.skipIf(!supported)('version 1 control snapshot import', () => {
-  async function legacyStore(mutate: { data?: (data: { namespace: string }) => void; envelope?: (envelope: { digest: string }) => void } = {}) {
-    const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
-    const agentDir = owner.target.agentDir; const directory = join(agentDir, 'daemon-control-v1'); const storeId = randomUUID();
-    const tool = { id: 'tool', name: 'read', message: 'm', state: 'completed', output: 'large tool output', truncated: false };
-    const data = { version: 1, namespace: owner.target.namespaceId, agentDir, clock: now, requests: [], interactions: [], continuations: [], resources: [],
-      sessions: [{ id: 's', root: 's', cwd: '/fixture', piPath: join(agentDir, 's.jsonl'), revision: 7, updatedAt: now, state: 'open', residency: 'warm',
-        run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, title: 'imported', projections: [
-          { key: 'message:m', updatedAt: now, value: { type: 'message', id: 'm', entryId: 'entry', state: 'observed' } },
-          { key: 'tool:tool', updatedAt: now, value: { type: 'tool', tool } },
-          { key: 'status:projection:catalog.updated', updatedAt: now, value: { type: 'status', id: 'projection:catalog.updated', text: 'digest' } },
-        ] }] };
-    mutate.data?.(data);
-    await mkdir(directory, { recursive: true });
-    await writeFile(join(agentDir, `.control-initialized-${createHash('sha256').update(directory).digest('hex')}.json`), JSON.stringify({ version: 1, storeId, directory }), { mode: 0o600 });
-    await writeFile(join(directory, 'format.json'), JSON.stringify({ version: 1, storeId }), { mode: 0o600 });
-    const envelope = { version: 1, storeId, sequence: 3, digest: createHash('sha256').update(JSON.stringify(data)).digest('hex'), data };
-    mutate.envelope?.(envelope);
-    await writeFile(join(directory, 'control.json'), JSON.stringify(envelope), { mode: 0o600 });
-    return { owner, directory, legacy: await readFile(join(directory, 'control.json'), 'utf8') };
+describe.skipIf(!supported)('shared remote persistence', () => {
+  function connect(owner: DaemonOwnership, directory: string, fault?: (boundary: PersistenceBoundary) => void) {
+    const database = new ControlDatabase(owner, directory, fault); databases.push(database); return database;
   }
-
-  it('imports sessions and message identities once, drops live-only views and leaves the old files in place', async () => {
-    const { owner, directory, legacy } = await legacyStore();
-    const store = reopen(owner);
-    expect(store.directory).toBe(join(owner.target.agentDir, 'daemon-control-v2'));
-    expect(store.needsRecovery).toBe(true);
-    expect(store.session('s')).toMatchObject({ title: 'imported', revision: 7 });
-    expect(store.session('s').projections.map(item => item.value.type)).toEqual(['message']);
-    expect(await databaseBytes(store.directory)).not.toContain('large tool output');
-    expect(await readFile(join(directory, 'control.json'), 'utf8')).toBe(legacy);
-    expect(await readdir(directory)).toContain('migrated-to-v2.json');
-    store.close(); await rm(controlDatabasePath(store.directory));
-    expect(reopen(owner).snapshot().sessions).toEqual([]);
+  async function fixture(fault?: (boundary: PersistenceBoundary) => void) {
+    const owner = await acquireDaemonOwnership(await target()); owners.push(owner);
+    const directory = join(owner.target.agentDir, 'remote-control');
+    return { owner, directory, database: connect(owner, directory, fault) };
+  }
+  it('persists isolated record kinds and paged outbox rows on the same control handle', async () => {
+    const { owner, directory, database } = await fixture();
+    expect(database.rebuilt).toBe(false);
+    expect(database.record('kind', 'missing')).toBeUndefined();
+    expect(database.transaction(() => {
+      database.putRecord("kind'; DROP TABLE meta; --", 'id', 'opaque');
+      database.putRecord('kind', 'id', 'old'); database.putRecord('kind', 'id', 'updated');
+      for (const seq of [3, 1, 2]) database.insertOutbox('session', seq, seq * 10, `data-${seq}`);
+      database.insertOutbox('other', 7, 70, 'other');
+      return 'result';
+    })).toBe('result');
+    database.write({ meta: { namespace: owner.target.namespaceId, agentDir: owner.target.agentDir, clock: now }, upserts: [], deletes: [] });
+    expect(database.read()?.meta.clock).toBe(now);
+    expect(database.records('kind')).toEqual([{ id: 'id', data: 'updated' }]);
+    expect(database.record("kind'; DROP TABLE meta; --", 'id')).toBe('opaque');
+    expect(database.outbox('session', 1, 1)).toEqual([{ seq: 2, bytes: 20, data: 'data-2' }]);
+    expect(database.outbox('session', 0, 0)).toEqual([]);
+    expect(database.outbox('session').map(row => row.seq)).toEqual([1, 2, 3]);
+    database.transaction(() => { database.deleteRecord('kind', 'id'); database.deleteOutbox('session', 2); database.deleteOutbox('other'); });
+    database.close();
+    const reopened = connect(owner, directory);
+    expect(reopened.rebuilt).toBe(false);
+    expect(reopened.records('kind')).toEqual([]);
+    expect(reopened.record("kind'; DROP TABLE meta; --", 'id')).toBe('opaque');
+    expect(reopened.outbox('session')).toEqual([{ seq: 3, bytes: 30, data: 'data-3' }]);
   });
-
-  it('does not import a version 1 snapshot that fails its integrity check', async () => {
-    const { owner, directory } = await legacyStore({ envelope: envelope => { envelope.digest = '0'.repeat(64); } });
-    expect(reopen(owner).snapshot().sessions).toEqual([]);
-    expect(await readdir(directory)).not.toContain('migrated-to-v2.json');
+  for (const boundary of ['before_commit', 'after_commit'] as const) {
+    it(`atomically fences remote writes at ${boundary}`, async () => {
+      let fail = false;
+      const { owner, directory, database } = await fixture(at => { if (fail && at === boundary) throw new Error('injected'); });
+      database.transaction(() => database.putRecord('kind', 'id', 'before'));
+      fail = true;
+      expect(() => database.transaction(() => { database.putRecord('kind', 'id', 'after'); database.insertOutbox('session', 1, 4, 'data'); })).toThrow(/commit failed/);
+      expect(() => database.record('kind', 'id')).toThrow(/fenced/);
+      database.close();
+      const reopened = connect(owner, directory);
+      expect(reopened.record('kind', 'id')).toBe(boundary === 'before_commit' ? 'before' : 'after');
+      expect(reopened.outbox('session')).toHaveLength(boundary === 'before_commit' ? 0 : 1);
+    });
+  }
+  it('requires transactions and rolls back callback failures and duplicate sequences', async () => {
+    const { owner, directory, database } = await fixture();
+    expect(() => database.putRecord('kind', 'id', 'data')).toThrow(/require a transaction/);
+    expect(() => database.deleteRecord('kind', 'id')).toThrow(/require a transaction/);
+    expect(() => database.insertOutbox('s', 1, 1, 'x')).toThrow(/require a transaction/);
+    expect(() => database.deleteOutbox('s')).toThrow(/require a transaction/);
+    expect(() => database.transaction(() => {
+      database.putRecord('kind', 'id', 'data');
+      database.insertOutbox('s', 1, 1, 'x'); database.insertOutbox('s', 1, 1, 'duplicate');
+    })).toThrow(/UNIQUE constraint/);
+    expect(database.records('kind')).toEqual([]); expect(database.outbox('s')).toEqual([]);
+    expect(() => database.transaction(() => { database.putRecord('kind', 'id', 'data'); throw new Error('callback'); })).toThrow('callback');
+    expect(database.records('kind')).toEqual([]);
+    database.transaction(() => database.putRecord('kind', 'kept', 'data'));
+    database.close();
+    const reopened = connect(owner, directory);
+    expect(reopened.records('kind')).toEqual([{ id: 'kept', data: 'data' }]); expect(reopened.outbox('s')).toEqual([]);
+    reopened.close();
   });
-
-  it('does not import a version 1 snapshot from another namespace', async () => {
-    const { owner } = await legacyStore({ data: data => { data.namespace = 'another-namespace'; } });
-    expect(reopen(owner).snapshot().sessions).toEqual([]);
+  it('adds remote tables to format 1 without rebuilding control state', async () => {
+    const { owner, directory, database } = await fixture();
+    database.write({ meta: { namespace: owner.target.namespaceId, agentDir: owner.target.agentDir, clock: now }, upserts: [], deletes: [] });
+    database.close();
+    execControlDatabase(directory, 'DROP TABLE remote_records; DROP TABLE remote_outbox');
+    const reopened = connect(owner, directory);
+    expect(reopened.rebuilt).toBe(false); expect(reopened.read()?.meta.clock).toBe(now);
+    reopened.transaction(() => reopened.putRecord('kind', 'id', 'data'));
+    expect(reopened.record('kind', 'id')).toBe('data');
   });
-
-  it.skipIf(process.getuid?.() === 0)('fails retryably while the version 1 snapshot cannot be read, then imports it', async () => {
-    const { owner, directory } = await legacyStore(); const path = join(directory, 'control.json');
-    await chmod(path, 0o000);
-    try { expect(() => reopen(owner)).toThrow(expect.objectContaining({ code: 'storage_failure', message: expect.stringContaining('EACCES') })); }
-    finally { await chmod(path, 0o600); }
-    expect(reopen(owner).session('s').title).toBe('imported');
+  for (const mode of ['missing', 'corrupt', 'directory', 'initialization', 'quarantine'] as const) {
+    it(`retains the rebuild marker after ${mode} recovery and restart`, async () => {
+      const { owner, directory, database } = await fixture();
+      database.transaction(() => database.putRecord('kind', 'id', 'data'));
+      if (mode === 'quarantine') database.quarantine();
+      database.close();
+      if (mode === 'missing') await rm(controlDatabasePath(directory));
+      if (mode === 'corrupt') await writeFile(controlDatabasePath(directory), 'corrupt');
+      if (mode === 'directory') { await rm(directory, { recursive: true }); await writeFile(directory, 'not a directory'); }
+      if (mode === 'initialization') await writeFile(join(owner.target.agentDir, `.control-initialized-${createHash('sha256').update(directory).digest('hex')}.json`), 'corrupt');
+      const reopened = connect(owner, directory);
+      expect(reopened.rebuilt).toBe(true); expect(reopened.records('kind')).toEqual([]);
+      reopened.close(); expect(connect(owner, directory).rebuilt).toBe(true);
+    });
+  }
+  it('rejects remote operations after ownership loss', async () => {
+    const { owner, database } = await fixture();
+    await owner.release();
+    expect(() => database.record('kind', 'id')).toThrow();
+    expect(() => database.transaction(() => database.putRecord('kind', 'id', 'data'))).toThrow();
   });
-
-  it('restores a lost import marker so an emptied store never imports stale state', async () => {
-    const { owner, directory } = await legacyStore();
-    const store = reopen(owner); store.close(); await rm(join(directory, 'migrated-to-v2.json'));
-    reopen(owner).close();
-    expect(await readdir(directory)).toContain('migrated-to-v2.json');
-    await rm(controlDatabasePath(store.directory));
-    expect(reopen(owner).snapshot().sessions).toEqual([]);
+  it('retains journal-loss evidence if directory recovery is interrupted before initialization', async () => {
+    const { owner, directory, database } = await fixture(); database.close();
+    await rename(directory, `${directory}.corrupt-interrupted`);
+    await unlink(join(owner.target.agentDir, `.control-initialized-${createHash('sha256').update(directory).digest('hex')}.json`));
+    expect(connect(owner, directory).rebuilt).toBe(true);
   });
 });
 

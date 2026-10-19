@@ -33,7 +33,7 @@ export async function composeLocalSession(options: {
   const modelRuntime = options.modelRuntime ?? await provider.createModelRuntime(options.agentDir);
   const composition = await provider.prepare({
     environment, session: { id: sessionManager.getSessionId(), root: sessionManager.getSessionId() }, modelRuntime,
-    source: 'headless', extensionPackages: options.extensionPackages ?? [], extensionConfigOverrides: [],
+    extensionPackages: options.extensionPackages ?? [], extensionConfigOverrides: [],
     extensionPaths: options.extensionPaths ?? [],
     ...(options.homeDir ? { homeDir: options.homeDir } : {}),
     ...(options.model ? { model: options.model } : {}),

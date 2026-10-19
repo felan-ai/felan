@@ -25,7 +25,7 @@ function fixture(): ControlState {
     run: { state: 'waiting', id: 'run', turnId: 'turn' },
     policy: { effective: 'host-default', generation: 7 },
     branch: 'selected-leaf', observedTip: 'newer-tip', model: { provider: 'provider', id: 'model' }, thinking: 'high',
-    profile: { source: 'tui', extensionPaths: ['/installed/extension.mjs'],
+    profile: { extensionPaths: ['/installed/extension.mjs'],
       extensionConfigOverrides: [{ extensionId: 'feature', source: 'original profile', values: { enabled: true, unknownOptions: { retain: [null, 'original'] } } }] },
     projections: [{ key: 'message:user', updatedAt: NOW + 17, value: { type: 'message', id: 'user', entryId: 'entry', state: 'observed' } },
       { key: 'queue', updatedAt: NOW + 18, value: { type: 'queue', ids: ['queued-turn'], identity: { sha256: DIGEST, bytes: 123 } } }],
@@ -33,7 +33,7 @@ function fixture(): ControlState {
   const state: ControlState = {
     version: 1, namespace: 'original-namespace', agentDir: '/agent', clock: NOW + 99,
     sessions: [root, { ...root, id: 'child', parent: 'root', cwd: '/workspace/child', piPath: '/agent/sessions/child.jsonl',
-      revision: 4, run: { state: 'running', id: 'child-run' }, profile: { source: 'headless' }, projections: [] }],
+      revision: 4, run: { state: 'running', id: 'child-run' }, profile: {}, projections: [] }],
     requests: [0, 1, 2, 3, 4].map((index): ControlState['requests'][number] => {
       const id = requestId(index);
       return { id, principal: 'local-owner', session: 'root', op: 'prompt', admittedAt: NOW,

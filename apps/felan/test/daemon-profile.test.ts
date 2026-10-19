@@ -281,12 +281,21 @@ describe('local daemon profile', () => {
     await external.runtime.dispose();
   });
 
-  it('does not admit external extensions without explicit interactive root permission', async () => {
+  it('loads host-approved extension paths for roots and children while validating paths', async () => {
     const { cwd, agentDir } = await fixture();
+    const extension = join(cwd, 'extension.js');
+    await writeFile(extension, `export default pi => pi.registerTool({ name: 'host_probe', label: 'Probe', description: 'Probe',
+      parameters: { type: 'object', properties: {} }, async execute() { return { content: [] }; } });`);
     const profile = await createTestSessionLifecycle({ agentDir, initializeProcess, createModelRuntime: fakeModels });
     const base: SessionOpenRequest = { resources: await profile.resolveResources({ cwd }), ownership: { assertOwned() {} },
       policy: { mode: 'acp-strict', generation: 1 }, services: services(), target: { kind: 'new' }, model };
-    await expect(profile.openSession({ ...base, source: 'acp', extensionPaths: ['/not-loaded.js'] })).rejects.toThrow('trusted interactive root');
+    await expect(profile.openSession({ ...base, extensionPaths: ['relative.js'] })).rejects.toThrow('absolute');
+    await expect(profile.openSession({ ...base, extensionPaths: ['/not-loaded.js'] })).rejects.toMatchObject({ code: 'ENOENT' });
+    const root = await profile.openSession({ ...base, extensionPaths: [extension] });
+    const child = await profile.openSession({ ...base, extensionPaths: [extension], parentSessionId: root.sessionId, rootSessionId: root.sessionId });
+    try {
+      for (const binding of [root, child]) expect(binding.runtime.session.getActiveToolNames()).toContain('host_probe');
+    } finally { await child.runtime.dispose(); await root.runtime.dispose(); await profile.dispose(); }
   });
 
   it('settles owned bindings before Pi disposal and does not hide failed cleanup', async () => {
@@ -466,7 +475,7 @@ describe('local daemon profile', () => {
     await writeFile(external, `export default pi => pi.registerTool({ name:'external_tool', label:'external', description:'fixture', parameters:{type:'object',properties:{}}, execute: async()=>({content:[],details:{}}) });`);
     const profile = await createTestSessionLifecycle({ agentDir, initializeProcess, createModelRuntime: fakeModels });
     const binding = await profile.openSession({ resources: await profile.resolveResources({ cwd }), ownership: { assertOwned() {} },
-      policy, services: services(), target: { kind: 'new' }, model, source: 'acp', interactiveExtensions: true, extensionPaths: [external] });
+      policy, services: services(), target: { kind: 'new' }, model, extensionPaths: [external] });
     try {
       expect(binding.toolProvenance).toContainEqual({ name: 'read', source: 'builtin', sourceId: '<inline:@felan-ai/agent-core/runtime-tools>' });
       expect(binding.toolProvenance).toContainEqual({ name: 'external_tool', source: 'external', sourceId: external });

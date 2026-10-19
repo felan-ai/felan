@@ -1,4 +1,4 @@
-import { OPERATION_CATALOG, type Operation, type SessionSnapshot } from '../src/index.js';
+import { OPERATION_CATALOG, type Operation, type RemoteStatus, type SessionSnapshot } from '../src/index.js';
 
 export const now = 1_800_000_000_000;
 export function requestId(time = now): string {
@@ -29,16 +29,20 @@ export const snapshot: SessionSnapshot = {
     { message: 'message', id: 'thinking-stream', kind: 'thinking', text: 'think', offset: 5 }],
   completionOnlyStreams: [],
 };
+export const remoteStatus: RemoteStatus = {
+  configured: false, share: 'on-request', state: 'off', apiUrl: 'https://app.felan.ai', projects: [], pending: 0, sessions: 0,
+};
 export const commandParams = {
   hello: { clientVersion: '0.1.0', protocol: 1, kind: 'tui', interactionKinds: ['confirm'], target: { kind: 'production' } },
-  'host.status': {}, 'sessions.list': { cwd: '/fixture' },
-  'sessions.create': { cwd: '/fixture', source: 'tui' },
+  'host.status': {}, 'remote.status': {}, 'remote.configure': { action: 'logout' }, 'sessions.list': { cwd: '/fixture' },
+  'sessions.create': { cwd: '/fixture' },
   attach: { expected: identity },
   detach: { attachmentId: 'attachment' }, close: {}, prompt, steer: prompt, follow_up: prompt, cancel: {},
   set_model: { provider: 'fixture', id: 'fake' }, set_thinking: { thinking: 'high' }, compact: { method: 'classifier' },
   fork: { from: { kind: 'entry', entryId: 'entry' } }, 'command.invoke': { name: 'tasks', arguments: '' },
   'interaction.answer': { interactionId: 'question', answer: { kind: 'confirm', confirmed: true } },
   'ui.action': { elementId: 'document', revision: 1, actionId: 'open', outcome: 'submit', values: {} },
+  'session.remote': { shared: true },
   'session.rename': { name: 'renamed' }, 'session.tree': {}, 'session.branch.select': { entryId: 'entry' },
   'session.entry.label': { entryId: 'entry', label: 'label' }, 'session.clone': {},
   'session.import': { path: '/fixture/selected.jsonl', cwd: '/fixture' },
@@ -64,11 +68,12 @@ export const results = {
   hello: { attachmentId: 'attachment', principal: 'principal', daemonVersion: '0.1.0', protocol: 1, identity,
     operations: Object.keys(commandParams), interactionKinds: ['confirm'] },
   'host.status': { state: 'ready', identity, daemonVersion: '0.1.0', protocol: 1, active: { sessions: 1, runs: 1, work: 1, attachments: 1 }, setupNeeds: [] },
+  'remote.status': remoteStatus, 'remote.configure': remoteStatus,
   'sessions.list': { entries: [] }, 'sessions.create': { sessionId: 'session' },
   attach: { attachmentId: 'attachment', snapshot }, detach: {}, close: {},
   prompt: { runId: 'run' }, steer: { itemId: 'item' }, follow_up: { itemId: 'item' }, cancel: {}, set_model: {}, set_thinking: {}, compact: { runId: 'run' },
   fork: { sessionId: 'fork' }, 'command.invoke': { status: 'completed' }, 'interaction.answer': {}, 'session.rename': {}, 'session.tree': { ...history, entries: [] },
-  'ui.action': {},
+  'ui.action': {}, 'session.remote': {},
   'session.branch.select': {}, 'session.entry.label': {}, 'session.clone': { sessionId: 'clone' }, 'session.import': { sessionId: 'import' },
   'session.export': { destination: '/fixture/export.jsonl' }, 'session.delete': {}, 'session.history': history, 'queue.update': {},
   'shell.execute': { resourceId: 'resource', runId: 'run' }, 'config.get': { writable: true, values: { extensionConfig: { codex: { priority: 'fast' } } } }, 'config.set': {},

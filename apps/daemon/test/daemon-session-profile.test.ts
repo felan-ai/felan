@@ -12,25 +12,41 @@ import { serverFixture } from './fixtures/server.js';
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 const overrides = [{ extensionId: 'codex', source: 'CLI', values: { fast: true } }];
 
-it('retains interactive extension permission independently of source through eviction', async () => {
-  const f = await fixture(); const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, source: 'acp', interactiveExtensions: true });
-  expect(f.store.session(binding.sessionId).profile).toEqual({ source: 'acp', interactiveExtensions: true });
+it('retains extension paths through eviction without a session-specific permission', async () => {
+  const f = await fixture(); const extensionPaths = [join(f.cwd, 'extension.mjs')];
+  const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, extensionPaths });
+  expect(f.store.session(binding.sessionId).profile).toEqual({ extensionPaths });
   await f.registry.evictIdle(); await f.registry.restore(binding.sessionId);
-  expect(f.opened.at(-1)?.source).toBe('acp');
-  expect(f.opened.at(-1)?.interactiveExtensions).toBe(true);
+  expect(f.opened.at(-1)?.extensionPaths).toEqual(extensionPaths);
+});
+
+it('persists execution children with their root extension paths across a restart', async () => {
+  const f = await fixture(); const extensionPaths = [join(f.cwd, 'extension.mjs')];
+  const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, extensionPaths });
+  const host = f.registry.executionHost(root.sessionId);
+  const child = await host.spawnSession({ prompt: 'task', description: 'task' });
+  if (!child.ok) throw new Error(child.error.message);
+  await vi.waitFor(() => expect(host.getExecution(child.value.executionId)?.status).toBe('completed'));
+  await host.settle();
+  const id = child.value.executionId;
+  expect(f.store.session(id).profile?.extensionPaths).toEqual(extensionPaths);
+  expect(f.opened.find(request => request.parentSessionId === root.sessionId)?.extensionPaths).toEqual(extensionPaths);
+  await f.registry.shutdown(); f.store.close();
+  const store = new DaemonControlStore(f.owner, { now: () => now }); const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+  await registry.restore(id);
+  expect(f.opened.at(-1)?.extensionPaths).toEqual(extensionPaths);
 });
 
 it('retains session configuration through eviction and a recovered control store', async () => {
   const f = await fixture();
-  const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, source: 'tui', extensionConfigOverrides: overrides });
-  expect(f.store.session(binding.sessionId).profile).toEqual({ source: 'tui', extensionConfigOverrides: overrides });
+  const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, extensionConfigOverrides: overrides });
+  expect(f.store.session(binding.sessionId).profile).toEqual({ extensionConfigOverrides: overrides });
   await f.registry.evictIdle(); await f.registry.restore(binding.sessionId);
   expect(f.opened.at(-1)?.extensionConfigOverrides).toEqual(overrides);
   await f.registry.shutdown(); f.store.close();
   const store = new DaemonControlStore(f.owner, { now: () => now }); const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
   await registry.restore(binding.sessionId);
   expect(f.opened.at(-1)?.extensionConfigOverrides).toEqual(overrides);
-  expect(f.opened.at(-1)?.source).toBe('tui');
 });
 
 it('atomically binds a configuration update to its admitted payload and preserves policy', async () => {
@@ -77,7 +93,7 @@ it('applies wire creation and reload overrides in real composition without chang
     client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
       expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui' });
     await client.connect();
-    const created = await client.request('sessions.create', { cwd: f.cwd, source: 'tui', config: { extensionConfig: { codex: { fast: true } } } });
+    const created = await client.request('sessions.create', { cwd: f.cwd, config: { extensionConfig: { codex: { fast: true } } } });
     expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') throw new Error('Creation failed');
     const session = created.result.sessionId; await client.attach(session); expect(observed.at(-1)).toBe(true);
     const opens = vi.spyOn(f.profile, 'openSession'); const id = newRequestId();

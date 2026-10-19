@@ -1,6 +1,6 @@
 import { open, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
-import { SessionManager, createAgentCoreSessionRuntimeFactory, createAgentSessionRuntime } from '@felan-ai/agent-core';
+import { SessionManager, createAgentCoreSessionRuntimeFactory, createAgentSessionRuntime, type AgentSession } from '@felan-ai/agent-core';
 import { createRuntimeStorageRequest } from '../runtime-factory.js';
 import { TrustedToolCatalog } from './execution-policy.js';
 import type { SessionLifecycleOptions } from './session-lifecycle.js';
@@ -93,6 +93,7 @@ export async function createWorkerBinding(request: SessionOpenRequest, manager: 
     settingsManager: worker.settingsManager, model: worker.model,
     ...(worker.thinkingLevel === undefined ? {} : { thinkingLevel: worker.thinkingLevel }),
     extensionPackages: [], importExtension: async () => { throw new Error('Worker extension discovery is disabled.'); },
+    extensionPaths: request.extensionPaths ?? [],
     ...(worker.customTools === undefined ? {} : { customTools: worker.customTools }),
     ...(worker.appendSystemPrompt === undefined ? {} : { appendSystemPrompt: worker.appendSystemPrompt }),
   }));
@@ -104,13 +105,15 @@ export async function createWorkerBinding(request: SessionOpenRequest, manager: 
     tools, toolProvenance: tools.provenance,
     activate: async () => {
       await created.session.bindExtensions({ mode: 'print' });
-      created.session.setActiveToolsByName([...worker.allowedTools]);
-      const actual = created.session.getActiveToolNames();
-      if (actual.length !== worker.allowedTools.length || actual.some(name => !worker.allowedTools.includes(name))) {
-        throw new Error('Worker tool restrictions could not be installed.');
-      }
+      restrictActiveTools(created.session, worker.allowedTools);
     },
   };
+}
+
+export function restrictActiveTools(session: AgentSession, allowedTools: readonly string[]): void {
+  session.setActiveToolsByName([...allowedTools]);
+  const actual = session.getActiveToolNames();
+  if (actual.length !== allowedTools.length || actual.some(name => !allowedTools.includes(name))) throw new Error('Worker tool restrictions could not be installed.');
 }
 
 // A transcript linked from elsewhere (for example a symlinked dotfile store) keeps its listed path.

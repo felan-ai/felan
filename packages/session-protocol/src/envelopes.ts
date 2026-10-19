@@ -8,6 +8,7 @@ import { CounterSchema, DiagnosticTextSchema, IdSchema, NameSchema, assertJson, 
 import { requestTimestamp, UUID_V7_PATTERN } from './request-id.js';
 import { PresentationEventSchema } from './presentation.js';
 import { validateSnapshotInvariants } from './snapshot-invariants.js';
+import { parseRemoteConfigureParams, parseRemoteStatus } from './remote.js';
 
 export const ERROR_CODES = Object.freeze(['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy',
   'request_conflict', 'stale_request', 'expired', 'not_found', 'forbidden', 'already_resolved', 'storage_failure',
@@ -66,6 +67,7 @@ export function parseClientEnvelope(value: unknown): ClientEnvelope {
     for (const edit of parsed.params.edits) if (edit.op === 'replace') validatePrompt(edit.prompt);
   }
   if (parsed.op === 'processes.write') validateBase64(parsed.params.data, LIMITS.processWriteBytes);
+  if (parsed.op === 'remote.configure') parseRemoteConfigureParams(parsed.params);
   if (parsed.op === 'config.set' && Object.keys(parsed.params.values).length === 0) throw new ProtocolValidationError('invalid_request', 'Empty configuration update');
   if ((parsed.op === 'config.get' || parsed.op === 'config.set') && parsed.params.scope === 'session' && !parsed.session) throw new ProtocolValidationError('invalid_request', 'Session configuration requires a session');
   return parsed;
@@ -88,6 +90,7 @@ function assertEnumerableData(value: unknown, seen = new Set<object>(), depth = 
 
 export function parseOperationResult<O extends Operation>(operation: O, value: unknown): OperationResult<O> {
   const result = parseSchema(ResultSchemas[operation], value);
+  if (operation === 'remote.status' || operation === 'remote.configure') parseRemoteStatus(result);
   if (operation === 'attach') {
     const { snapshot } = result as OperationResult<'attach'>;
     validateSnapshotInvariants(snapshot);

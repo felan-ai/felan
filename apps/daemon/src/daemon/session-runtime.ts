@@ -33,7 +33,6 @@ export interface SessionCompositionRequest {
   readonly extensionPackages: readonly string[];
   readonly extensionConfigOverrides: readonly ExtensionConfigOverride[];
   readonly extensionPaths: readonly string[];
-  readonly source: 'tui' | 'acp' | 'headless';
   readonly model?: CreateAgentCoreSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentCoreSessionOptions['thinkingLevel'];
 }

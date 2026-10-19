@@ -14,6 +14,7 @@ import { isPowerlinePresentation, processStatus } from '../client/powerline-pres
 import { startupHeader } from './startup-header.js';
 import { ToolInspector, inspectTools } from './tool-inspector.js';
 import { CommandHelp, commandHelp } from './command-help.js';
+import { remoteHistoryInput } from './remote.js';
 
 const WORKING_FRAMES = ['⠐◉ ', '⠈◉ ', ' ◉⠁', ' ◉⠂', ' ◉⠄', '⠠◉ '];
 
@@ -87,7 +88,7 @@ export class DaemonTuiScreen {
     this.component = stack;
     this.editor.onSubmit = text => {
       this.editor.setText(text);
-      if (this.submitting) { this.queuedSubmit = text; this.editor.addToHistory(text); this.editor.setText(''); }
+      if (this.submitting) { this.queuedSubmit = text; this.editor.addToHistory(remoteHistoryInput(text)); this.editor.setText(''); }
       else this.trackSubmission(this.submit(text));
     };
     this.removeInput = tui.addInputListener(data => {
@@ -128,7 +129,7 @@ export class DaemonTuiScreen {
       if (this.keys.matches(data, 'app.message.followUp')) {
         const text = this.editor.getExpandedText();
         if (text && !this.submitting) {
-          this.editor.addToHistory(text); this.editor.setText('');
+          this.editor.addToHistory(remoteHistoryInput(text)); this.editor.setText('');
           this.trackSubmission(controller.submit(text, 'follow_up').then(accepted => {
             if (!accepted && !this.editor.getText()) this.editor.setText(text);
           }).catch(error => {
@@ -186,7 +187,7 @@ export class DaemonTuiScreen {
   }
 
   async submit(text: string, preserveDraft = false): Promise<void> {
-    if (!preserveDraft) { this.editor.addToHistory(text); this.editor.setText(''); this.tui.requestRender(); }
+    if (!preserveDraft) { this.editor.addToHistory(remoteHistoryInput(text)); this.editor.setText(''); this.tui.requestRender(); }
     try {
       if (text.trim() === '/tools') {
         await this.dialogs.custom<void>(done => new ToolInspector(() => inspectTools(this.controller.history, this.controller.snapshot),

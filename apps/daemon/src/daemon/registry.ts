@@ -86,6 +86,7 @@ export class SessionRegistry {
   private readonly lifecycleWriters = new Set<Promise<unknown>>();
   private readonly reloadAttachments = new Map<string, Entry['attachments']>();
   private readonly invalidationListeners = new Set<(revisions: Readonly<Record<string, number>>) => void>();
+  private readonly observers = new Map<(event: ProjectionOutput) => void, ((session: string) => void) | undefined>();
   private readonly listeners = new Map<string, Set<(event: ProjectionOutput) => void>>();
   private readonly interactionListeners = new Set<(interaction: Interaction) => void>();
   private readonly retainedServices = new Map<string, Set<RegistryService>>();
@@ -224,7 +225,8 @@ export class SessionRegistry {
     }
     const key = randomUUID();
     const opening = this.open({ cwd: manager.getCwd(), sessionDir: dirname(path), target: { kind: 'resume', sessionFile: path },
-      parentSessionId: parent, rootSessionId: owner.root, policy: this.getPolicy(parent), source: 'headless', worker });
+      parentSessionId: parent, rootSessionId: owner.root, policy: this.getPolicy(parent),
+      extensionPaths: this.options.store.sessionMetadata(owner.root).profile?.extensionPaths ?? [], allowedTools: worker.allowedTools, worker });
     this.opening.set(key, opening);
     try { return await opening; } finally { this.opening.delete(key); }
   }
@@ -314,7 +316,7 @@ export class SessionRegistry {
   }
 
   /** Registers a discovered pre-daemon transcript under its existing ID and file; later turns append to that file. */
-  adopt(id: string, profile: Pick<RegistryOpenRequest, 'source' | 'interactiveExtensions' | 'policy'>): Promise<SessionBinding> {
+  adopt(id: string, profile: Pick<RegistryOpenRequest, 'policy'>): Promise<SessionBinding> {
     this.assertNewWork();
     if (this.options.store.findSessionMetadata(id)) return this.restore(id);
     const pending = this.opening.get(id);
@@ -394,6 +396,10 @@ export class SessionRegistry {
     this.require(id).projection.refresh();
     const listeners = this.listeners.get(id) ?? new Set(); listeners.add(listener); this.listeners.set(id, listeners);
     return () => { listeners.delete(listener); if (!listeners.size) this.listeners.delete(id); };
+  }
+  observe(listener: (event: ProjectionOutput) => void, lifecycle?: (session: string) => void): () => void {
+    this.observers.set(listener, lifecycle);
+    return () => { this.observers.delete(listener); };
   }
   registerService(id: string, service: RegistryService): () => void {
     const entry = this.require(id); entry.services.add(service);
@@ -590,6 +596,7 @@ export class SessionRegistry {
       const commit = this.options.store.markSessionDeleted(requestId);
       for (const session of tree) this.previews.delete(session.id);
       this.publishCommitted(commit.revisions);
+      for (const session of tree) for (const lifecycle of this.observers.values()) { try { lifecycle?.(session.id); } catch {} }
       for (const remove of removals) remove();
     })().finally(() => { for (const path of paths) if (this.reservations.get(path)?.token === token) this.reservations.delete(path); });
     return this.trackLifecycle(work);
@@ -1033,8 +1040,9 @@ export class SessionRegistry {
         policy: { effective: effectivePolicy.mode, generation: effectivePolicy.generation },
         branch: manager.getLeafId() ?? binding.sessionId, observedTip: sessionTip(manager),
         ...(binding.runtime.session.model ? { model: { provider: binding.runtime.session.model.provider, id: binding.runtime.session.model.id } } : {}), thinking: binding.runtime.session.thinkingLevel,
-        ...(request.source !== undefined || request.interactiveExtensions !== undefined || request.extensionPaths?.length || request.extensionConfigOverrides?.length ? { profile: parseSchema(SessionProfileSchema, {
-          source: request.source ?? 'headless', ...(request.interactiveExtensions === undefined ? {} : { interactiveExtensions: request.interactiveExtensions }), ...(request.extensionPaths?.length ? { extensionPaths: request.extensionPaths } : {}),
+        ...(request.extensionPaths?.length || request.allowedTools?.length || request.extensionConfigOverrides?.length ? { profile: parseSchema(SessionProfileSchema, {
+          ...(request.extensionPaths?.length ? { extensionPaths: request.extensionPaths } : {}),
+          ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
           ...(request.extensionConfigOverrides?.length ? { extensionConfigOverrides: request.extensionConfigOverrides } : {}),
         }) } : {}),
       });
@@ -1060,7 +1068,9 @@ export class SessionRegistry {
       if (this.closing.has(binding.sessionId) || request.parentSessionId && this.closing.has(request.parentSessionId)) throw new RegistryOpeningCancelled('Session closed during activation.');
       // A restored root rediscovers jobs that outlived its previous runtime or daemon.
       if (restored && !binding.parentSessionId) await this.processes.refresh(binding.rootSessionId).catch(error => { this.fence(error); throw error; });
-      projection.refresh(); if (borrowed) this.copyClaims.delete(borrowed); return binding;
+      projection.refresh();
+      for (const resident of this.observers.values()) { try { resident?.(binding.sessionId); } catch {} }
+      if (borrowed) this.copyClaims.delete(borrowed); return binding;
     } catch (error) {
       if (binding) {
         const installed = this.entries.get(binding.sessionId);
@@ -1175,9 +1185,10 @@ export class SessionRegistry {
       for (const listener of this.interactionListeners) listener(structuredClone(interaction));
     }
     const listeners = this.listeners.get(event.session);
-    if (listeners?.size) {
+    if (listeners?.size || this.observers.size) {
       const shared = structuredClone(event);
-      for (const listener of listeners) { try { listener(shared); } catch { /* A client observer does not own runtime lifetime. */ } }
+      for (const listener of listeners ?? []) { try { listener(shared); } catch { /* A client observer does not own runtime lifetime. */ } }
+      for (const observer of this.observers.keys()) { try { observer(shared); } catch {} }
     }
     const entry = this.entries.get(event.session);
     if (!entry || !('change' in event)) return;
@@ -1281,8 +1292,8 @@ export class SessionRegistry {
     if (!failures && errors.length) throw new AggregateError(errors, 'Registry operation failed to settle.');
   }
 }
-function profileOptions(profile: SessionProfile | undefined): Pick<RegistryOpenRequest, 'source' | 'interactiveExtensions' | 'extensionPaths' | 'extensionConfigOverrides'> {
-  return { source: profile?.source ?? 'headless', ...(profile?.interactiveExtensions === undefined ? {} : { interactiveExtensions: profile.interactiveExtensions }), ...(profile?.extensionPaths ? { extensionPaths: profile.extensionPaths } : {}),
+function profileOptions(profile: SessionProfile | undefined): Pick<RegistryOpenRequest, 'extensionPaths' | 'allowedTools' | 'extensionConfigOverrides'> {
+  return { ...(profile?.extensionPaths ? { extensionPaths: profile.extensionPaths } : {}), ...(profile?.allowedTools ? { allowedTools: profile.allowedTools } : {}),
     ...(profile?.extensionConfigOverrides ? { extensionConfigOverrides: profile.extensionConfigOverrides } : {}) };
 }
 function directoryOf(path: string): string { return path.slice(0, path.lastIndexOf('/')) || '/'; }

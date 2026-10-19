@@ -15,10 +15,6 @@ export function createRootPreparation(options: {
     options.assertCurrent(); caller.signal.throwIfAborted();
     const cwd = await realpath(request.cwd);
     if (!(await stat(cwd)).isDirectory()) throw new Error('Session cwd must be a directory.');
-    if (!request.interactiveExtensions) {
-      if (request.extensions?.length) throw new Error('External extensions require an interactive root session.');
-      return { cwd, extensionPaths: [] };
-    }
     const settings = parsePiExtensionSettings((await readDaemonGlobalSettings(options.agentDir, options.assertCurrent)).piExtensions);
     const paths: string[] = [];
     if (settings.user) paths.push(join(options.homeDir, '.pi', 'agent', 'extensions'));
@@ -26,14 +22,14 @@ export function createRootPreparation(options: {
     if (settings.project && (await existingStat(project))?.isDirectory()) {
       const store = new ProjectTrustStore(options.agentDir);
       let trusted = store.get(cwd);
-      if (trusted === null) {
+      if (trusted === null && caller.recipient !== undefined) {
         const parent = dirname(cwd);
         const outcome = await options.broker.request({ kind: 'select', title: `Trust project Pi extensions in ${cwd}?`, multiple: false,
           choices: [
             { id: 'trust', title: 'Trust this folder', description: 'Load its project Pi extensions with your permissions. Remember this decision.' },
             ...(parent === cwd ? [] : [{ id: 'trust-parent', title: 'Trust parent folder', description: `Trust ${parent} and its project Pi extensions. Remember this decision.` }]),
             { id: 'deny', title: 'Do not trust', description: 'Skip project Pi extensions in this folder. Remember this decision.' },
-          ] }, { kind: 'host', recipient: caller.id }, { signal: caller.signal });
+          ] }, { kind: 'host', recipient: caller.recipient }, { signal: caller.signal });
         caller.signal.throwIfAborted(); options.assertCurrent();
         if (await realpath(request.cwd) !== cwd) throw new Error('The project path changed during trust approval.');
         if (outcome.state === 'answered' && outcome.answer.kind === 'select') {

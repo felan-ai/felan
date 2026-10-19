@@ -29,14 +29,18 @@ describe('tool result content projection', () => {
   });
 });
 
-it('preserves real assistant metadata separately from text and leaves scalar tool details untouched', () => {
+it('preserves real assistant metadata separately from text and attaches tool metadata to non-object tool details', () => {
   const message = { ...assistant('Actual content'), timestamp: 42, model: 'actual-model',
     usage: { input: 17, output: 23, cacheRead: 2, cacheWrite: 3, totalTokens: 45,
       cost: { input: 0.01, output: 0.02, cacheRead: 0.003, cacheWrite: 0.004, total: 0.037 } } };
   const entry = { type: 'message' as const, id: 'entry', parentId: null, timestamp: new Date(100).toISOString(), message };
   expect(readMessageDisplay(projectPiMessage(entry).details)).toMatchObject({ timestamp: 42, model: 'actual-model', usage: message.usage });
-  expect(projectPiMessage({ ...entry, message: { role: 'toolResult', toolCallId: 'call', toolName: 'read', content: [], isError: false,
-    timestamp: 43, details: 'unchanged scalar' } }).details).toBe('unchanged scalar');
+  for (const details of ['unchanged scalar', [{ agentId: 'child' }], null]) {
+    const tool = projectPiMessage({ ...entry, message: { role: 'toolResult', toolCallId: 'call', toolName: 'list_subagents', content: [], isError: false,
+      timestamp: 43, details } });
+    expect(tool.content[0]).toMatchObject({ type: 'tool_result', details });
+    expect(readMessageDisplay(tool.details)).toEqual({ kind: 'tool', name: 'list_subagents', timestamp: 43 });
+  }
 });
 
 it('projects compaction summaries without interpreting feature-specific details', () => {
@@ -249,6 +253,18 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     const complete = projection.snapshot();
     expect(complete.presentation.some(item => item.id === MESSAGE_DISPLAY_ID)).toBe(false);
     expect(readMessageDisplay(complete.history.entries.at(-1)!.details)).toMatchObject({ kind: 'assistant', model: 'fixture', usage: message.usage });
+  });
+  it('never sends hidden custom messages to clients, live or in history', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const projection = f.registry.projection(b.sessionId); const manager = b.runtime.session.sessionManager;
+    const events: SessionEvent[] = []; f.registry.subscribe(b.sessionId, event => { if ('rev' in event) events.push(event); });
+    manager.appendCustomMessageEntry('felan-memory-context', 'private memory', false);
+    manager.appendCustomMessageEntry('visible-notice', 'shown notice', true);
+    projection.refresh();
+    const sent = events.flatMap(event => event.change.type === 'message.completed' ? [event.change.message.customType] : []);
+    expect(sent).toEqual(['visible-notice']);
+    expect(projection.snapshot().history.entries.map(entry => entry.customType).filter(Boolean)).toEqual(['visible-notice']);
+    expect(JSON.stringify(projection.snapshot())).not.toContain('private memory');
   });
   it('publishes compaction progress without durable capacity and clears it on interruption', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });

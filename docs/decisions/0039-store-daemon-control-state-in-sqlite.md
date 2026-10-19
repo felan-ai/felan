@@ -32,7 +32,7 @@ memory and publishes them with transient revisions, like presentations. A tool's
 durable record is its result in the Pi transcript. Message identity references
 and the pending queue record remain durable.
 
-Control state is stored in `<agentDir>/daemon-control-v2/control.sqlite` using
+Control state is stored in `<agentDir>/daemon-control/control.sqlite` using
 Node's built-in `node:sqlite`, in WAL mode with `synchronous=FULL` and
 `fullfsync`, which keeps the full flush the JSON store got from Node's `fsync` on
 macOS. Each session,
@@ -42,11 +42,6 @@ frozen and shared with each commit's draft, and a commit writes only rows whose
 content or position changed, in one transaction; a commit that changes nothing
 writes nothing. Changed rows are validated individually; cross-row references are
 rechecked for every row.
-
-The first start with an empty default store imports a verified
-`daemon-control-v1/control.json`, without its tool and status projections. The v1
-files are left in place and marked `migrated-to-v2.json`, so they are never
-imported again.
 
 `node:sqlite` is loaded only when the store opens, and its one-time
 `ExperimentalWarning` is suppressed so foreground daemon output stays clean.
@@ -63,12 +58,6 @@ imported again.
   as a call without a result, as it did before the daemon.
 - The store depends on `node:sqlite`, available unflagged on the supported Node
   lines but still marked experimental there.
-- Downgrading uses the old `daemon-control-v1` state as it was at migration.
-  Sessions registered afterwards are rediscovered as unregistered transcripts.
-  Request outcomes recorded after migration are missing there, so a client that
-  retries such a request ID against the downgraded daemon can run it again.
-  Upgrading again resumes the SQLite state and ignores changes made while
-  downgraded.
 - Database files are owner-private. WAL lets read-only tools inspect the store while
   the daemon runs; an external writer holding a lock for more than a second fences
   the store, as any failed commit does.

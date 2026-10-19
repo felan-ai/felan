@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
 import { HOST_RUNTIME_SERVICE, type ModelRuntime, type RuntimeDependenciesService } from '@felan-ai/agent-core';
 import { encodeFrame, type DaemonIdentity } from '@felan-ai/session-protocol';
+import { RemoteConnector } from '../remote/connector.js';
 import { DAEMON_VERSION } from '../version.js';
 import { redact } from '../logger.js';
 import { DaemonAgentLogs } from './agent-logs.js';
@@ -44,6 +45,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
   let registry: SessionRegistry | undefined;
   let server: SessionServer | undefined;
   let setup: HostSetup | undefined;
+  let connector: RemoteConnector | undefined;
   let providers: LoadedProviders | undefined;
   const agentLogs = new DaemonAgentLogs(owner);
   try {
@@ -104,8 +106,8 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const warmup = new AbortController(); let warming: Promise<void> = Promise.resolve();
     const lifecycle = new HostLifecycle({ target: owner.target, identity: owner.identity,
       ...(options.drainTimeoutMs ? { timeoutMs: options.drainTimeoutMs } : {}),
-      beginDrain: () => { liveSetup.beginDrain(); liveRegistry.beginDrain(); },
-      endDrain: () => { liveRegistry.endDrain(); liveSetup.endDrain?.(); },
+      beginDrain: () => { connector?.beginDrain(); liveSetup.beginDrain(); liveRegistry.beginDrain(); },
+      endDrain: () => { liveRegistry.endDrain(); liveSetup.endDrain?.(); connector?.endDrain(); },
       canRetry: () => { owner.assertCurrent(); liveStore.assertCurrent(); return !liveRegistry.fenced; },
       onBlocked: (blocked, error) => {
         liveSink.write('stderr', JSON.stringify({ event: 'shutdown_blocked', ...blocked, stack: shutdownStack(error) }));
@@ -122,6 +124,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
       complete: async action => {
         clearInterval(idleTimer); clearInterval(hold); removeLoss();
         warmup.abort(); await warming;
+        await connector?.stop();
         liveServer.sealCommands(); await liveServer.settleCommands();
         await agentLogs.close(); await liveSessionLifecycle.dispose(); await loadedProviders.dispose();
         liveServer.close(); liveStore.close(); liveSink.close(); await owner.release(); finish(action);
@@ -143,8 +146,12 @@ export async function startDaemonService(target: DaemonTarget, options: {
         } }, id, client, signal),
       ...(host.prepareRoot ? { prepareRoot: host.prepareRoot } : {}),
       management: { lifecycle, logs: params => log.page(params) },
-      setupNeeds: () => models.getAvailableSnapshot().length ? [] : [{ code: 'provider', message: 'Configure a local model provider. A Felan account is not required.' }] });
+      setupNeeds: () => [...(models.getAvailableSnapshot().length ? [] : [{ code: 'provider', message: 'Configure a local model provider. A Felan account is not required.' }]), ...(connector?.setupNeeds() ?? [])] });
     const liveServer = server;
+    try {
+      connector = new RemoteConnector({ database: liveStore.database, registry: liveRegistry, server: liveServer, secretStorage: sessionRuntime.secretStorage, owner });
+      liveServer.setRemote(connector);
+    } catch { sink.write('stderr', 'Remote connector storage is unavailable; local sessions remain available.'); }
     const idleTimer = setInterval(() => {
       if (lifecycle.state !== 'ready') return;
       void liveRegistry.evictIdle().catch(error => lifecycle.block(error, 'idle-eviction'));
@@ -152,12 +159,13 @@ export async function startDaemonService(target: DaemonTarget, options: {
     idleTimer.unref();
     const removeLoss = owner.onLost(error => {
       lifecycle.block(new ShutdownError('ownership-lost', error)); clearInterval(idleTimer); warmup.abort();
+      void connector?.stop();
       liveSetup.beginDrain();
       // An unresolved owner must not vanish and release native claims implicitly.
       hold ??= setInterval(() => {}, 60_000);
       void liveRegistry.settleWriters().catch(() => {});
     });
-    await server.start(); log.record('started');
+    await server.start(); connector?.start(); log.record('started');
     warming = liveRegistry.warmLegacySessions(warmup.signal).catch(() => { if (!warmup.signal.aborted) log.record('legacy_warmup_failed'); });
     return { owner, registry: liveRegistry, server: liveServer, lifecycle, stopped,
       async requestStop(action: HostAction = 'stop', mode: HostMode = 'drain') {
@@ -167,7 +175,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
   } catch (error) {
     sink?.write('stderr', error instanceof Error ? redact(`${error.name}: ${error.message}`) : 'Daemon startup failed.');
     try {
-      server?.close(); await setup?.drain(); await registry?.shutdown(); await sessionLifecycle?.dispose(); await providers?.dispose(); await agentLogs.close();
+      await connector?.stop(); server?.close(); await setup?.drain(); await registry?.shutdown(); await sessionLifecycle?.dispose(); await providers?.dispose(); await agentLogs.close();
       if (error instanceof ProviderStartupError) await error.cleanup();
       store?.close(); sink?.close(); await owner.release();
     } catch (cleanup) {

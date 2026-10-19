@@ -92,7 +92,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@felan-ai/daemon": "workspace:0.2.0",
+    "@felan-ai/daemon": "workspace:0.1.0",
     "@agentclientprotocol/sdk": "1.4.0",
     "@earendil-works/pi-coding-agent": "catalog:pi",
     "@earendil-works/pi-tui": "catalog:pi",

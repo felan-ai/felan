@@ -204,6 +204,25 @@ export class InteractionBroker {
     return { response: accepted(command.request, {}) };
   }
 
+  dispatchRemote(command: AdmittedCommand, requester: { user: string; command: string;
+    interactionKinds: OperationParams<'hello'>['interactionKinds'] }): AdmissionOutcome {
+    this.assertUsable();
+    if (command.request.op !== 'interaction.answer') throw commandError('invalid_request');
+    const item = this.find(command.request.params.interactionId);
+    if (item.scope.kind !== 'session' || item.authority === 'local-console' || command.request.session !== item.scope.session
+      || !requester.interactionKinds.includes(item.request.kind)) throw commandError('forbidden');
+    // RemoteCommandExecutor checks the requester against the host token owner; that does not confer local-console authority.
+    if (item.state !== 'waiting' && item.state !== 'deferred' || item.expiresAt !== undefined && item.expiresAt <= this.now()) throw commandError('already_resolved');
+    const answer = command.request.params.answer;
+    if (!('cancelled' in answer)) validateInteractionAnswer(item, answer);
+    command.assertDispatch();
+    const continuationId = item.state === 'deferred' && !('cancelled' in answer) ? randomUUID() : undefined;
+    this.publish(this.options.store.answerInteraction(command.request.id, answer, continuationId, requester.command));
+    if (continuationId) this.startContinuation(continuationId);
+    this.scheduleExpiry();
+    return { response: accepted(command.request, {}) };
+  }
+
   observe(interaction: Interaction): void {
     const waiter = this.waiters.get(interaction.id);
     if (!waiter || interaction.state === 'waiting') return;

@@ -6,13 +6,13 @@ import { appendFile, chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, sta
 import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { JsonLineDecoder, encodeFrame, parseServerEnvelope, type Operation, type SessionSnapshot } from '@felan-ai/session-protocol';
+import { JsonLineDecoder, encodeFrame, parseServerEnvelope, type Operation, type OperationParams, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { SessionClient, newRequestId } from '../../felan/src/client/client.js';
 import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { accepted, SessionCommands } from '../src/daemon/commands.js';
 import type { AdmittedCommand } from '../src/daemon/admission.js';
 import { connectLocalIpc } from '../src/daemon/ipc.js';
-import { SessionServer, type BrokerDispatchPort } from '../src/daemon/server.js';
+import { SessionServer, type BrokerDispatchPort, type SessionServerOptions } from '../src/daemon/server.js';
 import { protocolTarget } from '../src/daemon/target.js';
 import { gate, serverFixture } from './fixtures/server.js';
 import { LegacySessionIndex, legacySessionDirectoryName } from '../src/daemon/legacy-sessions.js';
@@ -22,6 +22,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const configDefinition = defineExtensionConfig({ id: 'codex', title: 'Synthetic config', fields: { fast: configField.boolean({ default: false, description: 'Synthetic value' }) } });
 
 async function fixture(options: { processAdapter?: ProcessAdapter; onStream?: () => Promise<void>; release?: () => void; broker?: BrokerDispatchPort; now?: () => number; extension?: (pi: ExtensionAPI) => void;
+  prepareRoot?: SessionServerOptions['prepareRoot'];
   compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean;
   composition?: { managerPackage: string; managerVersion: string; providerDigest: string; configDigest: string };
   currentComposition?: () => Promise<{ managerPackage: string; managerVersion: string; providerDigest: string; configDigest: string }> } = {}) {
@@ -31,12 +32,13 @@ async function fixture(options: { processAdapter?: ProcessAdapter; onStream?: ()
   const configuration = new DaemonConfiguration({ definitions: [configDefinition], assertCurrent: () => f.registry.assertAdmission() });
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'fixture',
     ...(options.composition ? { composition: options.composition } : {}), ...(options.currentComposition ? { currentComposition: options.currentComposition } : {}),
+    ...(options.prepareRoot ? { prepareRoot: options.prepareRoot } : {}),
     ...(options.broker ? { broker: options.broker } : {}), ...(options.now ? { now: options.now } : {}) });
   cleanups.push(async () => { options.release?.(); for (const client of clients) client.close(); for (const socket of sockets) socket.destroy(); server.close(); await f.dispose(); });
   await server.start();
-  async function client(kind: 'tui' | 'acp' | 'headless' = 'tui') {
+  async function client(kind: 'tui' | 'acp' | 'headless' = 'tui', interactionKinds: OperationParams<'hello'>['interactionKinds'] = []) {
     const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
-      expected: f.owner.identity, clientVersion: 'fixture', kind, requestTimeoutMs: 1000, retries: 1, reconnectAttempts: 2, reconnectDelayMs: 0 });
+      expected: f.owner.identity, clientVersion: 'fixture', kind, interactionKinds, requestTimeoutMs: 1000, retries: 1, reconnectAttempts: 2, reconnectDelayMs: 0 });
     clients.push(client); await client.connect(); return client;
   }
   async function raw() {
@@ -52,6 +54,54 @@ async function fixture(options: { processAdapter?: ProcessAdapter; onStream?: ()
   }
   return { ...f, server, client, raw };
 }
+
+it.each([
+  { kind: 'tui', offered: ['select'], supported: ['select'], recipient: true },
+  { kind: 'tui', offered: [], supported: ['select'], recipient: false },
+  { kind: 'tui', offered: ['select'], supported: [], recipient: false },
+  { kind: 'acp', offered: ['select'], supported: ['select'], recipient: false },
+  { kind: 'headless', offered: ['select'], supported: ['select'], recipient: false },
+] as const)('gives root preparation a recipient only for a prompt-capable TUI: %j', async ({ kind, offered, supported, recipient }) => {
+  const prepareRoot = vi.fn<NonNullable<SessionServerOptions['prepareRoot']>>(async request => ({ cwd: request.cwd, extensionPaths: [] }));
+  const f = await fixture({ prepareRoot, broker: { interactionKinds: [...supported], dispatch: () => { throw new Error('Unexpected interaction'); } } });
+  const client = await f.client(kind, [...offered]);
+  expect(await client.request('sessions.create', { cwd: f.cwd })).toMatchObject({ outcome: 'accepted' });
+  expect(prepareRoot).toHaveBeenCalledExactlyOnceWith({ cwd: f.cwd }, {
+    ...(recipient ? { recipient: expect.any(String) } : {}), signal: expect.any(AbortSignal),
+  });
+});
+
+it('prepares imports with host paths once and checks the prepared cwd before staging', async () => {
+  const prepareRoot = vi.fn<NonNullable<SessionServerOptions['prepareRoot']>>(async request => {
+    const path = join(request.cwd, 'host-extension.ts'); await writeFile(path, 'export default () => {};');
+    return { cwd: request.cwd, extensionPaths: [path] };
+  });
+  const f = await fixture({ prepareRoot }); const client = await f.client(); const id = newRequestId();
+  const params = { path: f.store.session(f.root.sessionId).piPath, cwd: f.cwd };
+  const response = await client.request('session.import', params, { id });
+  expect(response.outcome).toBe('accepted'); if (response.outcome !== 'accepted') throw new Error('Import failed');
+  expect(f.store.session(response.result.sessionId).profile?.extensionPaths).toEqual([join(f.cwd, 'host-extension.ts')]);
+  expect(prepareRoot.mock.calls[0]?.[0]).toEqual({ cwd: f.cwd });
+  expect(await client.request('session.import', params, { id })).toEqual(response);
+  expect(prepareRoot).toHaveBeenCalledOnce();
+  prepareRoot.mockResolvedValueOnce({ cwd: f.directory, extensionPaths: [] });
+  expect(await client.request('session.import', params)).toMatchObject({ outcome: 'rejected', error: { code: 'target_mismatch' } });
+  expect(f.registry.list()).toHaveLength(2);
+});
+
+it('deduplicates concurrent local preparation and rejects conflicting creation payloads', async () => {
+  const held = gate(); const prepareRoot = vi.fn<NonNullable<SessionServerOptions['prepareRoot']>>(async request => {
+    await held.promise; return { cwd: request.cwd, extensionPaths: [] };
+  });
+  const f = await fixture({ prepareRoot, release: held.resolve }); const first = await f.client(); const second = await f.client(); const third = await f.client(); const id = newRequestId();
+  const pending = first.request('sessions.create', { cwd: f.cwd }, { id });
+  await vi.waitFor(() => expect(prepareRoot).toHaveBeenCalledOnce());
+  const duplicate = second.request('sessions.create', { cwd: f.cwd }, { id });
+  expect(await third.request('sessions.create', { cwd: f.directory }, { id })).toMatchObject({ outcome: 'rejected', error: { code: 'request_conflict' } });
+  held.resolve(); const response = await pending;
+  expect(response.outcome).toBe('accepted'); expect(await duplicate).toEqual(response);
+  expect(prepareRoot).toHaveBeenCalledOnce();
+});
 
 it('reports provider changes as restart-required while allowing reloadable policy/config changes', async () => {
   const active = { managerPackage: '@felan-ai/felan', managerVersion: '1.0.0', providerDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64) };
@@ -178,7 +228,7 @@ function supportedRequests(f: Awaited<ReturnType<typeof fixture>>): Array<{ op: 
   const resource = { root: session, resourceId: 'not-created' };
   return [
     { op: 'host.status', params: {} }, { op: 'sessions.list', params: {} },
-    { op: 'sessions.create', params: { cwd: f.cwd, source: 'tui' } },
+    { op: 'sessions.create', params: { cwd: f.cwd } },
     { op: 'attach', session, params: { expected: f.owner.identity } },
     { op: 'detach', session, params: { attachmentId: 'not-attached' } }, { op: 'close', session, params: {} },
     { op: 'prompt', session, params: { text: 'must not execute' } }, { op: 'steer', session, params: { text: 'must not queue' } },
@@ -424,7 +474,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
 
   it('starts ACP-created roots with strict policy before any client attachment', async () => {
     const f = await fixture(); const acp = await f.client('acp'); const opened = vi.spyOn(f.profile, 'openSession');
-    const response = await acp.request('sessions.create', { cwd: f.cwd, source: 'acp', requirePolicy: 'acp-strict', model: { provider: 'offline', id: 'fixture' } });
+    const response = await acp.request('sessions.create', { cwd: f.cwd, requirePolicy: 'acp-strict', model: { provider: 'offline', id: 'fixture' } });
     if (response.outcome !== 'accepted') throw new Error('Create failed');
     expect(opened.mock.calls.filter(([request]) => request.target.kind === 'new')[0]?.[0].policy.mode).toBe('acp-strict');
     expect(f.registry.getPolicy(response.result.sessionId).mode).toBe('acp-strict'); expect(f.registry.attachmentCount(response.result.sessionId)).toBe(0);
@@ -462,7 +512,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     const f = await fixture(); const client = await f.client(); const resources = f.root.resources;
     for (const sessionDir of [f.store.directory, f.owner.target.runtimeDirectory,
       resources.sessionStorageBase, resources.agentStorageRoot, ...(resources.workerRoots ?? [])]) {
-      expect(await client.request('sessions.create', { cwd: f.cwd, sessionDir, source: 'tui', model: { provider: 'offline', id: 'fixture' } }))
+      expect(await client.request('sessions.create', { cwd: f.cwd, sessionDir, model: { provider: 'offline', id: 'fixture' } }))
         .toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
     }
     const child = await f.registry.create({ cwd: f.cwd, sessionDir: join(resources.agentStorageRoot, 'internal-child'),
@@ -502,7 +552,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     const f = await fixture(); const client = await f.client();
     const before = await client.request('host.status', {});
     if (before.outcome !== 'accepted') throw new Error('Status failed');
-    const created = await client.request('sessions.create', { cwd: f.cwd, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+    const created = await client.request('sessions.create', { cwd: f.cwd, model: { provider: 'offline', id: 'fixture' } });
     if (created.outcome !== 'accepted') throw new Error('Create failed');
     const id = created.result.sessionId;
     expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { active: { sessions: before.result.active.sessions } } });
@@ -657,7 +707,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
   it('creates a new session over the wire once and rejects unavailable overrides or models without opening', async () => {
     const f = await fixture(); const client = await f.client(); const original = await readFile(f.store.session(f.root.sessionId).piPath);
     const open = vi.spyOn(f.profile, 'openSession'); const id = newRequestId();
-    const params = { cwd: f.cwd, source: 'tui' as const, model: { provider: 'offline', id: 'fixture' }, thinking: 'off' as const };
+    const params = { cwd: f.cwd, model: { provider: 'offline', id: 'fixture' }, thinking: 'off' as const };
     const response = await client.request('sessions.create', params, { id });
     expect(response.outcome).toBe('accepted'); if (response.outcome !== 'accepted') throw new Error('Create failed');
     const created = f.store.session(response.result.sessionId);

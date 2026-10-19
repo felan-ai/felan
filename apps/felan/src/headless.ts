@@ -78,7 +78,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     const config = options.config ? parseSchema(ConfigValuesSchema, options.config) : undefined;
     const creating = !session;
     if (!session) {
-      session = accepted(await client.request('sessions.create', { cwd, source: 'headless',
+      session = accepted(await client.request('sessions.create', { cwd,
         ...(options.sessionDir ? { sessionDir: resolve(options.sessionDir) } : {}), ...(config ? { config } : {}),
         ...(options.thinkingLevel ? { thinking: options.thinkingLevel } : {}) })).sessionId;
     }

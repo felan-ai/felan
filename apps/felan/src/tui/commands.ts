@@ -6,6 +6,7 @@ import type { Theme } from '@earendil-works/pi-coding-agent';
 import type { NavigationDialogs } from './session-navigator.js';
 import type { TreeViewState } from './tree-navigator.js';
 import { describeHostBlocked, formatHostBlocked } from '../client/daemon-blocked.js';
+import { remoteCompletions, submitRemoteInput } from './remote.js';
 
 type ToolsManager = { getToolPath(tool: 'fd' | 'rg'): string | null };
 
@@ -42,6 +43,7 @@ const BUILTINS: SlashCommand[] = [
   { name: 'agents', description: '[t] Open agent navigator' },
   { name: 'exit', description: 'Quit Felan' },
   { name: 'daemon', description: 'Manage the daemon' },
+  { name: 'remote', description: 'Share sessions and manage the Felan connection', getArgumentCompletions: remoteCompletions },
 ];
 
 export function tuiCommands(controller: TuiSessionController): SlashCommand[] {
@@ -92,6 +94,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
   }
   const [, name = '', argument = ''] = /^\/(\S+)(?:\s+([\s\S]*))?$/u.exec(trimmed) ?? [];
   controller.setNotice('');
+  if (name === 'remote') return submitRemoteInput(controller, dialogs, argument);
   if (name === 'ui') {
     if (argument) throw new Error('Usage: /ui');
     if (!options.ui) throw new Error('Session UI is unavailable.');
@@ -119,7 +122,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
         await dialogs.select(`Daemon ${host.daemonVersion} · ${host.state}`, [
           { value: 'summary', label: `${host.active.sessions} sessions · ${host.active.runs} runs · ${host.active.work} active tasks · ${host.active.attachments} attachments` },
           ...(host.state === 'blocked' ? [{ value: 'blocked', label: 'Incomplete shutdown', description: formatHostBlocked(host.blocked, { client: 'tui' }) }] : []),
-          ...host.setupNeeds.map(need => ({ value: need.code, label: need.message })),
+          ...host.setupNeeds.map(need => ({ value: need.code, label: `${need.code === 'remote' ? 'Remote: ' : ''}${need.message}` })),
         ], ...(host.state === 'blocked' ? [{ initialValue: 'blocked' }] as const : []));
       } else {
         const response = await controller.perform('host.logs', { limit: 64 }); if (response.outcome !== 'accepted') return false;

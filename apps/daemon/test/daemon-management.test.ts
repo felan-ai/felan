@@ -78,7 +78,7 @@ it('reports an unrecoverable block and rejects force and new work with process r
     expect(await client.control(op, 'force')).toMatchObject({ outcome: 'rejected', state: 'blocked', blocked,
       error: { code: 'host_blocked', message: expect.stringContaining(`force-terminate the daemon process ${process.pid} (${process.platform === 'win32' ? 'taskkill /F /PID' : 'kill -9'} ${process.pid})`) } });
   }
-  expect(await client.request('sessions.create', { cwd: f.cwd, source: 'tui' })).toMatchObject({ outcome: 'rejected', error: {
+  expect(await client.request('sessions.create', { cwd: f.cwd })).toMatchObject({ outcome: 'rejected', error: {
     code: 'host_blocked', message: expect.stringContaining(`terminate the daemon process ${process.pid}`),
   } });
   expect(await client.request('prompt', { text: 'refused' }, { session: f.root.sessionId })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });

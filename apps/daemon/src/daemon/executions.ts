@@ -132,7 +132,7 @@ export class RegistryExecutions {
       const stored = this.registry.options.store.session(this.root);
       const root = this.registry.binding(this.root)?.resources ?? { cwd: stored.cwd, sessionDir: dirname(stored.piPath) };
       const binding = await this.registry.create({ cwd: root.cwd, sessionDir: root.sessionDir, target: { kind: 'new', id: randomUUID() },
-        rootSessionId: this.root, parentSessionId: parent, policy: this.registry.getPolicy(parent), source: 'headless', execution,
+        rootSessionId: this.root, parentSessionId: parent, policy: this.registry.getPolicy(parent), extensionPaths: stored.profile?.extensionPaths ?? [], execution,
         systemPromptAppend: request.appendSystemPrompt ?? '', ...(model ? { model } : {}), ...(request.thinking ? { thinkingLevel: request.thinking } : {}) });
       if (signal?.aborted || this.closed.has(this.root) || this.closed.has(parent) || this.registry.options.store.session(parent).execution?.completedAt) {
         this.finish(binding.sessionId, 'cancelled', { code: 'host_shutdown', message: 'Execution startup was interrupted' });

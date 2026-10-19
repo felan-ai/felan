@@ -12,6 +12,7 @@ import { runDaemonTerminal } from '../src/tui/run.js';
 import { TERMINAL_INTERACTION_KINDS } from '../src/tui/interactions.js';
 import { FakeTransport, snapshot } from './client-fixtures.js';
 import { checkForFelanUpdate } from '../src/update.js';
+import { AgentRailEditor } from '../src/subagents/agent-navigator.js';
 
 vi.mock('../src/update.js', () => ({ checkForFelanUpdate: vi.fn() }));
 beforeEach(() => { vi.mocked(checkForFelanUpdate).mockResolvedValue(undefined); });
@@ -20,12 +21,13 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', request: { kind: 'input', title: 'Model question must wait' } };
 
-async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number } = {}) {
+async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; remote?: boolean; remoteNeed?: string } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
   await mkdir(join(directory, 'tui'));
   await writeFile(join(directory, 'tui/settings.json'), JSON.stringify({ showImages: false, ...options.preferences }));
   const operations: Operation[] = ['attach', 'detach', 'sessions.create', 'prompt', 'interaction.answer',
     'host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link',
+    ...(options.remote ? ['remote.status', 'remote.configure', 'session.remote'] as const : []),
     ...(options.statusAvailable === false ? [] : ['host.status' as const])];
   const client = new SessionClient({ target: { kind: 'isolated', directory, namespaceId: 'startup-test' }, kind: 'tui', clientVersion: 'fixture',
     interactionKinds: [...TERMINAL_INTERACTION_KINDS], connector: fake.connector, retries: 0,
@@ -40,7 +42,10 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
       case 'hello': fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
         identity, operations, interactionKinds: [...TERMINAL_INTERACTION_KINDS] }, connection); break;
       case 'host.status': fake.reply(request, { identity, daemonVersion: 'fixture', protocol: 1, state: 'ready',
-        active: { sessions: 0, runs: 0, work: options.incompatibleWork ?? 0, attachments: 0 }, setupNeeds: loggedIn ? [] : [{ code: 'provider', message: 'No model available' }] }, connection); break;
+        active: { sessions: 0, runs: 0, work: options.incompatibleWork ?? 0, attachments: 0 }, setupNeeds: [
+          ...loggedIn ? [] : [{ code: 'provider', message: 'No model available' }],
+          ...options.remoteNeed ? [{ code: 'remote', message: options.remoteNeed }] : [],
+        ] }, connection); break;
       case 'sessions.create':
         if (options.createError) fake.frame({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'invalid_request', message: 'Invalid working directory.', retryable: false } }, connection);
         else fake.reply(request, { sessionId: 'session' }, connection);
@@ -55,6 +60,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
       case 'host.setup.read': fake.reply(request, cancelled ? { id: 'login-job', kind: 'login', state: 'cancelled', message: 'Cancelled' } : loggedIn ? { id: 'login-job', kind: 'login', state: 'completed', message: 'Done' } : waiting, connection); break;
       case 'host.setup.answer': loggedIn = true; fake.reply(request, {}, connection); break;
       case 'prompt': fake.reply(request, { runId: 'run' }, connection); break;
+      case 'remote.configure': fake.reply(request, { configured: true, share: 'on-request', state: 'connected', apiUrl: 'https://app.felan.ai', projects: [], pending: 0, sessions: 0 }, connection); break;
       default: fake.reply(request, {}, connection);
     }
   };
@@ -203,6 +209,71 @@ it('does not start attachment onboarding while a model question is being present
   await vi.waitFor(() => expect(f.text()).toContain('Model question must wait'));
   expect(f.text()).not.toContain('Install optional extensions');
   expect(f.fake.requests.some(request => request.op === 'host.setup.start')).toBe(false);
+});
+
+it.each([
+  'Felan cannot read this daemon’s session data; update Felan to resume sharing',
+  'Felan rejected the access token; run /remote login',
+])('shows a remote setup warning without blocking local startup: %s', async remoteNeed => {
+  const f = await fixture({ provider: true, remoteNeed }); f.start({ verbose: true });
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(f.controller.notes).toContainEqual(expect.objectContaining({ level: 'warning', text: remoteNeed }));
+  expect(f.text()).toContain('Warning:'); expect(f.text()).toContain('Felan');
+  expect(f.fake.requests.filter(request => request.op === 'sessions.create')).toHaveLength(1);
+});
+
+it('keeps remote warnings alongside provider setup when startup is deferred', async () => {
+  const f = await fixture({ remoteNeed: 'Felan rejected the access token; run /remote login' }); f.start();
+  await vi.waitFor(() => expect(f.controller.notice).toContain('No model is available'));
+  expect(f.controller.notes).toContainEqual(expect.objectContaining({ level: 'warning', text: 'Felan rejected the access token; run /remote login' }));
+  expect(f.fake.requests.some(request => request.op === 'sessions.create')).toBe(false);
+});
+
+it('masks remote login input and keeps the PAT out of prompt history, transcript, notices and retained client state', async () => {
+  const history = vi.spyOn(AgentRailEditor.prototype, 'addToHistory');
+  const f = await fixture({ provider: true, remote: true }); f.start();
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  f.terminal.input('/remote login'); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.text()).toContain('Felan personal access token'));
+  const token = 'fln_pat_synthetic_dialog_secret'; f.terminal.input(token);
+  expect(f.text()).toContain('Input is hidden.'); expect(f.text()).not.toContain(token);
+  f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.controller.notice).toContain('Felan login saved'));
+  expect(f.fake.requests.filter(request => request.op === 'remote.configure')).toMatchObject([{ params: { action: 'login', token } }]);
+  expect(JSON.stringify(f.fake.requests.filter(request => request.op !== 'remote.configure'))).not.toContain(token);
+  expect(JSON.stringify(history.mock.calls)).not.toContain(token);
+  expect(JSON.stringify(f.controller.notes)).not.toContain(token); expect(JSON.stringify(f.controller.history)).not.toContain(token);
+  expect(JSON.stringify([...(Reflect.get(f.client, 'records') as Map<string, unknown>).values()])).not.toContain(token);
+  expect(f.text()).not.toContain(token);
+});
+
+it('does not retain a mistakenly pasted inline PAT in prompt history', async () => {
+  const history = vi.spyOn(AgentRailEditor.prototype, 'addToHistory');
+  const f = await fixture({ provider: true, remote: true }); f.start();
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  const token = 'fln_pat_synthetic_inline_secret'; f.terminal.input(`/remote login ${token}`); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.controller.notice).toContain('Usage: /remote login'));
+  expect(JSON.stringify(history.mock.calls)).not.toContain(token);
+  expect(f.fake.requests.some(request => request.op === 'remote.configure')).toBe(false);
+  expect(JSON.stringify(f.controller.notes)).not.toContain(token); expect(f.text()).not.toContain(token);
+});
+
+it.each(['complete', 'cancel'] as const)('queues arriving model questions until remote PAT input %ss', async finish => {
+  const f = await fixture({ provider: true, remote: true }); f.start();
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  f.terminal.input('/remote login'); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.text()).toContain('Felan personal access token'));
+  f.fake.frame({ v: 1, interaction: question });
+  await vi.waitFor(() => expect(f.client.getInteractions()).toHaveLength(1));
+  const token = 'fln_pat_synthetic_private'; f.terminal.input(token);
+  expect(f.text()).not.toContain('Model question must wait'); expect(f.text()).not.toContain(token);
+  expect(f.fake.requests.some(request => request.op === 'interaction.answer')).toBe(false);
+  f.terminal.input(finish === 'complete' ? '\r' : '\x1b');
+  await vi.waitFor(() => expect(f.text()).toContain('Model question must wait'));
+  f.terminal.input('\x1b');
+  await vi.waitFor(() => expect(f.fake.requests.some(request => request.op === 'interaction.answer')).toBe(true));
+  expect(f.fake.requests.filter(request => request.op === 'remote.configure')).toHaveLength(finish === 'complete' ? 1 : 0);
+  expect(JSON.stringify(f.fake.requests.filter(request => request.op === 'interaction.answer'))).not.toContain(token);
 });
 
 class TestTerminal implements Terminal {

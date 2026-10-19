@@ -18,21 +18,32 @@ run in an isolated container, VM, or dedicated account supplied by the host.
 
 ## What the local host filters
 
-The local TUI loads source-controlled built-ins, Felan-owned settings and
+The local host loads source-controlled built-ins, Felan-owned settings and
 prompt appends, explicit global/workspace agent definitions and Agent Skills,
-the selected cwd instruction file, and local Pi extensions explicitly supplied
-with `--extension`/`-e` for the interactive root TUI. Opt-in `piExtensions.user`
-and `piExtensions.project` can add `~/.pi/agent/extensions` and, after a Felan
-folder-trust prompt, `<cwd>/.pi/extensions`. Those decisions are stored in
-`$FELAN_AGENT_DIR/trust.json`, not Pi's trust file. The host still filters Pi
-packages, prompts, project themes, skills, project settings, and package resources.
+the selected cwd instruction file, and external extensions explicitly supplied
+by local clients with `--extension`/`-e`. Remote creates cannot supply explicit
+paths. The host-wide settings `piExtensions.user` and `piExtensions.project`,
+both off by default, add `~/.pi/agent/extensions` and trusted
+`<cwd>/.pi/extensions` to every newly created root, including ACP, headless,
+web-created and imported sessions.
+
+Only the creating TUI prompts for folder trust. Without a saved decision, ACP,
+headless and web creates skip project extensions and save no decision. Folders
+already trusted directly or through a parent load for every creator. Decisions
+are stored in `$FELAN_AGENT_DIR/trust.json`, not Pi's trust file. Opening a
+project for remote creation does not grant folder trust. The host still filters
+Pi packages, prompts, project themes, skills, project settings, and package resources.
 The separate `piExtensions.llamaCpp` opt-in loads only Pi's bundled llama.cpp
-integration in interactive root sessions; it does not enable other Pi built-ins
-or ambient discovery.
+integration in root sessions created by any client, not children; it does not
+enable other Pi built-ins or ambient discovery.
 `$FELAN_AGENT_DIR/themes` is Felan user configuration, not Pi ambient discovery.
-Explicit and opted-in extensions are executable code with the current user's
-filesystem and process permissions; they are not loaded in headless, ACP, or
-subagent sessions.
+External extension paths are fixed at creation. Resume and clone/fork retain
+saved paths; adopting an existing unindexed transcript loads no external
+extensions. Children load the same external extension paths as their root.
+Explicit and opted-in external extensions execute with the current user's
+filesystem and process permissions, including in ACP, headless, web-created
+and child sessions. Worker tool allowlists still limit active tools; they do
+not sandbox loaded extension code.
 
 This prevents an arbitrary project configuration from silently adding an
 executable extension or prompt resource to a Felan Code session. It does not prevent

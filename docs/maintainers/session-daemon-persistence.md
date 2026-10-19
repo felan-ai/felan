@@ -8,7 +8,7 @@ added. Windows remains unsupported by the ownership prerequisite.
 ## Files and durability
 
 `DaemonControlStore` takes an acquired `DaemonOwnership`. Its default directory is
-`<agentDir>/daemon-control-v2`, inside the canonical startup root set. Every path
+`<agentDir>/daemon-control`, inside the canonical startup root set. Every path
 uses the return value of `assertOwnsPath`; every commit synchronously rechecks
 ownership and retained directory/file identities, including after fault hooks.
 The store never acquires/releases ownership for its caller. Close the store and
@@ -31,7 +31,34 @@ frozen and shared with each commit's draft; a commit replaces the rows it change
 validates those rows, rechecks cross-row references for all rows, and writes only
 changed rows in one transaction; a commit that changes no row writes nothing.
 `ord` preserves each table's in-memory order.
+The remote connector shares this handle through the narrow `RemoteDatabase`
+interface exposed by `DaemonControlStore.database`. `remote_records` stores
+records keyed by `(kind, id)`; `remote_outbox` stores pending events keyed by
+`(session, seq)` with encoded byte sizes for capacity accounting. Remote writes
+use the same transaction, ownership, fault-boundary and poisoning machinery,
+except that a transaction callback that throws and rolls back cleanly rethrows
+its error without fencing the database (control-state `write` still fences on any
+failure). A remote callback failure that rolls back cleanly does not fence local
+recording; commit-phase failures still do. A failed remote `BEGIN` also leaves the
+handle unfenced because no transaction started.
+Outbox pages and acknowledgement deletes use indexed sequence ranges, not the
+control-table array loader. These tables are additive `CREATE TABLE IF NOT EXISTS`
+extensions to format `1`: existing tables and their semantics are unchanged,
+and existing databases remain readable.
 Returned revisions/outcomes may be published only after the transaction commits.
+The remote tables have the same `synchronous=NORMAL` durability as every other
+control row: daemon/process crashes retain their commits, while an OS crash or
+power loss can roll back recent remote settings, share flags, outbox cursors and
+command-journal rows. A few published events may then be duplicated, missing or
+out of order on the web. An ordinary NORMAL rollback that loses a journal row can
+therefore admit the same remote command again, just as a lost local
+request-deduplication row can. A full rebuilt database remains conservative:
+unjournaled claims complete as `indeterminate` until an empty successful claim
+response persists the per-host `command_recovery` marker before normal dispatch.
+Connector publication fast-forwards an initial restored sequence rollback rather
+than permanently blocking; its one-recovery-chain guard clears after successful
+publication or exhausted pending data. Its eventual-consistency limits are
+documented in [remote connector persistence](../shared-session-daemon/remote-connector.md#persistence).
 Before first use, a separate private
 `<agentDir>/.control-initialized-<SHA-256-of-control-directory>.json` records the
 store identity. It is outside the control directory, is synced before control
@@ -39,7 +66,8 @@ initialization and must be included in backups.
 
 Recovery distinguishes the file from its rows:
 
-- A missing database starts an empty store without quarantine.
+- A missing database starts an empty store without quarantine. If initialization
+  already existed, the database records that durable state was lost.
 - Other read errors (for example `EACCES`) fail startup with a retryable
   `storage_failure` and leave the file in place.
 - Only a database that is corrupt, is not a database, lacks the control tables or
@@ -62,28 +90,32 @@ Deleting a session tombstones it and every registered descendant and removes
 all of their transcripts.
 The control directory cannot contain the agent directory/initialization record.
 Initialization syncs created directory entries through their owned parent chain.
-An uncommitted transaction is never visible after a crash. An I/O error, or a
-fault after the commit, permanently poisons that handle, even when the commit may
-have succeeded. Stop admission, settle writers and reopen/reconcile; never
-infer failure means the operation is safe to repeat.
+An uncommitted transaction is never visible after a crash. A control-state write
+failure or a remote commit-phase failure permanently poisons that handle, even
+when the commit may have succeeded. Remote callback errors that roll back cleanly
+and failed remote `BEGIN` attempts leave the handle unfenced. After fencing, stop
+admission, settle writers and reopen/reconcile; never infer failure means the
+operation is safe to repeat.
 
 `node:sqlite` is built into the supported Node lines, so the store adds no
 dependency; it is loaded only when the store opens, and its one-time
 `ExperimentalWarning` is suppressed. Live views (tool output, status, catalog,
 executions, presentations) are never committed; they take transient revisions.
-This is not a general transcript database, platform outbox, event archive or
-persistence framework.
+Beyond the connector's bounded pending outbox, this is not a transcript
+database, event archive or general persistence framework. Rebuild recovery and
+the loss of remote share flags are described in
+[remote connector persistence](../shared-session-daemon/remote-connector.md#persistence).
 
 ## Bounds and identities
 
-The store has no byte or session-count cap. Admission bounds only in-flight
+Local control state has no byte or session-count cap. Admission bounds only in-flight
 work (pending requests and their bytes), keeping a small reserve so cancellation,
 interaction resolution, close and drain can still be admitted under load.
 
 A protocol-valid request up to the protocol frame limit is canonicalized by the
 protocol parser, then stored as SHA-256 plus canonical encoded length. Prompt,
 image, shell/config payloads and arbitrary extra fields are not copied into the
-control store. The record includes the normalized ID, stable owner principal,
+local control tables. The record includes the normalized ID, stable owner principal,
 operation, session, admission time, retention deadline, phase and sanitized
 terminal response. Pass a **stable retry principal**, not an ephemeral attachment
 ID. A reconnecting authorized attachment must map to that same principal.
@@ -100,9 +132,11 @@ old terminal projections. Call it periodically from lifecycle management.
 Indeterminate continuations retain their winning answers indefinitely; unresolved
 resource identities are not age-evicted.
 Message references
-may be compacted without invalidating Pi content or retry protection. No full
+may be compacted without invalidating Pi content or retry protection. Local control tables store no full
 completed message, tool output, tree, raw process environment, provider
-credential, control token or command payload is stored here. Serializable user
+credential, control token or command payload. The remote outbox and command
+journal necessarily contain protocol-validated publication and command payloads
+until acknowledged. Serializable user
 answers must already be appropriate for durable local presentation. OAuth URL/credential interactions
 are explicitly rejected from this store; their presentation stays transient,
 with interruption recorded on their owning operation.
@@ -263,20 +297,11 @@ import copies history into a new daemon session without changing the source
 Older binaries must not write daemon-owned control data; use separate roots and
 verified backups when downgrading.
 
-The first start with an empty default store imports a verified version 1 snapshot
-(`daemon-control-v1/control.json` with its initialization record and format
-marker), dropping its tool and status projections, then writes
-`migrated-to-v2.json` into that directory so it is never imported again. Every
-later start rewrites a missing marker. The v1
-files are otherwise left untouched; a downgraded daemon resumes from them as they
-were at migration ([ADR 0039](../decisions/0039-store-daemon-control-state-in-sqlite.md) lists what that loses). An unverifiable v1 snapshot is not imported; an unreadable one
-fails startup retryably.
-
 ## Verification scope
 
 Deterministic disposable-root tests cover both commit boundaries, corrupt/
 missing/foreign/versioned databases, changed-row-only writes with order-preserving
-reload, version 1 import, count/byte reserves, retry conflicts/expiry/clock
+reload, count/byte reserves, retry conflicts/expiry/clock
 rollback, coalesced revisions, policy monotonicity, interaction winners, committed
 answers and continuation ambiguity, and explicit import boundaries. Spawned offline
 fixtures SIGKILL themselves at real intent/dispatch/effect/outcome, answer/

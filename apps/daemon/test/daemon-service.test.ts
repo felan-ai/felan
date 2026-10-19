@@ -57,7 +57,7 @@ it('assembles owned service state and executes a real offline session before exp
   const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui', expected: service.owner.identity });
   cleanups.push(async () => client.close()); await client.connect();
   expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'ready', setupNeeds: [], composition: { managerPackage: testManager.packageName } } });
-  const created = await client.request('sessions.create', { cwd: input.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const created = await client.request('sessions.create', { cwd: input.directory, model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   expect((await stat(join(service.owner.target.agentDir, 'storage'))).mode & 0o777).toBe(0o700);
   await client.attach(created.result.sessionId);
@@ -83,7 +83,7 @@ it('forces an owned foreground process to settle and persists its interrupted ru
   const { target: input, hostConfigPath } = await target(); const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: models });
   cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
   const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui' }); cleanups.push(async () => client.close()); await client.connect();
-  const created = await client.request('sessions.create', { cwd: input.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const created = await client.request('sessions.create', { cwd: input.directory, model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   await client.attach(created.result.sessionId);
   const shell = await client.request('shell.execute', { command: 'sleep 30', includeInContext: false }, { session: created.result.sessionId });
@@ -160,7 +160,7 @@ it('reports a recoverable shutdown failure on every management surface and expli
   let fail = true;
   cleanups.push(async () => { fail = false; if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
   const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui' }); cleanups.push(async () => client.close()); await client.connect();
-  const created = await client.request('sessions.create', { cwd: input.directory, source: 'tui', model: { provider: 'offline', id: 'fixture' } });
+  const created = await client.request('sessions.create', { cwd: input.directory, model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   const id = created.result.sessionId; await client.attach(id);
   const disposed = vi.fn(async () => {});
@@ -185,7 +185,7 @@ it('reports a recoverable shutdown failure on every management surface and expli
     expect(await client.request(op, { expected: service.owner.identity, mode: 'drain' })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
   }
   expect(service.lifecycle.blocked).toEqual(blocked);
-  expect(await client.request('sessions.create', { cwd: input.directory, source: 'tui' })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
+  expect(await client.request('sessions.create', { cwd: input.directory })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
   expect(await client.request('prompt', { text: 'refused' }, { session: id })).toMatchObject({ outcome: 'rejected', error: { code: 'host_blocked' } });
   expect(disposed).not.toHaveBeenCalled(); expect(() => service.owner.assertCurrent()).not.toThrow();
   expect(await client.control('host.stop', 'force')).toMatchObject({ outcome: 'accepted', state: 'draining' });

@@ -3,7 +3,7 @@ import { dirname, join } from 'node:path';
 import { Type } from 'typebox';
 import { canonicalProspectivePath, pathInside } from './target.js';
 import { CONTROL_LIMITS, ControlResourceSchema, ControlSessionMetadataSchema, ControlSessionSchema, ControlStoreError, SessionProfileSchema, assertControlRow, parseControlState, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlResource, type ControlSession, type ControlSessionMetadata, type ControlState, type SessionProfile } from './control-state.js';
-import { CONTROL_TABLES, ControlDatabase, markLegacyControlStateMigrated, readLegacyControlState, sha256, type ControlChanges, type ControlRow, type ControlTable, type PersistenceBoundary, type StoredControl } from './persistence.js';
+import { CONTROL_TABLES, ControlDatabase, sha256, type ControlChanges, type ControlRow, type ControlTable, type PersistenceBoundary, type RemoteDatabase, type StoredControl } from './persistence.js';
 import type { DaemonOwnership } from './ownership.js';
 import { recoverControlState, type RecoveryPlan } from './control-recovery.js';
 import { IdSchema, LIMITS, OPERATION_CATALOG, parseClientEnvelope, canonicalRequestPayload, parseInteraction, parseSchema, parseServerEnvelope, requestRetainUntil, validateInteractionAnswer, type Interaction, type InteractionAnswer, type Response, type Operation, type OperationParams } from '@felan-ai/session-protocol';
@@ -24,6 +24,7 @@ interface PersistedRows { rows: Record<RowTable, Map<string, PersistedRow>>; pro
 export class DaemonControlStore {
   readonly directory: string;
   private readonly file: ControlDatabase;
+  get database(): RemoteDatabase { return this.file; }
   /** Committed rows are deep-frozen and shared with commit drafts, which replace a row before changing it. */
   private state: ControlState;
   /** What the database holds for each row, so a commit writes only rows whose data or order changed. */
@@ -37,7 +38,7 @@ export class DaemonControlStore {
   private readonly transientRevisionCeilings = new Map<string, number>();
   constructor(readonly owner: DaemonOwnership, options: ControlStoreOptions = {}) {
     this.now = options.now ?? Date.now;
-    this.file = new ControlDatabase(owner, options.directory ?? join(owner.target.agentDir, 'daemon-control-v2'), options.fault);
+    this.file = new ControlDatabase(owner, options.directory ?? join(owner.target.agentDir, 'daemon-control'), options.fault);
     this.directory = this.file.directory;
     try {
       const stored = this.file.read();
@@ -47,20 +48,6 @@ export class DaemonControlStore {
         // Invalid or foreign state is moved aside; legacy discovery re-adopts the transcripts it described.
         if (state) { this.persisted = storedRows(stored); this.maxOrd = maxOrd(stored); this.initialized = true; }
         else this.file.quarantine();
-      }
-      if (options.directory === undefined) {
-        const legacy = join(owner.target.agentDir, 'daemon-control-v1');
-        if (!state && !stored) {
-          const raw = readLegacyControlState(owner, legacy);
-          state = raw === undefined ? undefined : this.restore(withoutLiveProjections(raw));
-          if (state) this.persist(state);
-        }
-        // Also repairs a marker lost after an import, so a later empty store cannot import stale state. The old
-        // directory is not needed to run, so a file-system error there leaves it unmarked rather than blocking startup.
-        if (this.initialized) {
-          try { markLegacyControlStateMigrated(owner, legacy); }
-          catch (error) { if (typeof (error as NodeJS.ErrnoException).errno !== 'number') throw error; }
-        }
       }
       if (state) { for (const table of ROW_TABLES) for (const row of state[table]) freeze(row); this.state = state; this.recoveryRequired = true; }
       else {
@@ -150,7 +137,7 @@ export class DaemonControlStore {
       const session = editSession(state, this.findSession(state, request.session));
       const payload = canonicalRequestPayload({ v: 1, id: requestId, op: 'config.set', session: session.id, params: { scope: 'session', values } });
       if (sha256(payload) !== request.identity.sha256 || Buffer.byteLength(payload) !== request.identity.bytes) throw new ControlStoreError('request_conflict', 'Configuration differs from its admitted payload.');
-      session.profile = parseSchema(SessionProfileSchema, { ...(session.profile ?? { source: 'headless' }), extensionConfigOverrides: overrides });
+      session.profile = parseSchema(SessionProfileSchema, { ...session.profile, extensionConfigOverrides: overrides });
       request.phase = 'dispatch_intent'; touched.add(session.id); return session;
     });
   }
@@ -664,15 +651,6 @@ function freeze<T>(value: T): T {
   }
   return value;
 }
-/** Version 1 snapshots also stored tool output and status markers, which are now live-only views. */
-function withoutLiveProjections(raw: unknown): unknown {
-  if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { sessions?: unknown }).sessions)) return raw;
-  return { ...raw, sessions: ((raw as { sessions: unknown[] }).sessions).map(session => {
-    const projections = (session as { projections?: unknown } | null)?.projections;
-    return Array.isArray(projections) ? { ...session as object, projections: projections.filter(row => ['message', 'queue'].includes((row as { value?: { type?: unknown } } | null)?.value?.type as string)) } : session;
-  }) };
-}
-
 function metadataCopy(session: ControlSession): ControlSessionMetadata {
   const { projections: _projections, ...metadata } = session;
   return structuredClone(metadata);

@@ -5,6 +5,7 @@ import { CatalogSchema, HistoryPageSchema, ProcessPageSchema, PromptSchema, Sess
 import { SessionSnapshotSchema } from './events.js';
 import { InteractionAnswerSchema, InteractionKindSchema, UserCancellationSchema } from './interactions.js';
 import { LIMITS } from './limits.js';
+import { RemoteConfigureParamsSchema, RemoteStatusSchema } from './remote.js';
 import { UiActionRequestSchema, UiCapabilitySchema } from './ui.js';
 import { SetupCatalogSchema, SetupJobSchema, SetupStartSchema } from './setup.js';
 import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, HostBlockedSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
@@ -30,10 +31,12 @@ export const OperationSchemas = {
     interactionKinds: Type.Array(InteractionKindSchema, { maxItems: 32, uniqueItems: true }),
     capabilities: Type.Optional(Type.Array(UiCapabilitySchema, { maxItems: 32, uniqueItems: true })), target: DaemonTargetSchema }),
   'host.status': empty,
+  'remote.status': empty,
+  'remote.configure': RemoteConfigureParamsSchema,
   'sessions.list': Type.Object({ ...PageRequestSchema.properties, cwd: Type.Optional(AbsolutePathSchema), root: Type.Optional(IdSchema) }),
   'sessions.create': Type.Object({ cwd: AbsolutePathSchema, sessionDir: Type.Optional(AbsolutePathSchema),
-    model: Type.Optional(ModelSchema), thinking: Type.Optional(ThinkingSchema), config: Type.Optional(ConfigValuesSchema), source: ClientKindSchema,
-    requirePolicy: Type.Optional(Type.Literal('acp-strict')), interactiveExtensions: Type.Optional(Type.Boolean()),
+    model: Type.Optional(ModelSchema), thinking: Type.Optional(ThinkingSchema), config: Type.Optional(ConfigValuesSchema),
+    requirePolicy: Type.Optional(Type.Literal('acp-strict')),
     extensions: Type.Optional(Type.Array(AbsolutePathSchema, { uniqueItems: true })) }),
   attach: Type.Object({ ...identity, requirePolicy: Type.Optional(Type.Literal('acp-strict')) }),
   detach: Type.Object({ attachmentId: IdSchema }),
@@ -49,6 +52,7 @@ export const OperationSchemas = {
   'command.invoke': Type.Object({ name: text(LIMITS.commandBytes, 1), arguments: unboundedText() }),
   'interaction.answer': Type.Object({ interactionId: IdSchema, answer: Type.Union([InteractionAnswerSchema, UserCancellationSchema]) }),
   'ui.action': UiActionRequestSchema,
+  'session.remote': Type.Object({ shared: Type.Boolean() }),
   'session.rename': Type.Object({ name: unboundedText(1) }),
   'session.tree': PageRequestSchema,
   'session.branch.select': Type.Object({ entryId: IdSchema, summarize: Type.Optional(Type.Boolean()) }),
@@ -91,13 +95,14 @@ const definition = <S extends Definition['scope']>(scope: S, mutation = true, st
 });
 export const OPERATION_CATALOG = Object.freeze({
   hello: definition('host', false, 'connection'), 'host.status': definition('host', false, 'none'),
+  'remote.status': definition('host', false, 'none'), 'remote.configure': definition('host', true, 'connection'),
   'sessions.list': definition('host', false, 'none'),
   'sessions.create': definition('host'), attach: definition('session', true, 'connection'),
   detach: definition('session', true, 'connection'), close: definition('session'),
   prompt: definition('session'), steer: definition('session'), follow_up: definition('session'), cancel: definition('session'),
   set_model: definition('session'), set_thinking: definition('session'), compact: definition('session'), fork: definition('session'),
   'command.invoke': definition('session'), 'interaction.answer': definition('either'), 'session.rename': definition('session'),
-  'ui.action': definition('session'),
+  'ui.action': definition('session'), 'session.remote': definition('session'),
   'session.tree': definition('session', false, 'none'), 'session.branch.select': definition('session'), 'session.entry.label': definition('session'),
   'session.clone': definition('session'), 'session.import': definition('host'), 'session.export': definition('session'), 'session.delete': definition('session'),
   'session.history': definition('session', false, 'none'), 'queue.update': definition('session'), 'shell.execute': definition('session'),
@@ -129,12 +134,13 @@ const inputResult = Type.Union([
 const emptyResult = Type.Object({});
 export const ResultSchemas = {
   hello: HelloResultSchema, 'host.status': HostStatusSchema, 'sessions.list': SessionsPageSchema,
+  'remote.status': RemoteStatusSchema, 'remote.configure': RemoteStatusSchema,
   'sessions.create': created,
   attach: Type.Object({ attachmentId: IdSchema, snapshot: SessionSnapshotSchema }),
   detach: emptyResult, close: emptyResult, prompt: run, steer: inputResult, follow_up: inputResult, cancel: emptyResult, set_model: emptyResult, set_thinking: emptyResult,
   compact: run, fork: created, 'command.invoke': Type.Object({ runId: Type.Optional(IdSchema), status: enumOf(['completed', 'started', 'waiting'] as const) }),
   'interaction.answer': emptyResult, 'session.rename': emptyResult, 'session.tree': TreePageSchema, 'session.branch.select': emptyResult, 'session.entry.label': emptyResult,
-  'ui.action': emptyResult,
+  'ui.action': emptyResult, 'session.remote': emptyResult,
   'session.clone': created, 'session.import': created, 'session.export': Type.Object({ destination: AbsolutePathSchema }), 'session.delete': emptyResult,
   'session.history': HistoryPageSchema, 'queue.update': emptyResult, 'shell.execute': Type.Object({ resourceId: IdSchema, runId: IdSchema }),
   'config.get': Type.Object({ writable: Type.Boolean(), values: ConfigValuesSchema, extensions: Type.Optional(ExtensionSettingsSchema), catalog: Type.Optional(CatalogSchema), credentialSetup: Type.Optional(Type.Object({ provisioningId: IdSchema })) }),

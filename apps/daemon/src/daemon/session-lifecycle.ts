@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { AGENT_CORE_VERSION, createAgentCoreSessionRuntimeFactory, createAgentSessionRuntime, getExtensionConfigDefinition, type AgentRuntime, type AgentSession, type ExtensionConfigWriter, type FelanServiceRegistry, type Logger, type ModelRuntime, type RuntimeDependenciesService, type SessionRef, type SessionsService } from '@felan-ai/agent-core';
 import { createRuntimeStorageRequest } from '../runtime-factory.js';
 import { inheritExecutionPolicy, TrustedToolCatalog } from './execution-policy.js';
-import { resolveTarget, assertTargetUnchanged, assertSessionManagerMatches, openSessionManager, createWorkerBinding, assertAbsolutePath, canonicalPath } from './profile-storage.js';
+import { resolveTarget, assertTargetUnchanged, assertSessionManagerMatches, openSessionManager, createWorkerBinding, restrictActiveTools, assertAbsolutePath, canonicalPath } from './profile-storage.js';
 import { interruptProviderScope, type LoadedProviders } from './provider-loader.js';
 import type { SessionExtensionBindings, SessionExtensionContext } from './session-execution.js';
 import type { ProviderSecretStorage, ProviderWorkerLauncher } from './provider.js';
@@ -58,9 +58,6 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
     async openSession(request) {
       if (disposed || !environments.has(request.resources)) throw new Error('Unknown session environment.');
       inheritExecutionPolicy(request.policy);
-      if (request.extensionPaths?.length && (!request.interactiveExtensions || request.parentSessionId !== undefined)) {
-        throw new Error('External extensions require a trusted interactive root session');
-      }
       const extensionPaths = await Promise.all((request.extensionPaths ?? []).map(async path => { assertAbsolutePath(path); return realpath(path); }));
       const target = await resolveTarget(request);
       if (request.parentSessionId !== undefined && request.rootSessionId === undefined) throw new Error('Child sessions require their root session identity');
@@ -71,7 +68,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
       const manager = await openSessionManager(request, owned);
       assertSessionManagerMatches(manager,
         target.identity.kind === 'resume' ? owned.identity.sourceSessionId : request.target.kind === 'new' ? request.target.id : undefined);
-      if (request.worker) return createWorkerBinding(request, manager, options);
+      if (request.worker) return createWorkerBinding({ ...request, extensionPaths }, manager, options);
       const id = manager.getSessionId(); const root = request.parentSessionId === undefined ? id : request.rootSessionId!;
       if (!root || root === '.' || root === '..' || root.includes('\0')) throw new Error('Invalid root session identity');
       const identity: SessionRef = { id, root, ...(request.parentSessionId ? { parent: request.parentSessionId } : {}) };
@@ -119,7 +116,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
           ...(options.homeDir ? { homeDir: options.homeDir } : {}),
           ...(options.createLogger ? { logger: options.createLogger(createRuntimeStorageRequest(cwd, options.agentDir, root).agentStorageRoot) } : {}),
           extensionPackages: options.extensionPackages, extensionConfigOverrides: request.extensionConfigOverrides ?? [], extensionPaths,
-          source: request.source ?? 'headless', ...(request.model ? { model: request.model } : {}), ...(request.thinkingLevel ? { thinkingLevel: request.thinkingLevel } : {}) });
+          ...(request.model ? { model: request.model } : {}), ...(request.thinkingLevel ? { thinkingLevel: request.thinkingLevel } : {}) });
         const prepared = composition.options;
         if (prepared.extensionPackages.some(name => !options.extensionPackages.includes(name))) throw new Error('Runtime enabled an unconfigured extension.');
         activePackages = prepared.extensionPackages;
@@ -156,7 +153,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         };
         const context: SessionExtensionContext = { updateExtensionConfig, runtime, modelRuntime: models, settingsManager: prepared.settingsManager, sessionManager: manager,
           resources: request.resources, rootSessionId: root, policy: inheritExecutionPolicy(request.services.getExecutionPolicy()), extensionPackages: prepared.extensionPackages,
-          source: request.source ?? 'headless', extensionConfigs: composition.extensionConfigs, extensionConfigOverrides: prepared.extensionConfigOverrides ?? [],
+          extensionConfigs: composition.extensionConfigs, extensionConfigOverrides: prepared.extensionConfigOverrides ?? [],
           scopedModels: prepared.scopedModels ?? [], skillPaths: prepared.skillPaths ?? [], classifier: runtime.classifier, dynamicThinking: prepared.dynamicThinking ?? false,
           services: options.serviceRegistry, importExtension: prepared.importExtension };
         const port = request.services.extensions.executionPort?.(context);
@@ -198,7 +195,8 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         const activate = () => {
           if (released || disposal) return Promise.reject(new Error('Session binding is disposing.'));
           return activation ??= (async () => { await scope!.activate(); await bindings?.onSession?.(runtime.session);
-            await runtime.session.bindExtensions({ mode: 'print', ...(bindings?.uiContext ? { uiContext: bindings.uiContext } : {}) }); })();
+            await runtime.session.bindExtensions({ mode: 'print', ...(bindings?.uiContext ? { uiContext: bindings.uiContext } : {}) });
+            if (request.allowedTools) restrictActiveTools(runtime.session, request.allowedTools); })();
         };
         if (!options.deferActivation) await activate();
         const tools = TrustedToolCatalog.fromSession(runtime.session, composition!.toolPolicy);
