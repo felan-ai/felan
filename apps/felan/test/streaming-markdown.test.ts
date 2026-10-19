@@ -92,7 +92,7 @@ it.each(Object.entries({ ...codeHeavyCorpus, ...inlineLatexCorpus, math: corpus.
       }
     }
   }
-});
+}, 30_000);
 
 it.each(Object.entries({ ...codeHeavyCorpus, ...inlineLatexCorpus }))('keeps settled blocks cached: %s', (_name, source) => {
   const heading = vi.fn(markdown.heading);

@@ -1,6 +1,6 @@
 import type { AgentRuntime, ExtensionContext } from '@felan-ai/agent-core';
 import type { BrowserAuthorizationRequest } from '@felan-ai/ext-browser';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChromePreflight } from '../src/providers/browser/chrome-devtools.js';
 
 import { createLocalBrowserAuthorizationHost } from '../src/providers/browser/authorization-host.js';
@@ -11,7 +11,13 @@ const openTarget = vi.fn(async () => ({ stdout: '', stderr: '', code: 0, killed:
 const APPLICATION = '/Applications/Google Chrome.app';
 
 describe('local browser authorization host', () => {
-  beforeEach(() => openTarget.mockClear());
+  // Chrome setup is macOS-only; pin the platform so the flow runs on any CI host.
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  beforeEach(() => {
+    openTarget.mockClear();
+    Object.defineProperty(process, 'platform', { ...platform, value: 'darwin' });
+  });
+  afterEach(() => { Object.defineProperty(process, 'platform', platform); });
 
   it('requires local consent before inspecting settings or creating a lease', async () => {
     const f = fixture();
