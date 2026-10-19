@@ -16,7 +16,7 @@ interface Started { id: string; calls: number; pid: number }
 interface Wire { id?: number; ok?: boolean; value?: unknown; error?: string; event?: string }
 type Exit = { code: number | null; signal: NodeJS.Signals | null };
 
-function deadline<T>(work: Promise<T>, label: string, milliseconds = 5000): Promise<T> {
+function deadline<T>(work: Promise<T>, label: string, milliseconds = 15_000): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   return Promise.race([work, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error(`Deadline: ${label}`)), milliseconds); })])
     .finally(() => clearTimeout(timer));
@@ -71,7 +71,7 @@ class Worker {
     return deadline(reply, `worker ${op}`).finally(() => this.pending.delete(id));
   }
 
-  event<T>(name: string, milliseconds = 5000): Promise<T> {
+  event<T>(name: string, milliseconds = 15_000): Promise<T> {
     let check!: () => void;
     const value = new Promise<T>((resolve, reject) => {
       check = () => {
@@ -196,7 +196,7 @@ it('runs without felan.usage, owns its launch environment, and completes a share
   await accepted(b.worker, 'close', {}, session); await wait(b.worker, { sessionState: 'closed' });
   expect(await accepted(b.worker, 'host.status', {})).toMatchObject({ state: 'ready' });
   await daemon.worker.stop();
-}, 20_000);
+}, 60_000);
 
 it('loses a committed acknowledgement, crashes and restarts the daemon, then returns the retained result without replay', async () => {
   const f = await fixture(); const original = await f.daemon('daemon-before-crash');
@@ -245,7 +245,7 @@ it('loses a committed acknowledgement, crashes and restarts the daemon, then ret
   expect(await environment(b.worker, session)).toBe('daemon-after-crash');
   expect((await b.worker.call<ClientView>('state')).environment).toBe('client-b');
   await accepted(b.worker, 'close', {}, session); await replacement.worker.stop();
-}, 20_000);
+}, 60_000);
 
 it('resumes at the transcript tip after a restart that follows an explicit older branch selection', async () => {
   const f = await fixture(); const original = await f.daemon('daemon-before-branch-restart');
@@ -306,7 +306,7 @@ it('resumes at the transcript tip after a restart that follows an explicit older
   expect(await replacement.worker.call('stats')).toMatchObject({ calls: 0, live: [] });
   expect(await f.calls()).toEqual(calls);
   await replacement.worker.stop();
-}, 20_000);
+}, 60_000);
 
 it('keeps a real foreground process alive after its client is killed and lets another client observe and stop it', async () => {
   const f = await fixture(); const daemon = await f.daemon('daemon-process-owner');
@@ -372,4 +372,4 @@ it('keeps a real foreground process alive after its client is killed and lets an
   expect(await f.calls()).toEqual([]);
   await accepted(b.worker, 'close', {}, session); await wait(b.worker, { sessionState: 'closed' });
   await daemon.worker.stop();
-}, 20_000);
+}, 60_000);

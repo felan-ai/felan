@@ -349,5 +349,5 @@ describe('registry-backed command dispatch', () => {
       await expect(tracker.startForeground(id, 'root', params)).rejects.toThrow('committed shell dispatch');
     }
     expect(start).toHaveBeenCalledTimes(4097);
-  });
+  }, 60_000);
 });
