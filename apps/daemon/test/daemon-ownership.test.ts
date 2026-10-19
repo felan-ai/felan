@@ -17,6 +17,8 @@ const fixture = new URL('./fixtures/daemon-owner.mjs', import.meta.url);
 afterEach(async () => {
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
+      // The child may exit before the write lands; the exit wait and SIGKILL below cover that case.
+      child.stdin.on('error', () => {});
       const exited = once(child, 'exit'); child.kill('SIGCONT'); child.stdin.write('stop\n');
       await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 1_000))]);
       if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
