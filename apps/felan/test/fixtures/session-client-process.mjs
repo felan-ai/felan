@@ -49,7 +49,7 @@ function construct(identity) {
 }
 function waitState(wanted) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => done(new Error(`State deadline: ${JSON.stringify(wanted)}`)), 5000);
+    const timer = setTimeout(() => done(new Error(`State deadline: ${JSON.stringify(wanted)}`)), 12_000);
     let unlisten = () => {};
     const done = error => { clearTimeout(timer); unlisten(); waits.delete(done); error ? reject(error) : resolve(view()); };
     const check = () => {

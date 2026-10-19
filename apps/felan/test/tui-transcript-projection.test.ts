@@ -113,7 +113,7 @@ it.each(['grouped', 'full'] as const)('appends and replaces streaming tails in %
     check({ streaming: undefined }, [{ role: 'user', timestamp: 13, content: 'Interrupt draft' }]);
     expect(detach).toHaveBeenCalledTimes(1);
   } finally { update.mockRestore(); incremental.dispose(); vi.useRealTimers(); }
-}, 30_000);
+});
 
 it.each((['grouped', 'full'] as const).flatMap(mode => (['note', 'compaction', 'settings', 'shell', 'fallback', 'streamingContent', 'streaming tools'] as const)
   .map(change => ({ mode, change }))))('handles $change changes in $mode mode and preserves fresh-render equivalence', ({ mode, change }) => {

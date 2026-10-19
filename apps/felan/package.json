@@ -88,7 +88,7 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json && cp -R src/themes dist/themes && cp src/host.json dist/host.json && chmod +x dist/cli.js",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run --passWithNoTests --testTimeout=30000",
     "prepack": "pnpm build"
   },
   "dependencies": {

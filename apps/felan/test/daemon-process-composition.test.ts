@@ -316,18 +316,18 @@ it('keeps a real foreground process alive after its client is killed and lets an
   await attach(a.worker, session); await attach(b.worker, session);
   const gate = join(f.directory, 'foreground-gate'); await writeFile(gate, 'hold', { mode: 0o600 });
   const script = `
-    const { watch, readFileSync } = require('node:fs');
-    const { dirname, basename } = require('node:path');
+    const { readFileSync } = require('node:fs');
     const gate = process.argv[1];
     const pid = String(process.pid).padStart(10, '0');
     let advanced = false;
-    const watcher = watch(dirname(gate), (_event, filename) => {
-      if (String(filename) !== basename(gate) || advanced || readFileSync(gate, 'utf8') !== 'advance') return;
+    // Polling, because fs.watch can miss a rename under load.
+    const poll = setInterval(() => {
+      if (advanced || readFileSync(gate, 'utf8') !== 'advance') return;
       advanced = true;
       process.stdout.write('AFTER:' + pid + '\\n');
-    });
+    }, 20);
     process.on('SIGTERM', () => {
-      watcher.close();
+      clearInterval(poll);
       if (!advanced) process.exit(2);
       process.stdout.write('STOPPED:' + pid + '\\n', () => process.exit(0));
     });
