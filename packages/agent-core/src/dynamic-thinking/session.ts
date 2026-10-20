@@ -12,7 +12,7 @@ export const DYNAMIC_THINKING_PRODUCER = '@felan-ai/agent-core/dynamic-thinking'
 
 export function createDynamicThinkingSession(
   runtime: AgentRuntime,
-  codexEffortUpdatesAvailable: boolean,
+  supportsNativeThinkingUpdates: (model: Model<Api>) => boolean,
   reporter?: SavingsReporter,
   options: { selectionScope?: ModelSelectionPersistenceScope; turnClassification?: TurnClassificationRegistry } = {},
 ): InlineExtension {
@@ -31,8 +31,8 @@ export function createDynamicThinkingSession(
     firstAssistant?: AssistantMessage;
     failed?: boolean;
   } | undefined;
-  const canClassify = (api: string) => (api !== 'openai-codex-responses' && api !== 'openai-responses')
-    || codexEffortUpdatesAvailable;
+  const canClassify = (model: Model<Api>) => (model.api !== 'openai-codex-responses' && model.api !== 'openai-responses')
+    || supportsNativeThinkingUpdates(model);
   const local = options.turnClassification ? undefined : createTurnClassificationRegistry(classifier, runtime.logger);
   const registry = options.turnClassification ?? local!;
   let prepared: { model: Model<Api>; original: FelanThinkingLevel } | undefined;
@@ -67,7 +67,7 @@ export function createDynamicThinkingSession(
         prepare(input, ctx) {
           prepared = undefined;
           if (!input.prompt.trim() || options.selectionScope?.owner || manualOverride || lifetime.signal.aborted
-            || !supportsDynamicThinking(ctx.model) || !canClassify(ctx.model.api)) return undefined;
+            || !supportsDynamicThinking(ctx.model) || !canClassify(ctx.model)) return undefined;
           const original = pi.getThinkingLevel();
           if (lastAutomaticLevel !== undefined && original !== lastAutomaticLevel) {
             manualOverride = true;

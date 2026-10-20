@@ -28,7 +28,7 @@ if (result.error) {
   process.exit(1);
 }
 if (result.status !== 0) {
-  process.stderr.write(result.stderr ?? 'Unable to collect production dependency licenses\n');
+  process.stderr.write(result.stderr || result.stdout || `Unable to collect production dependency licenses (exit ${result.status ?? 'unknown'})\n`);
   process.exit(result.status ?? 1);
 }
 
@@ -69,6 +69,7 @@ for (const required of [
   '@modelcontextprotocol/client@2.2.0',
   '@modelcontextprotocol/core@2.2.0',
   '@napi-rs/keyring@1.3.0',
+  'koffi@3.3.2',
   'open@11.0.0',
   'typebox@1.1.38',
 ]) {
@@ -116,6 +117,7 @@ for (const requiredNotice of [
   '@modelcontextprotocol/client 2.2.0',
   '@napi-rs/keyring 1.3.0',
   'open 11.0.0',
+  'Koffi 3.3.2',
   'pi-rtk-optimizer 0.9.0',
   'Microsoft MarkItDown 0.1.7',
   'https://github.com/JuliusBrussee/caveman',
@@ -301,7 +303,7 @@ const felanApiNotice = readFileSync(resolve(root, 'packages/ext-felan-api/NOTICE
 if (!felanApiNotice.includes('TypeBox 1.1.38')) {
   errors.push('packages/ext-felan-api/NOTICE is missing TypeBox 1.1.38');
 }
-const tuiNotice = readFileSync(resolve(root, 'apps/tui/NOTICE'), 'utf8');
+const tuiNotice = readFileSync(resolve(root, 'apps/felan/NOTICE'), 'utf8');
 for (const requiredNotice of [
   '@agentclientprotocol/sdk 1.4.0',
   'https://github.com/agentclientprotocol/typescript-sdk',
@@ -316,8 +318,13 @@ for (const requiredNotice of [
   '@felan-ai/ext-fusion',
 ]) {
   if (!tuiNotice.includes(requiredNotice)) {
-    errors.push(`apps/tui/NOTICE is missing ${requiredNotice}`);
+    errors.push(`apps/felan/NOTICE is missing ${requiredNotice}`);
   }
+}
+
+const daemonNotice = readFileSync(resolve(root, 'apps/daemon/NOTICE'), 'utf8');
+for (const requiredNotice of ['@felan-ai/daemon', 'Koffi 3.3.2', '@napi-rs/keyring 1.3.0', '@earendil-works/pi-tui']) {
+  if (!daemonNotice.includes(requiredNotice)) errors.push(`apps/daemon/NOTICE is missing ${requiredNotice}`);
 }
 
 if (errors.length > 0) {

@@ -1,13 +1,13 @@
 # Architecture
 
 Felan separates **where a feature runs** from **what the feature does**. The
-local terminal host owns user state and policy; portable extensions own feature
+local daemon owns user state and policy; clients own presentation; portable extensions own feature
 behavior; Agent Core owns the runtime-neutral composition boundary; and pinned
 Pi packages provide the underlying model, session, and TUI machinery.
 
 ```text
-  Felan Code TUI                         Felan cloud platform
-  credentials · storage · policy          tenant state · integrations · policy
+  Felan clients -> local daemon         Felan cloud platform
+  presentation    state · policy         tenant state · integrations · policy
              \                             /
               \                           /
                portable Felan extensions
@@ -33,14 +33,18 @@ daemon's graceful stop command; it does not mutate upstream coordination state.
 
 | Layer | Owns | Does not own |
 | --- | --- | --- |
-| `apps/tui` | Local credentials, settings, session and agent paths, model scope, built-in allowlist, dependency onboarding, local subagent execution, lifecycle, and TUI presentation | Portable feature contracts or cloud policy |
+| `apps/felan` | CLI/TUI, ACP, headless, local onboarding presentation | Daemon implementation or cloud policy |
+| `apps/daemon` | Local credentials, settings, session and agent paths, model scope, built-in allowlist, execution, descendants and lifecycle | Dependency on the Felan client application |
 | `packages/ext-*` | Feature schemas, lifecycle behavior, validation, model-facing tools, and host interfaces for one capability | Ambient discovery, credentials, browser callbacks, or application-specific storage unless explicitly defined by its contract |
 | `@felan-ai/agent-core` | `AgentRuntime`, host runtime, base prompt, cwd instructions, model tiers, coding tools, capabilities, resource/session composition, and the public Pi composition surface | Tasks, memory scheduling, Prewalk, local settings, feature policy, and UI |
 | Pinned Pi packages | Provider adapters, session machinery, extension API, model streams, and core TUI primitives | Felan's host policy and feature ownership |
 
-The dependency direction is intentionally one-way: `apps/tui` composes
-extensions, extensions consume Agent Core contracts, and Agent Core composes
-the pinned Pi surface. Feature packages should not import the TUI.
+The dependency direction is intentionally one-way: `apps/felan` installs the
+exact `apps/daemon` package; the daemon composes extensions, extensions consume
+Agent Core contracts, and Agent Core composes the pinned Pi surface. Feature
+packages should not import either application. TUI, ACP, and headless are daemon
+clients; client-local themes are not daemon state. The Pi SDK also transitively
+includes `pi-tui`; no terminal-free payload is claimed.
 
 ## Session composition
 
@@ -52,9 +56,9 @@ For every root session the local host:
 4. selects explicit Agent Skills and the cwd-level `AGENTS.md`/`CLAUDE.md`
    file, then delivers it as hidden user-role request context outside the system
    prompt;
-5. binds local adapters such as OAuth storage, dependency onboarding, memory
-   coordination, and TUI presentation; and
-6. creates the Pi session and rebinds the presentation for the active session.
+5. binds daemon-owned adapters such as OAuth storage, dependency onboarding, and
+   memory coordination, while the client binds presentation; and
+6. creates the Pi session and sends projections to attached clients.
 
 New, resumed, forked, cloned, and imported root sessions receive the same
 composition process. Nested subagents receive their own session history while
@@ -90,10 +94,20 @@ untrusted workloads require it.
 The local application uses a fixed resource boundary. It imports only
 source-controlled built-ins, Felan-owned settings and prompt appends, explicit
 agent definitions, explicit Agent Skills, and the Agent Core-selected cwd
-instruction file, plus explicitly requested local Pi extension paths and
-optional standard Pi extension directories for the interactive root TUI.
+instruction file, plus external extension paths explicitly supplied by local
+clients and optional standard Pi extension directories configured per host.
 Ambient Pi packages, prompts, themes, project settings, and package resources
-are filtered. Project Pi extensions require a Felan folder-trust decision.
+are filtered. `piExtensions.user` and `piExtensions.project` default to off
+and apply to every newly created root, including ACP, headless, web-created
+and imported sessions. Children load their root's external extension paths;
+worker tool allowlists still limit active tools.
+
+Project extensions require Felan folder trust, directly or through a parent.
+Only the creating TUI may prompt; other creators skip folders without a
+decision and save none. Remote creates cannot supply explicit paths. Paths are
+fixed at creation: resume and clone/fork retain saved paths, while adoption of
+an unindexed transcript loads none. The separate `piExtensions.llamaCpp`
+integration remains root-only for any client, not inherited by children.
 
 This boundary is part of the local host, not a promise that every Felan host
 will make the same policy decision. The Felan cloud platform can provide

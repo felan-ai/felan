@@ -1,3 +1,4 @@
+import type { InsightsDashboard } from "./data.js";
 import type { Analytics } from "./types.js";
 
 export function generateMarkdown(analytics: Analytics): string {
@@ -85,7 +86,42 @@ function tableRow(cells: string[]): string {
 }
 
 function tableCell(value: string): string {
-  return inline(value).replace(/\|/g, "\\|");
+  return escapeMarkdown(inline(value));
+}
+
+/** Escapes untrusted text so it cannot form raw HTML, links, emphasis or table syntax. */
+export function escapeMarkdown(value: string): string {
+  return value.replace(/[\\`*_{}\[\]()#+!|~&<>]/gu, char => char === "&" ? "&amp;" : char === "<" ? "&lt;" : char === ">" ? "&gt;" : `\\${char}`);
+}
+
+export function generateDashboardMarkdown(dashboard: InsightsDashboard): string {
+  const { totals, range, sessions } = dashboard;
+  const lines: string[] = ["# Felan Code Insights Report", ""];
+  lines.push(`Range: ${escapeMarkdown(range.label)} (${range.from?.slice(0, 10) ?? "beginning"} to ${range.to.slice(0, 10)})`, "");
+  lines.push(
+    `- Sessions: ${formatNumber(totals.sessions)} of ${formatNumber(dashboard.loadedSessions)} loaded`,
+    `- Messages: ${formatNumber(totals.messages)}`,
+    `- Tokens: ${formatNumber(totals.tokens)}`,
+    `- Cost: ${formatCurrency(totals.cost)}`,
+    `- Total duration: ${formatDuration(totals.durationMinutes)}`,
+    `- Average session duration: ${formatDuration(totals.avgSessionMinutes)}`,
+    `- Average messages/session: ${formatNumber(totals.avgMessagesPerSession)}`,
+    `- Model-switching sessions: ${formatNumber(totals.multiModelSessions)}`,
+    `- Rage hits: ${formatNumber(dashboard.rage.total)}`,
+    ""
+  );
+  addTable(lines, "Projects", ["Project", "Sessions", "Messages", "Tokens", "Cost", "Duration"], dashboard.projects.slice(0, 10).map(project => [
+    project.name, formatNumber(project.sessions), formatNumber(project.messages), formatNumber(project.tokens), formatCurrency(project.cost), formatDuration(project.durationMinutes),
+  ]));
+  addTable(lines, "Models", ["Model", "Sessions", "Messages", "Tokens", "Cost", "Avg duration", "Tool errors/session"], dashboard.models.slice(0, 10).map(model => [
+    model.name, formatNumber(model.sessions), formatNumber(model.messages), formatNumber(model.tokens), formatCurrency(model.cost), formatDuration(model.avgSessionMinutes), formatNumber(model.toolErrorsPerSession),
+  ]));
+  addTable(lines, "Tools", ["Tool", "Calls"], dashboard.tools.slice(0, 10).map(tool => [tool.name, formatNumber(tool.count)]));
+  addTable(lines, `Sessions (page ${sessions.page + 1} of ${sessions.pageCount}, ${formatNumber(sessions.matched)} matching${sessions.query ? ` "${escapeMarkdown(sessions.query)}"` : ""})`, ["Start", "Project", "Messages", "Tokens", "Duration", "Cost", "Models"], sessions.rows.map(row => [
+    row.start, row.project, formatNumber(row.messages), formatNumber(row.tokens), formatDuration(row.durationMinutes), formatCurrency(row.cost), row.models.join(", ") || "—",
+  ]));
+  if (dashboard.reportPath) lines.push(`Full HTML report: ${escapeMarkdown(dashboard.reportPath)}`, "");
+  return lines.join("\n").replace(/\n{3,}/g, "\n\n").trimEnd() + "\n";
 }
 
 function inline(value: string): string {

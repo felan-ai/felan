@@ -1,0 +1,62 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Session protocol browser smoke</title>
+<script type="importmap">
+{"imports":{"typebox":"/typebox/index.mjs","typebox/value":"/typebox/value/index.mjs"}}
+</script>
+<pre id="result">RUNNING</pre>
+<script type="module">
+  const result = document.querySelector('#result');
+  try {
+    const p = await import('/protocol/index.js');
+    if (typeof globalThis.process !== 'undefined' || typeof globalThis.Buffer !== 'undefined') throw new Error('Node globals were injected');
+    const request = p.parseClientEnvelope({v:1,id:'browser-query',op:'host.status',params:{}});
+    const decoder = new p.JsonLineDecoder();
+    const frames = decoder.push(p.encodeFrame(request));
+    decoder.finish();
+    if (frames.length !== 1 || frames[0].op !== 'host.status') throw new Error('framing failed');
+    if (p.utf8Bytes('😀\ud800') !== 7 || p.codePointLength('😀\ud800') !== 2) throw new Error('Unicode counting failed');
+    const fragmented = p.encodeFrame({text:'😀'.repeat(5000)});
+    const splitDecoder = new p.JsonLineDecoder();
+    if (splitDecoder.push(fragmented.subarray(0, 11)).length || splitDecoder.push(fragmented.subarray(11))[0].text !== '😀'.repeat(5000)) throw new Error('fragmented framing failed');
+    splitDecoder.finish();
+    let surrogateRejected = false;
+    try { p.encodeFrame({text:'\ud800'}); } catch { surrogateRejected = true; }
+    if (!surrogateRejected) throw new Error('invalid Unicode accepted');
+    const prefix = {message:'m',id:'s',kind:'thinking',text:'😀',offset:1};
+    if (p.classifyTextDelta(prefix,{v:1,session:'session',stream:{message:'m',id:'s',kind:'thinking',offset:1},text:'next'}) !== 'append') throw new Error('Unicode stream failed');
+    if (p.classifyTextDelta(undefined,{v:1,session:'session',stream:{message:'m',id:'new',kind:'assistant',offset:0},text:'new'}) !== 'start') throw new Error('stream start failed');
+    const bootstrap = p.parseSchema(p.BootstrapHelloSchema,{v:2,id:'hello',op:'hello',params:{protocol:2,clientVersion:'new',kind:'tui',future:true}});
+    if (bootstrap.params.protocol !== 2 || 'future' in bootstrap.params) throw new Error('bootstrap compatibility failed');
+    const data = p.parseSchema(p.JsonValueSchema,{constructor:{prototype:'ordinary data'}});
+    if (data.constructor.prototype !== 'ordinary data' || ({}).polluted !== undefined) throw new Error('JSON data safety failed');
+    const response = p.parseServerEnvelope({v:1,re:'q',outcome:'accepted',result:{future:1}},'cancel');
+    if (Object.keys(response.result).length) throw new Error('additive response failed');
+    const errorCodes = ['invalid_request', 'unsupported_operation', 'protocol_mismatch', 'unavailable', 'authentication_required', 'busy',
+      'request_conflict', 'stale_request', 'expired', 'not_found', 'forbidden', 'already_resolved', 'storage_failure',
+      'ownership_lost', 'resync_required', 'indeterminate', 'request_capacity', 'target_mismatch'];
+    if (JSON.stringify(p.ERROR_CODES) !== JSON.stringify(errorCodes)) throw new Error('known error vocabulary failed');
+    let answerRejected = false;
+    const answers = Array.from({length:2}, (_,i) => ({questionId:'q'+i,choices:[],text:'a'.repeat(32768),comment:'c'.repeat(32768)}));
+    try {
+      p.parseClientEnvelope({v:1,id:'00000000-0000-7000-8000-000000000001',op:'interaction.answer',session:'s',params:{interactionId:'i',answer:{kind:'ask_user',answers}}});
+    } catch (error) { answerRejected = String(error).includes('Schema validation failed'); }
+    if (!answerRejected) throw new Error('unsupported interaction accepted');
+    let presentationRejected = false;
+    try {
+      p.parseSchema(p.KnownSessionChangeSchema,{type:'presentation.updated',presentation:{id:'widget',kind:'widget',text:'a'.repeat(p.LIMITS.structuredBytes)}});
+    } catch (error) { presentationRejected = String(error).includes('Encoded field limit'); }
+    if (!presentationRejected) throw new Error('nested presentation limit failed');
+    const event = p.parseServerEnvelope({v:1,session:'s',rev:1,change:{type:'message.completed',message:{id:'m',entryId:'e',role:'assistant',timestamp:1,
+      content:[{type:'tool_call',id:'c',name:'write',arguments:{content:'x'.repeat(100000),items:Array.from({length:2048},(_,i)=>i)}}]}}});
+    if (event.change.message.content[0].arguments.content.length !== 100000 || event.change.message.content[0].arguments.items.length !== 2048) throw new Error('large transcript data failed');
+    let rejected = false;
+    try { p.parseClientEnvelope({v:2,id:'q',op:'host.status',params:{}}); } catch { rejected = true; }
+    if (!rejected) throw new Error('breaking version accepted');
+    result.textContent = 'PASS: native browser ESM import, nested limits, large transcript JSON, known errors, framing, streams, bootstrap/additive compatibility, JSON safety; no Node globals';
+    document.title = 'PASS';
+  } catch (error) {
+    result.textContent = 'FAIL: ' + String(error);
+    document.title = 'FAIL';
+  }
+</script>

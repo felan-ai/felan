@@ -6,7 +6,7 @@ import { packagePaths } from './package-paths.mjs';
 
 const root = resolve(import.meta.dirname, '..');
 const destination = resolve(root, '.artifacts');
-const appPath = 'apps/tui';
+const appPath = 'apps/felan';
 rmSync(destination, { recursive: true, force: true });
 
 for (const packagePath of packagePaths) {

@@ -2,7 +2,7 @@ import type {
   FelanExtension,
   ToolDefinition,
 } from '@felan-ai/agent-core';
-import { associateExtensionConfig, StringEnum } from '@felan-ai/agent-core';
+import { StringEnum } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
 import type {
   AskUserHost,
@@ -22,7 +22,6 @@ import {
   validateAskUserHostOutcome,
   validateAskUserProgress,
 } from './normalize.js';
-import { ASK_USER_CONFIG } from './config.js';
 
 const OptionSchema = Type.Object({
   title: Type.String({ minLength: 1, description: 'Short title for this option' }),
@@ -136,12 +135,10 @@ export function createAskUserExtension(host: AskUserHost): FelanExtension {
           return toolError(`Ask-user host failed: ${errorMessage(error)}`);
         }
       },
-      ...host.toolPresentation,
     };
 
     pi.registerTool(tool);
   };
-  associateExtensionConfig(extension, ASK_USER_CONFIG);
   return extension;
 }
 
@@ -292,15 +289,8 @@ export type {
   AskUserSingleSelectLayout,
   AskUserToolDetails,
   AskUserToolErrorDetails,
-  AskUserToolPresentation,
 } from './contracts.js';
-export {
-  ASK_USER_CONFIG,
-  DEFAULT_ASK_USER_CONFIG,
-  askUserConfigFromSettings,
-  normalizeAskUserShortcut,
-} from './config.js';
-export type { AskUserConfig } from './config.js';
+
 export {
   MAX_ASK_USER_QUESTIONS,
   normalizeAskUserRequest,

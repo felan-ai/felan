@@ -1,13 +1,15 @@
 import {
   selectModelForTier,
   uuidv7,
-  type Api,
+  MODELS_SERVICE,
   type AssistantMessage,
   type Context,
+  type ConfiguredFelanExtension,
   type ExtensionContext,
   type FelanExtension,
   type FelanExtensionAPI,
-  type Model,
+  type ModelReference,
+  type TextModelInfo,
   type SessionEntry,
 } from '@felan-ai/agent-core';
 import type {
@@ -17,15 +19,16 @@ import type {
   SessionTitlePreparation,
   SessionTitleSkipReason,
 } from './contracts.js';
+import { createSessionTitleModelsHost, sessionTitleModelInfo } from './models.js';
 
 export * from './contracts.js';
+export { formatSessionTerminalTitle } from './view.js';
 
 const SESSION_TITLE_MAX_LENGTH = 80;
 const SESSION_TITLE_MAX_TOKENS = 64;
 const SESSION_TITLE_PROMPT_MAX_LENGTH = 4_000;
 const SESSION_TITLE_TIMEOUT_MS = 30_000;
 const SESSION_TITLE_MAX_ATTEMPTS = 3;
-const TERMINAL_CONTROL_CHARACTERS = /[\u0000-\u001F\u007F-\u009F]/gu;
 const SESSION_TITLE_SYSTEM_PROMPT = [
   'Generate a concise navigation title for this work session.',
   'First determine the predominant language of the initial request.',
@@ -35,26 +38,6 @@ const SESSION_TITLE_SYSTEM_PROMPT = [
   'Return exactly one plain-text line with 3 to 10 words and no quotes, prefix, or explanation.',
   'Capture the main goal, stay within 80 characters, and make the title suitable for display in a UI.',
 ].join(' ');
-
-export function formatSessionTerminalTitle(
-  sessionName: string | undefined,
-  cwd: string,
-): string {
-  const normalizedName = sanitizeTerminalTitlePart(sessionName ?? '');
-  if (normalizedName) return normalizedName;
-
-  const normalizedCwd = cwd.replace(/[\\/]+$/gu, '');
-  if (!normalizedCwd) return sanitizeTerminalTitlePart(cwd) || '.';
-  const separatorIndex = Math.max(
-    normalizedCwd.lastIndexOf('/'),
-    normalizedCwd.lastIndexOf('\\'),
-  );
-  return sanitizeTerminalTitlePart(normalizedCwd.slice(separatorIndex + 1)) || '.';
-}
-
-function sanitizeTerminalTitlePart(value: string): string {
-  return value.replace(TERMINAL_CONTROL_CHARACTERS, ' ').replace(/\s+/gu, ' ').trim();
-}
 
 export function createSessionTitleExtension(
   host: SessionTitleHost,
@@ -124,7 +107,7 @@ async function generateSessionTitle(
       sessionId,
       prompt,
       mode: ctx.mode,
-      currentModel: ctx.model,
+      currentModel: sessionTitleModelInfo(ctx.model),
       parentSession,
       signal,
     });
@@ -267,8 +250,8 @@ function hasPriorUserMessage(entries: readonly SessionEntry[]): boolean {
 
 function selectSessionTitleModel(
   preparation: SessionTitlePreparation,
-  preferredModel: Model<Api> | undefined,
-): Model<Api> | undefined {
+  preferredModel: ModelReference | undefined,
+): TextModelInfo | undefined {
   const candidates = preparation.models.filter(
     (model) => model.provider === preparation.provider && model.input.includes('text'),
   );
@@ -283,11 +266,11 @@ function selectSessionTitleModel(
     (SESSION_TITLE_SYSTEM_PROMPT.length
       + Math.min(preparation.prompt.trim().length, SESSION_TITLE_PROMPT_MAX_LENGTH)) / 4,
   ));
-  const estimatedCost = (model: Model<Api>) => (
+  const estimatedCost = (model: TextModelInfo) => (
     estimatedInputTokens * model.cost.input + SESSION_TITLE_MAX_TOKENS * model.cost.output
   );
 
-  return candidates.slice(1).reduce<Model<Api>>((cheapest, candidate) => {
+  return candidates.slice(1).reduce<TextModelInfo>((cheapest, candidate) => {
     const costDifference = estimatedCost(candidate) - estimatedCost(cheapest);
     if (costDifference < 0) return candidate;
     if (costDifference === 0 && candidate.id.localeCompare(cheapest.id) < 0) return candidate;
@@ -391,3 +374,17 @@ async function reportError(
 function errorMessage(error: unknown): string {
   return error instanceof Error && error.message ? error.message : String(error);
 }
+
+const sessionTitleExtension: ConfiguredFelanExtension = Object.assign(
+  (pi: FelanExtensionAPI) => {
+    const models = pi.services.get(MODELS_SERVICE);
+    if (!models) {
+      pi.runtime.logger.debug({ component: 'session-title', reason: 'models-unavailable' }, 'Session title generation disabled.');
+      return;
+    }
+    return createSessionTitleExtension(createSessionTitleModelsHost(models, pi.runtime.logger))(pi);
+  },
+  { serviceRequirements: { optional: [MODELS_SERVICE] } },
+);
+
+export default sessionTitleExtension;

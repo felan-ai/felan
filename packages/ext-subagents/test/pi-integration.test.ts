@@ -13,7 +13,8 @@ import {
   type TranscriptContext,
 } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createSubagentsExtension, type SubagentHost } from '../src/index.js';
+import type { SessionsService } from '@felan-ai/agent-core';
+import { createSubagentsExtension } from '../src/index.js';
 
 const temporaryPaths: string[] = [];
 
@@ -55,20 +56,11 @@ describe('Pi subagent-routing integration', () => {
         }),
       },
     });
-    const host = {
-      descriptors: [{ id: 'explore', description: 'Read-only investigation', allowNesting: false }],
-      policy: { maxPromptBytes: 10_000, maxDescriptionBytes: 1_000, maxSteerBytes: 1_000 },
-      attachParent: vi.fn(() => () => {}),
-      spawn: vi.fn(),
-      list: vi.fn(async () => ({ ok: true as const, value: [] })),
-      getResult: vi.fn(),
-      steer: vi.fn(),
-      cancel: vi.fn(),
-    } as unknown as SubagentHost;
+    const sessions = { current: { id: 'root', root: 'root' }, executions: vi.fn(async () => ({ items: [] })) } as unknown as SessionsService;
     const result = await createAgentCoreSession({
       runtime,
       extensionPackages: ['@felan-ai/ext-subagents'],
-      importExtension: async () => ({ default: createSubagentsExtension(host) }),
+      importExtension: async () => ({ default: createSubagentsExtension(sessions, [{ descriptor: { id: 'explore', description: 'Read-only investigation', allowNesting: false }, prompt: 'Inspect' }]) }),
       modelRuntime,
       settingsManager: SettingsManager.inMemory(),
       sessionManager,

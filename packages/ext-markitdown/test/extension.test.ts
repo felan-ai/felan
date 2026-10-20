@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { basename, join, sep } from 'node:path';
 import {
   HostAgentRuntime,
+  createExtensionServiceAccess,
+  createFelanServiceRegistry,
   type AgentRuntime,
   type ExecOptions,
   type ExtensionContext,
@@ -590,6 +592,8 @@ function createHarness(runtime: AgentRuntime, options: {
   const activeTools = ['read'];
   const pi = {
     runtime,
+    services: createExtensionServiceAccess(createFelanServiceRegistry(), markitdownExtension.serviceRequirements!),
+    ui: { notify: async ({ text, level }: { text: string; level: string }) => { notifications.push({ message: text, type: level }); } },
     agentDir: '/agent',
     ...(options.savings === undefined ? {} : { savings: options.savings }),
     registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),

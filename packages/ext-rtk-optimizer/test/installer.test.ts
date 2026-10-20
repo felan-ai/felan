@@ -44,7 +44,7 @@ describe('managed RTK installation', () => {
     runtime = new MemoryRuntime(async (command, args) => {
       if (command === 'curl') {
         const output = args.at(-1)!;
-        runtime.files.set(output.replace('/agent-storage/', ''), new TextEncoder().encode('reviewed installer'));
+        runtime.fileContents.set(output.replace('/agent-storage/', ''), new TextEncoder().encode('reviewed installer'));
         return result();
       }
       if (command === '/usr/bin/env') return result('installed');
@@ -69,14 +69,14 @@ describe('managed RTK installation', () => {
     ]);
     expect(runtime.execCalls.find((call) => call.command === 'curl')?.args).toContain('65536');
     expect(statuses).toHaveLength(2);
-    expect([...runtime.files.keys()].some((path) => path.endsWith('.sh'))).toBe(false);
+    expect([...runtime.fileContents.keys()].some((path) => path.endsWith('.sh'))).toBe(false);
   });
 
   it('refuses changed installer content and unsupported Windows runtimes', async () => {
     let runtime!: MemoryRuntime;
     runtime = new MemoryRuntime(async (command, args) => {
       if (command === 'curl') {
-        runtime.files.set(args.at(-1)!.replace('/agent-storage/', ''), new TextEncoder().encode('changed'));
+        runtime.fileContents.set(args.at(-1)!.replace('/agent-storage/', ''), new TextEncoder().encode('changed'));
         return result();
       }
       return result();

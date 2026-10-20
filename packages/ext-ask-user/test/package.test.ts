@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 const packageRoot = resolve(import.meta.dirname, '..');
 
 describe('@felan-ai/ext-ask-user package boundary', () => {
-  it('publishes the portable root and explicit TUI adapter with pinned metadata', async () => {
+  it('publishes the portable root without a client adapter with pinned metadata', async () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-ask-user',
@@ -13,15 +13,15 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
       license: 'MIT',
       engines: { node: '>=22.19.0' },
       dependencies: {
-        '@earendil-works/pi-tui': 'catalog:pi',
+        '@felan-ai/session-protocol': 'workspace:*',
         typebox: '1.1.38',
       },
       peerDependencies: { '@felan-ai/agent-core': 'catalog:agent-core' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
       exports: {
-        '.': { types: './dist/index.d.ts', import: './dist/index.js' },
-        './tui': { types: './dist/tui.d.ts', import: './dist/tui.js' },
+        '.': { types: './dist/extension.d.ts', import: './dist/extension.js' },
+
       },
     });
   });

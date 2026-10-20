@@ -8,18 +8,19 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 
 | Path | Purpose |
 | --- | --- |
-| `settings.json` | Built-in enablement, extension configuration, local TUI behavior, model scope, and subagent limits |
+| `settings.json` | Local host configuration provider: built-in enablement, extension behavior, model scope, and subagent limits |
+| `tui/settings.json` | Client-owned theme, keybindings, and terminal display preferences |
 | `trust.json` | Remembered folder trust for optional project Pi extensions |
 | `models.json` | Pi provider credentials, custom models, and model metadata overrides |
 | `APPEND_SYSTEM.md` | Optional local application prompt append |
 | `mcp.json` | Felan-owned remote OAuth MCP servers |
 | `<workspace>/.mcp.json` | Project MCP entries; higher precedence by server name |
 | `agents/*.md` | Felan-specific user agent definitions |
-| `themes/*.json` | User Pi themes; same JSON `name` as `felan-light` or `felan-dark` shadows the packaged theme |
+| `themes/*.json` | Client-local user themes; same JSON `name` as `felan-light` or `felan-dark` shadows the packaged theme |
 
 The local host does not read Pi project settings. Configuration for ambient Pi
 extensions, prompts, packages, themes, or skills is filtered by default. Load a
-local Pi extension explicitly for the interactive root TUI with repeatable
+external extension explicitly from a local client with repeatable
 `--extension`/`-e` flags, or opt in to Pi's standard directories with
 `piExtensions` as described below. Neither path installs network or package
 sources.
@@ -62,10 +63,7 @@ browser and Powerline extensions:
   "extensionConfig": {
     "prewalk": { "entryApproval": "allow", "planReview": "skip" },
     "outputStyle": { "style": "concise" },
-    "tasks": { "displayMode": "inline" },
-    "contextView": { "displayMode": "inline" },
     "codebaseMemory": { "maxCacheBytes": 0 },
-    "promptHistory": { "displayMode": "inline" },
     "codex": { "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
     "sessionCompaction": { "method": "classifier", "model": "inherit" },
     "fusion": {
@@ -87,16 +85,11 @@ browser and Powerline extensions:
   "codemode": {
     "mode": "off"
   },
-  "felanTui": {
-    "toolDisplay": "grouped"
-  },
   "piExtensions": {
     "user": false,
     "project": false,
     "llamaCpp": false
-  },
-  "editorPaddingX": 1,
-  "tuiMode": "fullscreen"
+  }
 }
 ```
 
@@ -120,10 +113,11 @@ Defaults:
 
 Set `piExtensions.llamaCpp` to `true` in Felan's global `settings.json` to
 enable Pi's bundled llama.cpp provider and model-management commands for
-interactive root sessions. It is off by default and does not enable Pi's other
-built-in extensions or ambient extension discovery. The external Hugging Face
-`pi-llama` package is separate and is not enabled by this setting. Restart or
-resume the interactive session to apply the change.
+root sessions created by any client, but not child sessions. It is off by
+default and does not enable Pi's other built-in extensions or ambient extension
+discovery. The external Hugging Face `pi-llama` package is separate and is not
+enabled by this setting. Restart or
+resume the root session to apply the change.
 
 Felan does not install or start llama.cpp. Start an existing llama.cpp router
 server, then use `/login llama.cpp` to configure its URL and optional API key.
@@ -168,14 +162,30 @@ Felan's integration, not separately loaded extensions.
 
 ### Runtime resources and session behavior
 
-When `piExtensions.user` is `true`, interactive root TUI sessions load
-`~/.pi/agent/extensions`. When `piExtensions.project` is `true`, they load
+External extensions are configured per host, not per session or client.
+`piExtensions.user` loads `~/.pi/agent/extensions`; `piExtensions.project` loads
 `<cwd>/.pi/extensions` only after a Felan folder-trust decision stored in
-`$FELAN_AGENT_DIR/trust.json`. A new folder with project extensions asks once;
-parent-folder decisions apply. Trusting a folder authorizes those extension
-files only. It does not load Pi project settings, packages, skills, prompts, or
-themes. These directories are not loaded in headless, ACP, or subagent sessions.
-`--extension`/`-e` remains additive.
+`$FELAN_AGENT_DIR/trust.json`. Both default to `false` and apply to every new
+root: TUI, ACP, headless/print mode, web-created sessions through the remote
+connector, and `session.import`.
+
+Only the TUI creating a session asks about a folder without a trust decision.
+ACP, headless and web creates skip that folder without saving a decision, so a
+later TUI create can still ask. Folders already trusted directly or through a
+parent load for every creator. Trust authorizes those extension files only;
+it does not load Pi project settings, packages, skills, prompts, or themes.
+
+`--extension`/`-e` remains additive for local clients; remote creates cannot
+supply explicit paths. External extension paths are fixed at creation. Resume
+keeps saved paths, clone/fork keep the source session's paths, and adopting an
+existing unindexed transcript on attach loads no external extensions. `-e`
+passed while resuming is ignored with a notice and applies to new sessions.
+Children, including subagents, execution children and workers, load the same
+external extension paths as their root; a worker's tool allowlist still limits
+its active tools.
+
+Enabling these settings runs external extension code with your permissions in
+ACP, headless, web-created and child sessions as well as the TUI.
 
 `builtinExtensions.sessionTitle` controls automatic names for interactive root
 sessions. Disable it to keep the first prompt as the session-picker fallback.
@@ -206,8 +216,8 @@ to `inherit`, which uses the active session model. It also accepts `xhigh`,
 `high`, `medium`, and `low`; each selects an exact tier from the allowed session
 catalog, preferring the active provider/family before crossing providers. If no
 model exists in the requested tier, compaction falls back to `inherit`. The
-setting is also available in `/settings` and as
-`--session-compaction-model <inherit|xhigh|high|medium|low>`, and applies to a
+setting is also available in `/settings` and through
+`--session-compaction-model low`, and applies to a
 newly constructed runtime. Generation or validation failures before Pi
 accepts a replacement fall through to native compaction; a failure after Pi
 accepts a replacement cannot automatically rerun native compaction. Every
@@ -216,15 +226,48 @@ one bounded metadata-only diagnostic custom entry. The diagnostic is not shown,
 sent to the model, or returned by `session_recall`; it records delegation rather
 than native success. User cancellation is not reported as fallback.
 
-New installations use Pi's `fullscreen` TUI mode and editor padding `1`.
-Existing `tuiMode` and `editorPaddingX` values in `settings.json` remain
-authoritative, so `regular` mode and zero padding continue to work. Change
-either value from `/settings`; the choice is saved for future sessions. Felan Code
-uses Pi's native prompt editor frame rather than adding a second box around it.
-On Windows, fullscreen mode also normalizes terminal mouse modes so supported
-terminals send wheel events to the transcript instead of treating them as
-prompt-editor arrow keys. If a terminal or PTY does not pass mouse reports
-through, use `PageUp`/`PageDown` or switch to `regular` mode.
+### Terminal preferences
+
+The TUI owns `$FELAN_AGENT_DIR/tui/settings.json`. Themes, keybindings, thinking
+visibility, tool display, image rendering, output padding, editor padding,
+ask-user and task/history presentation, Powerline rendering,
+autocomplete size, hardware cursor, terminal progress, clear-on-shrink, Mermaid,
+startup verbosity, scrollbar, copy-on-select, and wheel scrolling stay on the
+client. They never enter the session protocol or daemon configuration. Web and
+chat clients own their own display preferences.
+
+For example:
+
+```json
+{
+  "theme": "felan-light/felan-dark",
+  "hideThinking": false,
+  "toolDisplay": "grouped",
+  "editorPadding": 1,
+  "keybindings": { "app.model.select": "alt+m" }
+}
+```
+
+Until a preference is present in this file, the TUI reads its Felan 0.28.3 value
+from `settings.json` and, for keybindings, `keybindings.json`. The first write
+copies all effective legacy preferences into the client file. It never writes
+these preferences back to either legacy file. Explicit launch theme/keybinding
+overrides remain active without changing saved defaults. Invalid legacy fields
+are skipped with one notice; other valid fields remain available and can be
+saved. Invalid values in the client file must be corrected before saving.
+Writes re-read the current file, merge only the edited fields, and atomically
+replace and sync the file and its parent directory. Editor padding defaults to
+one cell; output padding renders as zero when set to `0`, otherwise one cell,
+matching 0.28.3.
+
+The current TUI uses the fullscreen layout. `/settings` edits display preferences
+immediately and saves them locally; execution defaults apply to new sessions or
+an explicit `/reload`. Model and thinking changes for an attached session remain
+daemon session state. Persistent changes use the host configuration provider.
+`config.get` reports `writable` for the requested scope; a read-only host hides
+persistent save controls while session selection and local display remain usable.
+The local provider supports global writes, not project writes. No cloud provider
+is included.
 
 The dependency manager stores its revisioned onboarding manifest under
 `felanTui.onboarding`. It is internal state; prefer `/dependencies` over editing
@@ -459,9 +502,10 @@ values and persists them to `settings.json`.
 skips otherwise. The example above uses the unattended policy explicitly, so
 model entry is allowed and plan review is skipped.
 
-CLI options are generated from enabled extension declarations. For example:
+CLI session overrides use a generic JSON object, validated by the host against
+the enabled extension declarations. For example:
 
-```ts
+```sh
 felan --prewalk-entry-approval allow --prewalk-plan-review skip
 ```
 
@@ -477,16 +521,9 @@ values automatically.
 
 ### Tasks
 
-The `extensionConfig.tasks.displayMode` setting controls `/tasks` and
-`Ctrl+Shift+T`. It defaults to `inline`, which replaces the current content with
-the task list until it is closed. Set it to `overlay` for a centered popup. The
-view includes list, detail, and dependency-graph modes; details show both
-prerequisites and dependents with their current availability and titles.
-
-The setting is also available in `/settings` and as the generated
-`--tasks-display-mode` CLI option. It takes effect in a newly constructed
-runtime. Inline output uses two horizontal separators; overlay output uses a
-complete four-edge frame.
+The TUI owns `presentation.tasks.displayMode` in `tui/settings.json` (`inline`
+or `overlay`). Change it in `/settings` or use `--tasks-display-mode overlay` as
+a launch override. This does not change task execution or the daemon.
 
 ### Context View
 
@@ -503,21 +540,17 @@ ordinary conversation messages remain under Messages.
 
 ### Prompt History
 
-The `extensionConfig.promptHistory.displayMode` setting controls the prompt
-history picker opened by `Ctrl+R` or `Cmd+R`. It defaults to `inline`; set it to
-`overlay` for a centered popup. Prompt history is TUI-only. The local host reads
-only bounded, read-only session files from its configured session store; older
-prompts may be unavailable when a session file exceeds the scan limit.
-Inline output uses two horizontal separators; overlay output uses a complete
-four-edge frame.
+The TUI owns `presentation.promptHistory.displayMode` in `tui/settings.json`.
+The default is `inline`; select `overlay` in `/settings` or use
+`--prompt-history-display-mode overlay` for this launch.
 
 ### Ask User
 
-The `extensionConfig.askUser` settings control the local question presentation:
+The TUI owns `presentation.askUser` in `tui/settings.json`:
 
 ```json
 {
-  "extensionConfig": {
+  "presentation": {
     "askUser": {
       "displayMode": "inline",
       "singleSelectLayout": "auto",
@@ -528,13 +561,9 @@ The `extensionConfig.askUser` settings control the local question presentation:
 }
 ```
 
-The defaults are `inline`, `auto`, `alt+o`, and `ctrl+g`. Set `displayMode` to
-`overlay` for a centered popup, or set `singleSelectLayout` to `list` to hide
-the wide-terminal details pane. Inline output uses two horizontal separators; overlay
-output uses a complete four-edge frame. The shortcut fields accept a key or chord;
-`off`, `none`, `disabled`, or an empty value disables a shortcut. Per-call
-`ask_user` values override these defaults. The same fields are available in
-`/settings` and as generated `--ask-user-*` CLI options.
+Edit these preferences in `/settings` or use the corresponding
+`--ask-user-*` launch flags. Per-call `ask_user` presentation hints remain in the
+tool contract; clients may ignore them. The generic form adapter ignores them.
 
 ### Output style
 
@@ -581,11 +610,9 @@ directory. The local host reads the file when it binds the extension for root
 and child sessions; empty, missing, or unreadable files are errors. Setting both
 `instructions` and `instructionsFile` is an error.
 
-The same value can be selected from the CLI with `--output-style concise` or
-from the interactive `/settings` screen. Custom text is available through
-`--output-style-instructions` or the corresponding `/settings` field. Custom
-files are available through `--output-style-instructions-file` or the
-`instructionsFile` `/settings` field.
+The same values can be selected in `/settings` or with generic session overrides:
+`--output-style concise`. For custom output,
+use the `instructions` or `instructionsFile` fields in the same object.
 
 The former `caveman` value has been replaced by `concise`. Existing
 configurations should change either legacy `"outputStyle": "caveman"` or
@@ -698,67 +725,51 @@ of using the environment.
 
 ### Powerline
 
-All Powerline configuration lives under `extensionConfig.powerline` in
-`settings.json`, through `/settings`, or through the generated scalar CLI
-options. The complete shape is:
+Powerline separates collected data from TUI rendering. Host behavior settings
+remain under `extensionConfig.powerline` in `settings.json`:
 
 ```json
-{
-  "style": "powerline",
-  "charset": "text",
-  "autoWrap": true,
-  "padding": 1,
-  "lines": [
-    { "segments": { "directory": { "enabled": true, "style": "fish" } } },
-    { "segments": { "status": { "enabled": true }, "version": { "enabled": true, "align": "right" } } }
-  ]
-}
+{ "showWorkingTree": true, "showStashCount": false, "periodDays": 7, "maxWindows": 3 }
 ```
 
-The subscription segment supports ChatGPT usage on native `openai` models when
-both native OpenAI OAuth and a separate Codex OAuth login are configured for
-the same ChatGPT account/workspace; sign in to the companion with
-`/login openai-codex`. Keep inference on `openai`; the TUI uses only the Codex
-credential for companion usage requests. The status bar shows shared-plan
-primary/secondary windows, not app-specific quotas. The companion ChatGPT
-endpoints are undocumented, and matching the native app registration is a
-safeguard rather than independent account verification. When companion usage
-is unavailable or cannot be matched, the status bar displays
-`ChatGPT usage: web only`; review usage at
-<https://chatgpt.com/settings/usage>. Native OpenAI usage is held only in the
-current session and is not shared with cached Codex usage. Native OpenAI OAuth
-tokens are never sent to ChatGPT backend endpoints.
+The TUI owns `presentation.powerline` in `tui/settings.json`: `style` (`minimal`,
+`powerline`, `capsule`), `charset` (`text`, `unicode`), `autoWrap`, `padding`, and
+ordered `lines`. Each line contains `segments`; a segment has `enabled`, optional
+`align` (`left` or `right`), optional `colorKey`, and display options such as
+directory `style`, session `type`, or subscription `showReset`. Data-collection
+options do not belong in this layout. The default is a three-line minimal text
+footer, with padding 1 and wrapping enabled. The third line appears only when
+extension statuses exist; the default layout has no version segment. External
+Git changes appear on the next extension event or within the 60-second cache
+refresh, rather than immediately through a client-side branch watcher.
 
-`lines` replaces the default layout, so preserve any default segments you want
-when adding a custom line. Each line contains supported
-`directory`, `git`, `model`, `session`, `subscription`, `savings`, `context`,
-`status`, and optional `version` segments with their documented segment fields.
-The version segment displays the local Felan version and is not enabled in the
-default layout. The default layout adds
-`{ "savings": { "enabled": true, "align": "right", "periodDays": 7 } }` after
-Git on the first line. It shows estimated API-equivalent savings across all
-retained local measurements for seven inclusive UTC calendar days as
-`Est. Savings(7d): $33.00`; set `periodDays` to a positive integer from 1 to
-3650 for a different period. A `~` before the amount indicates incomplete
-pricing coverage.
-Powerline inherits the active Pi theme and maps its semantic segment roles to
-Pi foreground/background tokens. There is no second Powerline palette or
-color mode. Felan Code supplies `felan-light` and `felan-dark` and defaults to
-`felan-light/felan-dark` when no Pi theme is saved. User JSON in `themes/` can
-shadow those IDs by name. Auto light/dark follows the terminal background
-(OSC 11), not the OS color-scheme (CSI 997). Changes take effect in a newly
-constructed process/session. The built-in is enabled by default; set
-`builtinExtensions.powerline` to `false` to remove it.
+Use `/settings` or the TUI-only `--powerline-style`, `--powerline-charset`,
+`--powerline-auto-wrap`, `--powerline-padding`, and `--powerline-lines` flags.
+They never reach the daemon. Disable the extension with
+`builtinExtensions.powerline: false` to stop collection and publication.
 
-Felan Code keeps its theme IDs namespaced instead of replacing Pi's `dark` and
-`light`: Pi gives its built-in IDs precedence during HTML export. The
-interactive startup view is compact by default; press `Ctrl+O` to show full
-startup help and loaded resources.
+The `felan.powerline@3.0.0` hint carries structured values and semantic color roles,
+not rendered text or terminal layout. ACP and headless clients retain the generic
+plain-data fallback. Collection and publication do not require a TUI attachment.
 
 ### Extension configuration
 
+Execution flags such as `--codex-priority ultrafast`, `--codex-fast`,
+`--no-codex-fast`, `--codex-verbosity low`, `--fusion-thinking high` and
+`--fusion-participants '["openai/model-a","anthropic/model-b"]'` are generated
+from built-in extension definitions. They set session overrides in interactive
+and headless (`--mode text|json`) launches; they never persist defaults. ACP
+accepts no extension flags, matching 0.28.3. `--extension-config` is not supported.
+
+Display flags remain TUI-only, including their 0.28.3 names and value syntax.
+Until a TUI preference is saved, the TUI reads the corresponding released
+`extensionConfig.<id>.<field>` value from `settings.json` without writing it.
+Saved local values take precedence per field. Other clients keep their own
+presentation preferences.
+
+
 Every enabled configurable extension declares typed settings. Felan Code exposes the
-same declarations through `settings.json`, generated CLI options, `/settings`,
+same declarations through `settings.json`, generated per-field CLI flags, `/settings`,
 and the Agent Core programmatic API. Values are validated before activation;
 unknown extension or field names are errors. `/settings` first lists Pi settings
 and configurable extensions; select an extension to view its fields. Type to

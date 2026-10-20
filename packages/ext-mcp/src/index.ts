@@ -129,6 +129,7 @@ export function createMcpExtension(options: CreateMcpExtensionOptions): FelanExt
 
   return (pi) => {
     let state: SessionState | undefined;
+    let sessionController: AbortController | undefined;
     let initializing: Promise<void> = Promise.resolve();
     let generation = 0;
 
@@ -162,16 +163,19 @@ export function createMcpExtension(options: CreateMcpExtensionOptions): FelanExt
 
     pi.on('session_start', async (_event, ctx) => {
       const currentGeneration = ++generation;
+      sessionController?.abort(new Error('MCP session stopped'));
+      const controller = new AbortController();
+      sessionController = controller;
       const previous = state;
       state = undefined;
+      const previousInitialization = initializing;
       initializing = (async () => {
+        await previousInitialization.catch(() => {});
         await closeState(previous);
         if (currentGeneration !== generation) return;
-        const controller = new AbortController();
         const oauth = await options.oauthHost.createSession({
           sessionId: ctx.sessionManager.getSessionId(),
           signal: controller.signal,
-          extensionContext: ctx,
         });
         const next: SessionState = {
           controller,
@@ -196,6 +200,7 @@ export function createMcpExtension(options: CreateMcpExtensionOptions): FelanExt
 
     pi.on('session_shutdown', async () => {
       ++generation;
+      sessionController?.abort(new Error('MCP session stopped'));
       await initializing.catch(() => {});
       const current = state;
       state = undefined;
@@ -498,9 +503,7 @@ async function executeMcpAction(
     return textResult(authenticationText(serverName, outcome), {
       server: serverName,
       status: outcome.status,
-      ...('interactionId' in outcome && outcome.interactionId !== undefined
-        ? { interactionId: outcome.interactionId }
-        : {}),
+
     });
   }
   if (action === 'logout') {
@@ -577,7 +580,7 @@ async function authenticate(
   serverName: string,
   signal: AbortSignal | undefined,
   ctx: ExtensionContext,
-  reason: 'explicit' | 'connection-required',
+  reason: 'explicit',
 ): Promise<McpOAuthAuthenticationOutcome> {
   const server = state.manager.server(serverName);
   const outcome = await state.oauth.authenticate(server, {
@@ -592,9 +595,6 @@ async function authenticate(
 function authenticationText(serverName: string, outcome: McpOAuthAuthenticationOutcome): string {
   if (outcome.status === 'authenticated') {
     return `Authenticated with MCP server ${serverName}. Retry the requested MCP operation.`;
-  }
-  if (outcome.status === 'pending') {
-    return `${outcome.message} Authentication for ${serverName} is pending; do not retry until the consumer reports completion.`;
   }
   return outcome.message;
 }

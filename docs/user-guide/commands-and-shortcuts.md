@@ -9,7 +9,9 @@ and first-party extensions.
 | Command | Purpose |
 | --- | --- |
 | `/cwd [directory]` | Start a fresh session in another directory |
-| `/restart` | Restart Felan Code and resume the current session |
+| `/restart` | Restart the daemon and Felan Code, then resume the current session |
+| `/reload` | Reload the session configuration; background processes keep running |
+| `/reconnect` | Reconnect to the daemon now, starting it if none is running |
 | `/dependencies` | Inspect, install, enable, or disable external runtime dependencies |
 | `/memory` | Show project-memory status and inspect retained runs |
 | `/memory run` | Process pending memory evidence now, recovering backoff when needed |
@@ -17,6 +19,10 @@ and first-party extensions.
 | `/agents` | Open the subagent navigator |
 | `/tools` | Open the inline inspector for complete root-session tool arguments and results |
 | `/savings` | Show estimated API-equivalent savings for the current root session (`project`, `all`, or `details` also supported) |
+| `/daemon status` | Show daemon state and active counts |
+| `/daemon logs` | Show the first daemon log page |
+| `/daemon stop` / `/daemon restart` | Stop/restart the daemon; when runs, subagents, interactive PTY or foreground processes, or pending questions would be interrupted, asks once and then interrupts them. Detached background processes survive a restart |
+| `/close` | Close the current session; `/exit` detaches instead |
 
 `/dependencies`, `/memory`, and `/memory open` require the interactive TUI.
 
@@ -27,10 +33,18 @@ target directory, rebuilding cwd-bound settings, instructions, skills, tools,
 memory, and subagents. The parent shell's directory is unchanged; use `/cwd .`
 to start a new session for the current directory.
 
-Use `/restart` after rebuilding Felan Code from source to load fresh Felan Code, Agent
-Core, and extension modules without losing the active session history. Unlike
-Pi's `/reload`, this replaces the Node process; it is available only in the
-interactive TUI and requires the agent to be idle.
+`/restart` restarts the daemon and then Felan Code itself, resuming the current
+session, so rebuilt daemon and client code both take effect. The TUI shows
+`Daemon restarting…`, waits for the daemon to come back, and restarts the
+client process with the same launch options. `/daemon restart [force]`
+restarts only the daemon and reattaches the current session in place without
+restarting the client. In both cases detached background processes keep
+running and are rediscovered; interactive (PTY) processes end.
+
+When the daemon connection drops, the TUI shows `Daemon disconnected ·
+reconnecting in Ns · /reconnect to retry now` and retries automatically with
+backoff until the daemon is back. Automatic retries never start a daemon;
+`/reconnect` retries immediately and starts one if none is running.
 
 ## Extension commands
 
@@ -49,7 +63,7 @@ interactive TUI and requires the agent to be idle.
 | `/markitdown install` | Explicitly install the managed converter |
 | `/progressive-context` | Show progressively loaded nested instructions |
 | `/context` | Show estimated current context-window usage inline (or in the configured overlay) |
-| `/insights` | Generate a local Felan Code session analytics snapshot with date/session filters, charts, calendar, and optional Savings breakdowns |
+| `/insights` | Open a local Felan Code session analytics dashboard (Overview, Models, Projects, Sessions, Rage). `o` opens the static HTML snapshot after local confirmation |
 | `/rtk` | Open interactive RTK settings |
 | `/rtk show` | Show RTK configuration and runtime status |
 | `/rtk verify` | Recheck the active runtime for RTK |
@@ -63,7 +77,7 @@ reparses new or changed files, and replaces the self-contained static HTML
 report. Opening that file later does not read live data; run `/insights` again
 to regenerate it. `--refresh` only forces unchanged files to be reparsed. Date
 ranges use event timestamps, including the start and excluding the end, and
-group retained subagent activity under its root session.
+group retained subagent activity under its root session. The dashboard's initial range is 30 days unless `--since` is given; its range keys recompute from the loaded transcripts. `--no-open` skips the dashboard, and the HTML report is still written.
 
 ## Common Pi commands
 

@@ -7,15 +7,29 @@ clients, credentials, provider selection settings, or ambient discovery.
 ## Host integration
 
 ```ts
-import { createModelToolsExtension } from '@felan-ai/ext-model-tools';
+import { MODELS_SERVICE, createFelanServiceRegistry, type ModelsService } from '@felan-ai/agent-core';
 
-const extension = createModelToolsExtension(modelRuntime);
+declare const models: ModelsService;
+const services = createFelanServiceRegistry();
+services.set(MODELS_SERVICE, models);
 ```
 
-The injected runtime is Pi's `ModelRuntime` (only `getAvailableOfType` and
-`generateImages` are required). It owns authenticated image discovery and
-generation. The default export needs no image binding and can still expose
-`classify` through `pi.runtime.classifier`.
+Pass this registry into the host's Agent Core session composition and load the
+package root's default extension. It declares Core's `MODELS_SERVICE`
+(`felan.models@1`) as optional. The service owns authenticated image discovery
+and generation; it is a facade, not Pi's raw `ModelRuntime`. Missing service
+access disables only images. `classify` uses the effective
+`pi.runtime.classifier`, not the classifier on the shared model service.
+
+For explicit composition, `createModelToolsExtension(models)` accepts the
+minimal `ModelToolsRuntime` type:
+`Pick<ModelsService, 'getAvailableOfType' | 'generateImages'>`. Discovery returns
+`ImageModelInfo` metadata without endpoints, headers or compatibility options.
+Generation passes only `{ provider, id }` as a `ModelReference`; the service
+must revalidate the current authenticated, allowed model scope on each call.
+
+Import `MODELS_SERVICE` directly from Core. The package exposes no
+feature-specific service contract or compatibility alias.
 
 At extension initialization:
 
@@ -26,9 +40,10 @@ At extension initialization:
 - Neither capability means neither tool is registered. Reconstruct the session
   after configuring a previously unavailable capability.
 
-The TUI supplies both bindings in root, ACP, and child sessions. Its
-`builtinExtensions.modelTools` flag defaults to enabled; `false` disables both
-tools without disabling internal classifier-guided features.
+Hosts must supply the shared service and effective classifier for root, ACP,
+and child sessions where those capabilities are enabled. Loading the package
+controls these model-facing tools independently of internal classifier-guided
+features.
 
 ## `classify`
 

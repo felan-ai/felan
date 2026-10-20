@@ -13,11 +13,13 @@ describe('@felan-ai/ext-context-view package boundary', () => {
       type: 'module',
       license: 'MIT',
       engines: { node: '>=22.19.0' },
-      dependencies: { '@earendil-works/pi-tui': 'catalog:pi' },
-      peerDependencies: { '@felan-ai/agent-core': '^0.12.0' },
+      dependencies: {},
+      peerDependencies: { '@felan-ai/agent-core': '^0.13.0' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
-      exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+      exports: {
+        '.': { import: './dist/extension.js', types: './dist/extension.d.ts' },
+      },
     });
     expect(notice).toContain('packages/pi-context');
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');

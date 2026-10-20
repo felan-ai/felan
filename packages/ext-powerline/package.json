@@ -1,7 +1,7 @@
 {
   "name": "@felan-ai/ext-powerline",
-  "version": "0.13.0",
-  "description": "Terminal powerline extension for Felan",
+  "version": "0.14.0",
+  "description": "Portable session, Git and usage data for client-owned Powerline displays",
   "license": "MIT",
   "type": "module",
   "repository": {
@@ -20,21 +20,31 @@
   ],
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    },
+    "./extension": {
+      "types": "./dist/extension.d.ts",
+      "import": "./dist/extension.js"
+    },
+    "./data": {
+      "types": "./dist/data.d.ts",
+      "import": "./dist/data.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime.d.ts",
+      "import": "./dist/runtime.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --passWithNoTests",
     "prepack": "pnpm build"
   },
-  "dependencies": {
-    "@earendil-works/pi-tui": "catalog:pi"
-  },
+  "dependencies": {},
   "peerDependencies": {
-    "@felan-ai/agent-core": "catalog:agent-core"
+    "@felan-ai/agent-core": "^0.13.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

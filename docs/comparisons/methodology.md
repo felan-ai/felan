@@ -58,7 +58,7 @@ ships some capabilities disabled or experimental, and Codex's reviewed source
 contains feature flags that are not all enabled by default.
 
 [felan-snapshot]: https://github.com/felan-ai/felan/tree/abd4ee34ab2bc2289802af4d2a317b56239f44c5
-[felan-tui]: ../../apps/tui/README.md
+[felan-tui]: ../../apps/felan/README.md
 [felan-tasks]: ../../packages/ext-tasks/README.md
 [felan-subagents]: ../../packages/ext-subagents/README.md
 [felan-prewalk]: ../../packages/ext-prewalk/README.md

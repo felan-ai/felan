@@ -1,3 +1,5 @@
+import { defineServiceContract } from './services.js';
+
 export type SavingsCategory =
   | 'output-optimization'
   | 'model-routing'
@@ -47,3 +49,14 @@ export interface SavingsReporter {
 export interface SavingsReporterProvider {
   createReporter(producerId: string): SavingsReporter;
 }
+
+export interface SavingsSummary {
+  readonly savedCostUsd: number;
+  readonly hasUnpricedMeasurements: boolean;
+}
+
+export interface UsageService {
+  querySavings(query: { readonly from: Date; readonly to: Date; readonly signal?: AbortSignal }): Promise<SavingsSummary>;
+}
+
+export const USAGE_SERVICE = defineServiceContract<UsageService>('felan.usage', 1);

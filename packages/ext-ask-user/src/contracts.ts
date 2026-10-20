@@ -1,6 +1,5 @@
 import type {
   ExtensionContext,
-  ToolDefinition,
 } from '@felan-ai/agent-core';
 
 export type AskUserDisplayMode = 'overlay' | 'inline';
@@ -134,15 +133,9 @@ export interface AskUserToolErrorDetails {
   readonly error: string;
 }
 
-export type AskUserToolPresentation = Pick<
-  ToolDefinition<any, AskUserToolDetails | AskUserToolErrorDetails, any>,
-  'renderCall' | 'renderResult'
->;
-
 export interface AskUserHost {
   ask(
     request: AskUserRequest,
     context: AskUserHostExecutionContext,
   ): Promise<AskUserHostOutcome>;
-  readonly toolPresentation?: AskUserToolPresentation;
 }

@@ -12,7 +12,8 @@ import {
   type FelanExtensionAPI,
   type LogRecord,
 } from '@felan-ai/agent-core';
-import { createSubagentsExtension, type SubagentHost } from '../src/index.js';
+import type { SessionsService } from '@felan-ai/agent-core';
+import { createSubagentsExtension } from '../src/index.js';
 import { DISCOVERY_GUIDANCE } from '../src/routing.js';
 
 const catalog = [
@@ -23,7 +24,7 @@ const catalog = [
 describe('capability guidance', () => {
   it('always lists the catalog and describes when delegation pays off', () => {
     const pi = createPi(vi.fn(), new Map());
-    createSubagentsExtension(createHost(catalog))(pi);
+    extensionFor(createHost(catalog))(pi);
 
     const instructions = (pi.registerCapability as ReturnType<typeof vi.fn>).mock.calls[0]![0].instructions as string;
     expect(instructions).toContain('explore (Read-only investigation)');
@@ -44,7 +45,7 @@ describe('shared discovery routing', () => {
   it('uses static guidance without a registry, even with a direct classifier', () => {
     const harness = createHarness();
     delete (harness.pi as any).turnClassification;
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
 
     expect(harness.handlers.size).toBe(0);
     expect(harness.classify).not.toHaveBeenCalled();
@@ -56,7 +57,7 @@ describe('shared discovery routing', () => {
 
   it('registers no contribution without an explore agent', () => {
     const harness = createHarness();
-    createSubagentsExtension(createHost([catalog[1]]))(harness.pi);
+    extensionFor(createHost([catalog[1]]))(harness.pi);
 
     expect(harness.registry.register).not.toHaveBeenCalled();
     expect(harness.handlers.size).toBe(0);
@@ -67,7 +68,7 @@ describe('shared discovery routing', () => {
 
   it('registers discovery at init and consumes a shared namespaced decision once', async () => {
     const harness = createHarness();
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     expect(harness.registry.register).toHaveBeenCalledTimes(1);
     expect(harness.contribution().id).toBe('subagents');
     expect([...harness.handlers.keys()]).toEqual(['before_agent_start']);
@@ -87,8 +88,8 @@ describe('shared discovery routing', () => {
     await harness.consume(event, ctx);
 
     expect(harness.classify).toHaveBeenCalledTimes(1);
-    expect(harness.host.list).toHaveBeenCalledTimes(1);
-    expect(harness.host.list).toHaveBeenCalledWith({ includeDescendants: false });
+    expect(harness.host.executions).toHaveBeenCalledTimes(1);
+    expect(harness.host.executions).toHaveBeenCalledWith({ includeDescendants: false });
     const [state, questions] = harness.classify.mock.calls[0]!;
     expect(Object.keys(questions)).toEqual(['subagents:broad_discovery', 'other:broad_discovery']);
     expect(questions['subagents:broad_discovery']).toMatchObject({
@@ -127,7 +128,7 @@ describe('shared discovery routing', () => {
     const harness = createHarness(async () => ({
       answers: { 'subagents:broad_discovery': { type: 'bool', probability } },
     }));
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     const event = routingEvent({ prompt: 'Inspect this' });
     await harness.turn(event, context());
 
@@ -136,7 +137,7 @@ describe('shared discovery routing', () => {
 
   it('uses bounded sanitized shared evidence without scanning context during preparation or consumption', async () => {
     const harness = createHarness();
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     const ctx = context(Array.from({ length: 30 }, (_, index) => ({
       role: 'user', content: `finding-${index}-${'x'.repeat(1_300)}`,
     })));
@@ -162,7 +163,7 @@ describe('shared discovery routing', () => {
   it('does not require a direct runtime classifier when the registry is provided', async () => {
     const harness = createHarness();
     delete (harness.pi.runtime as any).classifier;
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     const event = routingEvent({ prompt: 'Survey' });
     await harness.turn(event, context());
     expect(event.systemPromptOptions.sections.subagent_routing).toBe(DISCOVERY_GUIDANCE);
@@ -170,7 +171,7 @@ describe('shared discovery routing', () => {
 
   it('adds no section when the registry reports no decision or classification fails', async () => {
     const harness = createHarness(async () => { throw new Error('classifier unavailable'); });
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     const event = routingEvent({ prompt: 'Inspect this' });
     await harness.turn(event, context());
     expect(event.systemPromptOptions.sections).toEqual({});
@@ -179,7 +180,7 @@ describe('shared discovery routing', () => {
 
   it('warns without injecting when result consumption fails', async () => {
     const harness = createHarness();
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     harness.registry.result.mockRejectedValueOnce(new Error('registry unavailable'));
     const event = routingEvent({ prompt: 'Survey' });
     await expect(harness.consume(event, context())).resolves.toBeUndefined();
@@ -194,7 +195,7 @@ describe('shared discovery routing', () => {
     ...[-1, 2, NaN, Infinity, '0.9'].map(probability => ({ type: 'bool', probability })),
   ])('rejects incomplete or invalid discovery answers: %j', async (answer) => {
     const harness = createHarness();
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     harness.registry.result.mockResolvedValueOnce({ answers: { broad_discovery: answer } } as any);
     const event = routingEvent({ prompt: 'Survey' });
     await harness.consume(event, context());
@@ -204,29 +205,39 @@ describe('shared discovery routing', () => {
     });
   });
 
-  it.each(['child', 'print', 'json'])('skips preparation and consumption for %s sessions', async (mode) => {
+  it.each(['subagent', 'print', 'json'])('skips preparation and consumption for %s sessions', async (mode) => {
     const harness = createHarness();
-    createSubagentsExtension(harness.host)(harness.pi);
-    const ctx = { ...context([], mode === 'child'), mode: mode === 'child' ? 'interactive' : mode };
+    const host = mode === 'subagent' ? { ...harness.host, current: { id: 'child-session', root: 'root-session', parent: 'root-session' } } : harness.host;
+    extensionFor(host)(harness.pi);
+    const ctx = { ...context(), mode: mode === 'subagent' ? 'interactive' : mode };
     const event = routingEvent({ prompt: 'Survey' });
     await harness.turn(event, ctx);
-    expect(harness.host.list).not.toHaveBeenCalled();
+    expect(harness.host.executions).not.toHaveBeenCalled();
     expect(harness.classify).not.toHaveBeenCalled();
     expect(harness.registry.result).not.toHaveBeenCalled();
     expect(event.systemPromptOptions.sections).toEqual({});
+  });
+
+  it('routes a forked root session, which records its source in parentSession', async () => {
+    const harness = createHarness();
+    extensionFor(harness.host)(harness.pi);
+    const event = routingEvent({ prompt: 'Survey' });
+    await harness.turn(event, context([], '/parent/session.jsonl'));
+    expect(harness.classify).toHaveBeenCalledOnce();
+    expect(Object.keys(event.systemPromptOptions.sections)).not.toHaveLength(0);
   });
 
   it('skips small repositories before listing children or classifying', async () => {
     const harness = createHarness();
     const listFiles = vi.fn(async () => ['package.json', 'src/main.ts', 'test/main.test.ts']);
     (harness.pi.runtime as any).listFiles = listFiles;
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     const event = routingEvent({ prompt: 'Trace the entire repository' });
     await harness.turn(event, context());
     expect(listFiles).toHaveBeenCalledWith('.', expect.objectContaining({
       recursive: true, limit: 20, ignore: ['.git', 'node_modules', '.artifacts', 'dist'], signal: expect.any(AbortSignal),
     }));
-    expect(harness.host.list).not.toHaveBeenCalled();
+    expect(harness.host.executions).not.toHaveBeenCalled();
     expect(harness.classify).not.toHaveBeenCalled();
     expect(event.systemPromptOptions.sections).toEqual({});
     expect(harness.logs.find(({ msg }) => msg === 'subagent routing decision')?.fields).toMatchObject({
@@ -238,7 +249,7 @@ describe('shared discovery routing', () => {
     const harness = createHarness();
     const listFiles = vi.fn(async () => Array.from({ length: 20 }, (_, index) => `file-${index}`));
     (harness.pi.runtime as any).listFiles = listFiles;
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     await harness.turn(routingEvent({ prompt: 'Survey' }), context());
     listFiles.mockRejectedValueOnce(new Error('listing unavailable'));
     await harness.turn(routingEvent({ prompt: 'Survey again' }), context());
@@ -247,8 +258,8 @@ describe('shared discovery routing', () => {
 
   it('does not classify when host listing fails', async () => {
     const harness = createHarness();
-    vi.mocked(harness.host.list).mockResolvedValueOnce({ ok: false, error: { code: 'host_unavailable', message: 'host unavailable' } });
-    createSubagentsExtension(harness.host)(harness.pi);
+    vi.mocked(harness.host.executions).mockRejectedValueOnce(new Error('host unavailable'));
+    extensionFor(harness.host)(harness.pi);
     const event = routingEvent({ prompt: 'Survey' });
     await harness.turn(event, context());
     expect(harness.classify).not.toHaveBeenCalled();
@@ -258,7 +269,7 @@ describe('shared discovery routing', () => {
   it('awaits pending shared work and does not duplicate calls for a matching turn', async () => {
     let resolve!: (value: Awaited<ReturnType<Classifier['classify']>>) => void;
     const harness = createHarness(() => new Promise(done => { resolve = done; }));
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     const ctx = context();
     const event = routingEvent({ prompt: 'Survey' });
     const request = { prompt: event.prompt, imageCount: 0 };
@@ -271,13 +282,13 @@ describe('shared discovery routing', () => {
     await pending;
     await harness.consume(event, ctx);
     expect(harness.classify).toHaveBeenCalledTimes(1);
-    expect(harness.host.list).toHaveBeenCalledTimes(1);
+    expect(harness.host.executions).toHaveBeenCalledTimes(1);
     expect(event.systemPromptOptions.sections.subagent_routing).toBe(DISCOVERY_GUIDANCE);
   });
 
   it('does not start fallback work for missing, mismatched, or finished turns', async () => {
     const harness = createHarness();
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     const ctx = context();
     await harness.consume(routingEvent({ prompt: 'No started turn' }), ctx);
     expect(harness.classify).not.toHaveBeenCalled();
@@ -301,20 +312,20 @@ describe('shared discovery routing', () => {
       controller.abort();
       return Array.from({ length: 20 }, () => 'file');
     });
-    if (stage === 'children') vi.mocked(harness.host.list).mockImplementationOnce(async () => {
+    if (stage === 'children') vi.mocked(harness.host.executions).mockImplementationOnce(async () => {
       controller.abort();
       return { ok: true, value: [] };
     });
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     expect(await harness.contribution().prepare(sharedInput(), context(), controller.signal)).toBeUndefined();
-    if (stage !== 'children') expect(harness.host.list).not.toHaveBeenCalled();
+    if (stage !== 'children') expect(harness.host.executions).not.toHaveBeenCalled();
     expect(harness.classify).not.toHaveBeenCalled();
   });
 
   it('leaves shutdown cancellation to the registry and does not inject stale guidance', async () => {
     let resolve!: (value: Awaited<ReturnType<Classifier['classify']>>) => void;
     const harness = createHarness(() => new Promise(done => { resolve = done; }));
-    createSubagentsExtension(harness.host)(harness.pi);
+    extensionFor(harness.host)(harness.pi);
     const ctx = context();
     const event = routingEvent({ prompt: 'Survey' });
     harness.registry.start({ prompt: event.prompt, imageCount: 0 }, ctx);
@@ -443,24 +454,18 @@ function routingEvent(overrides: { prompt: string; images?: unknown[] }) {
   };
 }
 
-function createHost(descriptors: any[]): SubagentHost {
-  return {
-    descriptors,
-    policy: { maxPromptBytes: 10_000, maxDescriptionBytes: 1_000, maxSteerBytes: 1_000 },
-    attachParent: vi.fn(() => () => {}),
-    spawn: vi.fn(),
-    list: vi.fn(async () => ({ ok: true, value: [{ agentId: 'child', type: 'explore', status: 'running', description: 'active' }] })),
-    getResult: vi.fn(),
-    steer: vi.fn(),
-    cancel: vi.fn(),
-  } as unknown as SubagentHost;
+function createHost(descriptors: any[], current: { id: string; root: string; parent?: string } = { id: 'root-session', root: 'root-session' }) {
+  return { descriptors, current, executions: vi.fn(async () => ({ items: [{ id: 'child', label: 'explore', state: 'running', description: 'active' }] })) };
+}
+function extensionFor(host: ReturnType<typeof createHost>) {
+  return createSubagentsExtension(host as unknown as SessionsService, host.descriptors.map(descriptor => ({ descriptor, prompt: '' })));
 }
 
-function context(messages: unknown[] = [], child = false): any {
+function context(messages: unknown[] = [], forkedFrom?: string): any {
   return {
     sessionManager: {
       getSessionId: () => 'root-session',
-      getHeader: () => child ? { parentSession: '/parent/session.jsonl' } : { id: 'root' },
+      getHeader: () => ({ id: 'root-session', ...(forkedFrom ? { parentSession: forkedFrom } : {}) }),
       buildContextEntries: vi.fn(() => messages.map((message, index) => ({
         type: 'message',
         id: `message-${index}`,

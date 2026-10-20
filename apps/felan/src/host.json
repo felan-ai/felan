@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "services": [
+    { "id": "felan.runtime", "major": 1, "use": "@felan-ai/felan/providers/runtime" },
+    { "id": "felan.session-runtime", "major": 1, "use": "@felan-ai/felan/providers/session-runtime", "options": {
+      "approvalExemptTools": [
+        "TaskGet", "TaskList", "ask_user", "codebase_memory", "enter_prewalk", "exit_plan_mode",
+        "find", "get_subagent_result", "grep", "list_background_bash", "list_subagents", "ls",
+        "read", "read_background_bash", "read_symbol", "search_and_read_symbols", "search_code",
+        "session_recall", "wait_background_bash"
+      ]
+    } },
+    { "id": "felan.runtime.dependencies", "major": 1, "use": "@felan-ai/felan/providers/runtime-dependencies" },
+    { "id": "felan.models", "major": 1, "use": "@felan-ai/felan/providers/models" },
+    { "id": "felan.secrets", "major": 1, "use": "@felan-ai/felan/providers/secrets" },
+    { "id": "felan.sessions", "major": 1, "use": "@felan-ai/felan/providers/sessions" },
+    { "id": "felan.sessions.history", "major": 1, "use": "@felan-ai/felan/providers/sessions" },
+    { "id": "felan.host.workers", "major": 1, "use": "@felan-ai/felan/providers/sessions" },
+    { "id": "felan.runtime.lifetime", "major": 1, "use": "@felan-ai/felan/providers/sessions" },
+    { "id": "felan.usage", "major": 1, "use": "@felan-ai/felan/providers/savings" },
+    { "id": "felan.browser.authorization", "major": 1, "use": "@felan-ai/felan/providers/browser-authorization" },
+    { "id": "felan.mcp.oauth-callback", "major": 1, "use": "@felan-ai/felan/providers/mcp-callback" },
+    { "id": "felan.platform", "major": 1, "use": "@felan-ai/felan/providers/felan-platform" }
+  ],
+  "extensions": [
+    { "package": "@felan-ai/ext-ask-user" },
+    { "package": "@felan-ai/ext-subagents" },
+    { "package": "@felan-ai/ext-tasks" },
+    { "package": "@felan-ai/ext-prewalk" },
+    { "package": "@felan-ai/ext-mcp" },
+    { "package": "@felan-ai/ext-felan-api" },
+    { "package": "@felan-ai/ext-model-tools" },
+    { "package": "@felan-ai/ext-fusion" },
+    { "package": "@felan-ai/ext-web-access" },
+    { "package": "@felan-ai/ext-browser" },
+    { "package": "@felan-ai/ext-background-bash" },
+    { "package": "@felan-ai/ext-codex" },
+    { "package": "@felan-ai/ext-session-compaction" },
+    { "package": "@felan-ai/ext-rtk-optimizer" },
+    { "package": "@felan-ai/ext-codebase-memory" },
+    { "package": "@felan-ai/ext-markitdown" },
+    { "package": "@felan-ai/ext-context" },
+    { "package": "@felan-ai/ext-context-view" },
+    { "package": "@felan-ai/ext-insights" },
+    { "package": "@felan-ai/ext-memory" },
+    { "package": "@felan-ai/ext-powerline" },
+    { "package": "@felan-ai/ext-output-style" },
+    { "package": "@felan-ai/ext-prompt-history" },
+    { "package": "@felan-ai/ext-session-title" }
+  ],
+  "policy": {
+    "projectTrust": "ask",
+    "dependencyInstalls": "ask"
+  }
+}

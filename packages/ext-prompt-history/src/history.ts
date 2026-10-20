@@ -5,30 +5,15 @@ import type {
 	PromptHistoryHost,
 	PromptHistorySession,
 	PromptHistorySessionReference,
+	PromptHistoryItem,
+	PromptHistoryScope,
+	PromptHistorySearchState,
 } from "./contracts.js";
+export { PROMPT_HISTORY_SCOPES } from "./contracts.js";
+export type { PromptHistoryItem, PromptHistoryScope, PromptHistorySearchState } from "./contracts.js";
 
 export const MAX_PROMPT_HISTORY_RESULTS = 50;
 export const PROMPT_HISTORY_SEARCH_BATCH_SIZE = 4;
-
-export const PROMPT_HISTORY_SCOPES = ["session", "project", "all"] as const;
-export type PromptHistoryScope = (typeof PROMPT_HISTORY_SCOPES)[number];
-
-export interface PromptHistoryItem {
-	readonly id: string;
-	readonly text: string;
-	readonly cwd: string;
-	readonly sessionLabel: string;
-	readonly sessionName?: string | undefined;
-	readonly timestamp: number;
-}
-
-export interface PromptHistorySearchState {
-	readonly items: readonly PromptHistoryItem[];
-	readonly loading: boolean;
-	readonly scanned: number;
-	readonly total?: number;
-	readonly complete: boolean;
-}
 
 export interface PromptHistorySource {
 	readonly cwd: string;
@@ -108,10 +93,13 @@ export async function searchPromptHistory(
 		sessions = [...await source.host.listSessions(source.sessionDirectory)]
 			.sort((left, right) => right.timestamp - left.timestamp);
 	} catch {
-		sessions = [];
+		const state = searchState([], false, 0, undefined, false);
+		onProgress(state);
+		return state;
 	}
 
 	let scanned = 0;
+	let failedRead = false;
 	let matches: PromptHistoryItem[] = [];
 	for (let index = 0; index < sessions.length && shouldContinue(); index += PROMPT_HISTORY_SEARCH_BATCH_SIZE) {
 		const batch = sessions.slice(index, index + PROMPT_HISTORY_SEARCH_BATCH_SIZE);
@@ -121,6 +109,7 @@ export async function searchPromptHistory(
 				if (!session || !matchesScope(source.cwd, session, scope)) return [];
 				return promptsFromSession(reference, session);
 			} catch {
+				failedRead = true;
 				return [];
 			}
 		}));
@@ -130,7 +119,7 @@ export async function searchPromptHistory(
 		if (matches.length >= MAX_PROMPT_HISTORY_RESULTS) break;
 	}
 
-	return searchState(matches, false, scanned, sessions.length, scanned >= sessions.length);
+	return searchState(matches, false, scanned, sessions.length, scanned >= sessions.length && !failedRead);
 }
 
 export function limitedPrompts(

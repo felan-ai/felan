@@ -1,6 +1,7 @@
 import {
   formatFelanApiContent,
 } from './boundary.js';
+import type { FelanApiRequest, FelanApiQueryValue } from '@felan-ai/agent-core';
 import type {
   FelanApiFetch,
   FelanApiMethod,
@@ -17,16 +18,6 @@ const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const MAX_QUERY_ENTRIES = 100;
 const METHODS = new Set<FelanApiMethod>(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
-
-export type FelanApiQueryValue = string | number | boolean;
-
-export interface FelanApiRequest {
-  readonly target?: FelanApiTarget;
-  readonly method?: FelanApiMethod;
-  readonly path?: string;
-  readonly query?: Readonly<Record<string, FelanApiQueryValue>>;
-  readonly body?: unknown;
-}
 
 export interface ResolvedFelanApiConfig {
   readonly apiKey: string;

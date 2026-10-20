@@ -33,24 +33,16 @@ export interface ResolvedMcpServer {
 export interface McpOAuthSessionContext {
   readonly sessionId: string;
   readonly signal: AbortSignal;
-  readonly extensionContext: ExtensionContext;
 }
 
 export interface McpOAuthAuthenticationContext {
-  readonly reason: 'explicit' | 'connection-required';
+  readonly reason: 'explicit';
   readonly signal: AbortSignal;
   readonly extensionContext: ExtensionContext;
 }
 
 export type McpOAuthAuthenticationOutcome =
   | { readonly status: 'authenticated' }
-  | {
-    readonly status: 'pending';
-    /** Non-secret identifier; pending outcomes are model-visible and may be persisted in session logs. */
-    readonly interactionId?: string;
-    /** Non-secret user guidance suitable for model context and session logs. */
-    readonly message: string;
-  }
   | {
     readonly status: 'cancelled' | 'unavailable';
     readonly message: string;

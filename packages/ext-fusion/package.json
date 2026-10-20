@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-fusion",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Review parallel model answers and explicitly fuse them with a selected model",
   "license": "MIT",
   "type": "module",
@@ -19,6 +19,10 @@
     "README.md"
   ],
   "exports": {
+    "./data": {
+      "types": "./dist/data.d.ts",
+      "import": "./dist/data.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
@@ -30,8 +34,11 @@
     "test": "vitest run",
     "prepack": "pnpm build"
   },
+  "dependencies": {
+    "@felan-ai/session-protocol": "workspace:*"
+  },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.12.0"
+    "@felan-ai/agent-core": "^0.13.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

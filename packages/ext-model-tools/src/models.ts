@@ -1,8 +1,8 @@
-import type { ImageApi, ImageModel, ModelRuntime } from '@felan-ai/agent-core';
+import type { ImageModelInfo, ModelsService } from '@felan-ai/agent-core';
 
-export type ModelToolsRuntime = Pick<ModelRuntime, 'getAvailableOfType' | 'generateImages'>;
+export type ModelToolsRuntime = Pick<ModelsService, 'getAvailableOfType' | 'generateImages'>;
 
-export async function discoverImageModels(models?: ModelToolsRuntime, signal?: AbortSignal): Promise<readonly ImageModel<ImageApi>[]> {
+export async function discoverImageModels(models?: ModelToolsRuntime, signal?: AbortSignal): Promise<readonly ImageModelInfo[]> {
   if (signal?.aborted) throw new Error('Image request was cancelled.');
   if (!models) return [];
   try {

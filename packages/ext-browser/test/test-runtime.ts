@@ -10,7 +10,7 @@ export class BrowserTestRuntime implements AgentRuntime {
   readonly kind = 'host' as const;
   readonly cwd = '/workspace';
   readonly logger = createSilentLogger();
-  readonly files = new Map<string, Uint8Array>();
+  readonly fileContents = new Map<string, Uint8Array>();
   readonly calls: Array<{ command: string; args: readonly string[]; options?: ExecOptions }> = [];
   readonly sessionStorage: BrowserTestStorage = new BrowserTestStorage('/session');
   readonly agentStorage: BrowserTestStorage = new BrowserTestStorage('/agent');
@@ -33,7 +33,7 @@ export class BrowserTestRuntime implements AgentRuntime {
   }
 
   async readFile(path: string): Promise<Uint8Array> {
-    const value = this.files.get(path);
+    const value = this.fileContents.get(path);
     if (!value) throw Object.assign(new Error(`Missing ${path}`), { code: 'ENOENT' });
     return value.slice();
   }

@@ -19,7 +19,7 @@ describe('@felan-ai/ext-subagents package boundary', () => {
         directory: 'packages/ext-subagents',
       },
       publishConfig: { access: 'public', provenance: true },
-      exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+      exports: { '.': { import: './dist/extension.js', types: './dist/extension.d.ts' } },
     });
     expect(license).toContain('MIT License');
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');

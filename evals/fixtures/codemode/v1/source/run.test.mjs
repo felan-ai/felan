@@ -8,7 +8,7 @@ import { loadComposition, runScenario } from './run.mjs';
 
 const composition = await loadComposition(
   fileURLToPath(new URL('../../../../../packages/agent-core/dist/index.js', import.meta.url)),
-  fileURLToPath(new URL('../../../../../apps/tui/dist/index.js', import.meta.url)),
+  fileURLToPath(new URL('../../../../../apps/felan/dist/index.js', import.meta.url)),
 );
 
 for (const mode of ['off', 'on', 'only']) {

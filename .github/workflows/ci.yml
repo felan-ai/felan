@@ -8,9 +8,29 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  verify:
+  check:
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: test daemon
+            run: pnpm --filter @felan-ai/daemon test
+          - name: test felan
+            run: pnpm --filter @felan-ai/felan test
+          - name: test ext-memory
+            run: pnpm --filter @felan-ai/ext-memory test
+          - name: test packages
+            run: pnpm -r --filter '!@felan-ai/daemon' --filter '!@felan-ai/felan' --filter '!@felan-ai/ext-memory' --if-present test
+          # Build compiles every workspace with the same sources and options as type-check.
+          - name: packed install
+            run: pnpm check:licenses && pnpm pack:all && pnpm test:packed-bin
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -22,4 +42,13 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
-      - run: pnpm verify
+      - run: pnpm build
+      - run: ${{ matrix.run }}
+
+  # Branch protection requires a single check named verify.
+  verify:
+    if: always()
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ needs.check.result }}" = success

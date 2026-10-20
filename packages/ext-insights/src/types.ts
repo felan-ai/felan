@@ -122,11 +122,16 @@ export interface ParsedSession {
 export interface InsightsSessionReference {
   readonly id: string;
   readonly path: string;
-  readonly size: number;
+  readonly size?: number;
+  readonly contentVersion?: string;
   readonly modifiedAtMs: number;
   readonly rootSessionId?: string;
   readonly isAgent?: boolean;
+  /** Why the host could not offer this session for reading; such sessions are counted, not read. */
+  readonly unavailable?: InsightsUnavailableReason;
 }
+
+export type InsightsUnavailableReason = 'invalid' | 'inaccessible' | 'stale' | 'oversize' | 'unsupported';
 
 export interface SessionMetadata {
   primaryModel: string;

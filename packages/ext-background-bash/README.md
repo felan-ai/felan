@@ -21,8 +21,8 @@ leaves its tools inactive when the runtime is incompatible. On native Windows,
 `FELAN_POSIX_SHELL`, `PATH`, or standard Git-for-Windows locations. WSL is not
 selected automatically because its path and process namespace does not match
 the host runtime. Git Bash's process tools use its `ps -l` format when GNU
-`ps -o` is unavailable. The local TUI can persistently disable the extension
-through dependency onboarding; Felan does not install operating-system
+`ps -o` is unavailable. Host dependency configuration can disable the extension
+when the runtime is incompatible; Felan does not install operating-system
 utilities.
 
 The same process surface is available to every selected model. Model-specific
@@ -42,17 +42,18 @@ runtime's explicit POSIX shell flavor.
 - `read_background_bash` reads trailing process output, capped at 128 KiB of log content. Larger files use POSIX `tail` without loading the whole log.
 - `wait_background_bash` waits for terminal status without returning log output.
 - `stop_background_bash` sends `SIGTERM` or `SIGKILL`.
-- `/processes` and `Ctrl+Shift+J` open the interactive process/log view inline in the TUI.
+- `/processes` opens the generic process list and output documents through `pi.ui`.
+- Felan's TUI provides `Ctrl+Shift+J` and an inline process/log view.
 
-The process/log view uses an inline frame. Automatic completion messages use a
-compact one-line summary; `Alt+A` reveals bounded details.
+The native TUI process/log view uses an inline frame. Its completion messages use
+a compact one-line summary; `Alt+A` reveals bounded details.
 
 The default foreground promotion window is 120 seconds and can be changed with
 `extensionConfig.backgroundBash.foregroundTimeoutSeconds`. Cancelling a foreground
 wait terminates its process tree; cancelling a wait for an already-backgrounded job
 does not terminate that job. Detached jobs remain discoverable after restart when
 their runtime storage persists. PTY handles are root-session-scoped and are not
-reattachable after shutdown. The footer status shows the number of running processes.
+reattachable after shutdown. The native TUI footer shows the number of running processes.
 Live PTY status comes from its root-session handle, not detached-runner PID probes.
 Status reads and input remain available while another caller waits in the foreground.
 Terminal outcomes and completion timestamps are recorded once. An orphaned PTY is
@@ -89,8 +90,43 @@ import backgroundBashExtension from '@felan-ai/ext-background-bash';
 const extension = backgroundBashExtension;
 ```
 
-Hosts provide the `AgentRuntime`; the local TUI owns the process view,
-shortcut, status polling, and dependency onboarding. Compatible runtimes need
+The default export keeps execution in the active runtime and uses the package-owned
+generic `pi.ui` adapter for presentation. It uses the host-owned
+`runtime.terminals.attach(id)` handles when available, preserving process lifetime
+across client detachment. Otherwise it owns the terminals it starts. No
+extension-specific service is required.
+
+`createBackgroundBashExtension()` exposes the same portable composition. Native
+rendering belongs to `apps/felan`; this package exports no TUI entrypoint.
+
+The generic adapter uses the normalized `./data` records, with at most 18 job summaries
+per page. It publishes a `view` with declared navigation and read actions, and a
+`document` for each selected process's output. Logs retain the existing bounded
+tail (up to 2,000 lines and 128 KiB), split into encoded-byte-bounded chunks. Every
+chunk and saved job is reachable through explicit paging actions. Command previews
+are marked when clipped, and output is escaped as literal Markdown. No custom
+presenter or hidden payload is needed; PIDs, process tokens, paths, and runtime
+handles are not control inputs or presentation metadata.
+
+Output documents declare stop and kill controls only for running processes, and
+an exact-byte stdin field only for running PTY processes with a write callback.
+The normalized presentation source's optional `write(id, chars)` callback delegates
+to the same manager used by `write_background_bash`. Controls recheck current job
+state before execution. Actions are serialized across the list and output document,
+and their element identity, revision, target, and input are validated again at execution.
+Stale, closed, foreign, or malformed actions cannot invoke a process control.
+
+Opening a generic view returns after publication; the command does not wait for
+user input. Closing or cancelling a view blocks new actions, joins pending reads
+and controls, and closes its handles without stopping any process. Shutdown awaits
+that cleanup while preserving the coordinator ownership policy. Cleanup failures
+remain observable. Refresh is explicit; the generic adapter installs no overlay,
+shortcut, or UI polling in any client. Execution's existing completion delivery is
+unchanged.
+
+Hosts provide the `AgentRuntime` and common UI binding; the optional local TUI owns
+native shortcuts and status polling. Trusted providers own dependency policy,
+not the client renderer. Compatible runtimes need
 the POSIX shell/process facilities listed in
 [runtime dependencies](../../docs/reference/runtime-dependencies.md). Felan
 does not install operating-system utilities, and the feature remains inactive

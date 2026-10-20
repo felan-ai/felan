@@ -5,8 +5,9 @@ token-efficient `mcp` gateway for status, reconnection, discovery, calls,
 authentication, and logout. It also registers `/mcp` for interactive status,
 tool listing, reconnection, authentication, and logout. The command remains
 available with an empty config so consumers can show setup guidance. The
-package intentionally does not load ambient MCP files, launch browsers, or
-store credentials.
+default entry loads configuration through Runtime files and persists OAuth
+credentials through Core Secrets. It never launches a browser itself or accesses
+a native credential store directly.
 
 The model-facing gateway exposes `status`, `reconnect`, `list`, `search`,
 `describe`, `call`, `authenticate`, and `logout`. Its capability and tool
@@ -29,7 +30,40 @@ SDK provides a structured OAuth, HTTP, timeout, or network error. Model-facing
 errors expose only the safe category, provider error code, and HTTP status;
 remote error text is not copied into model context.
 
-## Consumer-owned OAuth
+## Core services and host authorization
+
+The default entry requires Core `SECRETS_SERVICE` (`felan.secrets@1`). It reads
+`mcp.json` using `runtime.readAgentFile` and the workspace `.mcp.json` using
+`runtime.readFile`. Project entries override agent entries. Invalid or unsupported
+project entries produce bounded warnings; global configuration errors fail loading.
+
+The extension owns OAuth discovery, dynamic client registration, PKCE/state,
+refresh and logout. Credentials are scoped by agent directory, server name, URL,
+OAuth profile and issuer, and written with Secrets version checks. Configured
+OAuth clients may provide `clientSecret` or `clientSecretEnv` for confidential
+clients. Environment references are resolved through Runtime, never ambient
+extension I/O. Configured client secrets are not copied into the token store.
+
+Local sign-in additionally uses optional `MCP_OAUTH_CALLBACK_SERVICE`
+(`felan.mcp.oauth-callback@1`) from `@felan-ai/ext-mcp/service`. This is a narrow
+host exception because Runtime does not expose inbound HTTP listeners. It
+reserves an HTTP loopback callback and returns its result, and may implement
+`openAuthorizationUrl` to open the authorization URL in the host browser. It
+does not read configuration, store tokens, or implement authorization UI. The
+local provider owns listener activation, browser launch, cancellation and
+cleanup.
+
+The authorization URL appears in a nondeferrable, transient `pi.ui.request` form
+with `audience: 'host'`. Its presentation is never stored in the control snapshot.
+Only an eligible local console may present it; no client-kind
+claim or ordinary session form grants authority. When the callback service can
+open the URL, the browser opens before the form appears; otherwise the user opens
+the form's link locally. The form closes when the callback finishes. There is no
+extension-specific presenter. Without a callback provider, sign-in is unavailable;
+existing credentials can still be used, including credentials provisioned by a
+cloud host through Secrets and config sync.
+
+The named factory remains available for explicit composition:
 
 Create the extension with an immutable server snapshot and an injected OAuth
 host:
@@ -50,17 +84,10 @@ const extension = createMcpExtension({
 });
 ```
 
-`McpOAuthHost` creates a session-scoped adapter that supplies an MCP SDK OAuth
-provider and owns the complete OAuth implementation: client configuration,
-token and dynamic-client persistence, PKCE/state, callbacks, browser or web-app
-presentation, refresh behavior, and logout. An interactive local host can wait
-for a loopback callback, while a cloud host can return a persistent `pending`
-interaction completed by its web application.
-
-`pending` messages and interaction IDs are returned through the tool and may be
-persisted in session history. They must be non-secret: never place OAuth state,
-authorization codes, PKCE material, tokens, or credential-bearing URLs in
-either field.
+`McpOAuthHost` remains an explicit composition boundary for consumers using the
+named factory. Its sessions supply the SDK OAuth provider and honor shutdown and
+cancellation. The default entry composes the extension-owned implementation from
+Runtime, Secrets, host UI and the optional loopback service.
 
 Cloud hosts must also apply their tenant identity and outbound network policy
 to MCP and OAuth configuration before constructing the extension. In
@@ -71,9 +98,9 @@ redirect URI. Pass a policy-enforcing `fetch` in `createMcpExtension` options so
 transport-driven MCP and OAuth requests use the consumer's network boundary.
 
 The extension accepts only explicit `{ url, auth: "oauth" }` servers. It does
-not support stdio, Unix sockets, bearer tokens, custom headers, embedded OAuth
-secrets, direct MCP tools, resources/prompts, MCP Apps, scripting, sampling, or
-ambient host config discovery.
+not support stdio, Unix sockets, bearer tokens, custom headers,
+direct MCP tools, resources/prompts, MCP Apps, scripting, sampling, or
+configuration discovery outside the Runtime file boundary.
 
 All MCP metadata and tool output is bounded and returned inside an explicit
 untrusted-content boundary. OAuth credentials and provider state are never
@@ -81,17 +108,16 @@ included in tool results or details.
 
 ## Package boundary and requirements
 
-The package owns configuration validation, the OAuth-only gateway, transport
-lifecycle, bounded untrusted results, and the model-facing command. A consumer
-must provide `McpOAuthHost`, credential persistence, callback/browser
-presentation, and network policy. The package intentionally has no default
-token store, callback listener, browser launcher, or ambient configuration
-discovery.
+The package owns Runtime-backed configuration, OAuth orchestration, credential
+serialization, the gateway, transport lifecycle and bounded untrusted results.
+Hosts provide Secrets, UI authorization policy, and optionally the loopback
+callback and browser-opening primitive. Native filesystem access, credential
+storage, callback listeners and browser launchers do not belong in this package.
 
 It requires a compatible `@felan-ai/agent-core` peer, MCP SDK client, and
 TypeBox. Only explicit remote HTTP servers with `auth: 'oauth'` are accepted;
 stdio, sockets, bearer tokens, custom headers, direct tools/resources/prompts,
-MCP Apps, and embedded OAuth secrets are rejected.
+and MCP Apps are rejected.
 
 ## Development
 

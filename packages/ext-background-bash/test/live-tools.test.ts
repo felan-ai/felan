@@ -4,18 +4,20 @@ import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import {
   HostAgentRuntime,
+  createUnavailableExtensionUi,
+  type AgentRuntime,
   type ExtensionContext,
   type FelanExtensionAPI,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
 import { describe, expect, it } from 'vitest';
 import {
-  BackgroundBashCoordinator,
   createBackgroundBashExtension,
   type BackgroundBashDetails,
   type BackgroundBashInfo,
   type BackgroundBashJob,
 } from '../src/index.js';
+import { withOwnedTerminals } from './owned-terminals.js';
 
 const TEST_TIMEOUT_MS = 45_000;
 const OPERATION_TIMEOUT_MS = 5_000;
@@ -36,7 +38,7 @@ type LiveClient = {
   shutdown(): Promise<void>;
 };
 type LiveFixture = {
-  runtime: HostAgentRuntime;
+  runtime: AgentRuntime;
   owner: LiveClient;
   child: LiveClient;
   abortController(): AbortController;
@@ -48,7 +50,7 @@ describe('registered Background Bash tools with live host PTYs', () => {
     { mode: 'detached', params: { background: true }, background: true },
     { mode: 'pty', params: { background: true, tty: true }, background: true },
   ])('returns large $mode output through the registered tools', async ({ params, background }) => {
-    await withLiveTools(async ({ owner }) => {
+    await withLiveTools(async ({ runtime, owner }) => {
       const result = await call(owner, 'bash', {
         command: nodeCommand("process.stdout.write('old line\\n'.repeat(40000) + 'last-one\\nlast-two 🌍\\n', () => { process.exitCode = 7; });"),
         timeout: 10,
@@ -56,9 +58,18 @@ describe('registered Background Bash tools with live host PTYs', () => {
       });
       if (background) {
         const { id } = result.details as BackgroundBashDetails;
-        expect((await waitForJob(owner, id)).job.status).toMatchObject({ status: 'failed', exitCode: 7 });
+        const finished = await waitForJob(owner, id);
+        expect(finished.job.status).toMatchObject({ status: 'failed', exitCode: 7 });
         const output = text(await call(owner, 'read_background_bash', { id, lines: 2 }));
-        expect(output).toMatch(/\nlast-one\nlast-two 🌍$/u);
+        let diagnostic: string | undefined;
+        if (!/\nlast-one\nlast-two 🌍$/u.test(output)) {
+          const persisted = await runtime.storage('session').readFile(finished.job.meta.logPath);
+          const transport = await runtime.terminals!.attach!(id)!.read(0);
+          diagnostic = JSON.stringify({ persistedBytes: persisted.length, persistedTail: decoder.decode(persisted.slice(-80)),
+            transportBytes: transport.output.length, transportTail: decoder.decode(transport.output.slice(-80)),
+            nextOffset: transport.nextOffset, running: transport.running, exitCode: transport.exitCode });
+        }
+        expect(output, diagnostic).toMatch(/\nlast-one\nlast-two 🌍$/u);
         expect(output).not.toContain('old line');
       } else {
         expect(result.details).toMatchObject({ background: false, status: 'failed' });
@@ -248,7 +259,7 @@ async function withLiveTools(run: (fixture: LiveFixture) => Promise<void>): Prom
   const root = await mkdtemp(join(tmpdir(), 'felan live bash tools-'));
   const cwd = join(root, 'workspace');
   const sessionStorageRoot = join(root, 'session-storage');
-  let coordinator: BackgroundBashCoordinator | undefined;
+  let owned: ReturnType<typeof withOwnedTerminals> | undefined;
   const clients: LiveClient[] = [];
   const controllers = new Set<AbortController>();
   const pending = new Set<Promise<unknown>>();
@@ -256,15 +267,14 @@ async function withLiveTools(run: (fixture: LiveFixture) => Promise<void>): Prom
   try {
     await Promise.all([cwd, sessionStorageRoot, join(root, 'owner-storage'), join(root, 'child-storage')]
       .map((path) => mkdir(path, { recursive: true })));
-    const runtime = new HostAgentRuntime(cwd, {
+    const source = new HostAgentRuntime(cwd, {
       sessionStorageRoot, agentStorageRoot: join(root, 'owner-storage'),
     });
-    coordinator = new BackgroundBashCoordinator(runtime);
-    const owner = await createClient(runtime, coordinator, true, pending, controllers);
+    owned = withOwnedTerminals(source);
+    const runtime = owned.runtime;
+    const owner = await createClient(runtime, pending, controllers);
     clients.push(owner);
-    const child = await createClient(new HostAgentRuntime(cwd, {
-      sessionStorageRoot, agentStorageRoot: join(root, 'child-storage'),
-    }), coordinator, false, pending, controllers);
+    const child = await createClient(runtime, pending, controllers);
     clients.push(child);
     await run({
       runtime, owner, child,
@@ -287,7 +297,7 @@ async function withLiveTools(run: (fixture: LiveFixture) => Promise<void>): Prom
           if (failures.length > 0) throw new AggregateError(failures, 'Extension shutdown failed');
         },
       },
-      { label: 'PTY cleanup', run: () => coordinator?.shutdown() ?? Promise.resolve() },
+      { label: 'PTY cleanup', run: () => owned?.shutdown() ?? Promise.resolve() },
       { label: 'pending tool cleanup', run: () => Promise.allSettled([...pending]) },
       { label: 'temporary directory cleanup', run: () => rm(root, { recursive: true, force: true }) },
     ];
@@ -304,9 +314,7 @@ async function withLiveTools(run: (fixture: LiveFixture) => Promise<void>): Prom
 }
 
 async function createClient(
-  runtime: HostAgentRuntime,
-  coordinator: BackgroundBashCoordinator,
-  ownsCoordinator: boolean,
+  runtime: AgentRuntime,
   pending: Set<Promise<unknown>>,
   controllers: Set<AbortController>,
 ): Promise<LiveClient> {
@@ -317,9 +325,11 @@ async function createClient(
   let callId = 0;
   let shutdown: Promise<void> | undefined;
   const pi = {
-    runtime,
+    runtime, ui: createUnavailableExtensionUi(),
+    registerShortcut() {},
     registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
     registerMessageRenderer() {},
+    registerCommand() {},
     sendMessage() {},
     getActiveTools: () => activeTools,
     setActiveTools: (names: string[]) => { activeTools = names; },
@@ -330,7 +340,7 @@ async function createClient(
   const emit = async (name: string, event: unknown) => {
     for (const handler of handlers.get(name) ?? []) await handler(event, ctx);
   };
-  await createBackgroundBashExtension(coordinator, ownsCoordinator)(pi);
+  await createBackgroundBashExtension()(pi);
   await within(emit('session_start', {}), OPERATION_TIMEOUT_MS, 'live extension activation');
   expect([...tools.keys()]).toEqual([
     'bash', 'list_background_bash', 'read_background_bash', 'wait_background_bash',
@@ -391,7 +401,7 @@ async function waitForOutput(client: LiveClient, id: string, expected: string): 
     (output) => output.includes(expected), `PTY output contains ${JSON.stringify(expected)}`);
 }
 
-async function waitForSilentJob(runtime: HostAgentRuntime): Promise<BackgroundBashInfo> {
+async function waitForSilentJob(runtime: AgentRuntime): Promise<BackgroundBashInfo> {
   await eventually(() => runtime.readFile('silent-ready.txt'), (bytes) => bytes.length > 0, 'silent PTY starts');
   return eventually(async () => {
     const storage = runtime.storage('session');

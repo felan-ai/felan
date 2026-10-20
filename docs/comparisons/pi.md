@@ -28,7 +28,7 @@ own the host decisions yourself.
 | Context | cwd instruction file plus progressive nested context and explicit Agent Skills | Host/extension-defined context and resource loading |
 | Memory | Local-first Markdown memory with host-owned checkpoint/dream/publication lifecycle | No equivalent Felan memory contract in Pi core; extensions can define one |
 | Web and MCP | Bounded web evidence tools and local OAuth-only remote MCP gateway | Web/MCP are integrations or extensions supplied by the host |
-| Local policy | Filters ambient Pi packages, extensions, prompts, project settings, and themes | Host chooses resource discovery and policy |
+| Local policy | Filters ambient Pi packages, prompts, project settings, and themes; external extensions require explicit local paths or host opt-ins | Host chooses resource discovery and policy |
 | Providers | Consumes the pinned Pi model/provider surface and adds Felan model-specific adapters | Provides the underlying model/provider APIs and configuration primitives |
 | TUI | Local Felan Code groups tool activity, exposes task/agent/process overlays, and owns the footer/presentation | Pi TUI primitives and default host presentation |
 
@@ -42,8 +42,9 @@ See the [feature matrix](feature-matrix.md), especially its [planning](feature-m
 
 Felan Code's local TUI owns credentials, settings, storage path mapping, model scope,
 built-in allowlisting, dependency onboarding, local subagent execution, and
-presentation. It filters ambient Pi resources and exposes only explicit Felan Code
-skills, agents, and cwd instructions.
+presentation. It filters ambient Pi resources and exposes explicit Felan Code
+skills, agents, and cwd instructions. External extensions use explicit local
+paths or the host's opt-in user/project directories.
 
 Pi is valuable precisely because those choices remain open. A Pi application
 can select a different extension discovery policy, storage model, UI, or
@@ -97,7 +98,8 @@ host policy, and extensions without carrying a divergent Pi source tree.
 
 Felan Code uses the pinned Pi extension and session APIs, but it is not a drop-in
 runner for arbitrary Pi project configuration. The local host intentionally
-filters ambient Pi extensions, prompts, packages, project settings, and themes.
+filters ambient Pi prompts, packages, project settings, and themes. External
+extensions require explicit local paths or host-configured directory opt-ins.
 
 Portable extension authors can target `@felan-ai/agent-core` and the Felan
 extension contracts, then bind host behavior explicitly. A Pi extension that
@@ -129,11 +131,15 @@ its own Agent Core, host runtime, and extensions.
 
 ### Can I use a Pi extension unchanged?
 
-Not automatically in the local TUI. Felan Code loads source-controlled built-ins
-and explicitly supplied local extension paths. Opt in to Pi's standard user or
-project directories with `piExtensions`; project folders still require Felan
-folder trust. A compatible extension can also be loaded with `--extension`/`-e`,
-but it must respect the Agent Runtime and host-adapter boundaries.
+Not automatically. Felan Code loads source-controlled built-ins and external
+extensions from explicitly supplied local paths or the host's `piExtensions.user`
+and `piExtensions.project` opt-ins. These settings default to off and apply to
+every new root, including ACP, headless, web-created and imported sessions;
+children inherit their root's paths. Project folders require Felan folder
+trust. Only the creating TUI prompts; other creators skip undecided folders.
+A compatible extension can also be loaded with `--extension`/`-e` from a local
+client, never a remote create, and must respect the Agent Runtime and
+host-adapter boundaries. Loaded code runs with the user's permissions.
 
 ### Does Felan Code replace Pi's provider support?
 

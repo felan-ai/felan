@@ -19,7 +19,10 @@ describe('@felan-ai/ext-browser package boundary', () => {
         directory: 'packages/ext-browser',
       },
       publishConfig: { access: 'public', provenance: true },
-      exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
+      exports: {
+        '.': { import: './dist/extension.js', types: './dist/extension.d.ts' },
+        './service': { import: './dist/service.js', types: './dist/service.d.ts' },
+      },
     });
     expect(license).toContain('MIT License');
     expect(notice).toContain('agent-browser 0.37.1');

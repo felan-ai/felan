@@ -10,10 +10,10 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
-const themesDir = join(repoRoot, "apps", "tui", "src", "themes");
+const themesDir = join(repoRoot, "apps", "felan", "src", "themes");
 const pagesDir = join(repoRoot, ".artifacts", "theme-preview");
 const pagesIndex = join(pagesDir, "index.html");
-const felanVersion = JSON.parse(readFileSync(join(repoRoot, "apps", "tui", "package.json"), "utf8")).version;
+const felanVersion = JSON.parse(readFileSync(join(repoRoot, "apps", "felan", "package.json"), "utf8")).version;
 const port = Number(process.env.PORT || 4173);
 const host = "127.0.0.1";
 
@@ -314,10 +314,10 @@ function renderPreview() {
     '<div class="term-line"><span class="term-dim">  · Comparing the browser fixture with grouped transcript output.</span></div>',
     '<div class="term-blank"></div>',
     '<div class="term-line"><span class="term-green">✓</span> <span class="term-bold">Read 3 files</span> <span class="term-dim">· 24ms</span></div>',
-    '<div class="term-line"><span class="term-dim">  ✓ Read · apps/tui/src/themes/' + t.file + '</span></div>',
+    '<div class="term-line"><span class="term-dim">  ✓ Read · apps/felan/src/themes/' + t.file + '</span></div>',
     '<div class="term-line"><span class="term-dim">  ✓ Read · packages/ext-powerline/src/footer.ts</span></div>',
     '<div class="term-line"><span class="term-green">✓</span> <span class="term-bold">Updated 1 file</span> <span class="term-dim">· 8ms</span></div>',
-    '<div class="term-line"><span class="term-dim">  ✓ apply_patch · apps/tui/src/themes/' + t.file + '</span></div>',
+    '<div class="term-line"><span class="term-dim">  ✓ apply_patch · apps/felan/src/themes/' + t.file + '</span></div>',
     '<div class="term-blank"></div>',
     '<div class="term-line">The active Pi theme is <span class="term-accent">' + t.name + '</span>. The following output exercises its real semantic roles.</div>',
     '<div class="term-blank"></div>',
@@ -424,7 +424,7 @@ function renderPreview() {
   paletteToggle.onclick = togglePalette;
   paletteSummary.onclick = togglePalette;
 }
-function installCommand(t) { return 'apps/tui/src/themes/' + t.file; }
+function installCommand(t) { return 'apps/felan/src/themes/' + t.file; }
 function select(i, updateHash = false) {
   selected = Math.max(0, Math.min(i, filtered.length - 1));
   renderList();

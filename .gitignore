@@ -4,4 +4,14 @@ dist/
 node_modules/
 *.tgz
 packages/ext-insights/src/generated/
-apps/tui/npm-shrinkwrap.json
+apps/felan/npm-shrinkwrap.json
+
+# Daemon tests create owner-only stores in the package dir (host.json trust rejects world-writable /tmp parents).
+apps/daemon/.s14-*/
+apps/daemon/.host-config-test-*/
+apps/felan/.pc-*/
+.parity/
+
+tmp/
+# Local performance artifacts
+perf/results/

@@ -3,7 +3,8 @@ import { readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-export async function testBackgroundBashTools(runtime, workspace) {
+export async function testBackgroundBashTools(initialRuntime, workspace, reload) {
+  let runtime = initialRuntime;
   const extensionErrors = [];
   await runtime.session.bindExtensions({ mode: 'print', onError: (error) => extensionErrors.push(error) });
   const ownedJobs = new Set();
@@ -76,7 +77,11 @@ export async function testBackgroundBashTools(runtime, workspace) {
     assert.match((await call('read_background_bash', { id })).content[0].text, /heartbeat/);
     assert.equal((await call('wait_background_bash', { id, timeout: 0 })).details.timedOut, true);
 
-    await runtime.session.reload();
+    const reloaded = await reload();
+    assert.equal(reloaded.outcome, 'accepted', JSON.stringify(reloaded.error));
+    runtime = reloaded.runtime;
+    await runtime.session.bindExtensions({ mode: 'print', onError: (error) => extensionErrors.push(error) });
+    assert.ok((await call('list_background_bash', { status: 'running' })).details.jobs.some((job) => job.meta.id === id), 'PTY did not survive reload');
     await call('write_background_bash', { id, chars: 'Привет 🌍\nexit7\n' });
     const finished = (await call('wait_background_bash', { id, timeout: 5 })).details.job;
     assert.equal(finished.status.status, 'failed');
@@ -138,7 +143,10 @@ export async function testBackgroundBashTools(runtime, workspace) {
     await Promise.all([interactivePath, silentPath, pidPath].map((path) => rm(path, { force: true })));
   }
   if (errors.length) throw new AggregateError(errors, 'Background Bash registered-tool smoke failed');
-  return 'large foreground/background log tails, long-lived PTY, reload, Unicode/final output, stable terminal status, concurrent list/read/write/stop, descendant cleanup';
+  const reloaded = await reload();
+  assert.equal(reloaded.outcome, 'accepted', JSON.stringify(reloaded.error));
+  assert.deepEqual(extensionErrors, [], 'Unexpected extension lifecycle errors during daemon reload');
+  return 'large foreground/background log tails, long-lived PTY kept across reload, quiescent reload, Unicode/final output, stable terminal status, concurrent list/read/write/stop, descendant cleanup';
 }
 
 async function deadline(promise, operation) {
