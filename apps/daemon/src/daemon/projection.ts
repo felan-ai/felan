@@ -29,6 +29,7 @@ export interface ProjectionOptions {
 }
 
 type QueueItem = SessionSnapshot['queue'][number];
+type QueuedMessage = Parameters<AgentSession['agent']['steer']>[0];
 type Tool = SessionSnapshot['tools'][number];
 type Stream = SessionSnapshot['activeStreams'][number];
 type StreamState = { value: Stream; bytes: number; pendingHighSurrogate: string };
@@ -51,7 +52,7 @@ export class SessionProjection {
   private readonly presentation = new Map<string, Presentation>();
   private readonly completedStreams = new Set<string>();
   private queue: QueueItem[] = [];
-  private readonly queued = new Map<string, { message: object; kind: QueueItem['kind']; item?: QueueItem }>();
+  private readonly queued = new Map<string, { message: QueuedMessage; item: QueueItem }>();
   private readonly queueContext = new AsyncLocalStorage<{ origin: Origin; ids: string[] }>();
   private readonly restoreQueueMethods: Array<() => void> = [];
   private queueLost = false;
@@ -393,17 +394,17 @@ export class SessionProjection {
   }
   private refreshQueue(): void {
     if (this.queueObserved && this.session.isIdle && !this.session.agent.hasQueuedMessages()) { this.queued.clear(); this.queueLost = false; }
-    const next = [...this.queued.values()].flatMap(entry => entry.item ? [entry.item] : []);
+    const next = [...this.queued.values()].map(entry => entry.item);
     const key = digest(next);
     if (key !== this.queueKey) {
-      const commit = this.options.store.project(this.id, [{ type: 'queue', ids: next.map(item => item.id), identity: { sha256: digest(next), bytes: Buffer.byteLength(JSON.stringify(next)) } }]);
+      const input = [...this.queued.values()].flatMap(entry => entry.message.role === 'user' ? [entry.item] : []);
+      const commit = this.options.store.project(this.id, [{ type: 'queue', ids: input.map(item => item.id), identity: { sha256: digest(input), bytes: Buffer.byteLength(JSON.stringify(input)) } }]);
       this.queue = next; this.queueKey = key;
       this.options.publish({ v: 1, session: this.id, rev: commit.value.revision, change: { type: 'queue.updated', queue: next } });
     }
-    const notice = this.queueLost ? 'Native queue observation is incomplete. Queued input remains under runtime control; targeted editing is unavailable.'
-      : [...this.queued.values()].some(entry => !entry.item) ? 'Some native queued input cannot be represented as a client prompt. It remains under runtime control.' : '';
+    const notice = this.queueLost ? 'Native queue observation is incomplete. Queued input remains under runtime control; targeted editing is unavailable.' : '';
     if (notice !== this.queueNotice) {
-      this.setPresentation(notice ? { id: 'unrepresented-queue', kind: 'notification', level: 'warning', text: notice } : { id: 'unrepresented-queue', remove: true });
+      this.setPresentation(notice ? { id: 'queue-observation', kind: 'notification', level: 'warning', text: notice } : { id: 'queue-observation', remove: true });
       this.queueNotice = notice;
     }
   }
@@ -434,7 +435,7 @@ export class SessionProjection {
         const result = original.call(this);
         if (this === agent && !projection.disposed) {
           for (const [id, entry] of projection.queued) {
-            if (name === 'clearAllQueues' || entry.kind === (name === 'clearSteeringQueue' ? 'steer' : 'follow_up')) projection.queued.delete(id);
+            if (name === 'clearAllQueues' || entry.item.kind === (name === 'clearSteeringQueue' ? 'steer' : 'follow_up')) projection.queued.delete(id);
           }
           projection.schedule();
         }
@@ -445,25 +446,17 @@ export class SessionProjection {
     }
   }
 
-  private observeEnqueue(message: Parameters<AgentSession['agent']['steer']>[0], kind: QueueItem['kind']): void {
+  private observeEnqueue(message: QueuedMessage, kind: QueueItem['kind']): void {
+    if (message.role === 'custom' && !message.display) return;
     if (this.queued.size >= LIMITS.pageEntries) { this.loseQueueObservation(); return; }
     const id = randomUUID(); const context = this.queueContext.getStore();
-    let item: QueueItem | undefined;
-    if (message.role === 'user') {
-      try {
-        const prompt = typeof message.content === 'string' ? { text: message.content }
-          : { text: '', attachments: message.content.map(part => part.type === 'text' ? { type: 'text', text: part.text }
-            : { type: 'image', mimeType: part.mimeType, data: part.data }) };
-        const parsed = parseSchema(PromptSchema, prompt); validatePrompt(parsed);
-        item = { id, kind, prompt: parsed, origin: context?.origin ?? { kind: 'automation', source: 'runtime' } };
-      } catch { /* Unrepresentable queued input stays untouched in the native runtime. */ }
-    }
-    this.queued.set(id, { message, kind, ...(item ? { item } : {}) });
+    const item: QueueItem = { id, kind, prompt: queuedPrompt(message), origin: context?.origin ?? { kind: 'automation', source: 'runtime' } };
+    this.queued.set(id, { message, item });
     if (context) {
       if (context.ids.length >= LIMITS.pageEntries) this.loseQueueObservation();
       else context.ids.push(id);
     }
-    if (Buffer.byteLength(JSON.stringify([...this.queued.values()].flatMap(entry => entry.item ? [entry.item] : []))) > LIMITS.pageBytes / 2) this.loseQueueObservation();
+    if (Buffer.byteLength(JSON.stringify([...this.queued.values()].map(entry => entry.item))) > LIMITS.pageBytes / 2) this.loseQueueObservation();
     this.schedule();
   }
 
@@ -564,6 +557,23 @@ export function boundedText(value: string, bytes: number): string {
   let result = ''; let size = 0;
   for (const point of value) { size += Buffer.byteLength(point); if (size > bytes) break; result += point; }
   return result;
+}
+function queuedPrompt(message: QueuedMessage): QueueItem['prompt'] {
+  if (message.role === 'user' || message.role === 'custom') {
+    try {
+      const { content } = message;
+      const prompt = parseSchema(PromptSchema, typeof content === 'string' ? { text: content } : { text: '', attachments: content.map(part => part.type === 'text'
+        ? { type: 'text', text: part.text } : { type: 'image', mimeType: part.mimeType, data: part.data }) });
+      validatePrompt(prompt);
+      if (Buffer.byteLength(JSON.stringify(prompt)) <= LIMITS.statusTextBytes) return prompt;
+    } catch {}
+  }
+  const content = 'content' in message ? message.content : undefined;
+  const parts = typeof content === 'string' ? [content] : Array.isArray(content)
+    ? content.map(part => part.type === 'text' ? part.text : part.type === 'image' ? '[image omitted]' : '') : [];
+  const text = (parts.filter(Boolean).join('\n') as string & { toWellFormed(): string }).toWellFormed();
+  const preview = boundedText(text, LIMITS.statusTextBytes);
+  return { text: preview === text ? text || `[${message.role} message]` : `${preview}…` };
 }
 function resultText(value: unknown): string {
   if (!value || typeof value !== 'object' || !('content' in value) || !Array.isArray(value.content)) return '';

@@ -964,6 +964,7 @@ export class SessionRegistry {
     const sourcePath = request.target.kind === 'clone' || request.target.kind === 'fork' ? this.options.owner.assertOwnsPath(request.target.sourceSessionFile) : undefined;
     const source = sourcePath ? this.list().find(item => item.piPath === sourcePath) : undefined;
     const initialPolicy = request.parentSessionId ? this.getPolicy(request.rootSessionId!) : source ? profilePolicy(source) : request.policy ?? { mode: 'host-default', generation: 0 };
+    const instructions = request.parentSessionId ? undefined : request.instructions;
     let binding: SessionBinding | undefined;
     let claim: string | undefined;
     let borrowed: string | undefined;
@@ -1040,10 +1041,11 @@ export class SessionRegistry {
         policy: { effective: effectivePolicy.mode, generation: effectivePolicy.generation },
         branch: manager.getLeafId() ?? binding.sessionId, observedTip: sessionTip(manager),
         ...(binding.runtime.session.model ? { model: { provider: binding.runtime.session.model.provider, id: binding.runtime.session.model.id } } : {}), thinking: binding.runtime.session.thinkingLevel,
-        ...(request.extensionPaths?.length || request.allowedTools?.length || request.extensionConfigOverrides?.length ? { profile: parseSchema(SessionProfileSchema, {
+        ...(request.extensionPaths?.length || request.allowedTools?.length || request.extensionConfigOverrides?.length || instructions ? { profile: parseSchema(SessionProfileSchema, {
           ...(request.extensionPaths?.length ? { extensionPaths: request.extensionPaths } : {}),
           ...(request.allowedTools ? { allowedTools: request.allowedTools } : {}),
           ...(request.extensionConfigOverrides?.length ? { extensionConfigOverrides: request.extensionConfigOverrides } : {}),
+          ...(instructions ? { instructions } : {}),
         }) } : {}),
       });
       else this.options.store.updateSession(binding.sessionId, { residency: 'warm' });
@@ -1292,9 +1294,10 @@ export class SessionRegistry {
     if (!failures && errors.length) throw new AggregateError(errors, 'Registry operation failed to settle.');
   }
 }
-function profileOptions(profile: SessionProfile | undefined): Pick<RegistryOpenRequest, 'extensionPaths' | 'allowedTools' | 'extensionConfigOverrides'> {
+function profileOptions(profile: SessionProfile | undefined): Pick<RegistryOpenRequest, 'extensionPaths' | 'allowedTools' | 'extensionConfigOverrides' | 'instructions'> {
   return { ...(profile?.extensionPaths ? { extensionPaths: profile.extensionPaths } : {}), ...(profile?.allowedTools ? { allowedTools: profile.allowedTools } : {}),
-    ...(profile?.extensionConfigOverrides ? { extensionConfigOverrides: profile.extensionConfigOverrides } : {}) };
+    ...(profile?.extensionConfigOverrides ? { extensionConfigOverrides: profile.extensionConfigOverrides } : {}),
+    ...(profile?.instructions ? { instructions: profile.instructions } : {}) };
 }
 function directoryOf(path: string): string { return path.slice(0, path.lastIndexOf('/')) || '/'; }
 function registryError(code: string, message: string): Error & { code: string } { return Object.assign(new Error(message), { code }); }

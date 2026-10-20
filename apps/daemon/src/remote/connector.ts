@@ -1,6 +1,6 @@
 import { hostname } from 'node:os';
 import {
-  INTERACTION_KINDS, ROW_SCHEMA_VERSION, isPublishedChangeType, parseRemoteConfigureParams, parseRemoteStatus,
+  INTERACTION_KINDS, REMOTE_FEATURES, ROW_SCHEMA_VERSION, isPublishedChangeType, parseRemoteConfigureParams, parseRemoteStatus,
   type HostCapabilities, type HostRegistration, type KnownSessionChange, type OperationParams, type RemoteStatus,
 } from '@felan-ai/session-protocol';
 import type { ProviderSecretStorage } from '../daemon/provider.js';
@@ -26,6 +26,7 @@ import { HostTokenSource, HostTokenExchangeError, type HostTokenProvider, type H
 export const REMOTE_CAPABILITIES: HostCapabilities = {
   operations: ['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'],
   interactionKinds: [...INTERACTION_KINDS],
+  features: [...REMOTE_FEATURES],
 };
 export type ConnectorTokenSource = HostTokenProvider & Pick<HostTokenSource, 'stop' | 'invalidate'>;
 export type ConnectorPlatform = Pick<PlatformClient, 'register' | 'heartbeat' | 'publish' | 'claim' | 'complete' | 'close'> & {

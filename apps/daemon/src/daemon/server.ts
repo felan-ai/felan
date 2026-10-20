@@ -2,8 +2,8 @@ import type { HostConfiguration, HostSetup } from './host-services.js';
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { ModelRuntime } from '@felan-ai/agent-core';
-import { BootstrapHelloSchema, ERROR_CODES, IdSchema, JsonLineDecoder, LIMITS, OPERATION_CATALOG, PresentationEventSchema, UI_CAPABILITIES, canonicalRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse,
-  parseSchema, type ClientEnvelope, type Interaction, type Operation, type OperationParams, type OperationResult, type Response } from '@felan-ai/session-protocol';
+import { BootstrapHelloSchema, ChannelProviderSchema, ERROR_CODES, IdSchema, JsonLineDecoder, LIMITS, OPERATION_CATALOG, PresentationEventSchema, UI_CAPABILITIES, canonicalRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse,
+  parseSchema, type ClientEnvelope, type Interaction, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
 import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand, type AdmissionOutcome } from './admission.js';
 import { accepted, commandError, SessionCommands, type RemoteControl, type RootPreparation } from './commands.js';
 import { SessionFanout } from './fanout.js';
@@ -16,6 +16,10 @@ import type { HostCompositionInfo } from './host-config.js';
 import { headlessJsonEvent } from './headless-json.js';
 
 type Kind = OperationParams<'hello'>['kind'];
+export interface RemoteSubmission {
+  user: string; command: string; requireRetained?: boolean; channel?: { provider: string };
+  interactionKinds?: OperationParams<'hello'>['interactionKinds'];
+}
 export interface BrokerDispatchPort {
   interactionKinds: OperationParams<'hello'>['interactionKinds'];
   dispatch(command: AdmittedCommand, client: { principal: string; kind: Kind; attachment: string;
@@ -134,19 +138,19 @@ export class SessionServer {
     return this.options.registry.options.store.request(id) !== undefined;
   }
 
-  submitRemote(request: ClientEnvelope, remote: { user: string; command: string; requireRetained?: boolean;
-    interactionKinds?: OperationParams<'hello'>['interactionKinds'] }): Promise<Response> {
+  submitRemote(request: ClientEnvelope, remote: RemoteSubmission): Promise<Response> {
     return this.trackReceive(this.receiveRemote(request, remote));
   }
 
-  private async receiveRemote(value: ClientEnvelope, remote: { user: string; command: string; requireRetained?: boolean;
-    interactionKinds?: OperationParams<'hello'>['interactionKinds'] }): Promise<Response> {
+  private async receiveRemote(value: ClientEnvelope, remote: RemoteSubmission): Promise<Response> {
     let admissionAttempt = false;
     let preparing: RootPreparationWork | undefined; let ownsPreparation = false;
     try {
       const request = parseClientEnvelope(value);
       if (!['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'].includes(request.op)) throw commandError('forbidden');
       const user = parseSchema(IdSchema, remote.user); const commandId = parseSchema(IdSchema, remote.command);
+      const origin: Origin = remote.channel ? { kind: 'channel', provider: parseSchema(ChannelProviderSchema, remote.channel.provider), user, command: commandId }
+        : { kind: 'web', user, command: commandId };
       const retained = this.hasRemoteRequest(request.id);
       if (remote.requireRetained && !retained) throw commandError('indeterminate');
       if ((this.stopped || this.sealed || this.stopping()) && !retained) throw commandError('busy');
@@ -169,7 +173,7 @@ export class SessionServer {
           if (!this.options.broker?.dispatchRemote) throw commandError('unavailable');
           return this.options.broker.dispatchRemote(admitted, { user, command: commandId, interactionKinds: remote.interactionKinds ?? [] });
         }
-        return this.commands.prepare(admitted, { origin: { kind: 'web', user, command: commandId }, ...(rootPreparation ? { rootPreparation } : {}) });
+        return this.commands.prepare(admitted, { origin, ...(rootPreparation ? { rootPreparation } : {}) });
       });
     } catch (error) {
       const dispatched = admissionAttempt && this.options.registry.options.store.request(value.id)?.phase === 'dispatch_intent';

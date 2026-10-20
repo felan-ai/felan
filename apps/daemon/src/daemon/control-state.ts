@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { Type, type Static, type TSchema } from 'typebox';
-import { AbsolutePathSchema, CounterSchema, IdSchema, InteractionSchema, JsonValueSchema, ModelSchema, PolicySchema, RunSchema, ThinkingSchema, UUID_V7_PATTERN, assertJson, parseSchema, enumOf, text, unboundedText } from '@felan-ai/session-protocol';
+import { AbsolutePathSchema, CounterSchema, IdSchema, InteractionSchema, JsonValueSchema, LIMITS, ModelSchema, PolicySchema, RunSchema, ThinkingSchema, UUID_V7_PATTERN, assertJson, parseSchema, enumOf, text, unboundedText } from '@felan-ai/session-protocol';
 
 export const CONTROL_LIMITS = Object.freeze({
   projections: 256,
@@ -19,6 +19,7 @@ export const SessionProfileSchema = Type.Object({
   extensionConfigOverrides: Type.Optional(Type.Array(Type.Object({ extensionId: IdSchema, source: text(128, 1),
     values: Type.Record(Type.String(), JsonValueSchema),
   }))),
+  instructions: Type.Optional(text(LIMITS.instructionsBytes, 1)),
 });
 export type SessionProfile = Static<typeof SessionProfileSchema>;
 const message = Type.Object({ type: Type.Literal('message'), id: IdSchema, entryId: IdSchema, state: enumOf(['observed', 'missing'] as const) });

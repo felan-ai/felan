@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  OriginSchema, PUBLISHED_TOOL_OUTPUT_CHARACTERS, parseHostRegistration, parseHostTokenClaims, parseHostTokenResponse, parsePublishedEvent,
+  LIMITS, OriginSchema, PUBLISHED_TOOL_OUTPUT_CHARACTERS, RemoteCommandRowSchema, parseClientEnvelope, parseHostRegistration, parseHostTokenClaims, parseHostTokenResponse, parsePublishedEvent,
   parsePublishedSession, parseRealtimeNotification, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema,
 } from '../src/index.js';
 import { tool } from './fixtures.js';
@@ -56,6 +56,45 @@ describe('remote commands', () => {
   });
   it('records web requests as a run origin', () => {
     expect(parseSchema(OriginSchema, { kind: 'web', user: host, command })).toEqual({ kind: 'web', user: host, command });
+  });
+  it('records channel-started requests on runs, queue items and messages', () => {
+    const origin = { kind: 'channel', provider: 'slack', user: host, command };
+    expect(parseSchema(OriginSchema, origin)).toEqual(origin);
+    for (const change of [{ type: 'run.updated', run: { state: 'running', id: command, origin } },
+      { type: 'queue.updated', queue: [{ id: command, kind: 'steer', prompt: { text: 'Next' }, origin }] },
+      { type: 'message.completed', message: { id: command, entryId: command, role: 'user', content: [], timestamp: 0, origin } }]) {
+      expect(parsePublishedEvent({ ...event, change }).change).toEqual(change);
+    }
+    for (const provider of ['', 'Slack', 'slack\nadmin', 'a'.repeat(65)]) expect(() => parseSchema(OriginSchema, { ...origin, provider })).toThrow();
+    expect(() => parseSchema(OriginSchema, { kind: 'channel', user: host, command })).toThrow();
+  });
+});
+
+describe('channel commands and session instructions', () => {
+  const create = { op: 'sessions.create', params: { project: 'project', instructions: 'Write Markdown only.' } };
+  it('bounds remote and local create instructions', () => {
+    expect(parseRemoteCommand(create)).toEqual(create);
+    expect(() => parseRemoteCommand({ ...create, params: { ...create.params, instructions: '' } })).toThrow();
+    expect(() => parseRemoteCommand({ ...create, params: { ...create.params, instructions: 'é'.repeat(LIMITS.instructionsBytes / 2 + 1) } })).toThrow();
+    const local = { v: 1, id: command, op: 'sessions.create', params: { cwd: '/work', instructions: 'Stay silent unless addressed.' } };
+    expect(parseClientEnvelope(local)).toEqual(local);
+    expect(() => parseClientEnvelope({ ...local, params: { ...local.params, instructions: 'x'.repeat(LIMITS.instructionsBytes + 1) } })).toThrow();
+  });
+  it('carries the channel provider on claimed command rows', () => {
+    const row = { id: command, host, requester: host, command: create, createdAt: 1, expiresAt: 2 };
+    expect(parseSchema(RemoteCommandRowSchema, { ...row, channel: { provider: 'slack' } })).toEqual({ ...row, channel: { provider: 'slack' } });
+    expect(parseSchema(RemoteCommandRowSchema, row)).toEqual(row);
+    expect(() => parseSchema(RemoteCommandRowSchema, { ...row, channel: {} })).toThrow();
+  });
+  it('advertises optional host features and keeps unknown ones for forward compatibility', () => {
+    const registration = { name: 'host', daemonVersion: '0.2.0', rowSchemaVersion: 1, projects: [],
+      capabilities: { operations: ['sessions.create'], interactionKinds: [], features: ['sessions.create.instructions'] } };
+    expect(parseHostRegistration(registration)).toEqual(registration);
+    const { features: _, ...legacy } = registration.capabilities;
+    expect(parseHostRegistration({ ...registration, capabilities: legacy }).capabilities).toEqual(legacy);
+    expect(parseHostRegistration({ ...registration, capabilities: { ...legacy, features: ['future.feature'] } }).capabilities.features).toEqual(['future.feature']);
+    expect(() => parseHostRegistration({ ...registration, capabilities: { ...legacy, features: [''] } })).toThrow();
+    expect(() => parseHostRegistration({ ...registration, capabilities: { ...legacy, features: ['a', 'a'] } })).toThrow();
   });
 });
 

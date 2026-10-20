@@ -5,10 +5,9 @@ schemas, inferred types, bounded validation and JSON-line framing. Its sole
 runtime dependency is `typebox@1.1.38`. It imports no Node, Pi, Agent Core, TUI,
 ACP or platform APIs and can run directly in a browser.
 
-The intended first public release is **0.2.0**. No publication is performed by
-this implementation. The manual `0.0.0` bootstrap and trusted publisher setup in
-[`docs/maintainers/releasing.md`](../../docs/maintainers/releasing.md) remain
-release prerequisites. The only public subpath is `.`; no daemon or profile
+0.1.0 was the first public release. 0.2.0 adds the `channel` origin, which
+readers on 0.1.x reject, so it is a breaking minor. Releases follow
+[`docs/maintainers/releasing.md`](../../docs/maintainers/releasing.md). The only public subpath is `.`; no daemon or profile
 implementation is exported here. Breaking changes require the next minor;
 compatible fixes stay within `0.2.x`. Wire, stored-row and mismatch-control
 versions are independent constants, initially `1`.
@@ -282,11 +281,25 @@ pin the complete namespace/instance/root identity; the host must verify it.
 canonicalization, root containment, peer authentication and ownership are host
 responsibilities, not filesystem functionality in this package.
 
+## Remote commands and channel origins
+
+Platform commands run with origin `{ kind: 'web', user, command }`. A claimed
+`RemoteCommandRow` may carry `channel: { provider }` for a command started from a
+chat channel; the host then records `{ kind: 'channel', provider, user, command }`
+on runs, queue items and messages instead. `ChannelProviderSchema` limits
+`provider` to `^[a-z][a-z0-9_-]*$`, at most 64 bytes. Remote and local `sessions.create`
+accept optional `instructions` (at most `LIMITS.instructionsBytes`, 16 KiB) that
+the host appends to that root session's system prompt; child sessions do not
+inherit them. A host advertises this with
+`capabilities.features: ['sessions.create.instructions']`; `REMOTE_FEATURES`
+lists the known values. Features are optional behaviours: platforms rely on one
+only when the registered host advertises it, and readers ignore unknown values.
+
 ## Limits and verification
 
 `LIMITS` is the authoritative numeric table: JSON depth 32, 64 KiB structured
 data, 8 active streams/1 MiB each/4 MiB total, 64 KiB process reads/16 KiB
-writes, 256-entry/12 MiB pages, 32 MiB unsent bytes and 64 in-flight requests. The 64 KiB/1,024-entry structured JSON limits apply to
+writes, 256-entry/12 MiB pages, 32 MiB unsent bytes, 64 in-flight requests and 16 KiB session instructions. The 64 KiB/1,024-entry structured JSON limits apply to
 structured presentation data, tool catalog parameters and coalesced tool
 status details, not transcript payloads. Transcript tool arguments, result
 details and message details instead use the enclosing 12 MiB message/page/

@@ -103,6 +103,12 @@ describe('remote publication content', () => {
       expect(parsePublishedSession(value)).toEqual(value);
     }
   });
+  it('publishes channel origins with their provider and identities intact', () => {
+    const origin = { kind: 'channel' as const, provider: 'slack', user: session, command: session };
+    const change: KnownSessionChange = { type: 'run.updated', run: { state: 'running', id: 'run', origin } };
+    expect(publishableChange(change)).toEqual(change);
+  });
+
   it('preserves interaction identities while redacting their visible labels', () => {
     const id = 'sk-choice123456789';
     const change = publishableChange({ type: 'interaction.resolved', interaction: {

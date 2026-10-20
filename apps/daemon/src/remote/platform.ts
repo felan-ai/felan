@@ -31,6 +31,7 @@ export interface ClaimedCommand {
   command: RemoteCommand;
   expiresAt: number;
   claimedAt?: number;
+  channel?: { provider: string };
   state: 'pending' | 'claimed' | 'completed' | 'expired';
 }
 export interface InvalidClaimedCommand { id: string; invalid: string }
@@ -97,15 +98,17 @@ function claimed(value: unknown): ClaimedCommand | InvalidClaimedCommand {
       ...(session === null || session === undefined ? {} : { session }),
     });
     if (command.op === 'sessions.create' && session !== null && session !== undefined) throw new Error();
+    const provider = Reflect.get(value, 'channel_provider');
     const row = parseSchema(RemoteCommandRowSchema, {
       id, host: Reflect.get(value, 'host_id'), requester: Reflect.get(value, 'requester_user_id'), command,
       createdAt: timestamp(Reflect.get(value, 'created_at')), expiresAt: timestamp(Reflect.get(value, 'expires_at')),
+      ...(provider === null || provider === undefined ? {} : { channel: { provider } }),
     });
     const state = Reflect.get(value, 'state');
     if (!['pending', 'claimed', 'completed', 'expired'].includes(state)) throw new Error();
     return {
       id, ...(typeof session === 'string' ? { session } : {}), requester: row.requester,
-      command, expiresAt: row.expiresAt, state: state as ClaimedCommand['state'],
+      command, expiresAt: row.expiresAt, state: state as ClaimedCommand['state'], ...(row.channel ? { channel: row.channel } : {}),
       ...(Reflect.get(value, 'claimed_at') == null ? {} : { claimedAt: timestamp(Reflect.get(value, 'claimed_at')) }),
     };
   } catch { return { id, invalid: 'Invalid claimed command row.' }; }

@@ -188,7 +188,7 @@ export class SessionCommands {
         const creation = { cwd: resources.cwd, target: { kind: 'new' as const }, clientRoot: true as const,
           sessionDir: resources.sessionDir, ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } as const } : {}), ...(model ? { model } : {}),
           ...(request.params.thinking ? { thinkingLevel: request.params.thinking } : {}), ...(extensionPaths ? { extensionPaths } : {}),
-          ...(overrides.length ? { extensionConfigOverrides: overrides } : {}) };
+          ...(overrides.length ? { extensionConfigOverrides: overrides } : {}), ...(request.params.instructions ? { instructions: request.params.instructions } : {}) };
         await registry.validateConfiguration(creation, resources);
         command.assertDispatch();
         const work = command.dispatch(() => registry.create(creation));

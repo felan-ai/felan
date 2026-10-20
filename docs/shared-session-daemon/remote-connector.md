@@ -178,15 +178,26 @@ The connector advertises these operations:
 
 | Operation | Behavior |
 | --- | --- |
-| `sessions.create` | Resolve an opened project ID, create a shared root using host-configured external extensions without a trust prompt or explicit paths, optionally submit an initial prompt; successful remote result is `{ sessionId }`, the same as local create |
+| `sessions.create` | Resolve an opened project ID, create a shared root using host-configured external extensions without a trust prompt or explicit paths, apply optional `instructions` to that root's system prompt, optionally submit an initial prompt; successful remote result is `{ sessionId }`, the same as local create |
 | `prompt` | Submit a prompt through daemon admission |
 | `steer` | Steer through the normal session operation |
 | `cancel` | Cancel the current run, optionally matching a run ID |
 | `interaction.answer` | Answer an eligible session interaction through the broker; first valid answer wins |
 
 Commands other than create require a shared session. They are attributed with
-`{ kind: 'web', user, command }` provenance. Claims do not bypass daemon admission
-or interaction validation.
+`{ kind: 'web', user, command }` provenance. A claimed row whose
+`channel_provider` is set came from a chat channel; its runs, queue items and
+messages carry `{ kind: 'channel', provider, user, command }` instead, and the
+provider is part of the command's journal identity. Claims do not bypass daemon
+admission or interaction validation.
+
+Create `instructions` (at most 16 KiB) are appended to that root's base system
+prompt, after any host `APPEND_SYSTEM.md`, so every turn and compaction keep
+them. They are stored in the session profile, survive eviction, reload and daemon
+restarts, and are copied by clone and fork. Child executions do not inherit
+them. The connector advertises this with
+`capabilities.features: ['sessions.create.instructions']`; a platform sends
+`instructions` only to hosts that advertise it, because older hosts drop the field.
 
 The PAT owner may answer session-scoped owner-authority interactions. Host-scoped
 questions and `authority: 'local-console'` questions cannot be answered remotely.

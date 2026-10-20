@@ -65,7 +65,7 @@ importers:
         specifier: workspace:*
         version: link:../../packages/agent-core
       '@felan-ai/daemon':
-        specifier: workspace:0.1.0
+        specifier: workspace:0.2.0
         version: link:../daemon
       '@felan-ai/ext-ask-user':
         specifier: workspace:*

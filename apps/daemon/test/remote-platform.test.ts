@@ -114,6 +114,22 @@ describe('PlatformClient', () => {
     await platform.close();
   });
 
+  it('maps a channel provider from claimed rows and rejects a malformed one', async () => {
+    const f = setup();
+    const row = {
+      id, team_id: id, host_id: id, session_id: id, requester_user_id: other, op: 'prompt', params: { text: 'hi' }, state: 'claimed',
+      outcome: null, created_at: '2026-10-15T00:00:00Z', expires_at: '2026-10-15T00:01:00Z', claimed_at: null, completed_at: null,
+      channel_thread_id: other, channel_payload: { sender: 'U1' },
+    };
+    f.rpc.mockResolvedValue({ data: [{ ...row, channel_provider: 'slack' }, { ...row, id: other, channel_provider: null }, { ...row, id: other, channel_provider: 'Slack' }], error: null });
+    const platform = await PlatformClient.connect(f.source, { clientFactory: f.factory });
+    const [channel, web, invalid] = await platform.claim();
+    expect(channel).toMatchObject({ id, channel: { provider: 'slack' }, command: { op: 'prompt', session: id, params: { text: 'hi' } } });
+    expect(web).not.toHaveProperty('channel');
+    expect(invalid).toEqual({ id: other, invalid: 'Invalid claimed command row.' });
+    await platform.close();
+  });
+
   it('sanitizes RPC and thrown transport errors', async () => {
     const f = setup();
     const platform = await PlatformClient.connect(f.source, { clientFactory: f.factory });

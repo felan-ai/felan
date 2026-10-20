@@ -24,6 +24,7 @@ export const LIMITS = Object.freeze({
   linuxSocketPathBytes: 107,
   windowsPipeCharacters: 240,
   statusTextBytes: 64 * 1024,
+  instructionsBytes: 16 * 1024,
 });
 
 export class ProtocolValidationError extends Error {

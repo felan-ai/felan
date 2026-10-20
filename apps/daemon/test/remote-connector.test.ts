@@ -519,7 +519,7 @@ describe('RemoteConnector connection and commands', () => {
 
   it('registers capabilities and canonical projects, then re-registers edits and heartbeats', async () => {
     const f = await fixture(); expect(f.platform.registration[0]).toMatchObject({ rowSchemaVersion: 1, capabilities: {
-      operations: ['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'], interactionKinds: ['select', 'confirm', 'input', 'editor', 'tool_approval', 'dependency', 'form'],
+      operations: ['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'], interactionKinds: ['select', 'confirm', 'input', 'editor', 'tool_approval', 'dependency', 'form'], features: ['sessions.create.instructions'],
     } });
     const status = await f.connector.configure({ action: 'open_project', path: f.cwd }); await f.clock.tick();
     expect(status.projects[0]).toMatchObject({ path: f.cwd, name: 'work' }); expect(f.platform.registration.at(-1)!.projects).toEqual(status.projects);

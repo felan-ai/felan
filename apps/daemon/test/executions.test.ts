@@ -34,6 +34,22 @@ describe('registry-owned executions', () => {
     await expect(readFile(join(f.owner.target.agentDir, 'executions', f.root.sessionId, 'records.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('applies session instructions to the root only, not to its child executions', async () => {
+    const f = await realFixture();
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: f.root.runtime.session.model!, instructions: 'Output <no_response/> when silent.' });
+    await root.runtime.session.prompt('hello');
+    const host = f.registry.executionHost(root.sessionId);
+    const child = await host.spawnSession(request()); if (!child.ok) throw new Error(child.error.message);
+    await completed(host, child.value.executionId);
+    const sections = (session: { messages: readonly unknown[] }) => session.messages.flatMap(message => message && typeof message === 'object'
+      && Reflect.get(message, 'role') === 'system' ? [JSON.stringify(Reflect.get(message, 'sections'))] : []);
+    expect(sections(root.runtime.session).join()).toContain('Output <no_response/> when silent.');
+    const childSession = (await f.registry.restore(child.value.executionId)).runtime.session;
+    expect(sections(childSession).length).toBeGreaterThan(0);
+    expect(sections(childSession).join()).not.toContain('no_response');
+    expect(f.store.session(child.value.executionId).profile?.instructions).toBeUndefined();
+  });
+
   it('derives results and usage from the same child transcript and continues with one canonical identity', async () => {
     const f = await realFixture(); const host = f.registry.executionHost(f.root.sessionId);
     const child = await host.spawnSession(request()); if (!child.ok) throw new Error(child.error.message);

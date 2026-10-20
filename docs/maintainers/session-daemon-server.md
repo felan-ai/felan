@@ -79,6 +79,16 @@ handler behavior. It does not add queue editing or a new execution mode. The
 wider result type must be included in the public-contract release assessment;
 consumers cannot assume every accepted input contains `itemId`.
 
+Queued items mirror the native queue for the client. Queued custom messages with
+`display: false` are model context only, as in the transcript, so they are neither listed nor
+reported. Other queued messages are listed with their exact prompt when it is valid and
+encodes within `LIMITS.statusTextBytes`. Otherwise the daemon lists a text preview:
+images become `[image omitted]`, lone surrogates become U+FFFD, and text longer than the
+budget ends with `…`. Previews are display-only and must not be resubmitted as typed input.
+Queue observation is reported as incomplete only when the daemon loses track of the queue
+(more than 256 items, more than half the page byte budget, or input queued before
+observation began).
+
 ## Fan-out and snapshot cutover
 
 Each connection owns a bounded outbox. Held cutover events, queued frames and

@@ -1,4 +1,5 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import type { AgentSession } from '@felan-ai/agent-core';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -180,6 +181,27 @@ it('returns a durable completed outcome, rejects changed identity, and never dis
   f.executor.forget(row.id); expect(f.journal.get(row.id)).toBeUndefined();
 });
 
+it('passes channel provenance and create instructions to admission and binds the channel to command identity', async () => {
+  const f = await fixture(); const channel = { provider: 'slack' };
+  const row = { id: id(), requester, expiresAt, channel,
+    command: { op: 'sessions.create', params: { project: 'open', prompt: { text: 'Begin' }, instructions: 'Write Markdown only.' } } as RemoteCommand };
+  expect(await f.executor.execute(row)).toEqual({ v: 1, re: row.id, outcome: 'accepted', result: { sessionId: session } });
+  expect(f.submit.mock.calls.map(([request, remote]) => [request.op, remote.channel])).toEqual([['sessions.create', channel], ['prompt', channel]]);
+  expect(f.submit.mock.calls[0]![0]).toMatchObject({ op: 'sessions.create', params: { cwd: '/opened', instructions: 'Write Markdown only.' } });
+  const { channel: _, ...web } = row;
+  expect(await f.executor.execute(web)).toMatchObject({ error: { code: 'request_conflict' } });
+  await f.executor.execute({ id: id(), requester, expiresAt, command: { op: 'cancel', session, params: {} } });
+  expect(f.submit.mock.calls.at(-1)![1]).not.toHaveProperty('channel');
+  expect(f.submit).toHaveBeenCalledTimes(3);
+});
+
+it('keeps the journal identity format of commands without a channel', async () => {
+  const f = await fixture(); const row = { id: id(), requester, expiresAt, command: { op: 'cancel', session, params: {} } as RemoteCommand };
+  await f.executor.execute(row);
+  const canonical = `{"command":{"op":"cancel","params":{},"session":${JSON.stringify(session)}},"requester":${JSON.stringify(requester)}}`;
+  expect(f.journal.get(row.id)?.identity).toBe(createHash('sha256').update(canonical).digest('hex'));
+});
+
 it('keeps request identity stable when JSON key order changes', async () => {
   const f = await fixture(); const row = { id: id(), requester, expiresAt, command: { op: 'prompt', session, params: { text: 'Once' } } as RemoteCommand };
   const first = await f.executor.execute(row);
@@ -269,6 +291,50 @@ it('uses shared admission without attachments and preserves web origin on runs a
   expect(f.registry.projection(f.root.sessionId).snapshot().queue[0]?.origin).toEqual({ ...origin, command: steering });
   expect(await f.server.submitRemote(request, { user: randomUUID(), command })).toMatchObject({ error: { code: 'request_conflict' } });
 });
+
+it('records a channel origin on runs and queued steering for channel-started commands', async () => {
+  const f = await realServer(); const command = id(); const channel = { provider: 'slack' };
+  const request = parseClientEnvelope({ v: 1, id: command, op: 'prompt', session: f.root.sessionId, params: { text: 'Run' } });
+  expect(await f.server.submitRemote(request, { user: requester, command, channel })).toMatchObject({ outcome: 'accepted' });
+  expect(f.store.session(f.root.sessionId).run.origin).toEqual({ kind: 'channel', provider: 'slack', user: requester, command });
+  f.hold.resolve();
+  await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('idle'));
+  const steering = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: steering, op: 'steer', session: f.root.sessionId, params: { text: 'Steer' } }),
+    { user: requester, command: steering, channel })).toMatchObject({ outcome: 'accepted' });
+  expect(f.registry.projection(f.root.sessionId).snapshot().queue[0]?.origin).toEqual({ kind: 'channel', provider: 'slack', user: requester, command: steering });
+  const malformed = id();
+  expect(await f.server.submitRemote({ ...request, id: malformed } as ClientEnvelope, { user: requester, command: malformed, channel: { provider: '' } }))
+    .toMatchObject({ outcome: 'rejected', error: { code: 'invalid_request' } });
+});
+
+it('appends remote create instructions to the root system prompt on every run path and keeps them after eviction', async () => {
+  const f = await realServer(); f.hold.resolve(); const command = id();
+  const instructions = 'Write Markdown only. Output <no_response/> when no reply is needed.';
+  const response = await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'sessions.create', params: { cwd: f.cwd, instructions } }), { user: requester, command });
+  if (response.outcome !== 'accepted') throw new Error('Create failed');
+  const created = (response.result as { sessionId: string }).sessionId;
+  expect(f.store.session(created).profile?.instructions).toBe(instructions);
+  const first = f.registry.binding(created)!.runtime.session;
+  expect(await sentSystemPrompt(first, () => first.prompt('hello'))).toContain(instructions);
+  expect(first.systemPrompt).toContain(instructions);
+  expect(await sentSystemPrompt(first, () => first.sendCustomMessage({ customType: 'completion', content: 'Execution completion: done', display: true }, { triggerTurn: true })))
+    .toContain(instructions);
+  expect(await f.registry.evictIdle()).toContain(created);
+  const restored = (await f.registry.restore(created)).runtime.session;
+  expect(restored).not.toBe(first);
+  expect(await sentSystemPrompt(restored, () => restored.prompt('again'))).toContain(instructions);
+  const root = f.root.runtime.session;
+  expect(await sentSystemPrompt(root, () => root.prompt('unrelated'))).not.toContain(instructions);
+});
+
+async function sentSystemPrompt(session: AgentSession, run: () => Promise<unknown>): Promise<string> {
+  const before = session.messages.length;
+  await run();
+  await vi.waitFor(() => expect(session.messages.slice(before).some(message => message.role === 'assistant')).toBe(true));
+  await vi.waitFor(() => expect(session.isIdle).toBe(true));
+  return session.agent.state.systemPrompt;
+}
 
 it('creates remotely with host paths and no prompt recipient, without preparing retained or replayed requests again', async () => {
   const f = await realServer(); const command = id();

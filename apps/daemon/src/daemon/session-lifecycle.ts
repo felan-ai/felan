@@ -39,10 +39,12 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
     id: 'kernel',
     async resolveResources(request) {
       if (disposed) throw new Error('Session lifecycle is disposed.');
-      const environment = await options.composition.resolveEnvironment({ ...request, agentDir: options.agentDir,
-        ...(options.homeDir ? { homeDir: options.homeDir } : {}) });
+      const environment = await options.composition.resolveEnvironment({
+        ...request, agentDir: options.agentDir,
+        ...(options.homeDir ? { homeDir: options.homeDir } : {})
+      });
       for (const path of [environment.cwd, environment.agentDir, environment.sessionDir, environment.sessionStorageBase,
-        environment.agentStorageRoot, ...environment.writableRoots, ...(environment.workerRoots ?? [])]) {
+      environment.agentStorageRoot, ...environment.writableRoots, ...(environment.workerRoots ?? [])]) {
         assertAbsolutePath(path);
         if (await canonicalPath(path) !== path) throw new Error('Session environment paths must be canonical.');
       }
@@ -94,7 +96,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         if (released) return Promise.resolve();
         disposal ??= (async () => {
           if (scope) interruptProviderScope(scope);
-          await activation?.catch(() => {});
+          await activation?.catch(() => { });
           await phase('settle-providers', scope ? () => scope!.settle('force') : undefined);
           await phase('bindings', bindings?.dispose);
           await phase('session', disposeSession ?? (() => agent?.dispose()));
@@ -112,11 +114,13 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         if (sessionManager !== manager || await canonicalPath(cwd) !== request.resources.cwd) throw new Error('Session replacement requires registry admission.');
         assertSessionManagerMatches(manager, id);
         await request.ownership.assertOwned(request.resources, target.identity);
-        composition = await options.composition.prepare({ environment: request.resources, session: identity, modelRuntime: models,
+        composition = await options.composition.prepare({
+          environment: request.resources, session: identity, modelRuntime: models,
           ...(options.homeDir ? { homeDir: options.homeDir } : {}),
           ...(options.createLogger ? { logger: options.createLogger(createRuntimeStorageRequest(cwd, options.agentDir, root).agentStorageRoot) } : {}),
           extensionPackages: options.extensionPackages, extensionConfigOverrides: request.extensionConfigOverrides ?? [], extensionPaths,
-          ...(request.model ? { model: request.model } : {}), ...(request.thinkingLevel ? { thinkingLevel: request.thinkingLevel } : {}) });
+          ...(request.model ? { model: request.model } : {}), ...(request.thinkingLevel ? { thinkingLevel: request.thinkingLevel } : {})
+        });
         const prepared = composition.options;
         if (prepared.extensionPackages.some(name => !options.extensionPackages.includes(name))) throw new Error('Runtime enabled an unconfigured extension.');
         activePackages = prepared.extensionPackages;
@@ -151,42 +155,53 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
           await request.ownership.assertOwned(request.resources, target.identity);
           await prepared.settingsManager.reload();
         };
-        const context: SessionExtensionContext = { updateExtensionConfig, runtime, modelRuntime: models, settingsManager: prepared.settingsManager, sessionManager: manager,
+        const context: SessionExtensionContext = {
+          updateExtensionConfig, runtime, modelRuntime: models, settingsManager: prepared.settingsManager, sessionManager: manager,
           resources: request.resources, rootSessionId: root, policy: inheritExecutionPolicy(request.services.getExecutionPolicy()), extensionPackages: prepared.extensionPackages,
           extensionConfigs: composition.extensionConfigs, extensionConfigOverrides: prepared.extensionConfigOverrides ?? [],
           scopedModels: prepared.scopedModels ?? [], skillPaths: prepared.skillPaths ?? [], classifier: runtime.classifier, dynamicThinking: prepared.dynamicThinking ?? false,
-          services: options.serviceRegistry, importExtension: prepared.importExtension };
+          services: options.serviceRegistry, importExtension: prepared.importExtension
+        };
         const port = request.services.extensions.executionPort?.(context);
         const { services: _services, ...executionContext } = context;
-        scope = await options.openServiceScope({ runtime, modelRuntime: models, secretStorage: options.secretStorage, sessionId: id, rootSessionId: root, allowedModels: allowed,
+        scope = await options.openServiceScope({
+          runtime, modelRuntime: models, secretStorage: options.secretStorage, sessionId: id, rootSessionId: root, allowedModels: allowed,
           ...(port ? { execution: { context: executionContext, port } } : {}),
           ...(options.runtimeDependencies ? { runtimeDependencies: options.runtimeDependencies } : {}),
-          ...(options.sessions ? { sessions: options.sessions(identity, cwd) } : {}), ...(options.openWorker ? { openWorker: options.openWorker(identity, models, allowed) } : {}) });
+          ...(options.sessions ? { sessions: options.sessions(identity, cwd) } : {}), ...(options.openWorker ? { openWorker: options.openWorker(identity, models, allowed) } : {})
+        });
         bindings = await request.services.extensions.bind({ ...context, services: scope.services }, port);
         const onSession = bindings.onSession;
-        bindings = { ...bindings, inlineExtensions: [...(bindings.inlineExtensions ?? []), ...scope.inlineExtensions],
+        bindings = {
+          ...bindings, inlineExtensions: [...(bindings.inlineExtensions ?? []), ...scope.inlineExtensions],
           async onSession(session) {
-            if (port) releaseProviders = port.registerService({ disposeWhenIdle: true,
+            if (port) releaseProviders = port.registerService({
+              disposeWhenIdle: true,
               busy: () => scope!.busy(), settle: mode => scope!.settle(mode ?? 'force'),
               // Providers retain UI until the session's shutdown handlers finish.
-              async dispose() {} });
+              async dispose() { }
+            });
             await onSession?.(session);
           },
         };
         const paths = [...(prepared.extensionPaths ?? []), ...(bindings.extensionPaths ?? [])];
         for (const path of paths) assertAbsolutePath(path);
-        return { ...prepared, runtime, modelRuntime: models, importExtension: bindings.importExtension,
+        return {
+          ...prepared, runtime, modelRuntime: models, importExtension: bindings.importExtension,
           updateExtensionConfig,
+          ...(request.parentSessionId === undefined && request.instructions
+            ? { appendSystemPrompt: [...(prepared.appendSystemPrompt ?? []), request.instructions] } : {}),
           extensionPaths: [...new Set(paths)], inlineExtensions: [...(prepared.inlineExtensions ?? []), ...(bindings.inlineExtensions ?? [])],
           services: bindings.services ?? scope.services, ...(bindings.savings ? { savings: bindings.savings } : {}),
           ...(bindings.wrapStreamFunction ? { wrapStreamFunction: bindings.wrapStreamFunction } : {}),
-          ...(bindings.createExtensionUi ? { createExtensionUi: bindings.createExtensionUi } : {}) };
+          ...(bindings.createExtensionUi ? { createExtensionUi: bindings.createExtensionUi } : {})
+        };
       });
       try {
         const runtime = await createAgentSessionRuntime(async creation => {
           const result = await factory(creation); agent = result.session;
           const diagnostics = [...result.diagnostics, { type: 'info' as const, message: `Agent Core version: ${AGENT_CORE_VERSION}` }, ...(composition?.diagnostics ?? []),
-            ...result.services.settingsManager.drainErrors().map(({ scope, error }) => ({ type: 'warning' as const, message: `${scope} settings: ${diagnosticMessage(error)}` }))];
+          ...result.services.settingsManager.drainErrors().map(({ scope, error }) => ({ type: 'warning' as const, message: `${scope} settings: ${diagnosticMessage(error)}` }))];
           return { ...result, diagnostics };
         }, { cwd: request.resources.cwd, agentDir: request.resources.agentDir, sessionManager: manager });
         disposeSession = runtime.dispose.bind(runtime); runtime.dispose = cleanup;
@@ -194,16 +209,20 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         runtime.newSession = reject; runtime.switchSession = reject; runtime.fork = reject; runtime.importFromJsonl = reject;
         const activate = () => {
           if (released || disposal) return Promise.reject(new Error('Session binding is disposing.'));
-          return activation ??= (async () => { await scope!.activate(); await bindings?.onSession?.(runtime.session);
+          return activation ??= (async () => {
+            await scope!.activate(); await bindings?.onSession?.(runtime.session);
             await runtime.session.bindExtensions({ mode: 'print', ...(bindings?.uiContext ? { uiContext: bindings.uiContext } : {}) });
-            if (request.allowedTools) restrictActiveTools(runtime.session, request.allowedTools); })();
+            if (request.allowedTools) restrictActiveTools(runtime.session, request.allowedTools);
+          })();
         };
         if (!options.deferActivation) await activate();
         const tools = TrustedToolCatalog.fromSession(runtime.session, composition!.toolPolicy);
-        return { runtime, agentRuntime: agentRuntime!, sessionId: id, rootSessionId: root,
+        return {
+          runtime, agentRuntime: agentRuntime!, sessionId: id, rootSessionId: root,
           ...(options.composition.projectMessage ? { projectMessage: options.composition.projectMessage } : {}),
           ...(request.parentSessionId ? { parentSessionId: request.parentSessionId } : {}), resources: request.resources, diagnostics: runtime.diagnostics,
-          tools, toolProvenance: tools.provenance, ...(options.deferActivation ? { activate } : {}) } satisfies SessionBinding;
+          tools, toolProvenance: tools.provenance, ...(options.deferActivation ? { activate } : {})
+        } satisfies SessionBinding;
       } catch (error) {
         try { await cleanup(); } catch (failure) { throw new AggregateError([error, failure], 'Session setup cleanup failed; resources remain owned.'); }
         throw error;

@@ -224,8 +224,8 @@ a control-first reference whose entry is provably absent becomes `missing`.
 The caller must supply `absentEntryIds` only after actually proving absence in
 the relevant complete/pinned view, never from a partial history page. The new
 revision is committed before publishing recovery state. No boundary reruns the
-model, shell or request to make the two stores agree. Queue records contain IDs
-and a payload digest, not executable queued prompts; lost in-memory queues are
+model, shell or request to make the two stores agree. Queue records contain the IDs
+and digest of queued user input only, not executable queued prompts or automation previews; lost in-memory queues are
 reported as interrupted/unavailable, never reconstructed and automatically run.
 
 ## Interaction and continuation ordering

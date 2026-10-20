@@ -74,6 +74,7 @@ export interface SessionOpenRequest {
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];
   readonly extensionPaths?: readonly string[];
   readonly allowedTools?: readonly string[];
+  readonly instructions?: string;
   readonly worker?: SessionWorkerConfiguration;
 }
 

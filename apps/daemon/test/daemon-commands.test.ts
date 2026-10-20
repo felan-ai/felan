@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntime, AgentRuntimeProcess } from '@felan-ai/agent-core';
-import { canonicalRequestPayload, type OperationParams } from '@felan-ai/session-protocol';
+import { LIMITS, canonicalRequestPayload, type OperationParams } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from '../src/daemon/control-store.js';
 import { RegistryProcesses } from '../src/daemon/processes.js';
 import { OrderedAdmission } from '../src/daemon/admission.js';
@@ -80,12 +80,48 @@ describe('public processed queue observation', () => {
     expect(projection.snapshot().queue).toEqual([]);
   });
 
-  it('leaves custom and excessive native queues untouched while disclosing incomplete representation', async () => {
+  it('omits hidden custom messages from the queue without a notice and shows visible ones as previews', async () => {
     const f = await fixture(); const session = f.root.runtime.session; const projection = f.registry.projection(f.root.sessionId);
-    const custom = { role: 'custom' as const, customType: 'synthetic', content: 'native custom', display: false, timestamp: now };
-    session.agent.followUp(custom);
-    expect(projection.snapshot().presentation.some(item => 'text' in item && item.text.includes('cannot be represented'))).toBe(true);
-    expect(session.agent.peekQueuedMessages()[0]).toBe(custom);
+    const hidden = { role: 'custom' as const, customType: 'synthetic', content: 'hidden', display: false, timestamp: now };
+    session.agent.followUp(hidden);
+    expect(projection.snapshot()).toMatchObject({ queue: [], presentation: [] });
+    expect(session.agent.peekQueuedMessages()[0]).toBe(hidden);
+    session.clearQueue();
+    const visible = { role: 'custom' as const, customType: 'completion', content: 'Execution completion: done', display: true, timestamp: now };
+    session.agent.steer(visible);
+    expect(projection.snapshot()).toMatchObject({ queue: [{ kind: 'steer', prompt: { text: 'Execution completion: done' }, origin: { kind: 'automation', source: 'runtime' } }], presentation: [] });
+    session.clearQueue();
+    expect(projection.snapshot().queue).toEqual([]);
+  });
+
+  it('previews invalid user input and bounds oversized prompts without losing observation', async () => {
+    const f = await fixture(); const session = f.root.runtime.session; const projection = f.registry.projection(f.root.sessionId);
+    session.agent.steer({ role: 'user', content: [{ type: 'text', text: 'lone \ud800' }, { type: 'image', mimeType: 'image/bmp', data: '/w==' }], timestamp: now });
+    expect(projection.snapshot().queue[0]?.prompt).toEqual({ text: 'lone \ufffd\n[image omitted]', });
+    session.clearQueue();
+    session.agent.followUp({ role: 'user', content: 'x'.repeat(LIMITS.pageBytes / 2), timestamp: now });
+    const large = projection.snapshot();
+    expect(large.queue[0]!.prompt.text.endsWith('\u2026')).toBe(true);
+    expect(Buffer.byteLength(large.queue[0]!.prompt.text)).toBeLessThanOrEqual(LIMITS.statusTextBytes + 3);
+    expect(projection.canObserveQueue).toBe(true);
+    expect(large.presentation.some(item => item.id === 'queue-observation')).toBe(false);
+    session.clearQueue();
+    expect(projection.snapshot().queue).toEqual([]);
+  });
+
+  it('persists only user queue identities for restart recovery', async () => {
+    const f = await fixture(); const session = f.root.runtime.session; const projection = f.registry.projection(f.root.sessionId);
+    session.agent.steer({ role: 'user', content: 'typed input', timestamp: now });
+    session.agent.followUp({ role: 'custom', customType: 'completion', content: 'automation notice', display: true, timestamp: now });
+    const [user, automation] = projection.snapshot().queue;
+    expect(automation?.origin).toEqual({ kind: 'automation', source: 'runtime' });
+    const record = f.store.session(f.root.sessionId).projections.find(row => row.value.type === 'queue');
+    expect(record?.value).toMatchObject({ type: 'queue', ids: [user!.id] });
+    session.clearQueue();
+  });
+
+  it('leaves excessive native queues untouched while disclosing incomplete representation', async () => {
+    const f = await fixture(); const session = f.root.runtime.session; const projection = f.registry.projection(f.root.sessionId);
     session.clearQueue();
     for (let index = 0; index < 257; index++) session.agent.steer({ role: 'user', content: 'bounded observation', timestamp: now });
     const snapshot = projection.snapshot();

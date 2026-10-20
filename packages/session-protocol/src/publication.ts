@@ -5,7 +5,7 @@ import { KnownSessionChangeSchema, parseSessionEvent } from './events.js';
 import { INTERACTION_KINDS, InteractionKindSchema } from './interactions.js';
 import { LIMITS, PROTOCOL_VERSION, ProtocolValidationError, ROW_SCHEMA_VERSION } from './limits.js';
 import { CounterSchema, DiagnosticTextSchema, IdSchema, ModelSchema, NameSchema, ThinkingSchema, enumOf, parseSchema, text } from './schema.js';
-import { PromptSchema } from './data.js';
+import { ChannelProviderSchema, PromptSchema } from './data.js';
 import { UUID_V7_PATTERN } from './request-id.js';
 
 export const PUBLISHED_CHANGE_TYPES = [
@@ -23,6 +23,7 @@ export const PUBLICATION_LIMITS = Object.freeze({
 const UuidSchema = Type.String({ pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' });
 const SequenceSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
 const RemoteOperationSchema = enumOf(['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'] as const);
+export const REMOTE_FEATURES = ['sessions.create.instructions'] as const;
 
 export const PublishedEventSchema = Type.Object({
   schemaVersion: Type.Literal(ROW_SCHEMA_VERSION), session: UuidSchema, seq: SequenceSchema,
@@ -37,6 +38,7 @@ export const HostProjectSchema = Type.Object({ id: IdSchema, name: text(256, 1),
 export const HostCapabilitiesSchema = Type.Object({
   operations: Type.Array(RemoteOperationSchema, { uniqueItems: true }),
   interactionKinds: Type.Array(InteractionKindSchema, { maxItems: INTERACTION_KINDS.length, uniqueItems: true }),
+  features: Type.Optional(Type.Array(IdSchema, { maxItems: 64, uniqueItems: true })),
 });
 export const HostRegistrationSchema = Type.Object({
   name: text(128, 1), daemonVersion: text(128, 1), rowSchemaVersion: CounterSchema,
@@ -46,6 +48,7 @@ export const HostRegistrationSchema = Type.Object({
 export const RemoteCommandSchema = Type.Union([
   Type.Object({ op: Type.Literal('sessions.create'), params: Type.Object({
     project: IdSchema, prompt: Type.Optional(PromptSchema), model: Type.Optional(ModelSchema), thinking: Type.Optional(ThinkingSchema),
+    instructions: Type.Optional(text(LIMITS.instructionsBytes, 1)),
   }) }),
   Type.Object({ op: Type.Literal('prompt'), session: UuidSchema, params: OperationSchemas.prompt }),
   Type.Object({ op: Type.Literal('steer'), session: UuidSchema, params: OperationSchemas.steer }),
@@ -59,6 +62,7 @@ export const RemoteCommandOutcomeSchema = Type.Union([
 export const RemoteCommandRowSchema = Type.Object({
   id: Type.String({ pattern: UUID_V7_PATTERN }), host: UuidSchema, requester: UuidSchema,
   command: RemoteCommandSchema, createdAt: CounterSchema, expiresAt: CounterSchema,
+  channel: Type.Optional(Type.Object({ provider: ChannelProviderSchema })),
 });
 
 export const RealtimeNotificationSchema = Type.Union([

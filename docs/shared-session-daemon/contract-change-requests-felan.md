@@ -13,9 +13,11 @@ CR 24 records a user-requested implementation ahead of the platform's decision
 and asks to amend the accepted CR 9/CR 10 extension wording.
 
 `packages/session-protocol/src/publication.ts` and `OriginSchema` were not changed
-for the connector implementation. The platform pins `@felan-ai/session-protocol`
+for the Story 2 connector implementation. The platform pins `@felan-ai/session-protocol`
 `0.1.0-next.0` exactly (`0.3.0-next.0` was published in error). Changes to those
 shared schemas require a new package release and coordinated platform adoption.
+The Story 3 answers at the end of this document change both schemas in
+`@felan-ai/session-protocol` 0.2.0.
 
 ## 1. RPC error encoding
 
@@ -643,3 +645,40 @@ CR-1/2/5 are covered by daemon CR6/8/1; CR-3/7/10–14/17 cover platform identit
 notifications, routes, deletion, retention and readers. Re-pair after a local
 platform database reset. Deferred protocol changes must be coordinated with the
 platform database allow-list before hosts publish new change types.
+
+## Story 3 platform change requests
+
+Answers to `platform-cr-20` to `platform-cr-22` (raised 2026-10-19). They ship in
+`@felan-ai/session-protocol` 0.2.0 and `@felan-ai/daemon` 0.2.0.
+
+| Platform CR | Daemon answer | Implementation |
+| --- | --- | --- |
+| CR-20: channel instructions on remote create | Amend: root session only | Remote and local `sessions.create` accept optional `instructions`, at most `LIMITS.instructionsBytes` (16 KiB). The daemon stores them in the root's session profile and appends them to that root's base system prompt, after any host `APPEND_SYSTEM.md`. Every turn therefore carries them, including turns of runs triggered by completion notices, and compaction, eviction, reload and restarts keep them. A Pi extension that replaces the whole system prompt can still drop them. Clone and fork copy them. Child executions do not inherit them: rules such as `<no_response/>` would make a subagent return nothing to its parent. The connector advertises `capabilities.features: ['sessions.create.instructions']`. |
+| CR-21: `channel` origin kind | Accept | `OriginSchema` adds `{ kind: 'channel', provider, user, command }`; `provider` matches `^[a-z][a-z0-9_-]*$`, at most 64 bytes. The provider comes from a nullable `channel_provider` field on the claimed `session_commands` row, which `RemoteCommandRow` carries as `channel: { provider }`. With it set, runs, queue items and messages get the channel origin, and the provider joins the command's journal identity. Without it, provenance stays `{ kind: 'web', user, command }`. Admission principal and answer authority are unchanged. |
+| CR-22: chat answers | No change | The broker still rejects answers that do not match the request's kind, options or fields. |
+
+Platform follow-ups, in order:
+
+1. Upgrade `apps/web` and `e2e` to `@felan-ai/session-protocol` 0.2.0. Readers on
+   0.1.x reject rows that carry a `channel` origin, and CR-17 makes readers skip
+   them. Update `apps/web/lib/channels/presenter/present.ts` so `channel` origins
+   are not treated as terminal prompts attributed to the host owner. Keep the
+   `channel_thread_id` lookup for hosts that still send web origins.
+2. Then add a `channel_provider` column to `session_commands`, set once from the
+   thread's provider when the row is inserted, and never change it. Do not derive
+   it at claim time by joining `channel_threads`: the provider is part of the
+   command's journal identity, so a value that changes between claims makes a
+   re-claimed command fail with `request_conflict` instead of replaying its
+   outcome. Rows inserted before the column exists keep a null provider. Daemons
+   before 0.2.0 ignore the field and keep the web origin.
+3. When `hosts.capabilities.features` includes `sessions.create.instructions`,
+   send the channel rules as `params.instructions` and keep only `[Thread context]`
+   and `[Current message]` in the first prompt. For other hosts, keep the interim
+   prompt: older daemons drop unknown params silently.
+
+`host_register` already stores unknown capability keys, so registering the new
+`features` key needs no migration. Readers on 0.2.0 keep unknown feature
+values, so later features stay readable.
+
+Rolling back a daemon from 0.2.0 to 0.1.x after it has recorded a channel origin
+is unsupported: 0.1.x cannot parse that origin in its stored control state.

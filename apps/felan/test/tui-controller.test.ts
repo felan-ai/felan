@@ -421,6 +421,20 @@ it('keeps the queue read-only and rejects unavailable commands instead of sendin
   expect(dialogs.select).toHaveBeenCalledWith(expect.stringContaining('read-only'), []);
 });
 
+it('labels queued steers stored as attachments and visible extension messages on one line', async () => {
+  const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
+  const dialogs = fakeDialogs(); const session = f.root.runtime.session;
+  session.agent.steer({ role: 'user', content: [{ type: 'text', text: 'first\nline' }, { type: 'text', text: 'second' }], timestamp: Date.now() });
+  session.agent.followUp({ role: 'custom', customType: 'completion', content: 'Execution completion: done', display: true, timestamp: Date.now() });
+  await vi.waitFor(() => expect(controller.snapshot?.queue).toHaveLength(2));
+  await submitTuiInput(controller, dialogs, '/queue', { cwd: f.cwd, exit: vi.fn() });
+  expect(dialogs.select).toHaveBeenCalledWith(expect.stringContaining('read-only'), [
+    { value: expect.any(String), label: 'steer: first line second' },
+    { value: expect.any(String), label: 'follow_up: Execution completion: done' },
+  ]);
+  session.clearQueue();
+});
+
 it('changes cwd by creating another session instead of mutating the existing session', async () => {
   const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
   expect(await submitTuiInput(controller, fakeDialogs(), '/cwd .', { cwd: f.cwd, exit: vi.fn() })).toBe(true);

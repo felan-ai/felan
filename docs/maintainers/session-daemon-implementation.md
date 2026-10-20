@@ -146,7 +146,7 @@ source manifest from these paths; old runner approvals do not transfer.
   S1.09. Its internal exports support the existing client composer. The client
   passes its version into the mixed powerline importer; the daemon never reads
   or imports the client package to obtain that presentation value.
-- The client depends on `workspace:0.1.0` of the daemon, which packs to an exact
+- The client depends on the daemon through an exact `workspace:` version, which packs to an exact
   dependency, and resolves its installed package entrypoint. The root entrypoint
   is currently importable, not a standalone service command; S1.14 owns that
   startup behavior and continues to own management commands.
