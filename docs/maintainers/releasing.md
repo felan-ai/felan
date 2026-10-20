@@ -14,7 +14,9 @@ new extension version when its implementation, published manifest, or Agent
 Core peer range changes.
 
 Packages publish automatically from `main` with npm trusted publishing and
-provenance. `.github/workflows/release.yml` receives an OIDC identity token,
+provenance. `.github/workflows/release.yml` runs after the CI workflow
+succeeds for a `main` push, reusing CI as its verification gate; it only
+builds, packs and publishes the CI-verified commit. It receives an OIDC identity token,
 packs workspace dependencies with pnpm, and publishes with npm 11.19.0. The
 workflow stores no npm credential.
 
