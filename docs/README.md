@@ -27,6 +27,9 @@ to do.
 
 - [Architecture](concepts/architecture.md) — ownership from the local host,
   through extensions, to Agent Core and Pi.
+- [Daemon and client communication](diagrams/daemon-client-communication/README.md)
+  — an animated walk-through of connecting, framing, streaming, fan-out,
+  recovery, commits, and rendering.
 - [Classifier decisions and response latency](concepts/classifier-lifecycle.md)
   — which decisions gate the first response and which run later.
 - [Runtime and security](concepts/runtime-and-security.md) — permissions,

@@ -39,6 +39,10 @@ describe('daemon distribution boundary', () => {
     expect(import.meta.resolve('@felan-ai/daemon/host-config')).toBe(new URL('../dist/daemon/host-config.js', import.meta.url).href);
     const version = await import('@felan-ai/daemon/version');
     const config = await import('@felan-ai/daemon/host-config');
+    expect(manifest.exports['./host-token']).toEqual({ types: './dist/host-token.d.ts', import: './dist/host-token.js' });
+    const hostToken = await import('@felan-ai/daemon/host-token');
+    expect(hostToken.HostTokenSource).toBeTypeOf('function');
+    expect(hostToken.HostTokenExchangeError).toBeTypeOf('function');
     expect(version.DAEMON_VERSION).toBe(manifest.version);
     expect(config.loadHostConfig).toBeTypeOf('function');
     expect(config.resolveHostComposition).toBeTypeOf('function');

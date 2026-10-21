@@ -75,7 +75,7 @@ export type {
 } from './model-tiers.js';
 export { FELAN_THINKING_LEVELS, isFelanThinkingLevel } from './thinking.js';
 export type { FelanThinkingLevel } from './thinking.js';
-export { HostAgentRuntime } from './host-agent-runtime.js';
+export { createLocalRuntimeStorage, HostAgentRuntime } from './host-agent-runtime.js';
 export type { RuntimeFiles, RuntimeFileInfo, RuntimeFileSnapshot } from './runtime-files.js';
 export type { HostAgentRuntimeOptions, HostShellOptions } from './host-agent-runtime.js';
 export {

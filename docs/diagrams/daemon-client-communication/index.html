@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Felan · how the daemon and its clients talk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f6f5f1; --paper2: #efede7; --ink: #23262f; --muted: #5b6475; --soft: #9aa2b3; --rule: rgba(35,38,47,0.14);
+    --accent: #e4602a; --accent-tint: #fdece3; --ok: #2d7a57; --link: #2e5aa8;
+    --sans: 'Geist', -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --serif: 'Instrument Serif', Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--sans); }
+  header { padding: 20px 28px 8px; display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap; }
+  .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.14em; color: var(--muted); text-transform: uppercase; margin: 0; }
+  h1 { font-family: var(--serif); font-weight: 400; font-size: 2rem; margin: 0; }
+  header .hint { font-family: var(--mono); font-size: 11px; color: var(--soft); margin-left: auto; }
+  .layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 20px; padding: 8px 28px 28px; }
+  nav { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 12px; align-self: start; }
+  .chapter { all: unset; cursor: pointer; display: grid; grid-template-columns: 28px 1fr; column-gap: 6px; padding: 8px 10px; border-radius: 6px; border: 1px solid transparent; }
+  .chapter:hover { background: rgba(255,255,255,0.7); border-color: var(--rule); }
+  .chapter.active { background: #fff; border-color: var(--accent); }
+  .chapter .n { font-family: var(--mono); font-size: 11px; color: var(--soft); grid-row: span 2; padding-top: 2px; }
+  .chapter.active .n { color: var(--accent); }
+  .chapter .t { font-weight: 600; font-size: 13.5px; }
+  .chapter .s { font-size: 11.5px; color: var(--muted); }
+  .chapter:focus-visible { outline: 2px solid var(--link); }
+  main { min-width: 0; }
+  .stage-wrap { background: var(--paper); border: 1px solid var(--rule); border-radius: 8px; overflow: hidden; }
+  #stage { display: block; width: 100%; height: auto; max-height: max(380px, calc(100vh - 300px)); }
+  .controls { display: flex; align-items: center; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  .controls button, .controls select { font-family: var(--mono); font-size: 12px; border: 1px solid var(--rule); background: #fff; color: var(--ink); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  .controls button:hover { border-color: var(--ink); }
+  #play { min-width: 44px; }
+  #chapter-title { font-family: var(--mono); font-size: 11px; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; }
+  .track-wrap { flex: 1 1 320px; position: relative; height: 26px; display: flex; align-items: center; }
+  #track { position: relative; width: 100%; height: 8px; background: #e2e0da; border-radius: 4px; cursor: pointer; touch-action: none; }
+  #fill { position: absolute; left: 0; top: 0; bottom: 0; background: var(--ink); border-radius: 4px; pointer-events: none; }
+  #ticks span { position: absolute; top: -4px; width: 2px; height: 16px; background: var(--accent); border-radius: 1px; pointer-events: none; }
+  #clock { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 92px; text-align: right; }
+  #modes { display: flex; gap: 4px; }
+  #modes button.mode.active { background: var(--ink); color: #fff; border-color: var(--ink); }
+  #modes button.mode.before.active { background: #8a5a44; border-color: #8a5a44; }
+  .caption { display: grid; grid-template-columns: minmax(0, 1fr) 280px; gap: 20px; margin-top: 14px; }
+  .caption .text { background: #fff; border: 1px solid var(--rule); border-radius: 8px; padding: 16px 20px; min-height: 150px; }
+  #beat-title { font-family: var(--serif); font-size: 1.6rem; font-weight: 400; margin: 4px 0 8px; }
+  #beat-body { font-size: 14.5px; line-height: 1.55; color: #333845; }
+  #beat-body p { margin: 0 0 8px; }
+  #beat-body code { font-family: var(--mono); font-size: 12.5px; background: var(--paper2); padding: 1px 5px; border-radius: 4px; }
+  #beat-body a, footer a { color: var(--link); }
+  #beat-body .num { font-family: var(--mono); font-size: 13px; color: var(--ok); white-space: nowrap; }
+  #beat-body .was { font-family: var(--mono); font-size: 13px; color: #8a5a44; white-space: nowrap; }
+  #beat-body ul { margin: 4px 0 8px; padding-left: 20px; }
+  #beat-body li { margin: 2px 0; }
+  #next-chapter { margin-top: 10px; font-family: var(--mono); font-size: 12px; border: 1px solid var(--accent); background: var(--accent-tint); color: var(--ink); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  #beats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+  #beats li { font-size: 12.5px; padding: 6px 8px; border-radius: 6px; cursor: pointer; color: var(--muted); display: flex; gap: 8px; }
+  #beats li span { font-family: var(--mono); font-size: 11px; color: var(--soft); min-width: 16px; }
+  #beats li:hover { background: #fff; }
+  #beats li.active { background: #fff; color: var(--ink); box-shadow: inset 3px 0 0 var(--accent); }
+  footer { padding: 0 28px 24px; font-family: var(--mono); font-size: 11px; color: var(--soft); border-top: 1px solid var(--rule); margin: 0 28px; padding-top: 12px; }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr; } nav { position: static; flex-direction: row; flex-wrap: wrap; } .chapter { grid-template-columns: 24px auto; } .chapter .s { display: none; } .caption { grid-template-columns: 1fr; } }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }
+</style>
+</head>
+<body>
+<header>
+  <p class="eyebrow">Felan · daemon ⇄ clients</p>
+  <h1>How a keystroke and a token travel, and what we made faster</h1>
+  <span class="hint">space play/pause · ←/→ step · ↑/↓ chapter · B before/after</span>
+</header>
+<div class="layout">
+  <nav id="chapters" aria-label="Chapters"></nav>
+  <main>
+    <div class="stage-wrap"><svg id="stage" viewBox="0 0 1200 640" role="img" aria-label="Animated diagram"></svg></div>
+    <div class="controls">
+      <button id="prev" aria-label="Previous step">⏮</button>
+      <button id="play" aria-label="Play">▶</button>
+      <button id="next" aria-label="Next step">⏭</button>
+      <div class="track-wrap"><div id="track"><div id="fill"></div><div id="ticks"></div></div></div>
+      <span id="clock"></span>
+      <div id="modes"></div>
+      <select id="speed" aria-label="Speed">
+        <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+      </select>
+    </div>
+    <div class="caption">
+      <div class="text">
+        <p class="eyebrow"><span id="chapter-title"></span> · <span id="beat-no"></span></p>
+        <h2 id="beat-title"></h2>
+        <div id="beat-body"></div>
+        <button id="next-chapter" hidden>Next chapter →</button>
+      </div>
+      <ol id="beats"></ol>
+    </div>
+  </main>
+</div>
+<footer>
+  Before: the investigation baseline at commit bca187a (<a href="../../../perf/baseline-bca187a.md">perf/baseline-bca187a.md</a>). After: one full <code>node perf/run.mjs</code> run on 2026-10-16 (see <a href="../../decisions/0042-use-normal-synchronous-control-store-commits.md">ADR 0042</a> for the commit figures) and, for streaming markdown, the gated benchmark in <code>apps/felan/test/streaming-markdown.test.ts</code> on 2026-10-21. All on Apple M5 Pro / macOS / Node 22.20.0 with a local fake provider. The harnesses differ, so treat before/after pairs as indicative; derived totals are marked. Motion is slowed down to make sub-millisecond steps visible.
+</footer>
+<script src="engine.js"></script>
+<script>window.FELAN_SCENES = [];</script>
+<script src="scenes-a.js"></script>
+<script src="scenes-b.js"></script>
+<script>window.player = new Felan.Player(window.FELAN_SCENES);</script>
+</body>
+</html>

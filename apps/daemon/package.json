@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/daemon",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Felan session daemon with configured service providers",
   "license": "MIT",
   "type": "module",
@@ -48,6 +48,10 @@
     "./host-config": {
       "types": "./dist/daemon/host-config.d.ts",
       "import": "./dist/daemon/host-config.js"
+    },
+    "./host-token": {
+      "types": "./dist/host-token.d.ts",
+      "import": "./dist/host-token.js"
     },
     "./session-runtime": {
       "types": "./dist/daemon/session-runtime.d.ts",

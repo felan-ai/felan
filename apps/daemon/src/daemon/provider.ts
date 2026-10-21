@@ -108,7 +108,7 @@ export { createRuntimeStorageRequest } from '../runtime-factory.js';
 export type { RuntimeFactory, RuntimeStorageRequest } from '../runtime-factory.js';
 export { acquireLocalFileLock, withLocalFileLock } from '../lock.js';
 export type { LocalFileLock, LocalFileLockOptions } from '../lock.js';
-export { createLocalAgentLogger } from '../logger.js';
+export { createLocalAgentLogger, redact } from '../logger.js';
 export { commandError } from './commands.js';
 
 export type { ExecutionHost, ExecutionSettings, ExecutionRecord, ExecutionCompletionNotice, ExecutionParentPort } from './executions.js';

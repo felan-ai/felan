@@ -18,7 +18,7 @@ it('keeps local settings and credentials out of the daemon implementation', asyn
 it('publishes client, provider and lightweight host boundaries instead of implementation subpaths', async () => {
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   expect(Object.keys(manifest.exports).sort()).toEqual([
-    '.', './client', './daemon-bootstrap', './host-config', './provider', './session-runtime', './version',
+    '.', './client', './daemon-bootstrap', './host-config', './host-token', './provider', './session-runtime', './version',
   ]);
 });
 

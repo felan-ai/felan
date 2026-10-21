@@ -2,7 +2,7 @@ import { chmod, lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from '
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HostAgentRuntime } from '../src/index.js';
+import { createLocalRuntimeStorage, HostAgentRuntime } from '../src/index.js';
 import type { Classifier } from '../src/index.js';
 
 const temporaryPaths: string[] = [];
@@ -10,6 +10,44 @@ const temporaryPaths: string[] = [];
 afterEach(async () => {
   vi.restoreAllMocks();
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { force: true, recursive: true })));
+});
+
+describe('createLocalRuntimeStorage', () => {
+  it('reads, writes and lists files while rejecting root escapes', async () => {
+    const root = await createTemporaryDirectory('storage');
+    const outside = await createTemporaryDirectory('outside');
+    const storage = createLocalRuntimeStorage(root);
+    const content = new Uint8Array([1, 2, 3]);
+
+    expect(storage.root).toBe(root);
+    await storage.writeFile('state.bin', content);
+    await expect(storage.readFile('state.bin')).resolves.toEqual(content);
+    await expect(storage.listFiles('.')).resolves.toEqual(['state.bin']);
+
+    await symlink(outside, join(root, 'escape'), process.platform === 'win32' ? 'junction' : 'dir');
+    for (const path of ['../outside', outside, 'escape']) {
+      await expect(storage.readFile(path)).rejects.toThrow('escapes runtime root');
+      await expect(storage.writeFile(path, content)).rejects.toThrow('escapes runtime root');
+      await expect(storage.listFiles(path)).rejects.toThrow('escapes runtime root');
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('follows dangling symbolic link chains before writing', async () => {
+    const root = await createTemporaryDirectory('storage');
+    const outside = await createTemporaryDirectory('outside');
+    const storage = createLocalRuntimeStorage(root);
+    await symlink(join(outside, 'missing'), join(root, 'inner'));
+    await symlink('inner', join(root, 'outer'));
+    await symlink('loop-b', join(root, 'loop-a'));
+    await symlink('loop-a', join(root, 'loop-b'));
+    await symlink('missing', join(root, 'pending'));
+
+    await expect(storage.writeFile('outer', new Uint8Array([1]))).rejects.toThrow('escapes runtime root');
+    await expect(lstat(join(outside, 'missing'))).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(storage.writeFile('loop-a', new Uint8Array([1]))).rejects.toThrow('Too many symbolic links');
+    await storage.writeFile('pending', new Uint8Array([2]));
+    await expect(storage.readFile('missing')).resolves.toEqual(new Uint8Array([2]));
+  });
 });
 
 describe('HostAgentRuntime', () => {

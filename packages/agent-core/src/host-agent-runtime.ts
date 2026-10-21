@@ -94,8 +94,8 @@ export class HostAgentRuntime implements AgentRuntime {
     this.#configuredPosixShell = validateConfiguredShell(options.posixShell);
     if (options.classifier !== undefined) this.classifier = options.classifier;
     this.logger = options.logger ?? createSilentLogger();
-    this.#sessionStorage = createHostStorage(this.#sessionStorageRoot);
-    this.#agentStorage = createHostStorage(this.#agentStorageRoot);
+    this.#sessionStorage = createLocalRuntimeStorage(this.#sessionStorageRoot);
+    this.#agentStorage = createLocalRuntimeStorage(this.#agentStorageRoot);
     this.processes = {
       startShell: async (command, processOptions) => this.#startShellProcess(command, processOptions),
       startStdio: async (command, args, processOptions) => this.#startStdioProcess(command, args, processOptions),
@@ -836,7 +836,7 @@ class HostProcessOutput {
   }
 }
 
-function createHostStorage(root: string): AgentRuntimeStorage {
+export function createLocalRuntimeStorage(root: string): AgentRuntimeStorage {
   return {
     root,
     async readFile(path, options) {
@@ -1138,6 +1138,8 @@ async function resolveReadablePath(
   throw new Error(`Path escapes runtime root: ${resolvedPath}`);
 }
 
+const MAX_SYMBOLIC_LINKS = 40;
+
 async function resolveContainedPath(
   root: string,
   path: string,
@@ -1156,34 +1158,30 @@ async function resolveContainedPath(
   const resolvedExcludedRoot = excludedRoot === undefined ? undefined : await realpath(excludedRoot);
   const segments = relative(root, resolvedPath).split(sep).filter(Boolean);
   let current = resolvedRoot;
+  let links = 0;
 
-  for (let index = 0; index < segments.length; index += 1) {
-    const candidate = join(current, segments[index]!);
+  while (segments.length > 0) {
+    const candidate = join(current, segments.shift()!);
+    let stats;
     try {
-      const stats = await lstat(candidate);
-      if (stats.isSymbolicLink()) {
-        const target = await readlink(candidate);
-        const resolvedTarget = resolve(current, target);
-        assertContained(resolvedRoot, resolvedTarget, allowRoot);
-        try {
-          current = await realpath(candidate);
-        } catch (error) {
-          if (!isMissingPathError(error)) throw error;
-          current = resolvedTarget;
-        }
-        assertContained(resolvedRoot, current, allowRoot);
-        if (resolvedExcludedRoot && isContained(resolvedExcludedRoot, current)) {
-          throw new Error(`Path is inside agent storage: ${current}`);
-        }
-      } else {
-        current = candidate;
-      }
+      stats = await lstat(candidate);
     } catch (error) {
       if (!isMissingPathError(error)) throw error;
-      current = resolve(current, ...segments.slice(index));
-      assertContained(resolvedRoot, current, allowRoot);
+      current = resolve(candidate, ...segments);
       break;
     }
+    if (!stats.isSymbolicLink()) {
+      current = candidate;
+      continue;
+    }
+    if (++links > MAX_SYMBOLIC_LINKS) throw new Error(`Too many symbolic links: ${candidate}`);
+    const target = resolve(current, await readlink(candidate));
+    assertContained(resolvedRoot, target, allowRoot);
+    if (resolvedExcludedRoot && isContained(resolvedExcludedRoot, target)) {
+      throw new Error(`Path is inside agent storage: ${target}`);
+    }
+    segments.unshift(...relative(resolvedRoot, target).split(sep).filter(Boolean));
+    current = resolvedRoot;
   }
 
   assertContained(resolvedRoot, current, allowRoot);

@@ -64,5 +64,6 @@ export function redact(value: string): string {
     .replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}/gu, '[redacted]')
     .replace(/\b(?:gh[pousr]_|github_pat_|xox[abpr]-|AKIA)[A-Za-z0-9_-]{8,}/gu, '[redacted]')
     .replace(/\bAIza[0-9A-Za-z_-]{20,}/gu, '[redacted]')
+    .replace(/\bdtn_[A-Za-z0-9_-]{8,}/gu, '[redacted]')
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/gu, '[redacted]');
 }
