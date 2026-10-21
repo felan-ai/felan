@@ -46,7 +46,9 @@ describe('ask-user generic UI root', () => {
     expect(f.request).toHaveBeenCalledOnce();
     const [form, options] = f.request.mock.calls[0]!;
     expect(options).toEqual({ signal, deferrable: true, timeoutMs: 1200 });
-    expect(form.hint).toEqual({ id: 'ask-user.wizard', version: '1' });
+    expect(form.hint).toEqual({ id: 'ask-user.wizard', version: '2', data: { questions: [{ id: 'q1', header: 'Q1',
+      question: 'Describe the plan?', context: 'Explain the tradeoff.', options: [],
+      allowMultiple: false, allowFreeform: true, allowComment: false }] } });
     expect(form.input).toEqual({ fields: [{ id: 'q1.text', kind: 'string', label: 'Question 1: Written answer', required: true,
       multiline: true, maxLength: 32 * 1024 }] });
     expect(form.markdown).toContain('Describe the plan?');
@@ -78,7 +80,10 @@ describe('ask-user generic UI root', () => {
     } });
     expect(f.request).toHaveBeenCalledOnce();
     const form = f.request.mock.calls[0]![0];
-    expect(form.hint).toEqual({ id: 'ask-user.wizard', version: '1' });
+    expect(form.hint).toMatchObject({ id: 'ask-user.wizard', version: '2', data: { questions: [
+      expect.objectContaining({ id: 'q1', header: 'Scope', options: [{ title: 'Small', description: 'A focused change' }, { title: 'Full' }] }),
+      expect.objectContaining({ id: 'q2' }), expect.objectContaining({ id: 'q3' }), expect.objectContaining({ id: 'q4' }),
+    ] } });
     expect(form.input.defaults).toBeUndefined();
     expect(form.input.fields).toContainEqual(expect.objectContaining({
       id: 'q1.mode', kind: 'enum', required: true,
@@ -201,15 +206,21 @@ describe('ask-user generic UI root', () => {
     expect(form.markdown).toContain('\\[unsafe\\]\\(javascript:alert\\)');
     expect(form.markdown).toContain('\\\\u001b');
     expect(form.markdown).not.toContain('\u001b');
-    expect(form.hint).toEqual({ id: 'ask-user.wizard', version: '1' });
+    expect(form.hint).toMatchObject({ id: 'ask-user.wizard', version: '2', data: { questions: [expect.objectContaining({ context })] } });
   });
 
   it('presents large questions and option lists without truncating them', async () => {
     const f = harness(async () => answered({ 'q1.selection': 'option100' }));
     const titles = Array.from({ length: 100 }, (_, index) => index === 99 ? '🙂'.repeat(300) : `Choice ${index}`);
-    const out = await f.execute({ question: "q".repeat(200 * 1024), options: titles, allowFreeform: false });
+    const out = await f.execute({ question: 'q'.repeat(100 * 1024), options: titles, allowFreeform: false });
     expect(out.details)
       .toMatchObject({ status: 'answered', response: { kind: 'selection', selections: [titles[99]] } });
     expect(f.request.mock.calls[0]![0].input.fields[0]).toHaveProperty('options', titles.map((label, index) => ({ id: `option${index + 1}`, label })));
+  });
+
+  it('rejects oversized hint data before delivering the form', async () => {
+    const f = harness();
+    expect(await f.execute({ question: 'q'.repeat(128 * 1024) })).toMatchObject({ isError: true });
+    expect(f.request).not.toHaveBeenCalled();
   });
 });

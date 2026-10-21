@@ -10,6 +10,8 @@ import { presentProcessesElement } from '../../src/tui/renderers/processes.js';
 import { presentPromptHistoryElement } from '../../src/tui/renderers/prompt-history.js';
 import { presentPrewalkForm } from '../../src/tui/renderers/prewalk.js';
 import { presentAskUserForm } from '../../src/tui/renderers/ask-user.js';
+import { createUnavailableExtensionUi } from '@felan-ai/agent-core';
+import { createUiAskUserHost } from '../../../../packages/ext-ask-user/src/ui.js';
 
 const markdown = 'Literal &lt;T&gt; &amp; &#91;x&#93; &quot;q&quot;';
 function harness() {
@@ -69,12 +71,15 @@ describe('hint markdown entity decoding', () => {
     expect(h.lines.join('\n')).toContain('Literal <T> & [x] "q"');
   });
 
-  it('renders ask-user entities in the question', async () => {
+  it('renders ask-user structured text without decoding literal entities', async () => {
     const h = harness();
-    const form: UiForm = { title: 'Question', fallback: 'Question', markdown: `## Question 1: Header\n\n${markdown}\n\nChoose an answer type.`,
-      input: { fields: [{ id: 'q.text', kind: 'string', label: 'Answer', required: false, maxLength: 1000 }] },
-      actions: [{ id: 'submit', label: 'Submit', target: 'element', outcome: 'submit' }, { id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' }] };
-    await presentAskUserForm(form, { ui: h.ui, signal: new AbortController().signal });
-    expect(h.lines.join('\n')).toContain('Literal <T> & [x] "q"');
+    const question = 'Literal <T> & [x] "q" &lt;encoded&gt;';
+    const host = createUiAskUserHost({ ...createUnavailableExtensionUi(), request: async form => {
+      await presentAskUserForm(form, { ui: h.ui, signal: new AbortController().signal });
+      return { state: 'cancelled', reason: 'user' };
+    } });
+    await host.ask({ questions: [{ id: 'q', header: 'Header', question, options: [],
+      allowMultiple: false, allowFreeform: true, allowComment: false }] }, { signal: new AbortController().signal });
+    expect(h.lines.join('\n')).toContain(question);
   });
 });

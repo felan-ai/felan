@@ -1,5 +1,5 @@
 
-export const ASK_USER_FORM_HINT = { id: 'ask-user.wizard', version: '1' } as const;
+export { ASK_USER_FORM_HINT, readAskUserForm, encodeAskUserFormAnswer, decodeAskUserFormAnswer } from './form.js';
 export * from './contracts.js';
 
 export { normalizeAskUserOption } from './normalize.js';

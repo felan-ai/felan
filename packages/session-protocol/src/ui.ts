@@ -1,6 +1,6 @@
 import { Type, type Static } from 'typebox';
 import { LIMITS, ProtocolValidationError, utf8Bytes } from './limits.js';
-import { IdSchema, enumOf, parseSchema, text, unboundedText } from './schema.js';
+import { IdSchema, JsonValueSchema, assertJson, enumOf, parseSchema, text, unboundedText } from './schema.js';
 
 export const UI_CAPABILITIES = ['ui.status', 'ui.progress', 'ui.document', 'ui.view', 'ui.action', 'native.events'] as const;
 export const UiCapabilitySchema = enumOf(UI_CAPABILITIES);
@@ -12,7 +12,7 @@ const finiteNumber = Type.Number({ minimum: -Number.MAX_SAFE_INTEGER, maximum: N
 const field = { id: IdSchema, label: unboundedText(1), required: Type.Boolean() };
 const options = Type.Array(Type.Object({ id: IdSchema, label: unboundedText(1) }, closed), { minItems: 1 });
 
-export const UiHintSchema = Type.Object({ id: IdSchema, version: text(128, 1) }, closed);
+export const UiHintSchema = Type.Object({ id: IdSchema, version: text(128, 1), data: Type.Optional(JsonValueSchema) }, closed);
 export const UiValuesSchema = Type.Record(IdSchema, Type.Union([
   unboundedText(), finiteNumber, Type.Boolean(), Type.Array(IdSchema, { uniqueItems: true }),
 ]));
@@ -179,6 +179,7 @@ function validateMarkdown(markdown: string): void {
 
 export function parseUiForm(value: unknown): UiForm {
   const form = parseSchema(UiFormSchema, value);
+  if (form.hint?.data !== undefined) assertJson(form.hint.data, LIMITS.uiHintBytes);
   validateInput(form.input); validateActions(form.actions, false);
   if (form.actions.some(action => action.input !== undefined)) invalid('Form actions use the form input.');
   if (form.markdown !== undefined) validateMarkdown(form.markdown);
@@ -198,6 +199,7 @@ export function validateUiFormAnswer(form: UiForm, value: unknown): UiFormAnswer
 
 export function parseUiPresentation(value: unknown): UiPresentation {
   const source = parseSchema(UiPresentationSchema, value);
+  if (source.hint?.data !== undefined) assertJson(source.hint.data, LIMITS.uiHintBytes);
   if (source.kind === 'status') return source;
   validateActions(source.actions, source.kind === 'view');
   if (source.kind === 'document') validateMarkdown(source.markdown);

@@ -8,6 +8,7 @@ export const LIMITS = Object.freeze({
   commandBytes: 128,
   pathBytes: 4096,
   structuredBytes: 64 * 1024,
+  uiHintBytes: 128 * 1024,
   activeStreamBytes: 1024 * 1024,
   activeStreamsBytes: 4 * 1024 * 1024,
   activeStreams: 8,

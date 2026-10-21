@@ -14,8 +14,9 @@ const extension = askUser;
 The default root uses the always-present `pi.ui.request` API. It declares no service
 requirements. The host supplies generic form
 delivery, answer eligibility, cancellation, and deferred delivery. The extension does
-not inspect client kind or `hasUI`. The optional `ask-user.wizard` version `1`
-hint selects optional client rendering without changing form fields or outcomes.
+not inspect client kind or `hasUI`. The optional `ask-user.wizard` version `2`
+hint carries normalized questions in `data.questions` for client rendering without
+changing form fields or outcomes.
 
 For an explicitly chosen host, the named factory remains available:
 
@@ -69,16 +70,37 @@ and optional timeout are forwarded to `pi.ui.request`; deferred interaction IDs
 are retained. Unsupported UI maps to an unavailable cancellation. Host drain and
 restart map to abort cancellation with the original cause in the message.
 
-The generic protocol imposes these limits, measured in UTF-8 bytes:
-
-- At most 64 options per question; option labels must fit 1,024 bytes.
-- At most 128 KiB of Markdown after escaping, and 256 KiB for the aggregate form.
-- Written answers and comments each have a 32 KiB limit. All submitted values
-  together must fit 64 KiB, and the form plus answer must fit 256 KiB.
+The form hint's encoded JSON data must fit 128 KiB. Written answers and comments
+each have a 32 KiB UTF-8 limit. Multi-select questions support at most 64 options.
 
 Requests that exceed the form limits return an explicit tool error before delivery;
 oversized answers are also rejected. Content and option lists are never shortened
 to fit. These bounds apply to the generic adapter, not to custom named hosts.
+
+### Browser-safe form codec
+
+`@felan-ai/ext-ask-user/data` exports the question and answer contracts,
+`normalizeAskUserOption`, and:
+
+```ts
+const ASK_USER_FORM_HINT = { id: 'ask-user.wizard', version: '2' };
+readAskUserForm(form: UiForm): AskUserQuestion[] | null;
+encodeAskUserFormAnswer(form: UiForm, answers: readonly AskUserQuestionAnswer[] | null): UiFormAnswer;
+decodeAskUserFormAnswer(questions: readonly AskUserQuestion[], answer: UiFormAnswer): AskUserQuestionAnswer[] | null;
+```
+
+`readAskUserForm` validates the hint, questions, matching field definitions and
+submit/cancel actions. It returns `null` for unsupported hints (including version
+`1`), invalid payloads or inconsistent forms; clients should render those forms
+generically rather than parse their Markdown. Question context and option
+descriptions are plain text, not trusted HTML or Markdown.
+
+The encoder maps option titles to form option IDs and omitted wizard questions to
+explicit skips. It rejects empty or conflicting answers and validates the result
+against the form. Passing `null` encodes cancellation. The decoder validates the
+generic answer and returns `null` for cancellation; at least one wizard question
+must otherwise be answered. The data entry has no runtime dependency on Agent Core
+or Node APIs and can be used in browser bundles.
 
 ## Client rendering
 

@@ -1,9 +1,7 @@
-import { ASK_USER_FORM_HINT } from './data.js';
-import type { ExtensionUi, UiField, UiForm, UiValues } from '@felan-ai/agent-core';
+import { ASK_USER_FORM_HINT, askUserActions, askUserFields, decodeAskUserFormAnswer } from './form.js';
+import type { ExtensionUi, UiForm } from '@felan-ai/agent-core';
 import { parseUiForm, validateUiFormAnswer } from '@felan-ai/session-protocol';
-import type { AskUserHost, AskUserQuestion, AskUserRequest, AskUserResponse } from './contracts.js';
-
-const MAX_TEXT_BYTES = 32 * 1024;
+import type { AskUserHost, AskUserRequest } from './contracts.js';
 
 export function createUiAskUserHost(ui: ExtensionUi): AskUserHost {
   return {
@@ -26,12 +24,8 @@ export function createUiAskUserHost(ui: ExtensionUi): AskUserHost {
           }
         case 'answered': {
           const answer = validateUiFormAnswer(form, result.answer);
-          if (answer.outcome === 'cancel') return { status: 'cancelled', reason: 'user' };
-          const answers = request.questions.map(question => ({
-            questionId: question.id,
-            response: readResponse(question, request.questions.length > 1, answer.values),
-          }));
-          if (answers.every(answer => answer.response === null)) throw new Error('Answer at least one question.');
+          const answers = decodeAskUserFormAnswer(request.questions, answer);
+          if (answers === null) return { status: 'cancelled', reason: 'user' };
           return { status: 'answered', answers };
         }
         default: throw new Error('Generic UI returned an invalid outcome.');
@@ -42,33 +36,9 @@ export function createUiAskUserHost(ui: ExtensionUi): AskUserHost {
 
 function createForm(request: AskUserRequest): UiForm {
   const wizard = request.questions.length > 1;
-  const fields: UiField[] = [];
   const sections = request.questions.map((question, index) => {
     const choices = question.options.length > 0;
-    const mode = wizard || choices && question.allowFreeform;
     const label = `Question ${index + 1}`;
-    if (mode) {
-      fields.push({ id: `${question.id}.mode`, kind: 'enum', label: `${label}: Answer type`, required: true, options: [
-        ...(choices ? [{ id: 'selection', label: 'Choose listed options' }] : []),
-        ...(question.allowFreeform ? [{ id: 'freeform', label: 'Write an answer' }] : []),
-        ...(wizard ? [{ id: 'skip', label: 'Skip this question' }] : []),
-      ] });
-    }
-    if (choices) {
-      const options = question.options.map((option, optionIndex) => ({ id: `option${optionIndex + 1}`, label: option.title }));
-      const selection = { id: `${question.id}.selection`, label: `${label}: Listed options`, required: !mode, options };
-      fields.push(question.allowMultiple
-        ? { ...selection, kind: 'multi_select', maxSelections: options.length }
-        : { ...selection, kind: 'enum' });
-    }
-    if (question.allowFreeform) fields.push({
-      id: `${question.id}.text`, kind: 'string', label: `${label}: Written answer`, required: !mode && !choices,
-      multiline: true, maxLength: MAX_TEXT_BYTES,
-    });
-    if (choices && question.allowComment) fields.push({
-      id: `${question.id}.comment`, kind: 'string', label: `${label}: Optional comment on listed options`, required: false,
-      multiline: true, maxLength: MAX_TEXT_BYTES,
-    });
     return [
       `## ${label}: ${markdownText(question.header)}`,
       markdownText(question.question),
@@ -81,48 +51,16 @@ function createForm(request: AskUserRequest): UiForm {
   });
   try {
     return parseUiForm({
-      hint: ASK_USER_FORM_HINT,
+      hint: { ...ASK_USER_FORM_HINT, data: { questions: request.questions } },
       title: wizard ? `Answer ${request.questions.length} questions` : 'Answer question',
       markdown: sections.join('\n\n'),
       fallback: wizard ? 'Answer the questions or explicitly skip individual questions. At least one answer is required.' : 'Answer the question or cancel.',
-      input: { fields },
-      actions: [
-        { id: 'submit', label: 'Submit answers', target: 'element', outcome: 'submit' },
-        { id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' },
-      ],
+      input: { fields: askUserFields(request.questions) },
+      actions: askUserActions,
     });
   } catch (error) {
-    throw new Error('Ask-user content cannot be represented within generic form limits (1024 UTF-8 bytes per option label, 128 KiB Markdown, 256 KiB aggregate).', { cause: error });
+    throw new Error('Ask-user content cannot be represented within generic form limits (128 KiB hint data).', { cause: error });
   }
-}
-
-function readResponse(question: AskUserQuestion, wizard: boolean, values: UiValues): AskUserResponse | null {
-  const choices = question.options.length > 0;
-  const mode = wizard || choices && question.allowFreeform
-    ? values[`${question.id}.mode`]
-    : choices ? 'selection' : 'freeform';
-  const selection = values[`${question.id}.selection`];
-  const text = values[`${question.id}.text`];
-  const comment = values[`${question.id}.comment`];
-  const hasSelection = selection !== undefined && (!Array.isArray(selection) || selection.length > 0);
-  const hasText = typeof text === 'string' && text.trim().length > 0;
-  const hasComment = typeof comment === 'string' && comment.trim().length > 0;
-  if (mode === 'skip' && wizard && !hasSelection && !hasText && !hasComment) return null;
-  if (mode === 'freeform' && question.allowFreeform && hasText && !hasSelection && !hasComment) {
-    return { kind: 'freeform', text: text as string };
-  }
-  if (mode !== 'selection' || !choices || !hasSelection || hasText) throw new Error(`${question.id}: Provide a non-empty answer of the selected type, without conflicting fields.`);
-  const ids = typeof selection === 'string' ? [selection] : selection;
-  if (!Array.isArray(ids) || ids.length === 0 || ids.length > (question.allowMultiple ? question.options.length : 1)) {
-    throw new Error(`${question.id}: Invalid selection count.`);
-  }
-  const options = new Map(question.options.map((option, index) => [`option${index + 1}`, option.title]));
-  const selections = ids.map(id => {
-    const title = options.get(id);
-    if (title === undefined) throw new Error(`${question.id}: Unknown option identity.`);
-    return title;
-  });
-  return { kind: 'selection', selections, ...(hasComment ? { comment: comment as string } : {}) };
 }
 
 function markdownText(value: string): string {

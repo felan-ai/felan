@@ -77,6 +77,39 @@ describe('explicit UI contracts', () => {
     expect(() => parseSchema(UiHintSchema, { id: 'hint', version: '1', actions: [submit] })).toThrow();
   });
 
+  it('preserves optional JSON renderer data without changing answer validation', () => {
+    const data = { questions: [{ question: 'Choose?', options: ['One'], optional: null }], enabled: true, count: 1 };
+    const hint = { id: 'ask-user.wizard', version: '2', data };
+    const configured = parseUiForm({ ...form, hint });
+    expect(configured.hint).toEqual(hint);
+    expect(configured.hint?.data).not.toBe(data);
+    expect(parseUiPresentation({ ...view, hint }).hint).toEqual(hint);
+    expect(validateUiFormAnswer(configured, { kind: 'form', actionId: 'approve', outcome: 'submit', values: {} }).values).toEqual({});
+    expect(() => validateUiFormAnswer(configured, { kind: 'form', actionId: 'approve', outcome: 'submit', values: { enabled: true } })).toThrow();
+    expect(parseUiForm({ ...form, hint: { id: 'hint', version: '1' } }).hint).toEqual({ id: 'hint', version: '1' });
+    expect(() => parseUiForm({ ...form, hint: { ...hint, unknown: true } })).toThrow();
+    expect(() => parseUiPresentation({ ...view, hint: { ...hint, unknown: true } })).toThrow();
+  });
+
+  it('bounds renderer payloads for forms and every presentation kind', () => {
+    const sources = [view,
+      { id: 'doc', kind: 'document', revision: 1, title: 'Title', markdown: 'Text', actions: [], fallback: 'Text' },
+      { id: 'job', kind: 'progress', revision: 1, label: 'Working', state: 'running', actions: [], fallback: 'Working' },
+      { id: 'status', kind: 'status', key: 'status', value: { kind: 'text', text: 'Ready' }, fallback: 'Ready' }];
+    const data = 'x'.repeat(LIMITS.uiHintBytes - 2);
+    const hint = { id: 'hint', version: '1', data };
+    expect(parseUiForm({ ...form, hint }).hint?.data).toBe(data);
+    for (const source of sources) expect(parseUiPresentation({ ...source, hint }).hint?.data).toBe(data);
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    for (const data of ['x'.repeat(LIMITS.uiHintBytes - 1), '😀'.repeat(LIMITS.uiHintBytes / 4),
+      undefined, { value: undefined }, () => {}, NaN, Infinity, 1n, new Date(), cycle]) {
+      const hint = { id: 'hint', version: '1', data };
+      expect(() => parseUiForm({ ...form, hint })).toThrow();
+      for (const source of sources) expect(() => parseUiPresentation({ ...source, hint })).toThrow();
+    }
+  });
+
   it('binds actions to exact element, revision, outcome and current row', () => {
     expect(validateUiAction(view, request)).toEqual(request);
     for (const patch of [{ elementId: 'foreign' }, { revision: 2 }, { actionId: 'unknown' }]) {

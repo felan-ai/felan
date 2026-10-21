@@ -117,6 +117,12 @@ bounded data and revision-checked actions; `ui.action` identifies the element,
 revision, action, optional item and submitted values. Optional hints may select
 rendering but cannot change data, actions, validation or outcomes.
 
+Hints may include optional JSON `data`, a renderer payload limited to
+`LIMITS.uiHintBytes` (128 KiB encoded as UTF-8 JSON). Only clients recognizing the
+hint's `id` and `version` should interpret it. Renderers must validate the payload
+and fall back to generic rendering when it is unsupported or inconsistent with
+the form. Hint data never changes fields, actions or answer validation.
+
 Elements carry plain-text fallbacks; document/view/progress actions are
 declarative IDs bound to the current element revision and session through the
 `ui.action` request. Forms use a bounded field vocabulary (string, boolean,

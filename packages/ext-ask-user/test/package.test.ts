@@ -9,6 +9,7 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-ask-user',
+      version: '0.10.0',
       type: 'module',
       license: 'MIT',
       engines: { node: '>=22.19.0' },
@@ -21,9 +22,17 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
       publishConfig: { access: 'public', provenance: true },
       exports: {
         '.': { types: './dist/extension.d.ts', import: './dist/extension.js' },
-
+        './data': { types: './dist/data.d.ts', import: './dist/data.js' },
       },
     });
+  });
+
+  it('exports the browser-safe form codec through the data entry', async () => {
+    const data = await import('../src/data.js');
+    expect(Object.keys(data).sort()).toEqual([
+      'ASK_USER_FORM_HINT', 'decodeAskUserFormAnswer', 'encodeAskUserFormAnswer', 'normalizeAskUserOption', 'readAskUserForm',
+    ]);
+    expect(data.ASK_USER_FORM_HINT).toEqual({ id: 'ask-user.wizard', version: '2' });
   });
 
   it('preserves license and source attribution', async () => {

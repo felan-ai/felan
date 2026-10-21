@@ -1,5 +1,7 @@
 import type { AgentToolPresentation } from '../../subagents/agent-transcript.js';
-import { decodeUiMarkdown } from '../../client/ui.js';
+import type { InteractionPresenterUi } from '../../client/presenters.js';
+import { presentUiForm } from '../../client/ui.js';
+import { createGenericTuiDriver } from '../generic-ui.js';
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import { createRequire } from 'node:module';
 import {
@@ -32,10 +34,10 @@ import type {
   AskUserToolDetails,
   AskUserToolErrorDetails,
 } from '@felan-ai/ext-ask-user/data';
-import { normalizeAskUserOption } from '@felan-ai/ext-ask-user/data';
+import { encodeAskUserFormAnswer, normalizeAskUserOption, readAskUserForm } from '@felan-ai/ext-ask-user/data';
 import { renderSingleSelectRows } from './ask-user/single-select-layout.js';
 import { DEFAULT_ASK_USER_CONFIG, normalizeAskUserShortcut, type AskUserConfig } from '../ask-user-preferences.js';
-import type { UiForm, UiFormAnswer, UiValues } from '@felan-ai/session-protocol';
+import type { UiForm, UiFormAnswer } from '@felan-ai/session-protocol';
 export { ASK_USER_FORM_HINT } from '@felan-ai/ext-ask-user/data';
 
 type Theme = ExtensionContext['ui']['theme'];
@@ -99,66 +101,13 @@ export function createTuiAskUserPresenter(config: Partial<AskUserConfig> = {}): 
   }, defaults) };
 }
 
-export async function presentAskUserForm(form: UiForm, context: AskUserPresentationContext, config: Partial<AskUserConfig> = {}): Promise<UiFormAnswer | undefined> {
-  const ids = [...new Set(form.input.fields.map(field => field.id.replace(/\.(mode|selection|text|comment)$/u, '')))];
-  const sections = form.markdown?.split(/^## Question \d+: /mu).slice(1) ?? [];
-  const questions: AskUserQuestion[] = ids.map((id, index) => {
-    const selection = form.input.fields.find(field => field.id === `${id}.selection`);
-    const section = sections[index] ?? '';
-    const newline = section.indexOf('\n');
-    const header = newline < 0 ? `Q${index + 1}` : section.slice(0, newline);
-    const body = section.slice(newline + 1).trim();
-    const choicesAt = body.indexOf('\n\n- ');
-    const skipAt = body.lastIndexOf('\n\nChoose an answer type.');
-    const content = choicesAt >= 0 ? body.slice(0, choicesAt) : skipAt >= 0 ? body.slice(0, skipAt) : body;
-    const [question, ...context] = content.split('\n\n');
-    const choices = choicesAt < 0 ? [] : body.slice(choicesAt + 4, body.lastIndexOf('\n\nSelect ')).split('\n- ').map(formLiteral);
-    const options = selection?.kind === 'enum' || selection?.kind === 'multi_select' ? selection.options : [];
-    const numbered = new Set(options.map(option => option.label)).size !== options.length;
-    return {
-      id, header: formLiteral(header), question: formLiteral(question || form.title),
-      ...(context.length ? { context: formLiteral(context.join('\n\n')) } : {}),
-      options: options.map((option, index) => {
-        const title = option.label.replace(/[\u0000-\u001f\u007f-\u009f]/gu, '');
-        const choice = choices[index];
-        const description = choice?.startsWith(`${option.label}: `) ? choice.slice(option.label.length + 2) : undefined;
-        return { title: numbered ? `${index + 1}. ${title}` : title, ...(description === undefined ? {} : { description }) };
-      }),
-      allowMultiple: selection?.kind === 'multi_select',
-      allowFreeform: form.input.fields.some(field => field.id === `${id}.text` && field.kind === 'string'),
-      allowComment: form.input.fields.some(field => field.id === `${id}.comment` && field.kind === 'string'),
-    };
-  });
+export async function presentAskUserForm(form: UiForm, context: AskUserPresentationContext & { readonly ui: InteractionPresenterUi }, config: Partial<AskUserConfig> = {}): Promise<UiFormAnswer | undefined> {
+  const questions = readAskUserForm(form);
+  if (!questions) return presentUiForm(form, createGenericTuiDriver(context.ui), context.signal);
   const result = await createTuiAskUserPresenter(config).present({ questions }, context);
   if (context.signal.aborted) return undefined;
-  const action = form.actions.find(action => action.id === (result.status === 'answered' ? 'submit' : 'cancel'));
-  if (!action) throw new Error('Ask-user form is missing its response action.');
-  const values: UiValues = {};
-  if (result.status === 'answered') for (const question of questions) {
-    const response = result.answers.find(answer => answer.questionId === question.id)?.response;
-    const mode = response?.kind ?? 'skip';
-    if (form.input.fields.some(field => field.id === `${question.id}.mode`)) values[`${question.id}.mode`] = mode;
-    if (response?.kind === 'freeform') values[`${question.id}.text`] = response.text;
-    if (response?.kind === 'selection') {
-      const field = form.input.fields.find(field => field.id === `${question.id}.selection`);
-      if (field?.kind !== 'enum' && field?.kind !== 'multi_select') throw new Error('Ask-user selection field is missing.');
-      const selected = response.selections.map(title => {
-        const option = field.options[question.options.findIndex(option => option.title === title)];
-        if (!option) throw new Error('Ask-user returned an undeclared selection.');
-        return option.id;
-      });
-      values[field.id] = field.kind === 'multi_select' ? selected : selected[0]!;
-      if (response.comment !== undefined) values[`${question.id}.comment`] = response.comment;
-    }
-  }
-  return { kind: 'form', actionId: action.id, outcome: action.outcome, values };
+  return encodeAskUserFormAnswer(form, result.status === 'answered' ? result.answers : null);
 }
-
-function formLiteral(value: string): string {
-  return decodeUiMarkdown(value, { plainText: true }).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/gu, '');
-}
-
-
 
 async function presentAskUser(
   request: AskUserRequest,

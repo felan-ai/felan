@@ -9,6 +9,7 @@ import type {
 import { createTuiAskUserPresenter, presentAskUserForm } from '../../src/tui/renderers/ask-user.js';
 import { createUiAskUserHost } from '../../../../packages/ext-ask-user/src/ui.js';
 import { createUnavailableExtensionUi, type UiForm } from '@felan-ai/agent-core';
+import { ASK_USER_FORM_HINT } from '@felan-ai/ext-ask-user/data';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -16,12 +17,12 @@ afterEach(() => {
 });
 
 describe('ask-user form hint', () => {
-  async function present(request: AskUserRequest, drive: (component: Component) => void) {
+  async function present(request: AskUserRequest, drive: (component: Component) => void, transform = (form: UiForm) => form) {
     const { context } = tuiContext(drive);
     let form!: UiForm;
     const host = createUiAskUserHost({ ...createUnavailableExtensionUi(), request: async value => {
       form = value;
-      const answer = await presentAskUserForm(value, { ui: context.ui, signal: new AbortController().signal });
+      const answer = await presentAskUserForm(transform(value), { ui: context.ui, signal: new AbortController().signal });
       return answer ? { state: 'answered', answer } : { state: 'cancelled', reason: 'abort' };
     } });
     const outcome = await host.ask(request, { requestId: 'call', sessionId: 'session', signal: new AbortController().signal,
@@ -29,7 +30,7 @@ describe('ask-user form hint', () => {
     return { form, outcome };
   }
 
-  it('drives the wizard from generic fields and preserves stable choices, comments and skipped questions', async () => {
+  it('drives the wizard from structured hint data and preserves stable choices, comments and skipped questions', async () => {
     const request: AskUserRequest = { questions: [
       { ...singleRequest({ allowMultiple: true, allowComment: true }).questions[0]!, id: 'first' },
       { ...singleRequest().questions[0]!, id: 'second' },
@@ -41,17 +42,17 @@ describe('ask-user form hint', () => {
       component.handleInput?.('\r');
       component.handleInput?.('\t'); component.handleInput?.('\r');
     });
-    expect(form.hint).toEqual({ id: 'ask-user.wizard', version: '1' });
+    expect(form.hint).toEqual({ ...ASK_USER_FORM_HINT, data: { questions: request.questions } });
     expect(outcome).toEqual({ status: 'answered', answers: [
       { questionId: 'first', response: { kind: 'selection', selections: ['Alpha', 'Beta'], comment: 'context' } },
       { questionId: 'second', response: null },
     ] });
   });
 
-  it('preserves duplicate option identities and freeform answers', async () => {
-    const duplicate = singleRequest({ options: [{ title: 'Same' }, { title: 'Same' }] });
-    const selected = await present(duplicate, component => { component.handleInput?.('\u001b[B'); component.handleInput?.('\r'); });
-    expect(selected.outcome).toMatchObject({ status: 'answered', answers: [{ response: { selections: ['Same'] } }] });
+  it('preserves stable option identities and freeform answers', async () => {
+    const choices = singleRequest({ options: [{ title: 'Same *literal*' }, { title: 'Same _literal_' }] });
+    const selected = await present(choices, component => { component.handleInput?.('\u001b[B'); component.handleInput?.('\r'); });
+    expect(selected.outcome).toMatchObject({ status: 'answered', answers: [{ response: { selections: ['Same _literal_'] } }] });
     const freeform = await present(singleRequest({ options: [], allowFreeform: true }), component => {
       component.handleInput?.('\r');
       for (const char of 'literal answer') component.handleInput?.(char);
@@ -68,6 +69,39 @@ describe('ask-user form hint', () => {
       component.handleInput?.('\u001b');
     });
     expect(outcome).toMatchObject({ status: 'cancelled', reason: 'user' });
+  });
+
+  it('renders question, context, option titles and descriptions verbatim without reading markdown', async () => {
+    const question = 'Choose v2.0 (beta) & <tag> [literal] \\path';
+    const context = 'Context *literal* &lt;encoded&gt;';
+    const title = 'v2.0 (beta) & <tag>';
+    const description = 'Use *literal* [label] &lt;raw&gt;';
+    const { outcome } = await present(singleRequest({ question, context, options: [{ title, description }] }), component => {
+      const lines = component.render(160).join('\n');
+      for (const text of [question, context, title, description]) expect(lines).toContain(text);
+      expect(lines).not.toContain('Unrelated fallback markdown');
+      component.handleInput?.('\r');
+    }, form => ({ ...form, markdown: 'Unrelated fallback markdown' }));
+    expect(outcome).toMatchObject({ status: 'answered', answers: [{ response: { selections: [title] } }] });
+  });
+
+  it.each([undefined, { questions: [] }, { questions: singleRequest().questions }])('uses generic form controls for missing or inconsistent hint data: %j', async data => {
+    const { context } = tuiContext(component => {
+      expect(component.render(120).join('\n')).toContain('Generic question');
+      component.handleInput?.('\r');
+    });
+    const ui = { ...context.ui, select: vi.fn(async () => '1. Submit answers'), editor: vi.fn(async () => 'Generic answer') };
+    const form: UiForm = { title: 'Generic question', fallback: 'Answer or cancel',
+      hint: { ...ASK_USER_FORM_HINT, ...(data === undefined ? {} : { data }) },
+      input: { fields: [{ id: 'answer', kind: 'string', label: 'Answer', required: true, multiline: true, maxLength: 100 }] },
+      actions: [{ id: 'submit', label: 'Submit answers', target: 'element', outcome: 'submit' },
+        { id: 'cancel', label: 'Cancel', target: 'element', outcome: 'cancel' }] };
+    const signal = new AbortController().signal;
+    await expect(presentAskUserForm(form, { ui, signal })).resolves.toEqual({
+      kind: 'form', actionId: 'submit', outcome: 'submit', values: { answer: 'Generic answer' },
+    });
+    expect(ui.select).toHaveBeenCalledWith('Choose an action', ['1. Submit answers', '2. Cancel'], { signal });
+    expect(ui.editor).toHaveBeenCalledWith('Generic question\nAnswer', '', { signal });
   });
 });
 
