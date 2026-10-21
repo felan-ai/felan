@@ -15,7 +15,7 @@ function harness() {
     getContextUsage: () => ({ tokens: 10, percent: 1, contextWindow: 8192 }), sessionManager: { getEntries: () => [] },
     modelRegistry: { getAvailable: () => [{ provider: 'anthropic' }] } } as unknown as ExtensionContext;
   return { pi, context, handlers, exec, values, clear, host,
-    emit(name: string) { return handlers.get(name)?.({}, context); } };
+    emit(name: string, event: unknown = {}) { return handlers.get(name)?.(event, context); } };
 }
 
 it('publishes data in non-TUI sessions without an observer or footer', async () => {
@@ -28,6 +28,49 @@ it('publishes data in non-TUI sessions without an observer or footer', async () 
     expect(h.clear).not.toHaveBeenCalled();
   } finally { await h.emit('session_shutdown'); }
   expect(h.clear).toHaveBeenCalledOnce();
+});
+
+it.each([true, false])('publishes Claude Code response usage with host service %s without fetching', async withHost => {
+  const h = harness();
+  Object.assign(h.context, { model: { id: 'opus', provider: 'claude-code', contextWindow: 8192 } });
+  const fetchUsage = vi.fn(async () => ({ ok: false as const, error: { code: 'NO_CREDENTIALS' as const } }));
+  createPowerlineRuntimeExtension(withHost ? { fetchUsage } : undefined, {}, h.host)(h.pi);
+  const subscription = () => h.values.at(-1)?.segments.find(segment => segment.name === 'subscription')?.values;
+  try {
+    await h.emit('session_start');
+    await vi.waitFor(() => expect(subscription()).toEqual({ provider: 'anthropic', loading: false, windows: [] }));
+    await h.emit('after_provider_response', { type: 'after_provider_response', status: 200, headers: {
+      'anthropic-ratelimit-unified-5h-utilization': '0.14',
+      'anthropic-ratelimit-unified-7d-utilization': '0.35',
+    } });
+    await vi.waitFor(() => expect(subscription()).toEqual({ provider: 'anthropic', loading: false, windows: [
+      { label: '5h', usedPercent: 14 }, { label: 'Week', usedPercent: 35 },
+    ] }));
+    await h.emit('after_provider_response', { type: 'after_provider_response', status: 200, headers: {
+      'anthropic-ratelimit-unified-5h-utilization': '0.27',
+    } });
+    await vi.waitFor(() => expect(subscription()).toMatchObject({ windows: [{ label: '5h', usedPercent: 27 }] }));
+    await h.emit('model_select');
+    expect(fetchUsage).not.toHaveBeenCalled();
+  } finally { await h.emit('session_shutdown'); }
+  const count = h.values.length;
+  await h.emit('after_provider_response', { headers: { 'anthropic-ratelimit-unified-5h-utilization': '0.99' } });
+  expect(h.values).toHaveLength(count);
+});
+
+it('leaves host-backed Claude usage unchanged by provider response headers', async () => {
+  const h = harness();
+  const fetchUsage = vi.fn(async () => ({ ok: true as const, data: { five_hour: { utilization: 40 } } }));
+  createPowerlineRuntimeExtension({ fetchUsage }, {}, h.host)(h.pi);
+  const subscription = () => h.values.at(-1)?.segments.find(segment => segment.name === 'subscription')?.values;
+  try {
+    await h.emit('session_start');
+    await vi.waitFor(() => expect(subscription()).toMatchObject({ windows: [{ label: '5h', usedPercent: 40 }] }));
+    await h.emit('after_provider_response', { status: 200, headers: { 'anthropic-ratelimit-unified-5h-utilization': '0.99' } });
+    await Promise.resolve();
+    expect(subscription()).toMatchObject({ windows: [{ label: '5h', usedPercent: 40 }] });
+    expect(fetchUsage).toHaveBeenCalledOnce();
+  } finally { await h.emit('session_shutdown'); }
 });
 
 it('joins an outstanding Git probe before restarting and during shutdown', async () => {

@@ -494,6 +494,7 @@ describe('local provider runtime', () => {
         browser: false,
         backgroundBash: false,
         codex: false,
+        claudeCode: false,
         rtkOptimizer: false,
         memory: false,
         felanApi: false,

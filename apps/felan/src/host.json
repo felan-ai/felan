@@ -35,6 +35,7 @@
     { "package": "@felan-ai/ext-browser" },
     { "package": "@felan-ai/ext-background-bash" },
     { "package": "@felan-ai/ext-codex" },
+    { "package": "@felan-ai/ext-claude-code" },
     { "package": "@felan-ai/ext-session-compaction" },
     { "package": "@felan-ai/ext-rtk-optimizer" },
     { "package": "@felan-ai/ext-codebase-memory" },

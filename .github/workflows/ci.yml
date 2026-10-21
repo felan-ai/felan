@@ -31,6 +31,8 @@ jobs:
           # Build compiles every workspace with the same sources and options as type-check.
           - name: packed install
             run: pnpm check:licenses && pnpm pack:all && pnpm test:packed-bin
+          - name: release versions
+            run: pnpm check:proposed-version
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

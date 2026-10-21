@@ -442,6 +442,39 @@ describe('Agent Core session composition', () => {
     result.session.dispose();
   });
 
+  it('selects a default model whose provider an extension registers while loading', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(join(root, 'agent-dir'));
+    const result = await createAgentCoreSession({
+      runtime: new TestAgentRuntime(cwd),
+      extensionPackages: ['@felan-ai/test-provider'],
+      importExtension: async () => ({
+        default: ((pi) => {
+          pi.registerProvider('extension-provider', {
+            baseUrl: 'extension-provider', apiKey: 'not-used', api: 'extension-provider',
+            models: [{
+              id: 'extension-model', name: 'Extension model', reasoning: true, input: ['text'],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 32_000,
+            }],
+            streamSimple: () => createAssistantMessageEventStream(),
+          });
+        }) satisfies FelanExtension,
+      }),
+      modelRuntime,
+      settingsManager: SettingsManager.inMemory({ defaultProvider: 'extension-provider', defaultModel: 'extension-model', defaultThinkingLevel: 'high' }),
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+    try {
+      expect(result.modelFallbackMessage).toBeUndefined();
+      expect(result.session.model).toMatchObject({ provider: 'extension-provider', id: 'extension-model' });
+      expect(result.session.thinkingLevel).toBe('high');
+    } finally {
+      result.session.dispose();
+    }
+  });
+
   it('loads cwd CLAUDE.md as fallback and prefers AGENTS.md', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

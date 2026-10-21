@@ -3,9 +3,9 @@
 This is the canonical provenance and differential-review inventory for adapted
 or externally integrated extensions.
 
-Felan extensions are portable adaptations rather than vendored upstream
-snapshots. This inventory separates two revisions that serve different
-purposes:
+Most Felan extensions are portable adaptations; the Claude Code bridge retains
+a vendored source baseline. This inventory separates two revisions that serve
+different purposes:
 
 - **Initial adaptation source** records the immutable source/provenance
   checkpoint used for the first Felan implementation. Package-level `NOTICE`
@@ -24,6 +24,7 @@ use the reviewed path revision.
 | `@felan-ai/ext-background-bash` | Adapted source | [`pi-background-bash` 0.1.0 at `7e72e509`][background-bash-baseline] | Same release and revision | No upstream change; Felan now probes required POSIX runtime utilities and keeps the feature inactive when they are unavailable. |
 | `@felan-ai/ext-browser` | External CLI integration; no upstream source copied | [`agent-browser` 0.37.1 at `72007a67`][agent-browser-reviewed] | Same release and revision; Felan direct-CDP workaround for upstream auto-connect prompt bug | Felan exposes version-matched skills and CLI through portable browser tools, adds host-owned onboarding and existing-browser authorization, isolates sessions, and converts safe screenshots to native image content; it does not vendor the upstream daemon or install Chrome automatically. |
 | `@felan-ai/ext-codex` | Adapted selected code and behavior | [`@howaboua/pi-codex-conversion` 3.0.8 at `62d1501a`][codex-baseline] | Release [`3.0.26` at `f16fee5`][codex-latest-reviewed] | Ported structured skill-prompt preservation, delete-and-readd patch replacement, shutdown fencing, and the narrow `strict: null` to `strict: false` compatibility normalization for direct Responses function tools; excluded the upstream provider, voice, native compaction, Code/Notebook modes, context windows, and display sidecar. |
+| `@felan-ai/ext-claude-code` | Vendored MIT source with Felan adapters | [`pi-claude-bridge` 0.9.3 at `874fa7c2`][claude-code-baseline] | Same release and revision; reviewed 2026-10-21 | Removed AskClaude; added managed SDK loading, Felan settings, per-session lifecycle/UI isolation, per-session Claude Code processes kept between prompts, child-environment filtering, and isolated prompt-only requests. See [sync procedure](#claude-code-bridge). |
 | `@felan-ai/ext-codebase-memory` | Adapted behavior and prompt guidance plus external native CLI integration | [`pi-cbm` 1.2.1 at `921a749d`][codebase-memory-adaptation] and [`codebase-memory-mcp` 0.10.8 at `46ae198f`][codebase-memory-runtime-baseline] | Runtime [`codebase-memory-mcp` 0.11.0 at `8972ea69`][codebase-memory-runtime] reviewed 2026-09-26 | Retained the bounded four-tool `AgentRuntime` surface and exact-binary/no-config installation; adopted the v0.11 compact output contract and nested `.gitignore` fix while continuing to exclude watchers, LSP, ambient configuration, and automatic installation. |
 | `@felan-ai/ext-context` | Adapted source | [`pi-progressive-context` 0.1.0 at `9571293d`][context-baseline] | [`0.1.0` at monorepo `7e72e509`][context-reviewed] | No path changes since the adaptation source. |
 | `@felan-ai/ext-context-view` | Adapted source | [`pi-context` 0.1.0 at `7e72e509`][context-view-baseline] | Same revision | Ported the context estimate and overlay to Felan's public Agent Core surface; adapted prompt markup, tool attribution, and TUI boundaries. |
@@ -70,6 +71,51 @@ That reference is not an extension source snapshot: Felan copies no Beads code
 and does not invoke its CLI, so it is not used as a future source-diff
 checkpoint.
 
+## Claude Code bridge
+
+Upstream: [elidickinson/pi-claude-bridge](https://github.com/elidickinson/pi-claude-bridge),
+version **0.9.3**, commit
+**`874fa7c2678456336f23b64e784e2057e608d83e`**. Preserve Eli Dickinson's MIT
+attribution and the original claude-agent-sdk-pi attribution to Prateek Sunal.
+The [package NOTICE](../../packages/ext-claude-code/NOTICE) is authoritative.
+
+Upstream `src/*.ts` is vendored into
+[`packages/ext-claude-code/src/bridge/`](../../packages/ext-claude-code/src/bridge/):
+`agents-md.ts`, `attachments.ts`, `config.ts`, `convert.ts`,
+`extract-tool-results.ts`, `index.ts`, `log-paths.ts`, `mcp-server.ts`,
+`models.ts`, `prompt-capture.ts`, `prompt-stream.ts`, `query-state.ts`,
+`rate-limit.ts`, `session-cwd.ts`, `session-verify.ts`, `skills.ts`,
+`transcript.ts`, and `usage.ts`. `askclaude-schema.ts` and `askclaude-ui.ts`
+are deliberately omitted. Felan's entry, settings, command, `src/managed/`,
+and `src/sdk/` are owned adapters, not upstream source copies. The proprietary
+SDK and its declarations are not vendored.
+
+To sync:
+
+1. Review upstream commits since the recorded revision, then diff upstream
+   `src/` against Felan's `src/bridge/`. Keep upstream tabs and double quotes
+   in the bridge to make the comparison useful; identify intentional Felan
+   deviations marked `// Felan:` before applying changes.
+2. Preserve removal of AskClaude, Agent Core-only Pi imports, managed SDK
+   injection, Felan configuration/log paths, the `claude-code` provider ID,
+   per-session lifecycle, per-session processes kept between prompts, child
+   environment filtering, and prompt safeguards.
+   Review SDK/runtime compatibility separately; do not introduce Anthropic or
+   MCP packages into Felan package dependency fields.
+3. Re-run every ported test listed in
+   [`test/upstream/README.md`](../../packages/ext-claude-code/test/upstream/README.md),
+   plus Felan's SDK, installer, command, activation, and runtime adaptation
+   tests. That inventory explains dropped/rewritten cases and the exclusion of
+   real-Claude integration and diagnostic runs; offline tests do not establish
+   live service compatibility.
+4. From `packages/ext-claude-code`, run `pnpm build`, `pnpm type-check`, and
+   `pnpm test`. Run `scripts/test-isolated.sh pnpm verify` at the repository root
+   for cross-package or release-facing changes. Update the package `NOTICE`,
+   this baseline, and the test inventory with the reviewed revision/outcome.
+
+The [ADR](../decisions/0044-bridge-claude-code-through-managed-agent-sdk.md)
+records why Felan vendors the bridge without a companion mod or bundled SDK.
+
 ## Future reviews
 
 For a path in an upstream monorepo, compare from the **latest reviewed**
@@ -90,6 +136,7 @@ outcome even when the decision is "do not port."
 [background-bash-baseline]: https://github.com/mslavov/pi-extensions/tree/7e72e509fe45a5a87c4c2e176cb711de994a8c1d/packages/pi-background-bash
 [codex-baseline]: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91/packages/pi-codex-conversion
 [codex-latest-reviewed]: https://github.com/IgorWarzocha/howaboua-pi-stuff/commit/f16fee563f71849cc2b9a94be2b6f70e12fca804
+[claude-code-baseline]: https://github.com/elidickinson/pi-claude-bridge/tree/874fa7c2678456336f23b64e784e2057e608d83e
 [codebase-memory-adaptation]: https://github.com/alexykn/pi-cbm/tree/921a749d5cea74bda8f647542627ef9518fec272
 [codebase-memory-runtime-baseline]: https://github.com/DeusData/codebase-memory-mcp/tree/46ae198fc11cda80e817acbc5f5908d7c2de7032
 [codebase-memory-runtime]: https://github.com/DeusData/codebase-memory-mcp/tree/8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798

@@ -61,6 +61,8 @@ backoff until the daemon is back. Automatic retries never start a daemon;
 | `/mcp [status\|tools\|reconnect\|auth\|logout] [server]` | Inspect and manage configured remote MCP servers |
 | `/markitdown` | Show document-converter status |
 | `/markitdown install` | Explicitly install the managed converter |
+| `/claude-code [status]` | Show managed Claude Agent SDK availability, provider registration, and plan settings |
+| `/claude-code install` | Request explicit installation of the managed SDK; start a new session or reload afterward |
 | `/progressive-context` | Show progressively loaded nested instructions |
 | `/context` | Show estimated current context-window usage inline (or in the configured overlay) |
 | `/insights` | Open a local Felan Code session analytics dashboard (Overview, Models, Projects, Sessions, Rage). `o` opens the static HTML snapshot after local confirmation |

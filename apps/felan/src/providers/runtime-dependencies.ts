@@ -1,7 +1,7 @@
 import { RUNTIME_DEPENDENCIES_SERVICE, type RuntimeDependencyInstallResult } from '@felan-ai/agent-core';
 import { defineServiceProvider } from '@felan-ai/daemon/provider';
 
-const supported = new Set(['markitdown', 'rtk', 'codebase-memory']);
+const supported = new Set(['markitdown', 'rtk', 'codebase-memory', 'claude-code']);
 
 export default defineServiceProvider({
   scope: 'session', provides: [RUNTIME_DEPENDENCIES_SERVICE],

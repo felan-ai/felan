@@ -212,3 +212,11 @@ source code was copied.
 pi-todo-write package at commit 9571293d422db11de893fa80ed0fc3e39945c657.
 Felan implements its own task graph, tools, persistence, and presentation; no
 source code was copied.
+
+@felan-ai/ext-claude-code adapts pi-claude-bridge 0.9.3 from
+https://github.com/elidickinson/pi-claude-bridge at commit
+874fa7c2678456336f23b64e784e2057e608d83e.
+Copyright (c) 2026 Eli Dickinson, MIT License. Upstream was originally based
+on claude-agent-sdk-pi by Prateek Sunal. Package-level LICENSE and NOTICE
+retain the attribution. The proprietary Claude Agent SDK and Claude Code
+executable are installed separately on explicit approval, not bundled.

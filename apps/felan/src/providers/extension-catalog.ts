@@ -11,6 +11,7 @@ export const builtinExtensionPackages = {
   browser: '@felan-ai/ext-browser',
   backgroundBash: '@felan-ai/ext-background-bash',
   codex: '@felan-ai/ext-codex',
+  claudeCode: '@felan-ai/ext-claude-code',
   sessionCompaction: '@felan-ai/ext-session-compaction',
   rtkOptimizer: '@felan-ai/ext-rtk-optimizer',
   codebaseMemory: '@felan-ai/ext-codebase-memory',

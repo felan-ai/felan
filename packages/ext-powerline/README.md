@@ -105,6 +105,17 @@ The portable package owns
 provider detection, response parsing, caching, and throttling; the
 host owns credential access and provider requests.
 
+Models whose provider is `claude-code` use session-local
+`after_provider_response` headers instead of the host subscription service. The
+Claude Plan reports used percentages and reset times for the five-hour and weekly
+windows. Allowed overage appears as `Extra [on]`, or `Extra [active]` when the
+plan is exhausted and overage remains allowed; rejected or unknown overage does
+not appear as enabled. These headers do not supply extra-usage spending, so no
+spending amount is inferred from the overage-included weekly window. Before the
+first usage headers arrive, no usage error is reported. Header-based usage works
+without the optional Models service and is neither fetched, persisted, nor
+shared across sessions. Other providers continue using the host service.
+
 A local host can supply usage backed by `ModelRuntime`. It uses the active
 provider's Felan OAuth credential and fixed Codex, Anthropic, or xAI Grok Build
 billing endpoints. The extension package does not inspect authentication files,
@@ -120,7 +131,7 @@ The root uses optional Agent Core services:
 - `pi.runtime.host` supplies host version metadata without exposing a runtime factory.
 
 There is no Powerline-specific service. Omitting optional services leaves normal
-session/model/context data intact and omits unavailable subscription and
+session/model/context and header-based Claude Code data intact and omits unavailable subscription and
 savings segments. The root exports portable runtime APIs plus the service-backed
 default; `./runtime` exposes explicit runtime composition and `./data` exposes
 normalized records. Neither loads footer implementations or Pi-TUI. The package

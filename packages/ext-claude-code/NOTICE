@@ -1,0 +1,21 @@
+@felan-ai/ext-claude-code
+
+Includes code adapted from pi-claude-bridge 0.9.3,
+https://github.com/elidickinson/pi-claude-bridge at source commit
+874fa7c2678456336f23b64e784e2057e608d83e.
+
+Copyright (c) 2026 Eli Dickinson
+Licensed under the MIT License included in this package.
+Upstream was originally based on claude-agent-sdk-pi by Prateek Sunal,
+https://github.com/prateekmedia/claude-agent-sdk-pi.
+
+Adapted portions include the Claude Code provider, transcript conversion,
+session synchronization, MCP tool bridge, prompt projection, streaming,
+usage reporting, and isolated summary queries. Felan removes the legacy
+delegation tool, supplies extension settings and storage paths, imports Pi
+through Agent Core, and loads the separately managed SDK at runtime.
+
+The proprietary Claude Agent SDK and Claude Code executable are not bundled
+or dependencies of this package. Their optional managed installation is
+subject to Anthropic's terms. The managed MCP SDK is loaded from the same
+installation as the Claude Agent SDK.

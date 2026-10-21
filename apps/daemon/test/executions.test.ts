@@ -50,6 +50,26 @@ describe('registry-owned executions', () => {
     expect(f.store.session(child.value.executionId).profile?.instructions).toBeUndefined();
   });
 
+  it('renders child instructions as a prompt section and restores them for continued executions', async () => {
+    const f = await realFixture(); const host = f.registry.executionHost(f.root.sessionId);
+    const instructions = 'Review only the assigned files.';
+    const child = await host.spawnSession({ ...request(), appendSystemPrompt: instructions });
+    if (!child.ok) throw new Error(child.error.message);
+    await completed(host, child.value.executionId);
+    const first = f.registry.binding(child.value.executionId)!.runtime.session;
+    const childPrompt = `<child_instructions>\n${instructions}\n</child_instructions>`;
+    expect(first.agent.state.systemPrompt).toContain(childPrompt);
+    expect(first.messages).toContainEqual(expect.objectContaining({ role: 'system', sections: expect.objectContaining({ child_instructions: childPrompt }) }));
+    expect(f.root.runtime.session.systemPrompt).not.toContain(instructions);
+    expect(await f.registry.evictIdle()).toContain(child.value.executionId);
+    expect(await host.steer(child.value.executionId, 'Continue the review.')).toMatchObject({ ok: true });
+    await completed(host, child.value.executionId);
+    const restored = f.registry.binding(child.value.executionId)!.runtime.session;
+    expect(restored).not.toBe(first);
+    expect(restored.agent.state.systemPrompt).toContain(childPrompt);
+    expect(restored.messages).toContainEqual(expect.objectContaining({ role: 'system', sections: expect.objectContaining({ child_instructions: childPrompt }) }));
+  });
+
   it('derives results and usage from the same child transcript and continues with one canonical identity', async () => {
     const f = await realFixture(); const host = f.registry.executionHost(f.root.sessionId);
     const child = await host.spawnSession(request()); if (!child.ok) throw new Error(child.error.message);

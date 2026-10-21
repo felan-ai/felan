@@ -4,6 +4,7 @@ import {
   createSubscriptionUsageStore,
   detectSubscriptionProvider,
   formatReset,
+  parseClaudeCodeUsageHeaders,
   parseUsageSnapshot,
   prioritizeWindowsForModel,
   type SubscriptionUsageHost,
@@ -78,6 +79,7 @@ describe('subscription usage parsing', () => {
     expect(detectSubscriptionProvider({ provider: 'openai', id: 'gpt-5.6' })).toBe('openai');
     expect(detectSubscriptionProvider({ provider: 'openai-codex', id: 'gpt-5.6-sol' })).toBe('codex');
     expect(detectSubscriptionProvider({ provider: 'anthropic', id: 'claude-opus-4-6' })).toBe('anthropic');
+    expect(detectSubscriptionProvider({ provider: 'claude-code', id: 'opus' })).toBe('anthropic');
     expect(detectSubscriptionProvider({ provider: 'xai', id: 'grok-4.6' })).toBe('xai');
     expect(detectSubscriptionProvider({ provider: 'groq', id: 'grok-4.6' })).toBeUndefined();
     expect(detectSubscriptionProvider({ provider: 'openrouter', id: 'x-ai/grok-4' })).toBeUndefined();
@@ -147,7 +149,162 @@ describe('subscription usage parsing', () => {
   });
 });
 
+describe('Claude Code usage headers', () => {
+  it('converts fractional utilization and Unix seconds to Claude Plan windows', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-08-06T10:00:00.000Z'));
+    expect(parseClaudeCodeUsageHeaders({
+      'anthropic-ratelimit-unified-status': 'allowed',
+      'anthropic-ratelimit-unified-5h-utilization': '0.14',
+      'anthropic-ratelimit-unified-5h-reset': String(Date.parse('2026-08-06T12:00:00.000Z') / 1_000),
+      'anthropic-ratelimit-unified-7d-utilization': '0.015',
+      'anthropic-ratelimit-unified-7d-reset': String(Date.parse('2026-08-11T18:00:00.000Z') / 1_000),
+    })).toEqual({
+      provider: 'anthropic', displayName: 'Claude Plan', fiveHourUsage: 14, extraUsageEnabled: false,
+      windows: [
+        { label: '5h', usedPercent: 14, resetAt: '2026-08-06T12:00:00.000Z', resetDescription: '2h' },
+        { label: 'Week', usedPercent: 1.5, resetAt: '2026-08-11T18:00:00.000Z', resetDescription: '5d8h' },
+      ],
+    });
+  });
+
+  it.each([
+    ['allowed', 'allowed', 'Extra [on]'],
+    ['allowed_warning', 'allowed_warning', 'Extra [on]'],
+    ['rejected', 'allowed', 'Extra [active]'],
+    ['rejected', 'allowed_warning', 'Extra [active]'],
+  ])('uses plan status %s and overage status %s without inventing spending', (status, overageStatus, label) => {
+    const usage = parseClaudeCodeUsageHeaders({
+      'anthropic-ratelimit-unified-status': status,
+      'anthropic-ratelimit-unified-overage-status': overageStatus,
+      'anthropic-ratelimit-unified-5h-utilization': '0.14',
+      'anthropic-ratelimit-unified-7d-utilization': '1',
+      'anthropic-ratelimit-unified-7d_oi-utilization': '0.6',
+    });
+    expect(usage?.extraUsageEnabled).toBe(true);
+    expect(usage?.windows.at(-1)).toEqual({
+      label, usedPercent: 0, ...(status === 'rejected' ? { resetDescription: '__ACTIVE__' } : {}),
+    });
+    expect(usage?.error).toBeUndefined();
+  });
+
+  it.each(['rejected', 'disabled', 'unknown', ''])('does not report overage %s as enabled or active', overageStatus => {
+    const usage = parseClaudeCodeUsageHeaders({
+      'anthropic-ratelimit-unified-status': 'rejected',
+      'anthropic-ratelimit-unified-overage-status': overageStatus,
+      'anthropic-ratelimit-unified-5h-utilization': '1',
+    });
+    expect(usage?.extraUsageEnabled).toBe(false);
+    expect(usage?.windows).toEqual([{ label: '5h', usedPercent: 100 }]);
+    expect(usage?.error).toBeUndefined();
+  });
+
+  it('ignores unrelated headers and validates numbers and reset dates', () => {
+    expect(parseClaudeCodeUsageHeaders({ 'content-type': 'application/json' })).toBeUndefined();
+    expect(parseClaudeCodeUsageHeaders({
+      'Anthropic-Ratelimit-Unified-5h-Utilization': '2',
+      'anthropic-ratelimit-unified-5h-reset': '1e300',
+      'anthropic-ratelimit-unified-7d-utilization': '-1',
+      'anthropic-ratelimit-unified-7d-reset': '-1',
+    })?.windows).toEqual([{ label: '5h', usedPercent: 100 }, { label: 'Week', usedPercent: 0 }]);
+    expect(parseClaudeCodeUsageHeaders({
+      'anthropic-ratelimit-unified-5h-utilization': 'NaN',
+      'anthropic-ratelimit-unified-7d-utilization': 'Infinity',
+    })?.windows).toEqual([]);
+    expect(parseClaudeCodeUsageHeaders({
+      'anthropic-ratelimit-unified-5h-utilization': '',
+      'anthropic-ratelimit-unified-7d-utilization': '   ',
+    })?.windows).toEqual([]);
+  });
+});
+
 describe('subscription controller', () => {
+  it('keeps Claude Code usage session-local, updates from headers, and never fetches it', async () => {
+    const store = createSubscriptionUsageStore();
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn().mockResolvedValue({ ok: false, error: { code: 'NO_CREDENTIALS' } }),
+    };
+    const updates = vi.fn();
+    const controller = createSubscriptionController(host, updates, store);
+    const model = { provider: 'claude-code', id: 'opus' };
+    await controller.refresh(model);
+    expect(controller.state).toMatchObject({ provider: 'anthropic', loading: false });
+    expect(controller.state.usage).toBeUndefined();
+    controller.observeProviderResponse(model, { 'anthropic-ratelimit-unified-5h-utilization': '0.14' });
+    expect(controller.state.usage?.windows).toEqual([{ label: '5h', usedPercent: 14 }]);
+    controller.observeProviderResponse(model, { 'anthropic-ratelimit-unified-5h-utilization': '0.27' });
+    expect(controller.state.usage?.windows).toEqual([{ label: '5h', usedPercent: 27 }]);
+    controller.observeProviderResponse(model, { 'content-type': 'application/json' });
+    await controller.refresh(model, { force: true });
+    expect(controller.state.usage?.windows).toEqual([{ label: '5h', usedPercent: 27 }]);
+    expect(controller.state.usage?.error).toBeUndefined();
+    expect(controller.state.usage?.lastSuccessAt).toEqual(expect.any(Number));
+    expect(host.fetchUsage).not.toHaveBeenCalled();
+    expect(store.get('anthropic')).toBeUndefined();
+    expect(updates).toHaveBeenCalled();
+
+    const other = createSubscriptionController(host, undefined, store);
+    await other.refresh(model);
+    expect(other.state.usage).toBeUndefined();
+    controller.clear();
+    await controller.refresh(model);
+    expect(controller.state.usage).toBeUndefined();
+  });
+
+  it('isolates host Claude usage and errors from the Claude Code response cache', async () => {
+    const host: SubscriptionUsageHost = {
+      fetchUsage: vi.fn()
+        .mockResolvedValueOnce({ ok: false, error: { code: 'NO_CREDENTIALS' } })
+        .mockResolvedValueOnce({ ok: true, data: { five_hour: { utilization: 60 } } }),
+    };
+    const controller = createSubscriptionController(host);
+    const api = { provider: 'anthropic', id: 'claude-opus-4-6' };
+    const bridge = { provider: 'claude-code', id: 'opus' };
+    await controller.refresh(api);
+    expect(controller.state.usage?.error?.code).toBe('NO_CREDENTIALS');
+    await controller.refresh(bridge);
+    expect(controller.state.usage).toBeUndefined();
+    controller.observeProviderResponse(bridge, { 'anthropic-ratelimit-unified-5h-utilization': '0.14' });
+    await controller.refresh(api, { force: true });
+    controller.observeProviderResponse(api, { 'anthropic-ratelimit-unified-5h-utilization': '0.99' });
+    expect(controller.state.usage?.windows).toEqual([{ label: '5h', usedPercent: 60 }]);
+    await controller.refresh(bridge, { force: true });
+    expect(controller.state.usage?.windows).toEqual([{ label: '5h', usedPercent: 14 }]);
+    expect(host.fetchUsage).toHaveBeenCalledTimes(2);
+    expect(host.fetchUsage).toHaveBeenLastCalledWith(expect.objectContaining({ modelProvider: 'anthropic' }));
+  });
+
+  it('aborts pending host Claude usage when switching to Claude Code', async () => {
+    let resolve!: (result: SubscriptionUsageHostResult) => void;
+    let signal: AbortSignal | undefined;
+    const host: SubscriptionUsageHost = { fetchUsage: vi.fn(request => {
+      signal = request.signal;
+      return new Promise(done => { resolve = done; });
+    }) };
+    const controller = createSubscriptionController(host);
+    const pending = controller.refresh({ provider: 'anthropic', id: 'claude-opus-4-6' });
+    const bridge = { provider: 'claude-code', id: 'opus' };
+    await controller.refresh(bridge);
+    controller.observeProviderResponse(bridge, { 'anthropic-ratelimit-unified-5h-utilization': '0.14' });
+    expect(signal?.aborted).toBe(true);
+    resolve({ ok: true, data: { five_hour: { utilization: 90 } } });
+    await pending;
+    expect(controller.state.loading).toBe(false);
+    expect(controller.state.usage?.windows).toEqual([{ label: '5h', usedPercent: 14 }]);
+    expect(host.fetchUsage).toHaveBeenCalledOnce();
+  });
+
+  it('collects Claude Code headers without a host service', async () => {
+    const controller = createSubscriptionController();
+    const model = { provider: 'claude-code', id: 'opus' };
+    await controller.refresh(model);
+    controller.observeProviderResponse(model, { 'anthropic-ratelimit-unified-5h-utilization': '0.14' });
+    expect(controller.state.usage?.windows).toEqual([{ label: '5h', usedPercent: 14 }]);
+    await controller.refresh({ provider: 'anthropic', id: 'claude-opus-4-6' });
+    expect(controller.state.usage).toBeUndefined();
+    expect(controller.state.provider).toBeUndefined();
+  });
+
   it('coalesces in-flight refreshes and commits the result', async () => {
     let resolve!: (result: SubscriptionUsageHostResult) => void;
     const host: SubscriptionUsageHost = {

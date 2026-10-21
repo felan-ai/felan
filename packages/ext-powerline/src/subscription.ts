@@ -115,6 +115,7 @@ export interface SubscriptionController {
     model: { provider?: string; id?: string } | undefined,
     options?: SubscriptionRefreshOptions,
   ): Promise<void>;
+  observeProviderResponse(model: { provider?: string } | undefined, headers: Record<string, string>): void;
   clear(): void;
 }
 
@@ -154,7 +155,7 @@ const DISPLAY_NAMES: Record<SubscriptionProviderName, string> = {
 };
 
 export function createSubscriptionController(
-  host: SubscriptionUsageHost,
+  host?: SubscriptionUsageHost,
   onUpdate?: () => void,
   store: SubscriptionUsageStore = createSubscriptionUsageStore(),
 ): SubscriptionController {
@@ -170,6 +171,8 @@ export function createSubscriptionController(
   let inFlight: Promise<void> | undefined;
   let inFlightSequence: number | undefined;
   let sequence = 0;
+  let usingClaudeCode = false;
+  let claudeCodeResponse: { headers: Record<string, string>; receivedAt: number } | undefined;
 
   function notify(): void {
     onUpdate?.();
@@ -185,12 +188,41 @@ export function createSubscriptionController(
     else delete state.usage;
   }
 
+  function showClaudeCodeUsage(): void {
+    const usage = claudeCodeResponse && parseClaudeCodeUsageHeaders(claudeCodeResponse.headers);
+    if (usage) state.usage = { ...usage, lastSuccessAt: claudeCodeResponse!.receivedAt };
+    else delete state.usage;
+    state.loading = false;
+  }
+
+  function observeProviderResponse(model: { provider?: string } | undefined, headers: Record<string, string>): void {
+    if (!isClaudeCodeModel(model) || !parseClaudeCodeUsageHeaders(headers)) return;
+    claudeCodeResponse = { headers: { ...headers }, receivedAt: Date.now() };
+    if (usingClaudeCode) {
+      showClaudeCodeUsage();
+      state.lastRefreshAt = claudeCodeResponse.receivedAt;
+      notify();
+    }
+  }
+
   async function refresh(
     model: { provider?: string; id?: string } | undefined,
     options: SubscriptionRefreshOptions = {},
   ): Promise<void> {
     const provider = detectSubscriptionProvider(model);
-    if (!provider) {
+    usingClaudeCode = isClaudeCodeModel(model);
+    if (usingClaudeCode) {
+      sequence += 1;
+      abortActiveRequests();
+      for (const provider of Object.keys(latestRequestSequence) as SubscriptionProviderName[]) {
+        delete latestRequestSequence[provider];
+      }
+      state.provider = 'anthropic';
+      showClaudeCodeUsage();
+      notify();
+      return;
+    }
+    if (!provider || !host) {
       sequence += 1;
       abortActiveRequests();
       for (const provider of Object.keys(latestRequestSequence) as SubscriptionProviderName[]) {
@@ -278,7 +310,7 @@ export function createSubscriptionController(
     requestSequence: number,
     controller: AbortController,
   ): Promise<void> {
-    const result = await fetchHostUsage(host, provider, modelProvider, modelId, controller);
+    const result = await fetchHostUsage(host!, provider, modelProvider, modelId, controller);
     const errorCode = result.ok ? undefined : result.error.code;
     if (latestRequestSequence[provider] === requestSequence && provider === 'openai') {
       if (result.ok) {
@@ -319,6 +351,8 @@ export function createSubscriptionController(
     delete state.lastRefreshAt;
     nativeRateLimitedCount = 0;
     nativeBlockedUntil = undefined;
+    usingClaudeCode = false;
+    claudeCodeResponse = undefined;
     for (const provider of Object.keys(latestRequestSequence) as SubscriptionProviderName[]) {
       delete latestRequestSequence[provider];
       delete lastAttemptAt[provider];
@@ -338,13 +372,18 @@ export function createSubscriptionController(
     inFlightSequence = undefined;
   }
 
-  return { state, refresh, clear };
+  return { state, refresh, observeProviderResponse, clear };
+}
+
+function isClaudeCodeModel(model: { provider?: string } | undefined): boolean {
+  return model?.provider?.toLowerCase() === 'claude-code';
 }
 
 export function detectSubscriptionProvider(
   model: { provider?: string; id?: string } | undefined,
 ): SubscriptionProviderName | undefined {
   if (!model) return undefined;
+  if (isClaudeCodeModel(model)) return 'anthropic';
   const provider = model.provider?.toLowerCase() ?? '';
   const id = model.id?.toLowerCase() ?? '';
   if (provider === 'openai') return 'openai';
@@ -518,6 +557,46 @@ function parseAnthropicUsage(data: unknown): UsageSnapshot {
   }
 
   return snapshot('anthropic', { windows, extraUsageEnabled, fiveHourUsage });
+}
+
+export function parseClaudeCodeUsageHeaders(headers: Record<string, string>): UsageSnapshot | undefined {
+  const normalized = Object.fromEntries(Object.entries(headers).map(([name, value]) => [name.toLowerCase(), value]));
+  const prefix = 'anthropic-ratelimit-unified-';
+  if (!Object.keys(normalized).some(name => name.startsWith(prefix))) return undefined;
+
+  function window(name: string): AnthropicUsageResponse['five_hour'] {
+    const utilization = headerNumber(normalized[`${prefix}${name}-utilization`]);
+    if (utilization === undefined) return undefined;
+    const reset = headerNumber(normalized[`${prefix}${name}-reset`]);
+    const resetAt = reset !== undefined && reset > 0 ? new Date(reset * 1_000) : undefined;
+    return {
+      utilization: Math.round(clampPercent(utilization * 100) * 100) / 100,
+      ...(resetAt && Number.isFinite(resetAt.getTime()) ? { resets_at: resetAt.toISOString() } : {}),
+    };
+  }
+
+  const overageStatus = normalized[`${prefix}overage-status`];
+  const extraUsageEnabled = overageStatus === 'allowed' || overageStatus === 'allowed_warning';
+  const usage = parseAnthropicUsage({
+    five_hour: window('5h'),
+    seven_day: window('7d'),
+  });
+  usage.extraUsageEnabled = extraUsageEnabled;
+  if (extraUsageEnabled) {
+    const active = normalized[`${prefix}status`] === 'rejected';
+    usage.windows.push({
+      label: formatExtraUsageLabel(active ? 'active' : 'on'),
+      usedPercent: 0,
+      ...(active ? { resetDescription: '__ACTIVE__' } : {}),
+    });
+  }
+  return usage;
+}
+
+function headerNumber(value: string | undefined): number | undefined {
+  if (!value?.trim()) return undefined;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : undefined;
 }
 
 function parseXaiUsage(data: unknown): UsageSnapshot {

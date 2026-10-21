@@ -47,6 +47,7 @@ browser and Powerline extensions:
     "browser": false,
     "backgroundBash": true,
     "codex": true,
+    "claudeCode": true,
     "rtkOptimizer": true,
     "codebaseMemory": true,
     "markitdown": true,
@@ -65,6 +66,7 @@ browser and Powerline extensions:
     "outputStyle": { "style": "concise" },
     "codebaseMemory": { "maxCacheBytes": 0 },
     "codex": { "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
+    "claude-code": { "plan": "pro", "longContextExtraUsage": false },
     "sessionCompaction": { "method": "classifier", "model": "inherit" },
     "fusion": {
       "participants": [],
@@ -682,6 +684,35 @@ change its native Pi transport.
 GPT models keep Felan Code's ordinary `read` and `bash` tools. Codex mode replaces
 only `edit` and `write` with `apply_patch`; process sessions and image reading
 are not provider-specific.
+
+### Claude Code provider
+
+`builtinExtensions.claudeCode` enables the built-in, but models register only
+when the managed Agent SDK is installed on a supported host. Run
+`/claude-code install`, then start a new session or reload. Claude Code login
+is separate from Felan provider credentials: run `claude`, then `/login`, on
+the machine running the daemon.
+
+Use `/settings` or `extensionConfig["claude-code"]` for these fields:
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `plan` | `"pro"` | `"pro"` or `"max"`; selects plan-gated context windows, not authentication. |
+| `longContextExtraUsage` | `false` | Allow long-context variants that may consume paid Extra Usage. |
+| `forceTwoHundredK` | `[]` | Array of model IDs limited to 200K context, without `claude-code/` or `[1m]`. |
+| `strictMcpConfig` | `true` | Ignore local Claude Code MCP configuration and use Felan's tools. Claude.ai-connected MCP servers remain disabled. |
+| `autoMemoryEnabled` | `false` | Enable Claude Code auto-memory in addition to Felan memory. |
+| `pathToClaudeCodeExecutable` | unset | Optional absolute path to `claude` instead of the SDK-bundled binary. |
+| `inheritAnthropicEnvironment` | `false` | Preserve exported `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, and `ANTHROPIC_BASE_URL` in the child; otherwise remove them to use Claude plan login. |
+
+Unknown fields and invalid values are rejected. Settings apply on activation
+in a new session or reload; the bridge uses process-wide settings, so the
+latest activation governs subsequent queries in a shared daemon. Environment
+inheritance can change authentication, destination, and billing. Zero model
+prices in Felan do not mean free usage or guaranteed plan eligibility.
+
+See the [Claude Code guide](claude-code.md) for setup, compatibility, privacy,
+long-context behavior, and troubleshooting.
 
 ### Background processes
 

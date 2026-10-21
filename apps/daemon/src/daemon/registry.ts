@@ -1022,7 +1022,13 @@ export class SessionRegistry {
         const bindings = await externalServices.extensions.bind(context, port);
         return { ...bindings, inlineExtensions: [...(bindings.inlineExtensions ?? []), ...(request.systemPromptAppend ? [{
           name: '@felan-ai/daemon/child-instructions',
-          factory: (pi: import('@felan-ai/agent-core').ExtensionAPI) => { pi.on('before_agent_start', event => ({ systemPrompt: `${event.systemPrompt}\n\n${request.systemPromptAppend}` })); },
+          factory: (pi: import('@felan-ai/agent-core').ExtensionAPI) => { pi.on('before_agent_start', event => {
+            if (event.systemPromptOptions?.sections) {
+              event.systemPromptOptions.sections.child_instructions = request.systemPromptAppend!;
+              return;
+            }
+            return { systemPrompt: `${event.systemPrompt}\n\n${request.systemPromptAppend}` };
+          }); },
         }] : [])] };
       },
     } };

@@ -9,6 +9,7 @@ import {
   type CreateAgentSessionRuntimeResult,
   type InlineExtension,
   type ModelRuntime,
+  type ResourceLoader,
   type SessionManager,
   type SessionStartEvent,
   type SettingsManager,
@@ -210,6 +211,7 @@ async function composeAgentCoreSession(
       : { appendSystemPrompt: options.appendSystemPrompt }),
   });
   if (projectInstructions !== undefined) projectInstructionsByLoader.set(resourceLoader, projectInstructions);
+  registerLoadedExtensionModels(resourceLoader, options.modelRuntime, diagnostics);
   const result = await createAgentSession({
     cwd: options.runtime.cwd,
     agentDir,
@@ -265,6 +267,37 @@ async function composeAgentCoreSession(
       diagnostics,
     },
   };
+}
+
+/**
+ * Pi resolves the default or restored model before it binds extensions, so a provider registered while
+ * loading would otherwise miss that resolution. Pi's own service composition registers them first too.
+ */
+function registerLoadedExtensionModels(
+  resourceLoader: ResourceLoader,
+  modelRuntime: ModelRuntime,
+  diagnostics: AgentSessionServices['diagnostics'],
+): void {
+  const { runtime } = resourceLoader.getExtensions();
+  const register = (extensionPath: string, apply: () => void) => {
+    try {
+      apply();
+    } catch (error) {
+      diagnostics.push({ type: 'error', message: `Extension "${extensionPath}" error: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+  for (const { name, config, extensionPath } of runtime.pendingProviderRegistrations) {
+    register(extensionPath, () => modelRuntime.registerProvider(name, config));
+  }
+  runtime.pendingProviderRegistrations = [];
+  for (const { provider, extensionPath } of runtime.pendingNativeProviderRegistrations) {
+    register(extensionPath, () => modelRuntime.registerNativeProvider(provider));
+  }
+  runtime.pendingNativeProviderRegistrations = [];
+  for (const { definition, extensionPath } of runtime.pendingVirtualModelRegistrations) {
+    register(extensionPath, () => modelRuntime.registerVirtualModel(definition));
+  }
+  runtime.pendingVirtualModelRegistrations = [];
 }
 
 function optionalDynamicThinkingReporter(provider: SavingsReporterProvider | undefined): SavingsReporter | undefined {

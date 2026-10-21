@@ -35,6 +35,13 @@ The Fusion integration uses original MIT-licensed Felan code from
 reviewed revision recorded in the extension's NOTICE; no upstream source or
 prompt text is copied. Its package-level LICENSE and NOTICE contain details.
 
+The Claude Code integration uses @felan-ai/ext-claude-code, adapted from
+pi-claude-bridge 0.9.3 by Eli Dickinson, originally based on Prateek Sunal's
+claude-agent-sdk-pi. Its package-level LICENSE and NOTICE record the MIT
+attribution and source revision. The proprietary Claude Agent SDK and its
+MCP peers are installed only after explicit approval under Anthropic's terms;
+the Claude Agent SDK and Claude Code executable are not bundled.
+
 The client-owned ask-user wizard adapts the MIT-licensed pi-ask-user by
 Enzo Lucchesi, via packages/pi-ask-user in https://github.com/mslavov/pi-extensions
 at 7e72e509fe45a5a87c4c2e176cb711de994a8c1d and pi-ask-user 0.14.0 at

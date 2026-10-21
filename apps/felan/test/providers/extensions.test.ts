@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, createFelanServiceRegistry, loadFelanExtensions } from '@felan-ai/agent-core';
 import { builtinExtensionPackages, importLocalExtension, resolveConfiguredExtensionPackages } from '../../src/providers/extensions.js';
 
@@ -27,6 +27,33 @@ async function runtime() {
 it('preserves the supplied host extension order', () => {
   const packages = ['third-party-second', 'third-party-first', builtinExtensionPackages.tasks];
   expect(resolveConfiguredExtensionPackages(packages, undefined)).toEqual(packages);
+});
+
+it('includes Claude Code in the packaged host and allows disabling it by its built-in key', async () => {
+  const host = JSON.parse(await readFile(new URL('../../src/host.json', import.meta.url), 'utf8')) as {
+    extensions: Array<{ package: string }>;
+  };
+  const packages = host.extensions.map(extension => extension.package);
+  expect(packages).toContain(builtinExtensionPackages.claudeCode);
+  expect(new Set(packages)).toEqual(new Set(Object.values(builtinExtensionPackages)));
+  expect(resolveConfiguredExtensionPackages(packages, { claudeCode: false }))
+    .toEqual(packages.filter(name => name !== '@felan-ai/ext-claude-code'));
+});
+
+it('registers the Claude Code command without installing or registering a provider when the SDK is absent', async () => {
+  const hostRuntime = await runtime();
+  const exec = vi.spyOn(hostRuntime, 'exec');
+  const loaded = await loadFelanExtensions([builtinExtensionPackages.claudeCode], importLocalExtension, hostRuntime);
+  expect(loaded).toHaveLength(1);
+  const commands: string[] = [];
+  const registerProvider = vi.fn();
+  await loaded[0]!.factory({
+    registerCommand: name => { commands.push(name); },
+    registerProvider,
+  } as Parameters<typeof loaded[0]['factory']>[0]);
+  expect(commands).toEqual(['claude-code']);
+  expect(registerProvider).not.toHaveBeenCalled();
+  expect(exec).not.toHaveBeenCalled();
 });
 
 it('loads an installed extension named only in host configuration', async () => {

@@ -53,6 +53,9 @@ for (const [license, entries] of Object.entries(inventory)) {
     if (entry.name.startsWith('@felan-cloud/')) {
       errors.push(`Public production closure contains private package ${entry.name}`);
     }
+    if (entry.name === '@anthropic-ai/claude-agent-sdk') {
+      errors.push('Public production closure contains the managed-only Claude Agent SDK');
+    }
   }
 }
 
@@ -119,6 +122,8 @@ for (const requiredNotice of [
   'open 11.0.0',
   'Koffi 3.3.2',
   'pi-rtk-optimizer 0.9.0',
+  'pi-claude-bridge 0.9.3',
+  '874fa7c2678456336f23b64e784e2057e608d83e',
   'Microsoft MarkItDown 0.1.7',
   'https://github.com/JuliusBrussee/caveman',
   'pi-cbm 1.2.1',
@@ -270,6 +275,20 @@ for (const requiredNotice of [
     errors.push(`packages/ext-fusion/NOTICE is missing ${requiredNotice}`);
   }
 }
+const claudeCodeNotice = readFileSync(resolve(root, 'packages/ext-claude-code/NOTICE'), 'utf8');
+for (const requiredNotice of [
+  'pi-claude-bridge 0.9.3',
+  'https://github.com/elidickinson/pi-claude-bridge',
+  '874fa7c2678456336f23b64e784e2057e608d83e',
+  'Copyright (c) 2026 Eli Dickinson',
+  'Prateek Sunal',
+  'MIT License',
+  'not bundled',
+]) {
+  if (!claudeCodeNotice.includes(requiredNotice)) {
+    errors.push(`packages/ext-claude-code/NOTICE is missing ${requiredNotice}`);
+  }
+}
 const webAccessNotice = readFileSync(resolve(root, 'packages/ext-web-access/NOTICE'), 'utf8');
 for (const requiredNotice of [
   'pi-web-access 0.18.0',
@@ -316,6 +335,7 @@ for (const requiredNotice of [
   '@felan-ai/ext-session-compaction',
   '@felan-ai/ext-model-tools',
   '@felan-ai/ext-fusion',
+  '@felan-ai/ext-claude-code',
 ]) {
   if (!tuiNotice.includes(requiredNotice)) {
     errors.push(`apps/felan/NOTICE is missing ${requiredNotice}`);

@@ -16,6 +16,8 @@ to do.
   commands and navigation controls.
 - [Model Fusion](user-guide/fusion.md) — compare independent model answers
   before explicitly combining them.
+- [Claude Code provider](user-guide/claude-code.md) — use Claude plan login
+  through a managed Agent SDK while Felan keeps the tools and agent loop.
 - [Agents, tasks, and Prewalk](user-guide/agents-tasks-and-prewalk.md) — parallel
   work, the shared task graph, and same-session model handoff.
 - [Context and memory](user-guide/context-and-memory.md) — project
@@ -54,6 +56,8 @@ to do.
   classifiers sit behind Felan's portable capability and host-owned selection.
 - [ADR 0017](decisions/0017-session-compaction-methods.md) — why session
   compaction exposes mutually exclusive summary and classifier methods.
+- [ADR 0044](decisions/0044-bridge-claude-code-through-managed-agent-sdk.md) — why
+  Claude Code uses a vendored bridge and explicitly installed Agent SDK.
 - [Extension catalog](reference/extension-catalog.md) — every first-party
   package, its host boundary, commands, and runtime conditions.
 - [Runtime dependencies](reference/runtime-dependencies.md) — external
@@ -78,6 +82,7 @@ The package READMEs are the canonical npm-facing API and development references:
 - [`@felan-ai/ext-ask-user`](../packages/ext-ask-user/README.md)
 - [`@felan-ai/ext-background-bash`](../packages/ext-background-bash/README.md)
 - [`@felan-ai/ext-browser`](../packages/ext-browser/README.md)
+- [`@felan-ai/ext-claude-code`](../packages/ext-claude-code/README.md)
 - [`@felan-ai/ext-codex`](../packages/ext-codex/README.md)
 - [`@felan-ai/ext-codebase-memory`](../packages/ext-codebase-memory/README.md)
 - [`@felan-ai/ext-context`](../packages/ext-context/README.md)

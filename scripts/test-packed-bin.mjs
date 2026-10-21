@@ -110,6 +110,7 @@ try {
   assertPackedDaemonBoundary();
   assertSingleAgentCoreInstallation();
   assertPackedToolBoundary();
+  assertManagedClaudeSdkIsNotBundled();
   await assertPackedDaemonOnly(tarballs);
 
   run(process.execPath, [
@@ -149,6 +150,30 @@ try {
         if (calls.length !== 3 || !review.comparison || review.fused) throw new Error('Packed Fusion did not stop at reviewed comparison');
         const fused = await fusion.synthesizeFusion(review, runtime, fusion.DEFAULT_FUSION_CONFIG, new AbortController().signal);
         if (calls.length !== 4 || !fused.text.includes('offline response')) throw new Error('Packed Fusion synthesis did not run explicitly');
+      }
+      {
+        const claudeCode = await import('@felan-ai/ext-claude-code');
+        for (const name of ['inspectClaudeCodeRuntime', 'installManagedClaudeAgentSdk', 'loadClaudeAgentSdk', 'managedClaudeAgentSdkDirectory']) {
+          if (typeof claudeCode[name] !== 'function') throw new Error('Packed Claude Code is missing ' + name);
+        }
+        if (agentCore.getExtensionConfigDefinition(claudeCode.default)?.id !== 'claude-code') {
+          throw new Error('Packed Claude Code is missing its configuration definition');
+        }
+        const commands = [];
+        const runtime = {
+          kind: 'host',
+          storage: () => ({ root: process.env.FELAN_AGENT_DIR + '/storage', readFile: async () => { throw new Error('No managed SDK'); } }),
+          logger: { warn: () => {}, error: () => { throw new Error('Packed Claude Code activation failed'); } },
+          exec: async () => { throw new Error('Packed Claude Code must not install during activation'); },
+        };
+        if ((await claudeCode.inspectClaudeCodeRuntime(runtime)).available) throw new Error('Packed Claude Code bundled its managed SDK');
+        await claudeCode.default({
+          config: {}, runtime,
+          services: agentCore.createExtensionServiceAccess(agentCore.createFelanServiceRegistry(), claudeCode.default.serviceRequirements),
+          registerCommand: name => commands.push(name),
+          registerProvider: () => { throw new Error('Packed Claude Code registered a provider without the SDK'); },
+        });
+        if (JSON.stringify(commands) !== JSON.stringify(['claude-code'])) throw new Error('Packed Claude Code command is unavailable');
       }
       {
         const { createModelToolsExtension } = await import('@felan-ai/ext-model-tools');
@@ -209,6 +234,7 @@ try {
       const configuredPackages = JSON.parse(await readFile(new URL('./host.json', import.meta.resolve('@felan-ai/felan')), 'utf8')).extensions.map(extension => extension.package);
       if (!configuredPackages.includes('@felan-ai/ext-model-tools')) throw new Error('Packed daemon omitted model tools');
       if (!configuredPackages.includes('@felan-ai/ext-fusion')) throw new Error('Packed daemon omitted Fusion');
+      if (!configuredPackages.includes('@felan-ai/ext-claude-code')) throw new Error('Packed daemon omitted Claude Code');
       for (const packageName of configuredPackages) {
         const extension = await hostExtensions.importLocalExtension(packageName);
         if (packageName === '@felan-ai/ext-subagents') {
@@ -1108,6 +1134,18 @@ function filesBelow(directory) {
     const path = join(directory, entry.name);
     return entry.isDirectory() ? filesBelow(path) : entry.isFile() ? [path] : [];
   });
+}
+
+function assertManagedClaudeSdkIsNotBundled() {
+  for (const path of [
+    join(installDir, 'package-lock.json'),
+    join(installDir, 'node_modules', '@felan-ai', 'felan', 'npm-shrinkwrap.json'),
+  ]) {
+    const lock = JSON.parse(readFileSync(path, 'utf8'));
+    if (Object.keys(lock.packages).some(name => name.endsWith('node_modules/@anthropic-ai/claude-agent-sdk'))) {
+      throw new Error('Packed production closure contains the managed-only Claude Agent SDK');
+    }
+  }
 }
 
 function validateInstalledPackage(sourcePackage) {

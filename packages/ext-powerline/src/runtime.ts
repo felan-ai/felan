@@ -33,7 +33,7 @@ export function createPowerlineRuntimeExtension(subscriptionHost?: SubscriptionU
     let disposed = false;
     let failure: unknown;
     let draining = Promise.resolve();
-    let active: { refresh(force?: boolean): void; stop(): void; pending: Set<Promise<void>> } | undefined;
+    let active: { refresh(force?: boolean): void; observeProviderResponse(headers: Record<string, string>): void; stop(): void; pending: Set<Promise<void>> } | undefined;
 
     function stop(): void {
       generation++;
@@ -75,7 +75,7 @@ export function createPowerlineRuntimeExtension(subscriptionHost?: SubscriptionU
       const git = new GitCache(pi, context!.cwd, Date.now, { showWorkingTree: config.showWorkingTree, showStashCount: config.showStashCount });
       let redrawQueued = false;
       const changed = () => { if (!redrawQueued) { redrawQueued = true; queueMicrotask(() => { redrawQueued = false; redraw(); }); } };
-      const subscription = subscriptionHost ? createSubscriptionController(subscriptionHost, changed, options.subscriptionStore) : undefined;
+      const subscription = createSubscriptionController(subscriptionHost, changed, options.subscriptionStore);
       const savings = options.savingsHost ? createSavingsController(options.savingsHost, changed) : undefined;
       const additional = options.additionalSessionUsageHost;
       let unsubscribeAdditional: (() => void) | undefined;
@@ -103,7 +103,7 @@ export function createPowerlineRuntimeExtension(subscriptionHost?: SubscriptionU
             const { refreshedAt: _refreshedAt, ...values } = details;
             segments.push({ name: 'git', colorKey: 'git', values });
           }
-          if (subscription) {
+          if (subscriptionHost || subscription.state.provider) {
             const state = subscription.state;
             const windows = prioritizeWindowsForModel(state.usage?.windows ?? [], current.model)
               .filter(window => state.provider !== 'codex' || (window.label.match(/(?:^| )(5h|\d+h|Day|Week)$/)?.[1] ?? window.label) === window.label)
@@ -129,16 +129,16 @@ export function createPowerlineRuntimeExtension(subscriptionHost?: SubscriptionU
       function refresh(force = false): void {
         if (!alive || !context) return;
         track(git.refresh().then(redraw));
-        if (subscription) track(subscription.refresh(context.model, { force }));
+        track(subscription.refresh(context.model, { force }));
         if (savings) track(savings.refresh(period));
         redraw();
       }
       const timer = setInterval(() => refresh(), 60_000);
       const retry = setInterval(() => { if (dirty) redraw(); }, 1_000);
       timer.unref?.(); retry.unref?.();
-      active = { refresh, pending, stop() {
+      active = { refresh, pending, observeProviderResponse(headers) { subscription.observeProviderResponse(context?.model, headers); }, stop() {
         alive = false; clearInterval(timer); clearInterval(retry);
-        for (const cleanup of [unsubscribeAdditional, () => git?.dispose(), () => subscription?.clear(), () => savings?.clear()]) {
+        for (const cleanup of [unsubscribeAdditional, () => git?.dispose(), () => subscription.clear(), () => savings?.clear()]) {
           try { cleanup?.(); } catch (error) { failure ??= error; }
         }
       } };
@@ -151,6 +151,7 @@ export function createPowerlineRuntimeExtension(subscriptionHost?: SubscriptionU
     pi.on('agent_start', update); pi.on('agent_end', update); pi.on('turn_end', update);
     pi.on('tool_execution_end', update); pi.on('session_compact', update); pi.on('session_tree', update); pi.on('thinking_level_select', update);
     pi.on('model_select', (_event, ctx) => { context = ctx; reconcile(true); });
+    pi.on('after_provider_response', (event, ctx) => { context = ctx; active?.observeProviderResponse(event.headers); });
     pi.on('session_shutdown', async () => {
       disposed = true;
       stop(); await draining;

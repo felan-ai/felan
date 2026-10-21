@@ -1,7 +1,7 @@
 # Runtime dependencies
 
-Felan treats an executable as an extension runtime dependency only when the
-extension's primary capability cannot operate without it. The extension owns
+Felan treats an external runtime as an extension runtime dependency only when
+the extension's primary capability cannot operate without it. The extension owns
 portable detection, optional installation, and safe unavailable behavior;
 `apps/felan` owns interactive onboarding and global enable/disable choices.
 
@@ -9,12 +9,13 @@ portable detection, optional installation, and safe unavailable behavior;
 
 1. Cloud and other non-interactive runtimes preinstall required executables in
    the tool-execution environment. Extensions probe that same `AgentRuntime`.
+   Host-only integrations such as Claude Code do not support non-host runtimes.
 2. An unavailable dependency disables only the behavior that needs it. It must
    not trigger installation, repeatedly execute a missing command, or break
    unrelated extension behavior.
 3. The local TUI's source-controlled registry in
-   `apps/felan/src/dependencies.ts` probes dependency-backed extensions without a
-   current onboarding record, then shows one initially unchecked checklist for
+   `apps/felan/src/providers/dependencies.ts` probes dependency-backed extensions
+   without a current onboarding record, then shows one initially unchecked checklist for
    unavailable dependencies with managed installers. Checking an item is the
    explicit authorization to install it; unchecked items use their safe fallback.
    Available dependencies and unavailable dependencies without managed installers
@@ -36,13 +37,64 @@ portable detection, optional installation, and safe unavailable behavior;
 
 ## Current dependencies
 
-| Extension behavior | Executable | Unavailable behavior | Local install |
+| Extension behavior | Runtime | Unavailable behavior | Local install |
 | --- | --- | --- | --- |
 | MarkItDown document conversion | `markitdown` 0.1.7 | Read interception is bypassed; the extension can be disabled globally | Managed Python virtual environment |
 | RTK command rewriting | compatible `rtk` | Rewriting is bypassed; binary-independent output compaction remains active | Digest-verified official installer pinned to RTK 0.45.0 on Linux/macOS |
 | Browser automation and screenshots | `agent-browser` 0.37.1 | The browser tools are unavailable; the extension can be disabled | Integrity-verified native CLI package in agent storage; Chrome is installed separately by an explicit agent-browser action; existing-browser authorization is local-TUI-only |
 | Codebase Memory structural exploration | exact `codebase-memory-mcp` 0.11.0 | No Codebase Memory tools, capability, prompt, or grep augmentation; cloud logs a nonfatal hard error | Commit-pinned, digest-verified official installer into agent storage with upstream configuration disabled |
+| Claude Code model provider | Claude Agent SDK 0.3.293 and Claude Code | No `claude-code` models; `/claude-code status` reports the reason; other providers are unaffected | Explicit, lockfile-integrity-verified npm installation in agent storage on macOS/Linux; approximately 225 MB per-platform binary (Linux downloads both libc variants, roughly 450 MB); Anthropic's terms apply |
 | Background processes | POSIX shell plus `sh`, `nohup`, `ps`, `tr`, `kill`, `date`, `cat`, `mv`, `sleep`, and `tail`; PTY support is optional and requested per command | Detached Bash remains available; PTY requests fail clearly when unsupported | No managed installer; use a compatible runtime |
+
+## Claude Code managed runtime
+
+Run `/claude-code install` and approve the local host's installation request,
+or select Claude Code in `/dependencies`. The runtime-dependency ID is
+`claude-code`. The installer needs `npm` on the host's `PATH` and stages a
+private ESM package for
+`<agent-storage>/claude-code/agent-sdk-0.3.293` with these exact dependencies:
+
+| Package | Version |
+| --- | --- |
+| `@anthropic-ai/claude-agent-sdk` | `0.3.293` |
+| `@modelcontextprotocol/sdk` | `1.31.0` |
+| `zod` | `4.6.5` |
+| `@anthropic-ai/sdk` | `0.124.0` |
+
+The installer writes a committed, reviewed npm lockfile with integrity hashes
+for the full dependency closure and runs `npm ci --ignore-scripts` with a
+15-minute timeout. It verifies all four package versions and the platform-specific
+Claude Code binary package matching the host's libc on Linux, then writes
+`felan-claude-agent-sdk.mjs`. Completed installs are verified in staging before
+being moved into place. Replacement removes an incomplete target before the move;
+it is not atomic. A valid installation is never removed or replaced; reinstalling
+it is a no-op. The entry resolves the Agent SDK and MCP implementation from that
+same installation. Failed staging is discarded; subsequent installs also sweep
+orphaned staging directories older than the install timeout when modification
+times are available, or all staging directories otherwise.
+
+npm configuration still applies, including registry mirrors through
+`replace-registry-host` and proxies, but the lockfile's integrity hashes remain
+enforced.
+
+Inspection is read-only and validates the installed runtime.
+Startup/activation never downloads the SDK or runs `npm`. A missing or
+unloadable runtime leaves the provider unregistered and logs a diagnostic.
+After installation, start a new session or reload to register the models.
+
+The SDK is proprietary and includes an approximately **225 MB per-platform
+binary**. Linux downloads both glibc and musl variants, roughly **450 MB** in
+total, although only the host-matched variant is used. It is not a dependency of
+any Felan package; approval installs it
+separately under [Anthropic's SDK license and terms](https://github.com/anthropics/claude-agent-sdk-typescript).
+Non-host runtimes and Windows paths are unsupported. Claude Code authentication
+is separate: run `claude`, then `/login`, on the host. Installation does not
+sign in, change the subscription, or guarantee model entitlement.
+
+See the [Claude Code guide](../user-guide/claude-code.md) for settings, privacy,
+and troubleshooting.
+
+## Platform and operation-level requirements
 
 On native Windows, the ordinary `cmd.exe` shell is not a POSIX runtime. The
 host runtime therefore keeps `cmd.exe` as the default for ordinary shell calls

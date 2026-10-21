@@ -36,7 +36,10 @@ workflow stores no npm credential.
    ```
 
    `check:proposed-version` reports intended unpublished versions as available
-   and skips unchanged versions already on npm. Run `verify` through
+   and skips unchanged versions already on npm. It fails when a published
+   version's `workspace:` dependency pins no longer match the local versions,
+   for example after a dependency release; bump that package so it republishes
+   with current pins. CI runs it on every pull request and main push. Run `verify` through
    `scripts/test-isolated.sh` to isolate HOME, agent directories and TMPDIR.
    It builds, type-checks,
    tests, packs, clean-installs, imports every public package, checks exact

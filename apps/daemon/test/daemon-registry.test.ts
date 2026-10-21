@@ -1,8 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ExtensionAPI } from '@felan-ai/agent-core';
 import type { KnownSessionChange, SessionEvent } from '@felan-ai/session-protocol';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { ControlStoreError } from '../src/daemon/control-state.js';
+import type { SessionExtensionContext } from '../src/daemon/provider.js';
 import { assistant, deferred, fixture, fixtures, now, realFixture, requestId, supported } from './fixtures/registry.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
@@ -12,6 +14,33 @@ function hasChangeType<T extends KnownSessionChange['type']>(change: SessionEven
 }
 
 describe.skipIf(!supported)('daemon session registry', () => {
+  it.each([
+    { name: 'without prompt options', systemPromptOptions: undefined },
+    { name: 'without sections', systemPromptOptions: {} },
+    { name: 'with sections', systemPromptOptions: { sections: { session_tasks: 'Task context' } } },
+  ])('adds child instructions $name', async ({ systemPromptOptions }) => {
+    const f = await fixture();
+    const instructions = 'Review only the assigned files.';
+    const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, systemPromptAppend: instructions });
+    const extensions = await f.opened[0]!.services.extensions.bind({
+      sessionManager: binding.runtime.session.sessionManager, rootSessionId: binding.rootSessionId,
+    } as SessionExtensionContext);
+    const extension = extensions.inlineExtensions!.find(item => item.name === '@felan-ai/daemon/child-instructions')!;
+    const on = vi.fn();
+    await extension.factory({ on } as unknown as ExtensionAPI);
+    expect(on).toHaveBeenCalledOnce();
+    expect(on.mock.calls[0]![0]).toBe('before_agent_start');
+    const event = { systemPrompt: 'Base prompt', ...(systemPromptOptions ? { systemPromptOptions } : {}) };
+    const result = await on.mock.calls[0]![1](event);
+    if (systemPromptOptions?.sections) {
+      expect(result).toBeUndefined();
+      expect(systemPromptOptions.sections).toEqual({ session_tasks: 'Task context', child_instructions: instructions });
+    } else {
+      expect(result).toEqual({ systemPrompt: `Base prompt\n\n${instructions}` });
+    }
+    expect(event.systemPrompt).toBe('Base prompt');
+  });
+
   it('persists a new header without replacing its prepared runtime and appends the first turn once', async () => {
     const f = await fixture();
     const open = vi.mocked(f.profile.openSession).getMockImplementation()!;

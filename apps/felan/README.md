@@ -422,6 +422,7 @@ details:
 - [Configuration](../../docs/user-guide/configuration.md)
 - [Commands and shortcuts](../../docs/user-guide/commands-and-shortcuts.md)
 - [Model Fusion](../../docs/user-guide/fusion.md)
+- [Claude Code plan models](../../docs/user-guide/claude-code.md)
 - [Agents, tasks, and Prewalk](../../docs/user-guide/agents-tasks-and-prewalk.md)
 - [Context and memory](../../docs/user-guide/context-and-memory.md)
 - [Web, MCP, browser, and documents](../../docs/user-guide/web-mcp-and-browser.md)

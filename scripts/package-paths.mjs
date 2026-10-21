@@ -20,6 +20,7 @@ export const packagePaths = [
   'packages/ext-mcp',
   'packages/ext-felan-api',
   'packages/ext-codex',
+  'packages/ext-claude-code',
   'packages/ext-rtk-optimizer',
   'packages/ext-codebase-memory',
   'packages/ext-powerline',
