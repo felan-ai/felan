@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { isUtf8 } from 'node:buffer';
 import { constants } from 'node:fs';
 import { lstat, open } from 'node:fs/promises';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { Type, type Static } from 'typebox';
-import { JsonValueSchema, assertJson, parseSchema, text } from '@felan-ai/session-protocol';
+import { HostProjectSchema, JsonValueSchema, assertJson, parseSchema, text } from '@felan-ai/session-protocol';
 import { DaemonSecurityError } from './native-ownership.js';
 
 const ServiceSchema = Type.Object({
@@ -19,12 +19,18 @@ const ExtensionSchema = Type.Object({
 const PolicySchema = Type.Object({
   projectTrust: Type.Optional(Type.Union([Type.Literal('allow'), Type.Literal('ask'), Type.Literal('deny')])),
   dependencyInstalls: Type.Optional(Type.Union([Type.Literal('allow'), Type.Literal('ask'), Type.Literal('deny')])),
+  interactionHoldSeconds: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER })),
+}, { additionalProperties: false });
+const RemoteConfigSchema = Type.Object({
+  share: Type.Union([Type.Literal('all'), Type.Literal('on-request')]),
+  projects: Type.Array(Type.Object(HostProjectSchema.properties, { additionalProperties: false }), { maxItems: 256 }),
 }, { additionalProperties: false });
 export const HostConfigSchema = Type.Object({
   version: Type.Literal(1),
   services: Type.Array(ServiceSchema),
   extensions: Type.Array(ExtensionSchema),
   policy: Type.Optional(PolicySchema),
+  remote: Type.Optional(RemoteConfigSchema),
 }, { additionalProperties: false });
 export type HostConfig = Static<typeof HostConfigSchema>;
 
@@ -139,6 +145,14 @@ export async function loadHostConfig(options: {
     if (extension.grants?.some(grant => !/^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*@[1-9][0-9]{0,4}$/u.test(grant))) {
       throw new DaemonSecurityError('invalid_host_config', `Extension ${extension.package} has an invalid service grant.`);
     }
+  }
+  const projectIds = new Set<string>(); const projectPaths = new Set<string>();
+  for (const project of config.remote?.projects ?? []) {
+    if (!isAbsolute(project.path) || resolve(project.path) !== project.path || project.path.includes('\0')
+      || projectIds.has(project.id) || projectPaths.has(project.path)) {
+      throw new DaemonSecurityError('invalid_host_config', 'Remote projects require unique IDs and absolute normalized paths.');
+    }
+    projectIds.add(project.id); projectPaths.add(project.path);
   }
   assertJson(config);
   rejectCredentialValues(config);

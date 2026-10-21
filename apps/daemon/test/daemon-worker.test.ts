@@ -8,7 +8,8 @@ import { createRegisteredWorkerLauncher } from '../src/daemon/worker.js';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { createRuntimeStorageRequest } from '../src/runtime-factory.js';
 import { fixture as registryFixture, fixtures, offlineModel } from './fixtures/registry.js';
-import { createTestSessionLifecycle } from './fixtures/session-runtime.js';
+import { createTestSessionLifecycle, createTestSessionRuntime } from './fixtures/session-runtime.js';
+import { serverFixture } from './fixtures/server.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
@@ -28,6 +29,32 @@ function fixture() {
 }
 
 describe('admitted worker launcher', () => {
+  it('passes worker identity to the host stream wrapper before dispatching inference', async () => {
+    const stream = vi.fn();
+    const wrapped = vi.fn();
+    const wrapWorkerStream = vi.fn<NonNullable<import('../src/daemon/session-runtime.js').SessionRuntime['wrapWorkerStream']>>(
+      () => original => (...args) => { wrapped(); return original(...args); },
+    );
+    const f = await serverFixture({ onStream: async () => { stream(); },
+      createComposition: runtimeFactory => ({ ...createTestSessionRuntime({ runtimeFactory }), wrapWorkerStream }),
+    });
+    fixtures.push(() => f.dispose());
+    const workspace = join(f.root.resources.sessionStorageBase, f.root.sessionId, 'worker'); await mkdir(workspace, { recursive: true });
+    const manager = SessionManager.create(workspace, f.root.resources.sessionDir);
+    await writeFile(manager.getSessionFile()!, JSON.stringify(manager.getHeader()) + '\n');
+    const worker = await f.registry.openWorker(f.root.sessionId, {
+      runtime: new HostAgentRuntime(workspace, createRuntimeStorageRequest(workspace, f.owner.target.agentDir, f.root.sessionId)),
+      modelRuntime: f.root.runtime.session.modelRuntime, model: offlineModel,
+      sessionManager: SessionManager.open(manager.getSessionFile()!, f.root.resources.sessionDir, workspace),
+      settingsManager: SettingsManager.create(workspace, f.owner.target.agentDir), allowedTools: ['read'],
+    });
+    expect(wrapWorkerStream).toHaveBeenCalledExactlyOnceWith({ id: worker.sessionId, root: f.root.sessionId, parent: f.root.sessionId });
+    await f.registry.runWorker(worker.sessionId, () => worker.runtime.session.prompt('Do the work'));
+    expect(wrapped).toHaveBeenCalledOnce();
+    expect(stream).toHaveBeenCalledOnce();
+    expect(wrapped.mock.invocationCallOrder[0]).toBeLessThan(stream.mock.invocationCallOrder[0]!);
+  });
+
   it('re-resolves the model and opens only through the canonical registry', async () => {
     const f = fixture();
     const worker = await f.open({ ...f.request, model: { ...f.request.model, baseUrl: 'https://caller.invalid' } as ProviderWorkerRequest['model'] });

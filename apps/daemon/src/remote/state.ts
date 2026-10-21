@@ -10,6 +10,7 @@ const uuid = Type.String({ pattern: REMOTE_UUID_PATTERN });
 const object = { additionalProperties: false } as const;
 export const RemoteSettingsSchema = Type.Object({
   installId: uuid, share: Type.Union([Type.Literal('all'), Type.Literal('on-request')]),
+  appliedShare: Type.Optional(Type.Union([Type.Literal('all'), Type.Literal('on-request')])),
   projects: Type.Array(Type.Object(HostProjectSchema.properties, object), { maxItems: 256 }),
   apiUrl: Type.Optional(text(2048, 1)),
 }, object);

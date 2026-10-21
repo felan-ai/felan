@@ -37,11 +37,11 @@ class Clock implements RemoteClock {
 }
 class Token implements ConnectorTokenSource {
   failure: Error | undefined;
-  constructor(public host = hostA) {}
+  constructor(public host = hostA, public userId: string | undefined = user) {}
   token = vi.fn(async () => { if (this.failure) throw this.failure; return 'host-token-not-for-status'; });
   cachedToken = () => 'host-token-not-for-status';
   current = (): HostTokenInfo => ({ expiresAt: now + 100000, refreshAt: now + 90000,
-    host: { id: this.host, teamId: user, userId: user }, supabase: { url: 'https://db.example.test', publishableKey: 'public' } });
+    host: { id: this.host, teamId: user, ...(this.userId ? { userId: this.userId } : {}) }, supabase: { url: 'https://db.example.test', publishableKey: 'public' } });
   onChange = () => () => {};
   invalidate = vi.fn();
   stop = vi.fn();
@@ -72,12 +72,12 @@ class Platform implements ConnectorPlatform {
   close = vi.fn(async () => {});
 }
 
-async function fixture(options: { configured?: boolean; token?: Token; platform?: Platform; connector?: Partial<RemoteConnectorOptions>; wired?: boolean } = {}) {
+async function fixture(options: { configured?: boolean; credential?: string; token?: Token; platform?: Platform; connector?: Partial<RemoteConnectorOptions>; wired?: boolean } = {}) {
   const f = await serverFixture(); const clock = new Clock();
   const configuration = new TestHostConfiguration({ definitions: [], assertCurrent: () => f.registry.assertAdmission() });
   let connector!: RemoteConnector;
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'test', setupNeeds: () => connector?.setupNeeds() ?? [] });
-  let secret: string | undefined = options.configured === false ? undefined : pat;
+  let secret: string | undefined = options.configured === false ? undefined : options.credential ?? pat;
   const secrets = { read: vi.fn(async () => secret), write: vi.fn(async (_n: string, _k: string, value: string) => { secret = value; }), remove: vi.fn(async () => { secret = undefined; }) };
   const token = options.token ?? new Token(); const platform = options.platform ?? new Platform();
   const connectorOptions: RemoteConnectorOptions = { database: f.store.database, registry: f.registry, server, secretStorage: secrets, owner: f.owner,
@@ -92,7 +92,7 @@ async function fixture(options: { configured?: boolean; token?: Token; platform?
     return f.registry.projection(id).publish({ type: 'metadata.updated', title, state: 'open', residency: 'warm' }, { title });
   };
   return { ...f, id, clock, server, token, platform, secrets, change, get connector() { return connector; },
-    async restart() { await connector.stop(); connector = new RemoteConnector(connectorOptions); server.setRemote(connector); connector.start(); await clock.tick(); await clock.tick(); },
+    async restart(overrides: Partial<RemoteConnectorOptions> = {}) { await connector.stop(); Object.assign(connectorOptions, overrides); connector = new RemoteConnector(connectorOptions); server.setRemote(connector); connector.start(); await clock.tick(); await clock.tick(); },
   };
 }
 
@@ -510,6 +510,60 @@ describe('RemoteConnector publication', () => {
 });
 
 describe('RemoteConnector connection and commands', () => {
+  it('reconciles remote sharing when host configuration is added, changed or removed on restart', async () => {
+    const f = await fixture();
+    await f.connector.configure({ action: 'share', share: 'all' }); await f.clock.tick();
+    await f.connector.configure({ action: 'share', share: 'on-request' }); await f.clock.tick();
+    expect(f.platform.publications.at(-1)?.session.shared).toBe(false);
+    for (const share of ['all', 'on-request', 'all', undefined] as const) {
+      f.platform.publish.mockClear();
+      await f.restart({ remote: share ? { share, projects: [] } : undefined });
+      expect(f.platform.publish).toHaveBeenCalledWith(expect.objectContaining({ session: f.id, shared: share === 'all' }), []);
+      f.platform.publish.mockClear();
+      await f.restart();
+      expect(f.platform.publish).not.toHaveBeenCalled();
+    }
+  });
+
+  it('uses authoritative host projects and sharing without overwriting stored settings', async () => {
+    const remote = { share: 'all' as const, projects: [{ id: 'workspace', name: 'Team workspace', path: process.cwd() }] };
+    const f = await fixture({ connector: { remote } });
+    expect(f.connector.status()).toMatchObject({ share: 'all', projects: remote.projects });
+    expect(f.connector.isShared(f.id)).toBe(true);
+    expect(f.platform.registration.at(-1)?.projects).toEqual(remote.projects);
+    for (const action of [
+      { action: 'share', share: 'on-request' },
+      { action: 'open_project', path: f.cwd },
+      { action: 'close_project', id: 'workspace' },
+    ] as const) await expect(f.connector.configure(action)).rejects.toMatchObject({ code: 'forbidden' });
+    expect(f.connector.store.settings()).toMatchObject({ share: 'on-request', projects: [] });
+    await f.restart();
+    expect(f.connector.status()).toMatchObject({ share: 'all', projects: remote.projects });
+    expect(f.connector.isShared(f.id)).toBe(true);
+  });
+
+  it('starts automatically with a team credential and accepts team commands with any or no requester', async () => {
+    const token = new Token(); token.userId = undefined;
+    const credential = 'bzy_team_fixture_secret';
+    const tokenSource = vi.fn(() => token);
+    const remote = { share: 'all' as const, projects: [{ id: 'workspace', name: 'Team workspace', path: process.cwd() }] };
+    const f = await fixture({ credential, token, connector: { tokenSource, remote } });
+    expect(f.connector.status().state).toBe('connected');
+    expect(f.secrets.read).toHaveBeenCalledWith('remote', 'pat');
+    expect(tokenSource).toHaveBeenCalledWith(expect.objectContaining({ pat: credential }));
+    const sessions = [requestId(), requestId()];
+    f.platform.rows = sessions.map((sessionId, index) => ({ id: requestId(), ...(index ? { requester: hostB } : {}),
+      command: { op: 'sessions.create', params: { project: 'workspace', sessionId } }, automation: { source: 'nightly' }, expiresAt: now + 1000, state: 'claimed' }));
+    f.platform.notify(); await f.clock.tick();
+    await vi.waitFor(() => expect(f.platform.complete).toHaveBeenCalledTimes(2));
+    for (const sessionId of sessions) {
+      expect(f.store.session(sessionId).id).toBe(sessionId);
+      expect(f.connector.isShared(sessionId)).toBe(true);
+    }
+    for (const [, outcome] of f.platform.complete.mock.calls) expect(outcome).toMatchObject({ outcome: 'accepted' });
+    expect(JSON.stringify(f.connector.status())).not.toContain(credential);
+  });
+
   it('claims on host-channel resubscribe without waiting for a notification or heartbeat', async () => {
     const f = await fixture(); const time = f.clock.now(); f.platform.claim.mockClear();
     f.platform.subscribed(); await f.clock.tick(0); expect(f.platform.claim).toHaveBeenCalledTimes(1);
@@ -519,7 +573,7 @@ describe('RemoteConnector connection and commands', () => {
 
   it('registers capabilities and canonical projects, then re-registers edits and heartbeats', async () => {
     const f = await fixture(); expect(f.platform.registration[0]).toMatchObject({ rowSchemaVersion: 1, capabilities: {
-      operations: ['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'], interactionKinds: ['select', 'confirm', 'input', 'editor', 'tool_approval', 'dependency', 'form'], features: ['sessions.create.instructions'],
+      operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'], interactionKinds: ['select', 'confirm', 'input', 'editor', 'tool_approval', 'dependency', 'form'], features: ['sessions.create.instructions', 'sessions.create.session-id'],
     } });
     const status = await f.connector.configure({ action: 'open_project', path: f.cwd }); await f.clock.tick();
     expect(status.projects[0]).toMatchObject({ path: f.cwd, name: 'work' }); expect(f.platform.registration.at(-1)!.projects).toEqual(status.projects);

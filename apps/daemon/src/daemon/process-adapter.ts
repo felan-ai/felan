@@ -20,6 +20,8 @@ export interface DetachedProcessInspection {
 export interface ProcessAdapter {
   storageDirectory(runtime: AgentRuntime): string;
   describeJob(runtime: AgentRuntime, path: string, bytes: Uint8Array): ProcessRecord | undefined;
+  /** Remote providers read in the runtime namespace; the default reads daemon-owned local files. */
+  readOutputRange?(runtime: AgentRuntime, path: string, offset: number, limit: number): Promise<Uint8Array>;
   inspectDetached(runtime: AgentRuntime, id: string): Promise<DetachedProcessInspection>;
   stopDetached(runtime: AgentRuntime, id: string, signal: 'SIGTERM' | 'SIGKILL'): Promise<void>;
 }

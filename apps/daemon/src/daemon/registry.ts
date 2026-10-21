@@ -2,11 +2,13 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { closeSync, constants, existsSync, fsyncSync, openSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { AgentRuntime, AgentSession } from '@felan-ai/agent-core';
 import { canonicalRequestPayload, parseInteraction, parseSchema, type Interaction, type InteractionAnswer, type KnownSessionChange, type OperationParams, type Origin, type Policy, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { RegistryExecutions, ExecutionHost } from './executions.js';
 import type { ExecutionMetadata } from './control-state.js';
 import type { ProcessAdapter } from './process-adapter.js';
+import type { SessionRuntime } from './session-runtime.js';
 import type { ControlCommit, DaemonControlStore } from './control-store.js';
 import { SessionProfileSchema, type ControlSession, type ControlSessionMetadata, type SessionProfile } from './control-state.js';
 import { LegacySessionIndex, readTranscriptPreview, transcriptHasConversation, transcriptPreview, type LegacySession, type LegacySummary } from './legacy-sessions.js';
@@ -21,7 +23,7 @@ import { sessionTip } from './session-cursor.js';
 import type { createUiVocabulary } from './ui-vocabulary.js';
 import { shutdownStep } from './shutdown-error.js';
 
-export interface RegistryOpenRequest extends Omit<SessionOpenRequest, 'resources' | 'ownership' | 'services' | 'policy'> {
+export interface RegistryOpenRequest extends Omit<SessionOpenRequest, 'resources' | 'ownership' | 'services' | 'policy' | 'execution'> {
   cwd: string;
   sessionDir?: string;
   policy?: SessionExecutionPolicy;
@@ -40,10 +42,11 @@ export interface RegistryOptions {
   owner: DaemonOwnership;
   store: DaemonControlStore;
   lifecycle: SessionLifecycle;
-  services(context: { request: RegistryOpenRequest; getExecutionPolicy(): SessionExecutionPolicy }): DaemonSessionServices;
+  services(context: { request: RegistryOpenRequest; getExecutionPolicy(): SessionExecutionPolicy }): Omit<DaemonSessionServices, 'currentRun'>;
   now?: () => number;
   idleMs?: number;
   processAdapter?: ProcessAdapter;
+  acquireRun?: SessionRuntime['acquireRun'];
   commandAvailable?(session: string, name: string): boolean;
   onViewCancellationDiagnostic?(event: { session: string; elementId: string; reason: 'failed' | 'timeout' | 'limit' }): void;
 }
@@ -65,6 +68,8 @@ interface Entry {
   disposing?: Promise<void>;
   runtimeDisposed?: boolean;
   cancelling?: Promise<void>;
+  runAbort?: AbortController;
+  runPending?: boolean;
   cancellingViews?: Promise<void>;
   viewActions?: Set<AbortController>;
   viewCancellation?: { attempted: Set<string>; rounds: number };
@@ -167,19 +172,24 @@ export class SessionRegistry {
     this.draining = false;
   }
 
-  async waitForDrain(): Promise<void> {
+  async waitForDrain(signal?: AbortSignal): Promise<void> {
     this.assertAdmission();
     if (!this.draining) throw new Error('Drain must be started before waiting.');
-    await this.join([...this.entries.keys()].map(id => this.cancelViews(id)));
-    await this.join([...this.opening.values(), ...this.closes.values(), ...this.lifecycleWriters], undefined, true);
-    for (const entry of this.entries.values()) {
-      await entry.host?.settle();
-      await entry.cancelling;
-      await this.join([...entry.writers]);
-      for (const service of entry.services) await service.settle('drain');
+    for (;;) {
+      signal?.throwIfAborted();
+      await this.join([...this.entries.keys()].map(id => this.cancelViews(id)));
+      await this.join([...this.opening.values(), ...this.closes.values(), ...this.lifecycleWriters], undefined, true);
+      for (const entry of this.entries.values()) {
+        await entry.host?.settle();
+        await entry.cancelling;
+        if (!entry.binding.runtime.session.isIdle) await entry.binding.runtime.session.waitForIdle();
+        await this.join([...entry.writers]);
+        for (const service of entry.services) await service.settle('drain');
+      }
+      this.assertAdmission();
+      if (!await this.activeWork()) return;
+      await delay(10, undefined, { signal });
     }
-    this.assertAdmission();
-    if (await this.activeWork()) throw registryError('busy', 'Daemon still owns active processes or work. Explicit force is required to interrupt it.');
   }
 
   /** Units of work a drain waits for and a forced stop interrupts: busy resident sessions (including child executions) and live processes. Detached jobs survive a restart and are excluded. */
@@ -462,7 +472,7 @@ export class SessionRegistry {
       this.commitDispatch(requestId, id);
       entry.projection.publish({ type: 'run.updated', run }, { run });
       this.assertDispatch(id);
-      return await effect(entry.binding.runtime.session);
+      return await this.executeRun(id, entry, effect);
     }
     finally {
       try {
@@ -495,7 +505,9 @@ export class SessionRegistry {
       dispatch();
       entry.projection.publish({ type: 'run.updated', run }, { run });
       this.assertDispatch(id);
-      await entry.binding.runtime.session.prompt(`A previously deferred question was answered:\n${JSON.stringify(answer)}`);
+      await this.executeRun(id, entry, session => session.prompt(`A previously deferred question was answered:\n${JSON.stringify(answer)}`)).catch((error: unknown) => {
+        if (!(error instanceof Error && error.name === 'AbortError')) throw error;
+      });
     } finally {
       try {
         entry.dispatches.delete(continuationId);
@@ -505,6 +517,27 @@ export class SessionRegistry {
         }
       } catch (error) { this.fence(error); throw error; }
       finally { entry.writers.delete(writer); finish(); }
+    }
+  }
+
+  isRunPending(id: string): boolean { return this.entries.get(id)?.runPending === true; }
+
+  private async executeRun<T>(id: string, entry: Entry, effect: (session: AgentSession) => Promise<T>): Promise<T> {
+    if (!this.options.acquireRun || entry.binding.parentSessionId) return effect(entry.binding.runtime.session);
+    const controller = new AbortController();
+    entry.runAbort = controller;
+    entry.runPending = true;
+    let release: (() => void) | undefined;
+    try {
+      release = await this.options.acquireRun({ id, root: entry.binding.rootSessionId }, controller.signal);
+      controller.signal.throwIfAborted();
+      this.assertDispatch(id);
+      delete entry.runPending;
+      return await effect(entry.binding.runtime.session);
+    } finally {
+      delete entry.runAbort;
+      delete entry.runPending;
+      release?.();
     }
   }
 
@@ -743,6 +776,7 @@ export class SessionRegistry {
     if (runId && stored.run.id !== runId) throw registryError('not_found', 'Run not found.');
     if (entry.cancelling) return entry.cancelling;
     if (['idle', 'interrupted'].includes(stored.run.state) && entry.binding.runtime.session.isIdle) return;
+    entry.runAbort?.abort();
     const operation = Promise.resolve().then(async () => {
       entry.projection.transitionForSafety('cancelling', stored.run.id);
       this.settleInteractions(id, 'cancel');
@@ -854,6 +888,7 @@ export class SessionRegistry {
     await entry?.host?.shutdown();
     for (const child of descendants) await this.close(child.id);
     if (entry) {
+      entry.runAbort?.abort();
       await entry.cancelling;
       await entry.binding.runtime.session.abort();
       await this.processes.cancelForeground(id);
@@ -878,6 +913,7 @@ export class SessionRegistry {
     const cancellations = [...this.entries].map(([id, entry]) => {
       if (!options.interrupt) return shutdownStep('session-cancel-views', () => this.cancelViews(id), id);
       this.closing.add(id);
+      entry.runAbort?.abort();
       return (async () => {
         await shutdownStep('session-interactions', () => this.settleInteractions(id, 'shutdown'), id);
         await this.join([shutdownStep('session-cancel-views', () => this.cancelViews(id), id),
@@ -899,6 +935,7 @@ export class SessionRegistry {
       this.closing.add(id);
       await shutdownStep('session-interactions', () => this.settleInteractions(id, 'shutdown'), id);
       if (!options.interrupt) {
+        entry.runAbort?.abort();
         await shutdownStep('session-cancel-views', () => this.cancelViews(id), id);
         await shutdownStep('session-host-shutdown', () => entry.host?.shutdown(), id);
         await shutdownStep('session-abort', async () => { await entry.cancelling; if (!entry.runtimeDisposed) await entry.binding.runtime.session.abort(); }, id);
@@ -970,7 +1007,13 @@ export class SessionRegistry {
     let borrowed: string | undefined;
     const openingPolicy = () => request.parentSessionId ? this.getPolicy(request.rootSessionId!) : source ? this.getPolicy(source.id) : initialPolicy;
     const externalServices = this.options.services({ request, getExecutionPolicy: () => binding && this.entries.has(binding.sessionId) ? this.getPolicy(binding.sessionId) : openingPolicy() });
-    const services: DaemonSessionServices = { ...externalServices, extensions: {
+    const services: DaemonSessionServices = { ...externalServices,
+      currentRun: root => {
+        const run = this.options.store.findSessionMetadata(root)?.run;
+        if (!run?.id || run.state === 'idle' || run.state === 'interrupted') return undefined;
+        return { id: run.id, ...(run.turnId ? { turnId: run.turnId } : {}), ...(run.origin ? { origin: run.origin } : {}) };
+      },
+      extensions: {
       configuration: packages => externalServices.extensions.configuration(packages),
       ...(externalServices.extensions.executionPort ? { executionPort: externalServices.extensions.executionPort } : {}),
       bind: async (context, port) => {
@@ -1002,7 +1045,10 @@ export class SessionRegistry {
       }
     } };
     try {
-      binding = await this.runtimeOpening.run({}, () => this.options.lifecycle.openSession({ ...request, resources, ownership, policy: initialPolicy, services }));
+      const { execution = restored?.execution, ...sessionRequest } = request;
+      binding = await this.runtimeOpening.run({}, () => this.options.lifecycle.openSession({ ...sessionRequest, resources, ownership, policy: initialPolicy, services,
+        ...(execution ? { execution: { ...(execution.request.label === undefined ? {} : { label: execution.request.label }) } } : {}),
+      }));
       this.assertAdmission();
       if (restored && this.closing.has(restored.id) || request.parentSessionId && (this.closing.has(request.parentSessionId) || this.closing.has(request.rootSessionId!))) throw new RegistryOpeningCancelled('Session is closing.');
       const manager = binding.runtime.session.sessionManager;
@@ -1247,7 +1293,7 @@ export class SessionRegistry {
   private fence(error: unknown): void {
     this.failure = error;
     this.processes.sealAll();
-    for (const entry of this.entries.values()) entry.projection.dispose();
+    for (const entry of this.entries.values()) { entry.runAbort?.abort(); entry.projection.dispose(); }
     this.failureSettlement ??= Promise.resolve().then(() => this.settleAfterLoss());
     void this.failureSettlement.catch(() => {});
   }

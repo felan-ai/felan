@@ -1,5 +1,5 @@
 import type { AgentRuntime, AgentSession, CreateAgentCoreSessionOptions, ExtensionConfigOverride, ExtensionConfigWriter, ExtensionConfigValue, ExtensionPackageImporter, FelanServiceRegistry, ModelRuntime, SessionManager, SessionRef, SettingsManager } from '@felan-ai/agent-core';
-import type { Interaction, InteractionAnswer, InteractionAuthority, Presentation } from '@felan-ai/session-protocol';
+import type { Interaction, InteractionAnswer, InteractionAuthority, Origin, Presentation } from '@felan-ai/session-protocol';
 import type { SessionEnvironment } from './session-runtime.js';
 import type { SessionExecutionPolicy } from './session-lifecycle-contracts.js';
 import type { ProviderWorkerLauncher } from './provider.js';
@@ -22,6 +22,8 @@ export interface SessionExtensionContext {
   readonly sessionManager: SessionManager;
   readonly resources: SessionEnvironment;
   readonly rootSessionId: string;
+  currentRun(): { readonly id: string; readonly turnId?: string; readonly origin?: Origin } | undefined;
+  readonly execution?: { readonly label?: string };
   readonly policy: SessionExecutionPolicy;
   readonly extensionPackages: readonly string[];
   readonly extensionConfigs: ReadonlyMap<string, Readonly<Record<string, ExtensionConfigValue>>>;

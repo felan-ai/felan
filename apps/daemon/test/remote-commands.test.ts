@@ -10,8 +10,10 @@ import { SessionServer, type SessionServerOptions } from '../src/daemon/server.j
 import { OrderedAdmission } from '../src/daemon/admission.js';
 import { TestHostConfiguration } from './fixtures/host-services.js';
 import { gate, serverFixture } from './fixtures/server.js';
+import { offlineModel } from './fixtures/registry.js';
 import { closeRemoteDatabases, openRemoteDatabase } from './remote-database.js';
 import { RemoteIntegrityError } from '../src/remote/state.js';
+import { publishableChange, type PublishedChange } from '../src/remote/content.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); await closeRemoteDatabases(); });
@@ -21,16 +23,16 @@ function id() {
 }
 const requester = randomUUID(); const session = randomUUID();
 const expiresAt = Number.MAX_SAFE_INTEGER;
-const capabilities: HostCapabilities = { operations: ['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'], interactionKinds: ['confirm'] };
+const capabilities: HostCapabilities = { operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'], interactionKinds: ['confirm'] };
 function accepted(request: ClientEnvelope): Response {
   return { v: 1, re: request.id, outcome: 'accepted', result: request.op === 'sessions.create' ? { sessionId: session }
-    : request.op === 'prompt' ? { runId: 'run' } : request.op === 'steer' ? { itemId: 'item' } : {} };
+    : request.op === 'prompt' ? { runId: 'run' } : request.op === 'steer' || request.op === 'follow_up' ? { itemId: 'item' } : {} };
 }
 async function fixture(fault?: Parameters<typeof openRemoteDatabase>[0]) {
   const { database, reopen } = await openRemoteDatabase(fault);
   const journal = new RemoteCommandJournal(database);
   const submit = vi.fn<RemoteCommandDependencies['submit']>(async request => accepted(request));
-  const options: RemoteCommandDependencies = { submit, owner: () => requester, lookup: vi.fn(() => true), projects: () => [{ id: 'open', name: 'Open project', path: '/opened' }],
+  const options: RemoteCommandDependencies = { submit, hostIdentity: () => ({ kind: 'personal', userId: requester }), lookup: vi.fn(() => true), projects: () => [{ id: 'open', name: 'Open project', path: '/opened' }],
     isShared: vi.fn(() => true), markWebCreated: vi.fn(), capabilities: structuredClone(capabilities), journal };
   return { database, reopen, journal, submit, options, executor: new RemoteCommandExecutor(options) };
 }
@@ -64,6 +66,7 @@ it.each(['admissible', 'forbidden', 'expired', 'invalid'] as const)('rejects an 
 it.each([
   { op: 'prompt', session, params: { text: 'Hello' } },
   { op: 'steer', session, params: { text: 'Correction' } },
+  { op: 'follow_up', session, params: { text: 'Next' } },
   { op: 'cancel', session, params: { runId: 'run' } },
   { op: 'interaction.answer', session, params: { interactionId: 'question', answer: { kind: 'confirm', confirmed: true } } },
 ] satisfies RemoteCommand[])('maps $op with the command identity and web requester', async command => {
@@ -143,13 +146,48 @@ it('dispatches a claim before expiry and replays its recorded outcome after expi
   expect(f.submit).toHaveBeenCalledOnce();
 });
 
-it.each([undefined, randomUUID()])('rejects a requester when the token owner is %s', async owner => {
-  const f = await fixture(); f.options.owner = () => owner;
+it.each([randomUUID()])('rejects a requester when the token owner is %s', async owner => {
+  const f = await fixture(); f.options.hostIdentity = () => ({ kind: 'personal', userId: owner });
   const row = { id: id(), requester, expiresAt, command: { op: 'cancel', session, params: {} } as RemoteCommand };
   expect(await f.executor.execute(row)).toMatchObject({ outcome: 'rejected', error: {
     code: 'forbidden', message: 'Remote commands require the host owner.', retryable: false,
   } });
   expect(f.submit).not.toHaveBeenCalled();
+});
+
+it.each([undefined, randomUUID()])('accepts team-host commands with requester %s', async user => {
+  const f = await fixture(); f.options.hostIdentity = () => ({ kind: 'team' });
+  const row = { id: id(), ...(user ? { requester: user } : {}), expiresAt, automation: { source: 'nightly' },
+    command: { op: 'cancel', session, params: {} } as RemoteCommand };
+  expect(await f.executor.execute(row)).toMatchObject({ outcome: 'accepted' });
+  expect(f.submit).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ automation: { source: 'nightly' } }));
+  expect(await f.executor.execute({ ...row, automation: { source: 'changed' } })).toMatchObject({ error: { code: 'request_conflict' } });
+});
+
+it('rejects a missing requester for a personal host', async () => {
+  const f = await fixture();
+  expect(await f.executor.execute({ id: id(), expiresAt, command: { op: 'cancel', session, params: {} } }))
+    .toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
+  expect(f.submit).not.toHaveBeenCalled();
+});
+
+it('leaves a command retryable without dispatch or journaling until the host identity is known', async () => {
+  const f = await fixture(); f.options.hostIdentity = () => undefined;
+  const row = { id: id(), requester, expiresAt, command: { op: 'cancel', session, params: {} } as RemoteCommand };
+  await expect(f.executor.execute(row)).rejects.toMatchObject({ code: 'unavailable' });
+  expect(f.submit).not.toHaveBeenCalled(); expect(f.journal.get(row.id)).toBeUndefined();
+  f.options.hostIdentity = () => ({ kind: 'personal', userId: requester });
+  expect(await f.executor.execute(row)).toMatchObject({ outcome: 'accepted' });
+  expect(f.submit).toHaveBeenCalledOnce();
+});
+
+it('passes a requested session ID only to root creation, including after journal recovery', async () => {
+  const f = await fixture(); const requestedId = randomUUID();
+  const row = await interrupted(f, { op: 'sessions.create', params: { project: 'open', sessionId: requestedId, prompt: { text: 'Begin' } } });
+  f.submit.mockImplementation(async request => accepted(request));
+  expect(await f.executor.execute(row)).toMatchObject({ outcome: 'accepted' });
+  expect(f.submit.mock.calls[0]![1]).toMatchObject({ sessionId: requestedId, requireRetained: true });
+  expect(f.submit.mock.calls[1]![1]).not.toHaveProperty('sessionId');
 });
 
 async function interrupted(f: Awaited<ReturnType<typeof fixture>>, command: RemoteCommand) {
@@ -268,12 +306,13 @@ it('bounds the private atomic journal and refuses corrupt recovery', async () =>
 });
 
 async function realServer() {
-  const hold = gate(); const f = await serverFixture({ now: Date.now, onStream: () => hold.promise });
+  const hold = gate(); const streamStarted = gate();
+  const f = await serverFixture({ now: Date.now, onStream: () => { streamStarted.resolve(); return hold.promise; } });
   const prepareRoot = vi.fn<NonNullable<SessionServerOptions['prepareRoot']>>(async request => ({ cwd: request.cwd, extensionPaths: [] }));
   const server = new SessionServer({ registry: f.registry, configuration: new TestHostConfiguration({ definitions: [], assertCurrent: () => f.registry.assertAdmission() }),
     models: f.root.runtime.session.modelRuntime, version: 'test', prepareRoot });
   cleanups.push(async () => { hold.resolve(); server.close(); await f.dispose(); });
-  return { ...f, server, hold, prepareRoot };
+  return { ...f, server, hold, streamStarted, prepareRoot };
 }
 
 it('uses shared admission without attachments and preserves web origin on runs and queued steering', async () => {
@@ -308,10 +347,99 @@ it('records a channel origin on runs and queued steering for channel-started com
     .toMatchObject({ outcome: 'rejected', error: { code: 'invalid_request' } });
 });
 
+it.each([
+  { remote: { automation: { source: 'nightly' } }, origin: { kind: 'automation', source: 'nightly' } },
+  { remote: { channel: { provider: 'slack' } }, origin: { kind: 'channel', provider: 'slack' } },
+])('starts and queues remote follow-ups with $origin.kind provenance without a requester', async ({ remote, origin }) => {
+  const f = await realServer(); const session = f.root.sessionId;
+  const command = id();
+  const started = await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'follow_up', session, params: { text: 'Start' } }), { command, ...remote });
+  expect(started).toMatchObject({ outcome: 'accepted', result: { status: 'handled' } });
+  expect(f.store.session(session).run).toMatchObject({ state: 'running', origin });
+  if (origin.kind === 'channel') expect(f.store.session(session).run.origin).toMatchObject({ command });
+  const queuedCommand = id();
+  const queued = await f.server.submitRemote(parseClientEnvelope({ v: 1, id: queuedCommand, op: 'follow_up', session, params: { text: 'Next' } }), { command: queuedCommand, ...remote });
+  expect(queued).toMatchObject({ outcome: 'accepted', result: { itemId: expect.any(String) } });
+  expect(f.registry.projection(session).snapshot().queue[0]).toMatchObject({ kind: 'follow_up', origin });
+  f.root.runtime.session.clearQueue();
+  f.hold.resolve();
+  await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+});
+
+it.each([
+  { initial: 'web', op: 'follow_up' },
+  { initial: 'automation', op: 'follow_up' },
+  { initial: 'web', op: 'steer' },
+  { initial: 'automation', op: 'steer' },
+] as const)('publishes a queued channel $op behind a $initial run as its own turn', async ({ initial, op }) => {
+  const f = await realServer(); const session = f.root.sessionId;
+  const changes: PublishedChange[] = [];
+  f.registry.subscribe(session, event => {
+    if (!('change' in event)) return;
+    const change = publishableChange(event.change);
+    if (change) changes.push(change);
+  });
+  const command = id(); const queuedCommand = id();
+  const remote = initial === 'web' ? { user: requester } : { automation: { source: 'nightly' } };
+  const initialOrigin = initial === 'web' ? { kind: 'web', user: requester, command } : { kind: 'automation', source: 'nightly' };
+  const channelOrigin = { kind: 'channel', provider: 'slack', user: requester, command: queuedCommand };
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'prompt', session, params: { text: 'Start' } }),
+    { command, ...remote })).toMatchObject({ outcome: 'accepted' });
+  await f.streamStarted.promise;
+  const runId = f.store.session(session).run.id;
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: queuedCommand, op, session, params: { text: 'Channel follow-up' } }),
+    { command: queuedCommand, user: requester, channel: { provider: 'slack' } })).toMatchObject({ outcome: 'accepted', result: { itemId: expect.any(String) } });
+  expect(f.registry.projection(session).snapshot().queue).toMatchObject([{ kind: op, origin: channelOrigin }]);
+  f.hold.resolve();
+  await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+  const messages = changes.filter(change => change.type === 'message.completed').map(change => change.message)
+    .filter(message => message.role === 'user' || message.role === 'assistant');
+  expect(messages.map(message => [message.role, message.origin])).toEqual([
+    ['user', initialOrigin], ['assistant', initialOrigin], ['user', channelOrigin], ['assistant', channelOrigin],
+  ]);
+  const boundary = changes.findIndex(change => change.type === 'run.updated' && change.run.origin?.kind === 'channel');
+  const before = changes.slice(0, boundary).filter(change => change.type === 'message.completed' && (change.message.role === 'user' || change.message.role === 'assistant'));
+  const after = changes.slice(boundary + 1).filter(change => change.type === 'message.completed');
+  expect(before).toHaveLength(2);
+  expect(after).toHaveLength(2);
+  const run = changes[boundary];
+  expect(run).toMatchObject({ type: 'run.updated', run: { state: 'running', id: runId, turnId: expect.any(String), origin: channelOrigin } });
+  if (run?.type !== 'run.updated') throw new Error('Missing queued turn boundary');
+  expect(run.run.turnId).not.toBe(runId);
+  expect(changes.filter(change => change.type === 'run.updated').at(-1))
+    .toEqual({ type: 'run.updated', run: { ...run.run, state: 'idle' } });
+  const snapshot = f.registry.projection(session).snapshot();
+  expect(snapshot.queue).toEqual([]);
+  expect(snapshot.run).toEqual({ ...run.run, state: 'idle' });
+  expect(snapshot.history.entries.filter(message => message.role === 'user' || message.role === 'assistant').map(message => message.origin))
+    .toEqual(messages.map(message => message.origin));
+});
+
+it('requires a requester for web origins, validates automation sources, and prefers automation over channel', async () => {
+  const f = await realServer(); const session = f.root.sessionId;
+  const request = () => parseClientEnvelope({ v: 1, id: id(), op: 'prompt', session, params: { text: 'Start' } });
+  expect(await f.server.submitRemote(request(), { command: id() })).toMatchObject({ error: { code: 'invalid_request' } });
+  expect(await f.server.submitRemote(request(), { command: id(), automation: { source: '' } })).toMatchObject({ error: { code: 'invalid_request' } });
+  expect(await f.server.submitRemote(request(), { command: id(), automation: { source: 'nightly' }, channel: { provider: 'slack' } })).toMatchObject({ outcome: 'accepted' });
+  expect(f.store.session(session).run.origin).toEqual({ kind: 'automation', source: 'nightly' });
+});
+
+it('creates the exact requested root session ID and refuses collisions or malformed IDs', async () => {
+  const f = await realServer(); const sessionId = randomUUID(); const command = id();
+  const request = parseClientEnvelope({ v: 1, id: command, op: 'sessions.create', params: { cwd: f.cwd } });
+  const response = await f.server.submitRemote(request, { user: requester, command, sessionId });
+  expect(response).toMatchObject({ outcome: 'accepted', result: { sessionId } });
+  expect(f.store.session(sessionId)).toMatchObject({ id: sessionId, root: sessionId });
+  expect(f.registry.binding(sessionId)?.runtime.session.sessionId).toBe(sessionId);
+  expect(await f.server.submitRemote(request, { user: requester, command, sessionId })).toEqual(response);
+  expect(await f.server.submitRemote({ ...request, id: id() }, { user: requester, command, sessionId })).toMatchObject({ error: { code: 'request_conflict' } });
+  expect(await f.server.submitRemote({ ...request, id: id() }, { user: requester, command, sessionId: '../bad' })).toMatchObject({ error: { code: 'invalid_request' } });
+});
+
 it('appends remote create instructions to the root system prompt on every run path and keeps them after eviction', async () => {
   const f = await realServer(); f.hold.resolve(); const command = id();
   const instructions = 'Write Markdown only. Output <no_response/> when no reply is needed.';
-  const response = await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'sessions.create', params: { cwd: f.cwd, instructions } }), { user: requester, command });
+  const response = await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'sessions.create', params: { cwd: f.cwd, instructions, model: { provider: offlineModel.provider, id: offlineModel.id } } }), { user: requester, command });
   if (response.outcome !== 'accepted') throw new Error('Create failed');
   const created = (response.result as { sessionId: string }).sessionId;
   expect(f.store.session(created).profile?.instructions).toBe(instructions);

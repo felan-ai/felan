@@ -244,7 +244,12 @@ export class RegistryProcesses {
         const current = this.authorizeResource(requester, id);
         if (current.reference !== reference || current.startIdentity !== row.startIdentity || current.kind !== 'detached'
           || !info || info.id !== id || info.startIdentity !== row.startIdentity || info.kind !== 'detached') throw new Error('Detached output identity changed.');
-        const data = readOwnedOutputRange(this.options.store.owner, info.outputPath, offset, limit);
+        const adapter = this.options.processAdapter!;
+        if (!adapter.readOutputRange && root.runtime.kind !== 'host') throw processFault('unavailable', 'Remote process output reading is unavailable.');
+        const data = adapter.readOutputRange
+          ? await adapter.readOutputRange(root.runtime, info.outputPath, offset, limit)
+          : readOwnedOutputRange(this.options.store.owner, info.outputPath, offset, limit);
+        if (!(data instanceof Uint8Array) || data.byteLength > limit || !Number.isSafeInteger(offset + data.byteLength)) throw new Error('Invalid process output range.');
         this.assertLifetime(lifetime); this.assertLifetime(root); this.authorizeResource(requester, id);
         const state = current.state === 'reconciling' ? 'interrupted' : info.status === 'unknown' ? 'missing'
           : info.status !== 'running' ? 'exited' : current.state;
@@ -377,11 +382,11 @@ export class RegistryProcesses {
       if (row.kind !== 'detached' || !row.reference || !row.startIdentity) continue;
       const runtime = this.runtime(row.session, root) ?? this.runtime(root, root);
       if (!runtime) continue;
+      const adapter = this.options.processAdapter;
+      if (!adapter || !pathInside(adapter.storageDirectory(runtime), row.reference)) { this.update(row, 'missing'); continue; }
       const bytes = await runtime.storage('session').readFile(row.reference, { maxBytes: 64 * 1024 }).catch(() => undefined);
       this.options.assertCurrent();
       if (!bytes) { this.update(row, 'missing'); continue; }
-      const adapter = this.options.processAdapter;
-      if (!adapter) continue;
       let info: ProcessRecord | undefined;
       try { info = this.describeJob(runtime, row.reference, bytes); } catch { this.update(row, 'missing'); continue; }
       if (!info || info.id !== row.id || info.startIdentity !== row.startIdentity || info.kind !== 'detached') { this.update(row, 'missing'); continue; }

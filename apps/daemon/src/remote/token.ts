@@ -40,14 +40,18 @@ export interface HostTokenSourceOptions extends RetryOptions {
   requestTimeoutMs?: number;
 }
 
+// Plain HTTP is accepted only where traffic never leaves the machine: loopback, or Docker's
+// alias for the host when the daemon runs in a local development container.
+export const PLAIN_HTTP_API_HOSTS: readonly string[] = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
+
 function endpoint(value: string): string {
   try {
     const url = new URL(value);
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
-    if (url.protocol !== 'https:' && !['localhost', '127.0.0.1', '[::1]', '::1'].includes(url.hostname)) throw new Error();
+    if (url.protocol !== 'https:' && !PLAIN_HTTP_API_HOSTS.includes(url.hostname)) throw new Error();
     return url.toString().replace(/\/$/u, '');
   } catch {
-    throw new HostTokenExchangeError('unavailable', 'Remote API URL must use HTTPS (HTTP is allowed only on loopback).');
+    throw new HostTokenExchangeError('unavailable', 'Remote API URL must use HTTPS (HTTP is allowed only for local hosts).');
   }
 }
 

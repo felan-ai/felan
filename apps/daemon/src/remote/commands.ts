@@ -4,15 +4,16 @@ import { ERROR_CODES, parseClientEnvelope, parseRemoteCommand, parseRemoteComman
 import { commandError } from '../daemon/commands.js';
 import type { CommandJournal, RemoteCommandJournalEntry } from './command-journal.js';
 import { systemClock, type RemoteClock } from './backoff.js';
+import type { RemoteSubmission } from '../daemon/server.js';
 
-export type ClaimedRemoteCommand = { id: string; requester: string; command: RemoteCommand; expiresAt: number; claimedAt?: number; channel?: RemoteChannel } | { id: string; invalid: string };
+export type ClaimedRemoteCommand = { id: string; requester?: string; command: RemoteCommand; expiresAt: number; claimedAt?: number; channel?: RemoteChannel; automation?: { source: string } } | { id: string; invalid: string };
 export interface RemoteChannel { provider: string }
 export interface CommandClaimBatch { startedAt: number; receivedAt: number }
+export type RemoteHostIdentity = { kind: 'personal'; userId: string } | { kind: 'team' };
 export interface RemoteCommandDependencies {
-  submit(request: ClientEnvelope, remote: { user: string; command: string; requireRetained?: boolean; channel?: RemoteChannel;
-    interactionKinds: HostCapabilities['interactionKinds'] }): Promise<Response>;
+  submit(request: ClientEnvelope, remote: RemoteSubmission): Promise<Response>;
   lookup(id: string): boolean;
-  owner(): string | undefined;
+  hostIdentity(): RemoteHostIdentity | undefined;
   clock?: Pick<RemoteClock, 'now'>;
   /** Projects explicitly opened and trusted by the local user, not arbitrary cwd values. */
   projects(): HostProject[];
@@ -43,25 +44,27 @@ export class RemoteCommandExecutor {
 
   private async run(row: ClaimedRemoteCommand, batch: CommandClaimBatch): Promise<RemoteCommandOutcome> {
     requestTimestamp(row.id);
+    const host = this.options.hostIdentity();
+    if (!host) throw commandError('unavailable', 'Host identity is unavailable.');
     const id = row.id.toLowerCase();
     let identity = createHash('sha256').update(JSON.stringify(row)).digest('hex');
     let entry = this.options.journal.get(id);
     if (!entry && this.options.unrecordedIsIndeterminate?.()) {
-      if (!('invalid' in row)) identity = commandIdentity(row.requester.toLowerCase(), row.command, row.channel);
+      if (!('invalid' in row)) identity = commandIdentity(row.requester?.toLowerCase(), row.command, row.channel, row.automation);
       return this.complete(id, identity, failure(id, 'indeterminate', 'Remote command journal was lost. Inspect the session before retrying.'));
     }
     try {
       let command: RemoteCommand;
-      let requester: string;
+      let requester: string | undefined;
       if ('invalid' in row) {
         if (entry) return entry.identity === identity && entry.state === 'completed' ? entry.outcome : failure(id, 'request_conflict', 'Remote command identity changed.');
         throw commandError('invalid_request', 'Invalid remote command row.');
       }
-      if (!/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu.test(row.requester)) throw commandError('invalid_request');
-      requester = row.requester.toLowerCase(); command = parseRemoteCommand(row.command);
-      identity = commandIdentity(requester, command, row.channel);
+      if (row.requester !== undefined && !/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/iu.test(row.requester)) throw commandError('invalid_request');
+      requester = row.requester?.toLowerCase(); command = parseRemoteCommand(row.command);
+      identity = commandIdentity(requester, command, row.channel, row.automation);
       if (entry && entry.identity !== identity) return failure(id, 'request_conflict', 'Remote command identity changed.');
-      if (requester !== this.options.owner()?.toLowerCase()) {
+      if (host.kind === 'personal' && requester !== host.userId.toLowerCase()) {
         const outcome = failure(id, 'forbidden', 'Remote commands require the host owner.');
         return entry ? outcome : this.complete(id, identity, outcome);
       }
@@ -81,8 +84,11 @@ export class RemoteCommandExecutor {
         this.options.journal.write(dispatching);
         entry = dispatching;
       }
-      const channel = row.channel;
-      let response = await this.submit(entry, requester, replay, channel);
+      const remote: RemoteSubmission = { ...(requester ? { user: requester } : {}), command: id,
+        ...(row.channel ? { channel: row.channel } : {}), ...(row.automation ? { automation: row.automation } : {}),
+        ...(command.op === 'sessions.create' && command.params.sessionId ? { sessionId: command.params.sessionId } : {}),
+        interactionKinds: this.options.capabilities.interactionKinds };
+      let response = await this.submit(entry, remote, replay);
       if (response.outcome === 'accepted' && command.op === 'sessions.create') {
         const session = entry.createdSession ?? ('sessionId' in response.result ? response.result.sessionId : undefined);
         if (typeof session !== 'string') throw commandError('indeterminate');
@@ -92,7 +98,8 @@ export class RemoteCommandExecutor {
           const dispatching: RemoteCommandJournalEntry = { id, identity, state: 'dispatching', request: prompt, createdSession: session };
           this.options.journal.write(dispatching);
           entry = dispatching;
-          response = await this.options.submit(prompt, { user: requester, command: id, ...(channel ? { channel } : {}), interactionKinds: this.options.capabilities.interactionKinds });
+          const { sessionId: _, ...promptRemote } = remote;
+          response = await this.options.submit(prompt, promptRemote);
         }
         if (response.outcome === 'accepted') return this.complete(id, identity, { v: 1, re: id, outcome: 'accepted', result: { sessionId: session } } as RemoteCommandOutcome);
       }
@@ -107,10 +114,11 @@ export class RemoteCommandExecutor {
     }
   }
 
-  private async submit(entry: Extract<RemoteCommandJournalEntry, { state: 'dispatching' }>, user: string, replay: boolean, channel: RemoteChannel | undefined): Promise<Response> {
+  private async submit(entry: Extract<RemoteCommandJournalEntry, { state: 'dispatching' }>, remote: RemoteSubmission, replay: boolean): Promise<Response> {
     if (replay && !this.options.lookup(entry.request.id)) return failure(entry.id, 'indeterminate', 'The admitted request is no longer retained.');
-    return this.options.submit(entry.request, { user, command: entry.id, ...(replay ? { requireRetained: true } : {}), ...(channel ? { channel } : {}),
-      interactionKinds: this.options.capabilities.interactionKinds });
+    const { sessionId, ...context } = remote;
+    return this.options.submit(entry.request, { ...context, ...(entry.request.op === 'sessions.create' && sessionId ? { sessionId } : {}),
+      ...(replay ? { requireRetained: true } : {}) });
   }
 
   private map(id: string, command: RemoteCommand): ClientEnvelope {
@@ -133,8 +141,8 @@ export class RemoteCommandExecutor {
   }
 }
 
-function commandIdentity(requester: string, command: RemoteCommand, channel: RemoteChannel | undefined): string {
-  return createHash('sha256').update(canonical({ requester, command, ...(channel ? { channel } : {}) })).digest('hex');
+function commandIdentity(requester: string | undefined, command: RemoteCommand, channel: RemoteChannel | undefined, automation: { source: string } | undefined): string {
+  return createHash('sha256').update(canonical({ ...(requester ? { requester } : {}), command, ...(channel ? { channel } : {}), ...(automation ? { automation } : {}) })).digest('hex');
 }
 
 function canonical(value: unknown): string {

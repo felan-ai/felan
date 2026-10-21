@@ -90,6 +90,61 @@ describe.skipIf(!supported)('registry process ownership', () => {
     expect(new TextDecoder().decode(output.data)).toBe('configured output');
   });
 
+  it('keeps remote job references out of local store ownership, including after recovery', async () => {
+    const readOutputRange = vi.fn(async (_runtime: AgentRuntime, _path: string, offset: number, limit: number) =>
+      new TextEncoder().encode('remote output').slice(offset, offset + limit));
+    const adapter = { ...fakeProcessAdapter(), readOutputRange };
+    const f = await fixture({}, adapter);
+    const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const remoteRoot = '/remote/workspace/.felan/session';
+    const files = new Map<string, Uint8Array>();
+    const ports = (raw: HostAgentRuntime): Partial<AgentRuntime> => ({
+      kind: 'docker',
+      storage: () => ({ ...raw.storage(), root: remoteRoot,
+        mkdir: async () => {},
+        writeFile: async (path, bytes) => { files.set(path, bytes); },
+        readFile: async path => { const bytes = files.get(path); if (!bytes) throw new Error('Missing remote file'); return bytes; },
+      }),
+      shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }),
+      exec: async () => ({ stdout: '', stderr: '', code: 1, killed: false }),
+      terminals: { startShell: async () => ({ pid: 42,
+        read: async offset => ({ output: new TextEncoder().encode('hi\n').slice(offset), nextOffset: 3, running: false, exitCode: 0 }),
+        write: async () => {}, terminate: async () => {}, dispose: async () => {},
+      }) },
+    });
+    const remote = await wrappedRuntime(f, b.sessionId, b.rootSessionId, ports);
+    const manager = new BackgroundBashManager(remote);
+    const foreground = await manager.startInteractive('echo hi');
+    expect(new TextDecoder().decode((await remote.terminals!.attach!(foreground.job.meta.id)!.read(0)).output)).toBe('hi\n');
+    expect(f.registry.processes.list(b.rootSessionId)).toContainEqual(expect.objectContaining({ id: foreground.job.meta.id, kind: 'pty', state: 'exited' }));
+    const job = await manager.start('echo remote');
+    expect(() => f.owner.assertOwnsPath(job.meta.infoPath)).toThrow('outside the daemon store roots');
+    expect(f.store.resource(job.meta.id)?.reference).toBe(job.meta.infoPath);
+    expect(new TextDecoder().decode((await f.registry.processes.read(b.sessionId, job.meta.id, 7, 6)).data)).toBe('output');
+    expect(readOutputRange).toHaveBeenCalledWith(remote, job.meta.logPath, 7, 6);
+    await f.registry.shutdown(); f.store.close();
+    const store = new DaemonControlStore(f.owner);
+    const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+    expect(store.resource(job.meta.id)?.reference).toBe(job.meta.infoPath);
+    const ownRoot = vi.spyOn(f.owner, 'ownRoot');
+    await store.ownPersistedRoots();
+    expect(ownRoot).not.toHaveBeenCalled();
+    const processes = new RegistryProcesses({ store, processAdapter: adapter, assertCurrent: () => f.owner.assertCurrent(), changed() {} });
+    await wrappedRuntime(f, b.sessionId, b.rootSessionId, ports, processes);
+    expect(new TextDecoder().decode((await processes.read(b.sessionId, job.meta.id, 0, 6)).data)).toBe('remote');
+  });
+
+  it('does not read persisted job references outside the provider storage directory', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const readFile = vi.fn();
+    await wrappedRuntime(f, b.sessionId, b.rootSessionId, raw => ({ storage: () => ({ ...raw.storage(), readFile }) }));
+    f.store.putResource({ id: 'untrusted-job', kind: 'detached', session: b.sessionId, root: b.rootSessionId,
+      reference: join(f.owner.target.agentDir, 'unrelated.json'), startIdentity: 'launch', state: 'running', updatedAt: now });
+    await f.registry.processes.refresh(b.rootSessionId);
+    expect(readFile).not.toHaveBeenCalled();
+    await expect(f.registry.processes.read(b.sessionId, 'untrusted-job', 0, 1)).rejects.toThrow('outside its root storage');
+  });
+
   it('snapshots running and most recently updated processes once a root has more than a page', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const total = LIMITS.pageEntries + 4;

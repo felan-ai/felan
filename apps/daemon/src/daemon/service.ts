@@ -84,10 +84,11 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const models = await makeModels(owner.target.agentDir);
     let services: RegistryOptions['services'];
     registry = new SessionRegistry({ owner, store, lifecycle: sessionLifecycle, services: context => services(context),
+      ...(sessionRuntime.acquireRun ? { acquireRun: sessionRuntime.acquireRun.bind(sessionRuntime) } : {}),
       onViewCancellationDiagnostic: event => sink!.write('stderr', JSON.stringify({ event: 'view_cancellation', ...event })),
       ...(sessionRuntime.processAdapter ? { processAdapter: sessionRuntime.processAdapter } : {}) });
     const liveRegistry = registry; const liveStore = store; const liveSessionLifecycle = sessionLifecycle; const liveSink = sink;
-    const broker = createRegistryInteractionBroker(registry);
+    const broker = createRegistryInteractionBroker(registry, hostConfig.config.policy ?? {});
     const setupRuntime = loadedProviders.services.get(HOST_RUNTIME_SERVICE)!.create(owner.target.agentDir, { pathAccess: 'host', agentDir: owner.target.agentDir,
       agentStorageRoot: join(owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: join(owner.target.agentDir, 'storage', 'setup') });
     const host = await sessionRuntime.createHostServices({ agentDir: owner.target.agentDir, homeDir: homeDir ?? homedir(),
@@ -149,7 +150,8 @@ export async function startDaemonService(target: DaemonTarget, options: {
       setupNeeds: () => [...(models.getAvailableSnapshot().length ? [] : [{ code: 'provider', message: 'Configure a local model provider. A Felan account is not required.' }]), ...(connector?.setupNeeds() ?? [])] });
     const liveServer = server;
     try {
-      connector = new RemoteConnector({ database: liveStore.database, registry: liveRegistry, server: liveServer, secretStorage: sessionRuntime.secretStorage, owner });
+      connector = new RemoteConnector({ database: liveStore.database, registry: liveRegistry, server: liveServer, secretStorage: sessionRuntime.secretStorage, owner,
+        ...(hostConfig.config.remote ? { remote: hostConfig.config.remote } : {}) });
       liveServer.setRemote(connector);
     } catch { sink.write('stderr', 'Remote connector storage is unavailable; local sessions remain available.'); }
     const idleTimer = setInterval(() => {
@@ -193,7 +195,7 @@ export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown
     const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     if (failures.length) throw new AggregateError(failures, 'Forced daemon settlement failed.');
   } else {
-    await draining; await shutdownStep('drain-wait', () => registry.waitForDrain()); signal?.throwIfAborted(); await registry.shutdown();
+    await draining; await shutdownStep('drain-wait', () => registry.waitForDrain(signal)); signal?.throwIfAborted(); await registry.shutdown();
   }
 }
 

@@ -13,9 +13,9 @@ describe('public package boundary', () => {
       expect(text, file).not.toMatch(/\bprocess\.(?:env|cwd|chdir|pid|platform|stdout|stdin|stderr)\b|\b(?:Buffer|require)\s*[.(]/);
     }
   });
-  it('ships a single ESM export and one direct dependency at intended 0.2.0', () => {
+  it('ships a single ESM export and one direct dependency at intended 0.3.0', () => {
     const manifest = JSON.parse(readFileSync(resolve(import.meta.dirname, '../package.json'), 'utf8'));
-    expect(manifest.version).toBe('0.2.0');
+    expect(manifest.version).toBe('0.3.0');
     expect(manifest.type).toBe('module');
     expect(manifest.dependencies).toEqual({ typebox: '1.1.38' });
     expect(Object.keys(manifest.exports)).toEqual(['.']);

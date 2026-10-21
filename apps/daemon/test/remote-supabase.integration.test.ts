@@ -228,7 +228,7 @@ describe.skipIf(!probe.environment)(`shared Supabase connector contract${probe.r
     const journal = new RemoteCommandJournal(database);
     const submit = vi.fn<RemoteCommandDependencies['submit']>(() => new Promise(() => {}));
     const dependencies: RemoteCommandDependencies = { submit, lookup: () => false, projects: () => [], isShared: () => true,
-      markWebCreated: () => {}, capabilities: registration.capabilities, journal, owner: () => host.userId };
+      markWebCreated: () => {}, capabilities: registration.capabilities, journal, hostIdentity: () => ({ kind: 'personal', userId: host.userId }) };
     void new RemoteCommandExecutor(dependencies).execute(claimed);
     await waitFor(() => journal.get(id)?.state === 'dispatching', 'durable command dispatch');
     expect(submit).toHaveBeenCalledTimes(1);

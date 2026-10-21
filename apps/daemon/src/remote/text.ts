@@ -4,6 +4,7 @@ import { redact } from '../logger.js';
 const alphabet = /[A-Za-z0-9_-]/u;
 const patterns = [
   { prefix: 'fln_pat_', minimum: 1 },
+  { prefix: 'bzy_team_', minimum: 1 },
   { prefix: 'AIza', minimum: 20 },
   ...['sk-', 'pk-', 'rk-', 'ghp_', 'gho_', 'ghu_', 'ghs_', 'ghr_', 'github_pat_', 'xoxb-', 'xoxa-', 'xoxp-', 'xoxr-', 'AKIA'].map(prefix => ({ prefix, minimum: 8 })),
 ];

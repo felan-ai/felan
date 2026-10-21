@@ -106,8 +106,6 @@ export class HostLifecycle {
     } catch (error) {
       if (pending.generation !== this.generation) return;
       this.completing = false;
-      // A drain can reopen admission only before registry shutdown has made resumption unsafe.
-      if (!releasing && pending.mode === 'drain' && this.resume()) return;
       this.block(error, releasing ? 'release' : 'settlement', !releasing && !(error instanceof ShutdownError && error.step === 'settlement-deadline'));
     }
   }

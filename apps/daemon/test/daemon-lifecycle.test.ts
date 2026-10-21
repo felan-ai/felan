@@ -3,7 +3,9 @@ import type { ClientEnvelope } from '@felan-ai/session-protocol';
 import { OrderedAdmission } from '../src/daemon/admission.js';
 import { createRegistryInteractionBroker } from '../src/daemon/broker.js';
 import { HostLifecycle, type HostLifecycleOptions } from '../src/daemon/lifecycle.js';
+import { settleDaemonWork } from '../src/daemon/service.js';
 import { fixture, fixtures, now, requestId } from './fixtures/registry.js';
+import { gate, serverFixture } from './fixtures/server.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
@@ -12,7 +14,7 @@ async function setup(overrides: Partial<HostLifecycleOptions> = {}) {
   const broker = createRegistryInteractionBroker(f.registry); const complete = vi.fn(async () => {});
   const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity, beginDrain: () => f.registry.beginDrain(), endDrain: () => f.registry.endDrain(),
     canRetry: () => { f.owner.assertCurrent(); return !f.registry.fenced; },
-    settle: async mode => { await broker.drain(); if (mode === 'drain') await f.registry.waitForDrain(); await f.registry.shutdown({ interrupt: mode === 'force' }); },
+    settle: async (mode, signal) => { await broker.drain(); if (mode === 'drain') await f.registry.waitForDrain(signal); signal.throwIfAborted(); await f.registry.shutdown({ interrupt: mode === 'force' }); },
     complete, ...overrides });
   const admission = new OrderedAdmission(f.store, { now: () => now });
   async function request(mode: 'drain' | 'force' = 'drain', op: 'host.stop' | 'host.restart' = 'host.stop', notify = true) {
@@ -55,6 +57,44 @@ it('waits for existing work without aborting it and refuses new turns', async ()
   release(); await running; await vi.waitFor(() => expect(f.lifecycle.state).toBe('stopped'));
 });
 
+it.each([false, true])('drains a root turn after its final assistant message (started during drain check: %s)', async late => {
+  const settling = gate(); const release = gate();
+  const f = await serverFixture({ extension: pi => {
+    pi.on('agent_end', async () => { settling.resolve(); await release.promise; });
+  } });
+  fixtures.push(async () => { release.resolve(); await f.dispose(); });
+  let running: Promise<void>;
+  if (late) {
+    const count = f.registry.processes.interruptibleCount.bind(f.registry.processes);
+    vi.spyOn(f.registry.processes, 'interruptibleCount').mockImplementationOnce(async () => {
+      running = f.root.runtime.session.prompt('existing'); await settling.promise;
+      return count();
+    });
+  } else {
+    running = f.root.runtime.session.prompt('existing'); await settling.promise;
+  }
+  const abort = vi.spyOn(f.root.runtime.session, 'abort');
+  const complete = vi.fn(async () => {});
+  const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity,
+    beginDrain: () => f.registry.beginDrain(), endDrain: () => f.registry.endDrain(),
+    settle: (mode, signal) => settleDaemonWork(f.registry, createRegistryInteractionBroker(f.registry), mode, signal), complete });
+  const admission = new OrderedAdmission(f.store, { now: () => now });
+  const stopId = requestId();
+  const response = await admission.submit({ v: 1, id: stopId, op: 'host.stop', params: { expected: f.owner.identity, mode: 'drain' } },
+    'test-client', command => lifecycle.prepare(command));
+  expect(response.outcome).toBe('accepted'); lifecycle.afterResponse(stopId);
+  await settling.promise;
+  expect(f.root.runtime.session.messages.some(message => message.role === 'assistant')).toBe(true);
+  expect(f.root.runtime.session.isIdle).toBe(false);
+  await new Promise(resolve => setTimeout(resolve, 25));
+  expect(lifecycle.state).toBe('draining'); expect(complete).not.toHaveBeenCalled(); expect(abort).not.toHaveBeenCalled();
+  expect(() => f.registry.assertNewWork()).toThrow('draining');
+  release.resolve(); await running!;
+  await vi.waitFor(() => expect(lifecycle.state).toBe('stopped'));
+  expect(complete).toHaveBeenCalledWith('stop');
+  expect(f.store.session(f.root.sessionId).run.state).toBe('idle');
+});
+
 it('defers a waiting question before releasing the host', async () => {
   const f = await setup(); const answer = f.broker.request({ kind: 'input', title: 'Choose' },
     { kind: 'session', session: f.root.sessionId, root: f.root.sessionId }, { deferrable: true });
@@ -63,19 +103,34 @@ it('defers a waiting question before releasing the host', async () => {
   expect(f.store.snapshot().interactions.at(-1)?.state).toBe('deferred');
 });
 
-it('returns to ready and reopens admission when a drain misses its deadline', async () => {
+it('keeps admission closed when an accepted drain misses its deadline', async () => {
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   const settle = vi.fn(() => gate); const f = await setup({ settle, timeoutMs: 5 }); f.releases.add(release);
-  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'));
+  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('blocked'));
   expect(settle.mock.calls.map(([mode]) => mode)).toEqual(['drain']); expect(f.complete).not.toHaveBeenCalled();
-  expect(() => f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).not.toThrow();
-  release(); await gate; await Promise.resolve(); expect(f.lifecycle.state).toBe('ready'); expect(f.complete).not.toHaveBeenCalled();
+  expect(f.lifecycle.blocked).toMatchObject({ recoverable: false, step: 'settlement-deadline' });
+  expect(() => f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).toThrow('draining');
+  release(); await gate; await Promise.resolve(); expect(f.lifecycle.state).toBe('blocked'); expect(f.complete).not.toHaveBeenCalled();
 });
 
-it('returns to ready when drain settlement fails', async () => {
+it('keeps admission closed when accepted drain settlement fails', async () => {
   const settle = vi.fn(async () => { throw new Error('fixture drain failure'); }); const f = await setup({ settle });
-  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'));
+  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('blocked'));
+  expect(f.lifecycle.blocked).toMatchObject({ recoverable: true, message: 'Error: fixture drain failure' });
+  expect(() => f.registry.assertNewWork()).toThrow('draining');
   expect(f.complete).not.toHaveBeenCalled();
+});
+
+it('stops waiting for active work at the drain deadline without releasing ownership or reopening admission', async () => {
+  const f = await setup({ timeoutMs: 20 });
+  const active = vi.spyOn(f.registry, 'activeWork').mockResolvedValue(1);
+  const shutdown = vi.spyOn(f.registry, 'shutdown');
+  await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('blocked'));
+  expect(f.lifecycle.blocked).toMatchObject({ recoverable: false, step: 'settlement-deadline' });
+  const checks = active.mock.calls.length;
+  await new Promise(resolve => setTimeout(resolve, 25));
+  expect(active).toHaveBeenCalledTimes(checks); expect(shutdown).not.toHaveBeenCalled(); expect(f.complete).not.toHaveBeenCalled();
+  expect(() => f.owner.assertCurrent()).not.toThrow(); expect(() => f.registry.assertNewWork()).toThrow('draining');
 });
 
 it('fences an old drain continuation when explicit force supersedes it', async () => {

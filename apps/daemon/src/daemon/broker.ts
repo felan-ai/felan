@@ -38,6 +38,7 @@ export type BrokerOutcome =
 export interface BrokerOptions {
   store: DaemonControlStore;
   ownerPrincipal?: string;
+  interactionHoldSeconds?: number;
   publish(interaction: Interaction, revisions: Readonly<Record<string, number>>): void;
   resume?(session: string, answer: InteractionAnswer, continuationId: string, dispatch: () => void): Promise<void>;
   committed?(revisions: Readonly<Record<string, number>>): void;
@@ -65,6 +66,10 @@ export class InteractionBroker {
   private failure: unknown;
 
   constructor(private readonly options: BrokerOptions) {
+    if (options.interactionHoldSeconds !== undefined
+      && (!Number.isSafeInteger(options.interactionHoldSeconds) || options.interactionHoldSeconds < 1)) {
+      throw new Error('Interaction hold must be a positive integer number of seconds.');
+    }
     this.now = options.now ?? Date.now;
     this.ownerPrincipal = options.ownerPrincipal ?? `local:${options.store.owner.target.uid}:${options.store.owner.target.namespaceId}`;
     for (const item of this.pending()) {
@@ -204,14 +209,14 @@ export class InteractionBroker {
     return { response: accepted(command.request, {}) };
   }
 
-  dispatchRemote(command: AdmittedCommand, requester: { user: string; command: string;
+  dispatchRemote(command: AdmittedCommand, requester: { user?: string; command: string;
     interactionKinds: OperationParams<'hello'>['interactionKinds'] }): AdmissionOutcome {
     this.assertUsable();
     if (command.request.op !== 'interaction.answer') throw commandError('invalid_request');
     const item = this.find(command.request.params.interactionId);
     if (item.scope.kind !== 'session' || item.authority === 'local-console' || command.request.session !== item.scope.session
       || !requester.interactionKinds.includes(item.request.kind)) throw commandError('forbidden');
-    // RemoteCommandExecutor checks the requester against the host token owner; that does not confer local-console authority.
+    // Platform-authorized remote commands do not confer local-console authority.
     if (item.state !== 'waiting' && item.state !== 'deferred' || item.expiresAt !== undefined && item.expiresAt <= this.now()) throw commandError('already_resolved');
     const answer = command.request.params.answer;
     if (!('cancelled' in answer)) validateInteractionAnswer(item, answer);
@@ -224,6 +229,7 @@ export class InteractionBroker {
   }
 
   observe(interaction: Interaction): void {
+    this.scheduleExpiry();
     const waiter = this.waiters.get(interaction.id);
     if (!waiter || interaction.state === 'waiting') return;
     this.waiters.delete(interaction.id);
@@ -236,6 +242,8 @@ export class InteractionBroker {
   async recover(): Promise<void> {
     this.assertUsable();
     this.expire();
+    this.deferHeldInteractions();
+    this.scheduleExpiry();
     for (const item of this.options.store.snapshot().continuations) {
       if (item.phase === 'ready') this.startContinuation(item.id);
     }
@@ -356,14 +364,28 @@ export class InteractionBroker {
     }
   }
 
+  private holdDeadline(item: Interaction): number | undefined {
+    return this.options.interactionHoldSeconds !== undefined && item.state === 'waiting'
+      && item.deferrable && item.scope.kind === 'session'
+      ? item.createdAt + this.options.interactionHoldSeconds * 1_000 : undefined;
+  }
+
+  private deferHeldInteractions(): void {
+    for (const item of this.pending()) {
+      const deadline = this.holdDeadline(item);
+      if (deadline !== undefined && deadline <= this.now()) this.publish(this.options.store.deferInteraction(item.id));
+    }
+  }
+
   private scheduleExpiry(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     if (this.draining || this.failure) return;
-    const deadlines = this.pending().flatMap(item => item.expiresAt === undefined ? [] : [item.expiresAt]);
+    const deadlines = this.pending().flatMap(item => [item.expiresAt, this.holdDeadline(item)]
+      .filter((deadline): deadline is number => deadline !== undefined));
     if (!deadlines.length) return;
     const delay = Math.min(2_147_483_647, Math.max(0, Math.min(...deadlines) - this.now()));
-    this.timer = setTimeout(() => this.safely(() => { this.expire(); this.scheduleExpiry(); }), delay);
+    this.timer = setTimeout(() => this.safely(() => { this.expire(); this.deferHeldInteractions(); this.scheduleExpiry(); }), delay);
     this.timer.unref();
   }
 
@@ -378,9 +400,9 @@ export class InteractionBroker {
   }
 }
 
-export function createRegistryInteractionBroker(registry: SessionRegistry, options: Pick<BrokerOptions, 'ownerPrincipal'> = {}): InteractionBroker {
+export function createRegistryInteractionBroker(registry: SessionRegistry, options: Pick<BrokerOptions, 'ownerPrincipal' | 'interactionHoldSeconds'> = {}): InteractionBroker {
   return new InteractionBroker({ store: registry.options.store,
-    ...(options.ownerPrincipal === undefined ? {} : { ownerPrincipal: options.ownerPrincipal }),
+    ...options,
     publish: (interaction, revisions) => registry.publishInteraction(interaction, revisions),
     committed: revisions => registry.publishCommitted(revisions),
     resume: (session, answer, id, dispatch) => registry.resumeInteraction(session, answer, id, dispatch),

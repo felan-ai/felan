@@ -47,6 +47,7 @@ export interface SessionExecutionPolicy {
 
 export interface DaemonSessionServices {
   readonly getExecutionPolicy: () => SessionExecutionPolicy;
+  currentRun(rootSessionId: string): ReturnType<SessionExtensionContext['currentRun']>;
   readonly extensions: {
     configuration(packages: readonly string[]): Promise<readonly ExtensionConfigDefinition[]>;
     executionPort?(context: SessionExtensionContext): SessionExecutionPort;
@@ -69,6 +70,7 @@ export interface SessionOpenRequest {
   readonly target: SessionTarget;
   readonly rootSessionId?: string;
   readonly parentSessionId?: string;
+  readonly execution?: { readonly label?: string };
   readonly model?: CreateAgentSessionOptions['model'];
   readonly thinkingLevel?: CreateAgentSessionOptions['thinkingLevel'];
   readonly extensionConfigOverrides?: readonly ExtensionConfigOverride[];

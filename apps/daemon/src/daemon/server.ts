@@ -2,7 +2,7 @@ import type { HostConfiguration, HostSetup } from './host-services.js';
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { ModelRuntime } from '@felan-ai/agent-core';
-import { BootstrapHelloSchema, ChannelProviderSchema, ERROR_CODES, IdSchema, JsonLineDecoder, LIMITS, OPERATION_CATALOG, PresentationEventSchema, UI_CAPABILITIES, canonicalRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse,
+import { BootstrapHelloSchema, OriginSchema, ERROR_CODES, IdSchema, JsonLineDecoder, LIMITS, OPERATION_CATALOG, PresentationEventSchema, UI_CAPABILITIES, canonicalRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse, parseRemoteCommand,
   parseSchema, type ClientEnvelope, type Interaction, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
 import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand, type AdmissionOutcome } from './admission.js';
 import { accepted, commandError, SessionCommands, type RemoteControl, type RootPreparation } from './commands.js';
@@ -17,7 +17,7 @@ import { headlessJsonEvent } from './headless-json.js';
 
 type Kind = OperationParams<'hello'>['kind'];
 export interface RemoteSubmission {
-  user: string; command: string; requireRetained?: boolean; channel?: { provider: string };
+  user?: string; command: string; requireRetained?: boolean; channel?: { provider: string }; automation?: { source: string }; sessionId?: string;
   interactionKinds?: OperationParams<'hello'>['interactionKinds'];
 }
 export interface BrokerDispatchPort {
@@ -25,7 +25,7 @@ export interface BrokerDispatchPort {
   dispatch(command: AdmittedCommand, client: { principal: string; kind: Kind; attachment: string;
     interactionKinds: OperationParams<'hello'>['interactionKinds'];
     capabilities?: OperationParams<'hello'>['capabilities'] }): AdmissionOutcome | Promise<AdmissionOutcome>;
-  dispatchRemote?(command: AdmittedCommand, requester: { user: string; command: string;
+  dispatchRemote?(command: AdmittedCommand, requester: { user?: string; command: string;
     interactionKinds: OperationParams<'hello'>['interactionKinds'] }): AdmissionOutcome | Promise<AdmissionOutcome>;
   connected?(client: BrokerClient): void;
   attached?(attachment: string, session: string): void;
@@ -147,10 +147,15 @@ export class SessionServer {
     let preparing: RootPreparationWork | undefined; let ownsPreparation = false;
     try {
       const request = parseClientEnvelope(value);
-      if (!['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'].includes(request.op)) throw commandError('forbidden');
-      const user = parseSchema(IdSchema, remote.user); const commandId = parseSchema(IdSchema, remote.command);
-      const origin: Origin = remote.channel ? { kind: 'channel', provider: parseSchema(ChannelProviderSchema, remote.channel.provider), user, command: commandId }
-        : { kind: 'web', user, command: commandId };
+      if (!['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'].includes(request.op)) throw commandError('forbidden');
+      const user = remote.user === undefined ? undefined : parseSchema(IdSchema, remote.user); const commandId = parseSchema(IdSchema, remote.command);
+      const origin: Origin = parseSchema(OriginSchema, remote.automation ? { kind: 'automation', source: remote.automation.source }
+        : remote.channel ? { kind: 'channel', provider: remote.channel.provider, ...(user ? { user } : {}), command: commandId }
+        : { kind: 'web', user, command: commandId });
+      if (remote.sessionId !== undefined) {
+        if (request.op !== 'sessions.create') throw commandError('invalid_request');
+        parseRemoteCommand({ op: 'sessions.create', params: { project: 'remote', sessionId: remote.sessionId } });
+      }
       const retained = this.hasRemoteRequest(request.id);
       if (remote.requireRetained && !retained) throw commandError('indeterminate');
       if ((this.stopped || this.sealed || this.stopping()) && !retained) throw commandError('busy');
@@ -166,14 +171,14 @@ export class SessionServer {
       }
       if (remote.requireRetained && !this.hasRemoteRequest(request.id)) throw commandError('indeterminate');
       admissionAttempt = true;
-      // A user's retries retain their identity across reconnects and token rotation, unlike a connection or host token.
-      return await this.admission.submit(value, `web:${user}`, admitted => {
+      // Retries retain their identity across reconnects and token rotation, unlike a connection or host token.
+      return await this.admission.submit(value, user ? `web:${user}` : `remote:${commandId}`, admitted => {
         if (this.stopped || this.sealed || this.stopping()) throw commandError('busy');
         if (request.op === 'interaction.answer') {
           if (!this.options.broker?.dispatchRemote) throw commandError('unavailable');
-          return this.options.broker.dispatchRemote(admitted, { user, command: commandId, interactionKinds: remote.interactionKinds ?? [] });
+          return this.options.broker.dispatchRemote(admitted, { ...(user ? { user } : {}), command: commandId, interactionKinds: remote.interactionKinds ?? [] });
         }
-        return this.commands.prepare(admitted, { origin, ...(rootPreparation ? { rootPreparation } : {}) });
+        return this.commands.prepare(admitted, { origin, remote: { ...(remote.sessionId ? { sessionId: remote.sessionId } : {}) }, ...(rootPreparation ? { rootPreparation } : {}) });
       });
     } catch (error) {
       const dispatched = admissionAttempt && this.options.registry.options.store.request(value.id)?.phase === 'dispatch_intent';

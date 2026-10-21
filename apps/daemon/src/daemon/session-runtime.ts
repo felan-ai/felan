@@ -27,6 +27,7 @@ export interface SessionEnvironmentRequest {
 export interface SessionCompositionRequest {
   readonly environment: SessionEnvironment;
   readonly session: SessionRef;
+  readonly execution?: { readonly label?: string };
   readonly modelRuntime: ModelRuntime;
   readonly logger?: Logger;
   readonly homeDir?: string;
@@ -61,6 +62,8 @@ export interface SessionRuntime {
   readonly secretStorage: ProviderSecretStorage;
   createHostServices(request: HostServicesRequest): Promise<HostServices>;
   readonly processAdapter?: ProcessAdapter;
+  /** Root runs are already admitted while waiting; abort must reject, and the returned release runs on settlement. */
+  acquireRun?(session: SessionRef, signal: AbortSignal): Promise<() => void>;
   projectMessage?(entry: SessionEntry, message: Message): Message;
   openUrl?(runtime: AgentRuntime, url: string, signal: AbortSignal): Promise<void>;
   prepareOpenInteraction?(runtime: AgentRuntime, request: Interaction['request'], assertOwnsPath: (path: string) => string, signal: AbortSignal): () => Promise<void>;
@@ -69,6 +72,7 @@ export interface SessionRuntime {
   validateConfiguration(environment: SessionEnvironment, packages: readonly string[], overrides: readonly ExtensionConfigOverride[]): Promise<void>;
   prepare(request: SessionCompositionRequest): Promise<SessionComposition>;
   bindExtensions?(context: SessionExtensionContext, port: SessionExecutionPort): Promise<SessionExtensionBindings>;
+  wrapWorkerStream?(session: SessionRef): SessionExtensionBindings['wrapStreamFunction'];
 }
 
 export const SESSION_RUNTIME_SERVICE = defineServiceContract<SessionRuntime>('felan.session-runtime', 1);

@@ -89,8 +89,12 @@ export async function createWorkerBinding(request: SessionOpenRequest, manager: 
   if (!request.parentSessionId || !request.rootSessionId) throw new Error('Worker requires a registered parent scope.');
   const runtimeRequest = createRuntimeStorageRequest(request.resources.cwd, request.resources.agentDir, request.rootSessionId);
   const runtime = options.wrapRuntime?.(worker.runtime, runtimeRequest) ?? worker.runtime;
+  const wrapStreamFunction = options.composition.wrapWorkerStream?.({
+    id: manager.getSessionId(), root: request.rootSessionId, parent: request.parentSessionId,
+  });
   const factory = createAgentCoreSessionRuntimeFactory(async () => ({ runtime, modelRuntime: worker.modelRuntime,
     settingsManager: worker.settingsManager, model: worker.model,
+    ...(wrapStreamFunction ? { wrapStreamFunction } : {}),
     ...(worker.thinkingLevel === undefined ? {} : { thinkingLevel: worker.thinkingLevel }),
     extensionPackages: [], importExtension: async () => { throw new Error('Worker extension discovery is disabled.'); },
     extensionPaths: request.extensionPaths ?? [],

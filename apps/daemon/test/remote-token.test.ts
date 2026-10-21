@@ -25,6 +25,15 @@ beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
 afterEach(() => { for (const value of sources.splice(0)) value.stop(); vi.useRealTimers(); });
 
 describe('HostTokenSource', () => {
+  it('exchanges a team API key without requiring a user identity in the host response', async () => {
+    const team = { ...body(), host: { id, teamId: id } };
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response(200, team));
+    const value = source(fetcher, { pat: 'bzy_team_fixture_secret' });
+    expect(await value.token()).toBe(team.token);
+    expect(fetcher.mock.calls[0]![1]?.headers).toMatchObject({ Authorization: 'Bearer bzy_team_fixture_secret' });
+    expect(value.current()?.host).toEqual({ id, teamId: id });
+  });
+
   it('validates the exchange request, caches, truncates by UTF-8 bytes and exposes no token in current()', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(response());
     const value = source(fetcher, { name: '🌍'.repeat(40) });
@@ -205,7 +214,7 @@ describe('HostTokenSource', () => {
     expect(() => source(vi.fn(), { apiUrl })).toThrow('Remote API URL must use HTTPS');
   });
 
-  it.each(['http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000'])('allows local URL %s', apiUrl => {
+  it.each(['http://localhost:3000', 'http://127.0.0.1:3000', 'http://[::1]:3000', 'http://host.docker.internal:3000'])('allows local URL %s', apiUrl => {
     expect(() => source(vi.fn(), { apiUrl })).not.toThrow();
   });
 

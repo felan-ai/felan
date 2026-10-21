@@ -78,6 +78,7 @@ export type ControlContinuation = Static<typeof ControlContinuationSchema>;
 export const ControlResourceSchema = Type.Object({
   id: IdSchema, session: IdSchema, root: IdSchema, kind: enumOf(['foreground', 'pty', 'detached'] as const),
   state: enumOf(['running', 'exited', 'interrupted', 'missing', 'reconciling'] as const),
+  // Process references belong to the provider's runtime namespace, not the daemon's local stores.
   reference: Type.Optional(AbsolutePathSchema), pid: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483_647 })),
   startIdentity: Type.Optional(text(128, 1)), updatedAt: CounterSchema,
 });

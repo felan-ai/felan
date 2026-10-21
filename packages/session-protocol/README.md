@@ -5,11 +5,13 @@ schemas, inferred types, bounded validation and JSON-line framing. Its sole
 runtime dependency is `typebox@1.1.38`. It imports no Node, Pi, Agent Core, TUI,
 ACP or platform APIs and can run directly in a browser.
 
-0.1.0 was the first public release. 0.2.0 adds the `channel` origin, which
-readers on 0.1.x reject, so it is a breaking minor. Releases follow
+0.1.0 was the first public release. 0.2.0 adds the `channel` origin. 0.3.0 adds
+team-host identities, remote `follow_up`, client-selected remote session IDs
+and automation command origins. Older readers reject these contracts, so they
+are breaking minors. Releases follow
 [`docs/maintainers/releasing.md`](../../docs/maintainers/releasing.md). The only public subpath is `.`; no daemon or profile
 implementation is exported here. Breaking changes require the next minor;
-compatible fixes stay within `0.2.x`. Wire, stored-row and mismatch-control
+compatible fixes stay within `0.3.x`. Wire, stored-row and mismatch-control
 versions are independent constants, initially `1`.
 
 ## Boundary API
@@ -283,11 +285,22 @@ responsibilities, not filesystem functionality in this package.
 
 ## Remote commands and channel origins
 
+Personal-host tokens carry `host.userId` and `felan.user_id`; team-host tokens
+omit those fields. Hosts, not these schemas, enforce requester authorization.
+
 Platform commands run with origin `{ kind: 'web', user, command }`. A claimed
-`RemoteCommandRow` may carry `channel: { provider }` for a command started from a
-chat channel; the host then records `{ kind: 'channel', provider, user, command }`
-on runs, queue items and messages instead. `ChannelProviderSchema` limits
-`provider` to `^[a-z][a-z0-9_-]*$`, at most 64 bytes. Remote and local `sessions.create`
+`RemoteCommandRow` may omit `requester` and carry `automation: { source }` or
+`channel: { provider }`. Automation commands use `{ kind: 'automation', source }`;
+`AutomationSourceSchema` bounds a nonempty source to 256 UTF-8 bytes. Channel
+commands use `{ kind: 'channel', provider, user?, command }` on runs, queue items
+and messages. `ChannelProviderSchema` limits `provider` to
+`^[a-z][a-z0-9_-]*$`, at most 64 bytes. Web origins still require `user`.
+
+`RemoteOperationSchema` includes `follow_up` with `PromptSchema` params and the
+same `{ itemId }` or `{ status: 'handled' }` result as local follow-ups. Remote
+`sessions.create` accepts an optional lowercase UUID `sessionId`; supporting
+hosts advertise `sessions.create.session-id` in `capabilities.features`.
+Remote and local `sessions.create`
 accept optional `instructions` (at most `LIMITS.instructionsBytes`, 16 KiB) that
 the host appends to that root session's system prompt; child sessions do not
 inherit them. A host advertises this with

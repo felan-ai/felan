@@ -1,15 +1,16 @@
 # Remote connector
 
 The daemon's remote connector publishes selected local sessions to Felan and
-accepts commands from their owner on the web. Local session execution and
+accepts platform-authorized commands. Personal hosts require the token's owner;
+team hosts accept any requester or no requester. Local session execution and
 persistence remain in the daemon; losing the connection does not stop local
-work. The connector exchanges a personal access token (PAT) for a scoped host
+work. The connector exchanges a personal access token (PAT) or team API key for a scoped host
 token and communicates with the platform through RPCs and private Realtime
 channels.
 
 - Publishes a session index and a bounded, chronological copy of shared history.
 - Broadcasts live text without storing the text stream on the platform.
-- Accepts remote create, prompt, steer, cancel and interaction-answer commands
+- Accepts remote create, prompt, steer, follow-up, cancel and interaction-answer commands
   through normal daemon admission.
 - Keeps a durable outbox and command journal for disconnects and restarts.
 
@@ -31,6 +32,59 @@ or settings files. Host tokens are cached in memory and renewed at `refreshAt`.
 `/remote logout` removes the saved PAT and stops the connector. It does not delete
 local sessions, the outbox or previously published history. Login and logout are
 daemon-wide for this agent directory, not per TUI attachment.
+
+### Headless team hosts
+
+A managing package can supply a file-backed secret-storage provider whose
+`read('remote', 'pat')` returns a team API key (`bzy_team_…`). The connector starts
+automatically with any nonempty stored credential; no `/remote login`, TTY or
+OS keyring is required. A token response without `host.userId` identifies a team
+host; requester authorization belongs to the platform.
+
+Set an optional authoritative `remote` section in `host.json`:
+
+```json
+{
+  "remote": {
+    "share": "all",
+    "projects": [
+      { "id": "workspace", "name": "Team workspace", "path": "/home/agent/workspace" }
+    ]
+  }
+}
+```
+
+`share` is `all` or `on-request`. Project IDs and absolute normalized paths must
+be unique. These settings override, but do not overwrite, the connector's stored
+sharing default and projects. `/remote share`, `/remote open` and `/remote close`
+are refused while this section is present. Remove it and restart to use the
+stored settings again. Per-session sharing choices remain unchanged.
+
+Custom managers launch with `runDaemonProcess(argv, manager)` from
+`@felan-ai/daemon/daemon-bootstrap`; supply `packageName`, `version`, a file-URL
+`resolveFrom`, `resolveProvider` and `packagedDefaultPath`. Use `--foreground`
+and `--host-config /absolute/path/host.json` (or put `host.json` under the
+selected agent directory). The first argument is the serialized daemon target:
+
+```ts
+await runDaemonProcess([
+  JSON.stringify({ kind: 'production', agentDir: '/home/agent/.felan/agent' }),
+  '--foreground',
+], {
+  packageName: '@felan-cloud/agent',
+  version: '1.0.0',
+  resolveFrom: import.meta.url,
+  resolveProvider: specifier => import.meta.resolve(specifier),
+  packagedDefaultPath,
+});
+```
+
+`felan daemon foreground` runs the default manager.
+The local provider factories remain available from
+`@felan-ai/felan/providers/session-runtime`, `/models` and `/secrets`, allowing
+a custom manager to replace secret storage without replacing session composition.
+Session `prepare` and `bindExtensions` receive `execution?: { label?: string }`;
+child execution labels are the subagent definition IDs.
 
 ### API URL
 
@@ -178,28 +232,34 @@ The connector advertises these operations:
 
 | Operation | Behavior |
 | --- | --- |
-| `sessions.create` | Resolve an opened project ID, create a shared root using host-configured external extensions without a trust prompt or explicit paths, apply optional `instructions` to that root's system prompt, optionally submit an initial prompt; successful remote result is `{ sessionId }`, the same as local create |
+| `sessions.create` | Resolve an opened project ID, create a shared root using optional `sessionId` and host-configured external extensions without a trust prompt or explicit paths, apply optional `instructions` to that root's system prompt, optionally submit an initial prompt; successful remote result is `{ sessionId }`, the same as local create |
 | `prompt` | Submit a prompt through daemon admission |
 | `steer` | Steer through the normal session operation |
+| `follow_up` | Queue a follow-up during an active run; start a new prompt turn when idle (`{ status: 'handled' }`) |
 | `cancel` | Cancel the current run, optionally matching a run ID |
 | `interaction.answer` | Answer an eligible session interaction through the broker; first valid answer wins |
 
-Commands other than create require a shared session. They are attributed with
-`{ kind: 'web', user, command }` provenance. A claimed row whose
-`channel_provider` is set came from a chat channel; its runs, queue items and
-messages carry `{ kind: 'channel', provider, user, command }` instead, and the
-provider is part of the command's journal identity. Claims do not bypass daemon
-admission or interaction validation.
+Commands other than create require a shared session. An `automation_source`
+produces `{ kind: 'automation', source }` provenance. Otherwise a claimed row
+with `channel_provider` produces `{ kind: 'channel', provider, user?, command }`.
+All other commands require a requester and produce `{ kind: 'web', user, command }`.
+Requester, channel and automation source participate in journal identity. Claims
+do not bypass daemon admission or interaction validation.
+
+The `sessions.create.session-id` capability permits an optional lowercase UUID
+`sessionId`. The daemon creates that exact root identity and rejects an identity
+already registered locally; ordinary command retries return their retained result.
 
 Create `instructions` (at most 16 KiB) are appended to that root's base system
 prompt, after any host `APPEND_SYSTEM.md`, so every turn and compaction keep
 them. They are stored in the session profile, survive eviction, reload and daemon
 restarts, and are copied by clone and fork. Child executions do not inherit
 them. The connector advertises this with
-`capabilities.features: ['sessions.create.instructions']`; a platform sends
+`capabilities.features: ['sessions.create.instructions', 'sessions.create.session-id']`; a platform sends
 `instructions` only to hosts that advertise it, because older hosts drop the field.
 
-The PAT owner may answer session-scoped owner-authority interactions. Host-scoped
+An authorized personal-host owner or team-host caller may answer session-scoped
+owner-authority interactions. Host-scoped
 questions and `authority: 'local-console'` questions cannot be answered remotely.
 Local-console interactions may appear in published history for display, without
 remote answer authority.

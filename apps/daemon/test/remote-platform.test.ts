@@ -130,6 +130,21 @@ describe('PlatformClient', () => {
     await platform.close();
   });
 
+  it('maps nullable requesters and automation sources and validates their boundaries', async () => {
+    const f = setup();
+    const row = { id, host_id: id, session_id: id, requester_user_id: null, op: 'follow_up', params: { text: 'hi' }, state: 'claimed',
+      created_at: '2026-10-15T00:00:00Z', expires_at: '2026-10-15T00:01:00Z', automation_source: 'nightly' };
+    f.rpc.mockResolvedValue({ data: [row, { ...row, requester_user_id: other, channel_provider: 'slack' },
+      { ...row, automation_source: '' }, { ...row, requester_user_id: 'invalid' }], error: null });
+    const platform = await PlatformClient.connect(f.source, { clientFactory: f.factory });
+    const [automation, channel, invalidSource, invalidUser] = await platform.claim();
+    expect(automation).toMatchObject({ automation: { source: 'nightly' }, command: { op: 'follow_up' } });
+    expect(automation).not.toHaveProperty('requester');
+    expect(channel).toMatchObject({ requester: other, channel: { provider: 'slack' }, automation: { source: 'nightly' } });
+    expect(invalidSource).toHaveProperty('invalid'); expect(invalidUser).toHaveProperty('invalid');
+    await platform.close();
+  });
+
   it('sanitizes RPC and thrown transport errors', async () => {
     const f = setup();
     const platform = await PlatformClient.connect(f.source, { clientFactory: f.factory });

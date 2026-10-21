@@ -279,11 +279,21 @@ export class SessionProjection {
     }
     if (event.type === 'message_start') {
       const observed = [...this.queued].find(([, entry]) => entry.message === event.message);
-      if (observed) this.queued.delete(observed[0]);
+      if (observed) {
+        // Complete coalesced output under its old origin before the queued turn begins.
+        this.refresh();
+        this.queued.delete(observed[0]);
+        const origin = observed[1].item.origin;
+        this.setOrigin(origin);
+        const run = { ...this.options.store.sessionMetadata(this.id).run, turnId: randomUUID(), origin };
+        this.publish({ type: 'run.updated', run }, { run });
+      }
     }
     if (event.type === 'agent_start') {
       const previous = this.options.store.sessionMetadata(this.id).run;
-      const run = { state: 'running' as const, id: (previous.state === 'running' || previous.state === 'waiting') && previous.id ? previous.id : randomUUID(), ...(this.origin ? { origin: this.origin } : {}) };
+      const continuesRun = (previous.state === 'running' || previous.state === 'waiting') && previous.id;
+      const run = { state: 'running' as const, id: continuesRun || randomUUID(),
+        ...(continuesRun && previous.turnId ? { turnId: previous.turnId } : {}), ...(this.origin ? { origin: this.origin } : {}) };
       this.publish({ type: 'run.updated', run }, { run });
       this.runtimeRunId = run.id;
     }

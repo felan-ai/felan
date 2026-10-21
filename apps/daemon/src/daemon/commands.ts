@@ -24,7 +24,7 @@ export async function forkSession(
 }
 
 export interface RootPreparation { cwd: string; extensionPaths: readonly string[] }
-export interface CommandContext { origin: Origin; signal?: AbortSignal; rootPreparation?: RootPreparation; invalidateAfterResponse?(revisions: Readonly<Record<string, number>>): void }
+export interface CommandContext { origin: Origin; signal?: AbortSignal; remote?: { sessionId?: string }; rootPreparation?: RootPreparation; invalidateAfterResponse?(revisions: Readonly<Record<string, number>>): void }
 export interface RemoteControl {
   status(): OperationResult<'remote.status'>;
   configure(params: OperationParams<'remote.configure'>): Promise<OperationResult<'remote.configure'>>;
@@ -178,6 +178,7 @@ export class SessionCommands {
       }
       case 'sessions.create': {
         if (request.params.extensions !== undefined && !localClient) throw commandError('forbidden');
+        if (context.remote?.sessionId && registry.options.store.findSessionMetadata(context.remote.sessionId)) throw commandError('request_conflict', 'Session identity is already registered.');
         const overrides = request.params.config && Object.keys(request.params.config).length ? configuration.sessionOverrides(request.params.config) : [];
         const model = request.params.model && await this.model(request.params.model);
         if (!request.params.model && !(await this.options.models.getAvailable()).length) throw commandError('authentication_required', 'No model is available. Log in with /login or configure a provider API key.');
@@ -185,7 +186,7 @@ export class SessionCommands {
         if (context.rootPreparation && context.rootPreparation.cwd !== resources.cwd) throw commandError('target_mismatch');
         registry.assertClientSessionDirectory(resources);
         const extensionPaths = context.rootPreparation?.extensionPaths ?? request.params.extensions;
-        const creation = { cwd: resources.cwd, target: { kind: 'new' as const }, clientRoot: true as const,
+        const creation = { cwd: resources.cwd, target: { kind: 'new' as const, ...(context.remote?.sessionId ? { id: context.remote.sessionId } : {}) }, clientRoot: true as const,
           sessionDir: resources.sessionDir, ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } as const } : {}), ...(model ? { model } : {}),
           ...(request.params.thinking ? { thinkingLevel: request.params.thinking } : {}), ...(extensionPaths ? { extensionPaths } : {}),
           ...(overrides.length ? { extensionConfigOverrides: overrides } : {}), ...(request.params.instructions ? { instructions: request.params.instructions } : {}) };
@@ -320,13 +321,7 @@ export class SessionCommands {
         return { response };
       }
       case 'prompt': {
-        const session = registry.binding(request.session)!.runtime.session;
-        const model = session.model;
-        if (!model || !(await session.modelRuntime.getAvailable()).some(candidate => candidate.provider === model.provider && candidate.id === model.id)) throw commandError('authentication_required', model ? `Model ${model.provider}/${model.id} is not available. Log in with /login or choose another model.` : 'No model is selected. Choose one with /model.');
-        return this.start(request, context.origin, session => {
-          const input = promptInput(request.params);
-          return session.prompt(input.text, { images: input.images, source: 'rpc', expandPromptTemplates: false });
-        });
+        return this.prompt(request, context.origin);
       }
       case 'compact': {
         if (request.params.method && request.params.method !== 'summary') throw commandError('unavailable');
@@ -335,6 +330,7 @@ export class SessionCommands {
       case 'command.invoke': {
         const target = registry.projection(request.session).catalog().commands.find(item => item.name === request.params.name);
         if (!target) throw commandError('unavailable');
+        if (registry.isRunPending(request.session)) throw commandError('busy', 'Wait for the current run to start.');
         const invoke = (session: AgentSession) => session.prompt(`/${request.params.name}${request.params.arguments ? ` ${request.params.arguments}` : ''}`, { source: 'rpc' });
         // Like Pi, extension commands execute immediately during an active run; skill commands still wait for it.
         const active = registry.options.store.session(request.session).run;
@@ -351,6 +347,9 @@ export class SessionCommands {
         return this.start(request, context.origin, invoke);
       }
       case 'steer': case 'follow_up': {
+        if (request.op === 'follow_up' && context.remote && registry.binding(request.session)!.runtime.session.isIdle) {
+          return this.prompt(request, context.origin);
+        }
         const projection = registry.projection(request.session);
         if (!projection.canObserveQueue) throw commandError('unavailable');
         const work = registry.mutateAdmitted(request.id, request.session, async ({ session, assertCurrent }) => {
@@ -409,15 +408,26 @@ export class SessionCommands {
 
   private start(request: ClientEnvelope & { session: string }, origin: Origin, effect: (session: AgentSession) => Promise<unknown>): AdmissionOutcome {
     const { registry } = this.options;
-    let started = false;
-    const work = registry.runAdmitted(request.id, request.session, origin, session => { started = true; return effect(session); });
-    if (!started) return { response: work.then(() => { throw commandError('unavailable'); }) };
-    const runId = registry.options.store.session(request.session).run.id!;
-    void work.catch(() => {
+    const previousRunId = registry.options.store.session(request.session).run.id;
+    const work = registry.runAdmitted(request.id, request.session, origin, effect);
+    const runId = registry.options.store.session(request.session).run.id;
+    if (!runId || runId === previousRunId) return { response: work.then(() => { throw commandError('unavailable'); }) };
+    void work.catch((error: unknown) => {
+      if (error instanceof Error && error.name === 'AbortError') return;
       if (!registry.binding(request.session)) return;
       try { registry.projection(request.session).setPresentation({ id: 'run-error', kind: 'notification', level: 'error', text: 'Run failed. Inspect the session before retrying.' }); } catch {}
     });
-    return { response: accepted(request, request.op === 'command.invoke' ? { runId, status: 'started' } : { runId }) };
+    return { response: accepted(request, request.op === 'command.invoke' ? { runId, status: 'started' } : request.op === 'follow_up' ? { status: 'handled' } : { runId }) };
+  }
+
+  private async prompt(request: Extract<ClientEnvelope, { op: 'prompt' | 'follow_up' }>, origin: Origin): Promise<AdmissionOutcome> {
+    const session = this.options.registry.binding(request.session)!.runtime.session;
+    const model = session.model;
+    if (!model || !(await session.modelRuntime.getAvailable()).some(candidate => candidate.provider === model.provider && candidate.id === model.id)) throw commandError('authentication_required', model ? `Model ${model.provider}/${model.id} is not available. Log in with /login or choose another model.` : 'No model is selected. Choose one with /model.');
+    return this.start(request, origin, session => {
+      const input = promptInput(request.params);
+      return session.prompt(input.text, { images: input.images, source: 'rpc', expandPromptTemplates: false });
+    });
   }
 
   private async model(reference: OperationParams<'set_model'>, session?: AgentSession) {

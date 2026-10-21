@@ -50,7 +50,7 @@ describe('remote publication content', () => {
     }
   });
   it('redacts provider keys, PATs, JWTs and Bearer headers in text, thinking, results and nested argument leaves', () => {
-    const secrets = ['sk-secret123456789', 'fln_pat_test123456789', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhIn0.signature', 'Bearer abc123456789'];
+    const secrets = ['sk-secret123456789', 'fln_pat_test123456789', 'bzy_team_test123456789', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhIn0.signature', 'Bearer abc123456789'];
     const text = secrets.join(' ');
     const change = publishableChange({ type: 'message.completed', message: {
       id: 'm', entryId: 'e', role: 'assistant', timestamp: 1,

@@ -7,6 +7,7 @@ import type { ProviderSecretStorage } from '../daemon/provider.js';
 import type { RemoteDatabase } from '../daemon/persistence.js';
 import type { SessionRegistry } from '../daemon/registry.js';
 import type { SessionServer } from '../daemon/server.js';
+import type { HostConfig } from '../daemon/host-config.js';
 import type { ProjectionOutput } from '../daemon/projection.js';
 import { commandError } from '../daemon/commands.js';
 import { redact } from '../logger.js';
@@ -14,17 +15,17 @@ import { DAEMON_VERSION } from '../version.js';
 import { retryDelay, schedule, systemClock, type RemoteClock, type TimerHandle } from './backoff.js';
 import { publicationBatches } from './batch.js';
 import { RemoteCommandJournal } from './command-journal.js';
-import { RemoteCommandExecutor } from './commands.js';
+import { RemoteCommandExecutor, type RemoteHostIdentity } from './commands.js';
 import { publishableChange, publishedEvent, publishedSession } from './content.js';
 import { RemoteOutbox, RemoteOutboxCapacityError, type OutboxItem } from './outbox.js';
 import { PlatformClient, PlatformError } from './platform.js';
 import { sessionShared, setSessionSharing, webCreatedSession, type SharingInput } from './sharing.js';
 import { RemoteTextSanitizer } from './text.js';
 import { RemoteIntegrityError, RemoteStorageError, RemoteStore, type RemoteSessionRecord } from './state.js';
-import { HostTokenSource, HostTokenExchangeError, type HostTokenProvider, type HostTokenSourceOptions } from './token.js';
+import { HostTokenSource, HostTokenExchangeError, PLAIN_HTTP_API_HOSTS, type HostTokenInfo, type HostTokenProvider, type HostTokenSourceOptions } from './token.js';
 
 export const REMOTE_CAPABILITIES: HostCapabilities = {
-  operations: ['sessions.create', 'prompt', 'steer', 'cancel', 'interaction.answer'],
+  operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'],
   interactionKinds: [...INTERACTION_KINDS],
   features: [...REMOTE_FEATURES],
 };
@@ -38,6 +39,7 @@ export interface RemoteConnectorOptions {
   server: Pick<SessionServer, 'submitRemote' | 'hasRemoteRequest'>;
   secretStorage: ProviderSecretStorage;
   owner: { assertCurrent(): void };
+  remote?: HostConfig['remote'];
   apiUrl?: string;
   name?: string;
   daemonVersion?: string;
@@ -71,6 +73,7 @@ export class RemoteConnector {
   private supported: RemoteStatus['supported'];
   private configured = false;
   private host: string | undefined;
+  private hostIdentity: RemoteHostIdentity | undefined;
   private token: ConnectorTokenSource | undefined;
   private platform: ConnectorPlatform | undefined;
   private generation = 0;
@@ -110,15 +113,15 @@ export class RemoteConnector {
     this.capabilities = structuredClone(options.capabilities ?? REMOTE_CAPABILITIES);
     this.store = new RemoteStore(options.database);
     this.outbox = new RemoteOutbox(options.database);
-    this.lastStatus = { configured: false, share: this.store.settings().share, state: 'off', apiUrl: this.apiOrigin(), projects: [], pending: 0, sessions: 0 };
+    this.lastStatus = { configured: false, share: this.settings().share, state: 'off', apiUrl: this.apiOrigin(), projects: [], pending: 0, sessions: 0 };
     options.owner.assertCurrent();
     const journal = new RemoteCommandJournal(options.database);
     this.executor = new RemoteCommandExecutor({
       submit: (request, remote) => options.server.submitRemote(request, remote),
       lookup: id => options.server.hasRemoteRequest(id),
-      owner: () => this.token?.current()?.host.userId,
+      hostIdentity: () => this.hostIdentity,
       clock: this.clock,
-      projects: () => this.store.settings().projects,
+      projects: () => this.settings().projects,
       isShared: id => this.isShared(id),
       markWebCreated: id => {
         options.owner.assertCurrent();
@@ -179,7 +182,7 @@ export class RemoteConnector {
     }
   }
   private collectStatus(): RemoteStatus {
-    const settings = this.store.settings();
+    const settings = this.settings();
     const issues: string[] = [];
     const omissions: string[] = [];
     for (const id of this.store.sessions()) {
@@ -220,6 +223,9 @@ export class RemoteConnector {
           : value?.action === 'open_project' ? 'Remote project path must be absolute and its name must be 1–256 bytes.' : 'Invalid remote configuration.';
         throw commandError('invalid_request', message);
       }
+      if (this.options.remote && ['share', 'open_project', 'close_project'].includes(params.action)) {
+        throw commandError('forbidden', 'Remote sharing and projects are managed by host.json.');
+      }
       if (params.action === 'login' && params.apiUrl !== undefined) this.validateApiUrl(params.apiUrl);
       try {
         if (params.action === 'login') {
@@ -237,19 +243,9 @@ export class RemoteConnector {
           this.state = 'off'; this.reason = undefined; this.message = undefined; this.supported = undefined;
         } else {
           if (params.action === 'share') {
-            const rows = this.options.registry.list(); const share = this.store.settings().share;
-            const before = new Map(rows.map(row => [row.id, sessionShared(this.sharing(row.id, row.root, share))]));
+            const previous = this.settings().share;
             this.store.configure({ share: params.share });
-            for (const row of rows) {
-              const shared = sessionShared(this.sharing(row.id, row.root, params.share));
-              if (before.get(row.id) && !shared) this.markUnshared(row.id);
-              else if (shared) {
-                const record = this.store.session(row.id);
-                if (!before.get(row.id) && record?.backfilled) this.store.setSession(row.id, { ...record, sharedPending: true, unsharedPending: false });
-                this.safelyBackfill(row.id);
-              }
-            }
-            this.wakePublish();
+            this.applySharing(previous, params.share);
           } else {
             if (params.action === 'open_project') this.store.addProject(params.path, params.name);
             else this.store.removeProject(params.id);
@@ -275,7 +271,7 @@ export class RemoteConnector {
     const root = this.currentRootId(session);
     if (!root) throw commandError('not_found');
     const children = this.options.registry.list().filter(row => row.root === root);
-    const share = this.store.settings().share;
+    const share = this.settings().share;
     const before = new Map(children.map(row => [row.id, sessionShared(this.sharing(row.id, root, share))]));
     let transition;
     try { transition = setSessionSharing(this.sharing(session, root, share), shared); }
@@ -307,13 +303,31 @@ export class RemoteConnector {
     this.rootIds.set(session, row.root);
     return row.root;
   }
-  private sharing(session: string, root = this.rootId(session), share = this.store.settings().share): SharingInput {
+  private settings() { return { ...this.store.settings(), ...this.options.remote }; }
+  private applySharing(previous: SharingInput['share'], next: SharingInput['share']): void {
+    if (previous !== next) {
+      const rows = this.options.registry.list();
+      const before = new Map(rows.map(row => [row.id, sessionShared({ ...this.sharing(row.id, row.root, previous), configured: true })]));
+      for (const row of rows) {
+        const shared = sessionShared({ ...this.sharing(row.id, row.root, next), configured: true });
+        if (before.get(row.id) && !shared) this.markUnshared(row.id);
+        else if (shared) {
+          const record = this.store.session(row.id);
+          if (!before.get(row.id) && record?.backfilled) this.store.setSession(row.id, { ...record, sharedPending: true, unsharedPending: false });
+          this.safelyBackfill(row.id);
+        }
+      }
+      this.wakePublish();
+    }
+    if (this.store.settings().appliedShare !== next) this.store.configure({ appliedShare: next });
+  }
+  private sharing(session: string, root = this.rootId(session), share = this.settings().share): SharingInput {
     const record = this.store.session(session);
     const rootRecord = root && root !== session ? this.store.session(root) : undefined;
     return { configured: this.configured, share, ...(record ? { record } : {}), ...(rootRecord ? { rootRecord } : {}) };
   }
   private record(session: string, share?: SharingInput['share']): RemoteSessionRecord {
-    return this.store.session(session) ?? { shared: (share ?? this.store.settings().share) === 'all', explicit: false, origin: 'local', backfilled: false, unsharedPending: false };
+    return this.store.session(session) ?? { shared: (share ?? this.settings().share) === 'all', explicit: false, origin: 'local', backfilled: false, unsharedPending: false };
   }
   private markUnshared(session: string): void {
     this.text.discard(session);
@@ -331,7 +345,7 @@ export class RemoteConnector {
     try { this.validateApiUrl(this.apiUrl()); return new URL(this.apiUrl()).origin; }
     catch {
       this.state = 'offline'; this.reason = 'unavailable';
-      this.message = 'Remote API URL is invalid. Run /remote login with a valid HTTPS URL (HTTP is allowed only on loopback).';
+      this.message = 'Remote API URL is invalid. Run /remote login with a valid HTTPS URL (HTTP is allowed only for local hosts).';
       // Status requires an HTTP origin even when the configured endpoint cannot be parsed.
       return 'https://invalid.invalid';
     }
@@ -341,13 +355,13 @@ export class RemoteConnector {
       const url = new URL(value);
       if (url.username || url.password || url.search || url.hash || !['https:', 'http:'].includes(url.protocol)
         || /[\\\u0000-\u0020\u007f-\u009f]/u.test(value)
-        || url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error();
-    } catch { throw commandError('invalid_request', 'Remote API URL must use HTTPS (HTTP is allowed only on loopback), without credentials, query or fragment.'); }
+        || url.protocol === 'http:' && !PLAIN_HTTP_API_HOSTS.includes(url.hostname)) throw new Error();
+    } catch { throw commandError('invalid_request', 'Remote API URL must use HTTPS (HTTP is allowed only for local hosts), without credentials, query or fragment.'); }
   }
   private registration(): HostRegistration {
     return { name: Array.from(this.options.name ?? hostname()).reduce((name, char) => Buffer.byteLength(name + char) <= 128 ? name + char : name, ''),
       daemonVersion: this.options.daemonVersion ?? DAEMON_VERSION, rowSchemaVersion: ROW_SCHEMA_VERSION,
-      capabilities: this.capabilities, projects: this.store.settings().projects };
+      capabilities: this.capabilities, projects: this.settings().projects };
   }
   private register(platform: ConnectorPlatform): Promise<void> {
     const generation = this.generation;
@@ -364,17 +378,28 @@ export class RemoteConnector {
   private login(pat: string): void {
     if (this.stopped) return;
     this.configured = true; this.state = 'connecting'; this.reason = undefined; this.message = undefined; this.supported = undefined; this.attempt = 0;
+    this.hostIdentity = undefined;
     this.reauthorizedPublications.clear();
     try {
       try { this.validateApiUrl(this.apiUrl()); }
       catch { this.apiOrigin(); return; }
+      const stored = this.store.settings();
+      this.applySharing(stored.appliedShare ?? stored.share, this.settings().share);
       this.token = (this.options.tokenSource ?? (options => new HostTokenSource(options)))({
         pat, apiUrl: this.apiUrl(), installId: this.store.settings().installId,
         daemonVersion: this.options.daemonVersion ?? DAEMON_VERSION, name: this.options.name ?? hostname(), clock: this.clock,
       });
+      const token = this.token; const generation = this.generation;
+      token.onChange((_value, info) => {
+        if (this.current(generation) && this.token === token) this.rememberHostIdentity(info);
+      });
       for (const row of this.options.registry.list()) this.safelyBackfill(row.id);
       this.connect();
     } catch { this.state = 'offline'; this.reason = 'unavailable'; this.message = 'Remote connection settings are unavailable. Run /remote login to retry.'; }
+  }
+
+  private rememberHostIdentity(info: HostTokenInfo): void {
+    this.hostIdentity = info.host.userId === undefined ? { kind: 'team' } : { kind: 'personal', userId: info.host.userId };
   }
 
   private connect(): void {
@@ -391,8 +416,10 @@ export class RemoteConnector {
         try { platform = await this.bounded(opening); }
         catch (error) { abandoned = true; throw error; }
         if (!this.current(generation)) { await this.bounded(platform.close()).catch(() => {}); return; }
-        const host = token.current()?.host.id;
-        if (!host) throw new PlatformError('invalid', 'Host metadata is unavailable.');
+        const info = token.current();
+        if (!info) throw new PlatformError('invalid', 'Host metadata is unavailable.');
+        this.rememberHostIdentity(info);
+        const host = info.host.id;
         this.host = host;
         this.fenceRepairedSessions(host);
         await this.register(platform);

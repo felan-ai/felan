@@ -82,6 +82,7 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
     } });
   let installedServices: RegistryOptions['services'] | undefined;
   registry = new SessionRegistry({ owner, store, lifecycle: profile, now: options.now ?? (() => now), idleMs: 0,
+    ...(composition?.acquireRun ? { acquireRun: composition.acquireRun.bind(composition) } : {}),
     ...(options.processAdapter ?? composition?.processAdapter ? { processAdapter: options.processAdapter ?? composition!.processAdapter! } : {}),
     services: input => {
       if (options.servicesFactory) return (installedServices ??= options.servicesFactory(registry!))(input);

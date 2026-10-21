@@ -11,12 +11,13 @@ export const PromptAttachmentSchema = Type.Union([
   Type.Object({ type: Type.Literal('resource_link'), uri: unboundedText(1), name: Type.Optional(text(256)), mimeType: Type.Optional(text(256)), description: Type.Optional(unboundedText()) }),
 ]);
 export const PromptSchema = Type.Object({ text: unboundedText(), attachments: Type.Optional(Type.Array(PromptAttachmentSchema)) });
+export const AutomationSourceSchema = text(256, 1);
 export const ChannelProviderSchema = Type.String({ minLength: 1, maxLength: 64, pattern: '^[a-z][a-z0-9_-]*$', 'x-maxBytes': 64 });
 export const OriginSchema = Type.Union([
   Type.Object({ kind: ClientKindSchema, attachment: IdSchema }),
-  Type.Object({ kind: Type.Literal('automation'), source: IdSchema, parentRunId: Type.Optional(IdSchema) }),
+  Type.Object({ kind: Type.Literal('automation'), source: AutomationSourceSchema, parentRunId: Type.Optional(IdSchema) }),
   Type.Object({ kind: Type.Literal('web'), user: IdSchema, command: IdSchema }),
-  Type.Object({ kind: Type.Literal('channel'), provider: ChannelProviderSchema, user: IdSchema, command: IdSchema }),
+  Type.Object({ kind: Type.Literal('channel'), provider: ChannelProviderSchema, user: Type.Optional(IdSchema), command: IdSchema }),
 ]);
 export const QueueItemSchema = Type.Object({ id: IdSchema, kind: enumOf(['steer', 'follow_up'] as const), prompt: PromptSchema, origin: OriginSchema });
 export const RunSchema = Type.Object({

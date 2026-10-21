@@ -31,14 +31,23 @@ class Clock implements RemoteClock {
   }
 }
 
-async function fixture(overrides: Partial<RemoteConnectorOptions> = {}, recovery = false) {
+async function fixture(overrides: Partial<RemoteConnectorOptions> = {}, recovery = false,
+  tokenHost: HostTokenInfo['host'] = { id: host, teamId: user, userId: user }) {
   const f = await serverFixture(); const clock = new Clock();
   if (recovery) Object.defineProperty(f.store.database, 'rebuilt', { configurable: true, get: () => true });
+  const info: HostTokenInfo = { expiresAt: now + 100_000, refreshAt: now + 90_000,
+    host: tokenHost, supabase: { url: 'https://db.example.test', publishableKey: 'public' } };
+  const listeners = new Set<(token: string, info: HostTokenInfo) => void>();
+  const current = vi.fn<ConnectorTokenSource['current']>(() => info);
   const token: ConnectorTokenSource = {
-    token: vi.fn(async () => 'host-token'), cachedToken: () => 'host-token',
-    current: (): HostTokenInfo => ({ expiresAt: now + 100_000, refreshAt: now + 90_000,
-      host: { id: host, teamId: user, userId: user }, supabase: { url: 'https://db.example.test', publishableKey: 'public' } }),
-    onChange: () => () => {}, stop: vi.fn(), invalidate: vi.fn(),
+    token: vi.fn(async () => {
+      current.mockReturnValue(info);
+      for (const listener of listeners) listener('host-token', info);
+      return 'host-token';
+    }), cachedToken: () => current() ? 'host-token' : null, current,
+    onChange: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    stop: vi.fn(() => { current.mockReturnValue(undefined); listeners.clear(); }),
+    invalidate: vi.fn(() => { current.mockReturnValue(undefined); }),
   };
   let rows: ClaimedCommand[] = recovery ? [{ id: requestId(), requester: user, command: { op: 'cancel', session: f.root.sessionId, params: {} }, expiresAt: now + 60_000, state: 'claimed' }] : []; let notify = () => {};
   const platform = {
@@ -76,13 +85,38 @@ it('rejects stale claimed commands through the connector without dispatch', asyn
   expect(f.server.submitRemote).not.toHaveBeenCalled(); expect(f.journal.get(row.id)).toBeUndefined();
 });
 
-it('rejects a non-owner requester using the current host token owner', async () => {
+it('rejects a non-owner requester using the host identity', async () => {
   const f = await fixture(); const row = f.row(other);
   f.setRows([row]); f.notify(); await f.clock.tick();
   expect(f.platform.complete).toHaveBeenCalledWith(row.id, expect.objectContaining({ outcome: 'rejected', error: {
     code: 'forbidden', message: 'Remote commands require the host owner.', retryable: false,
   } }));
   expect(f.server.submitRemote).not.toHaveBeenCalled();
+});
+
+it.each(['invalidate', 'stop'] as const)('rejects a foreign requester when a personal host token is cleared by %s during a claim', async clear => {
+  const f = await fixture(); f.connector.setShared(f.root.sessionId, true); await f.clock.tick();
+  const row = f.row(other); f.setRows([row]);
+  f.platform.claim.mockImplementationOnce(async () => {
+    f.token[clear](); expect(f.token.current()).toBeUndefined(); return [row];
+  });
+  f.notify(); await f.clock.tick();
+  expect(f.platform.complete).toHaveBeenCalledWith(row.id, expect.objectContaining({ outcome: 'rejected', error: {
+    code: 'forbidden', message: 'Remote commands require the host owner.', retryable: false,
+  } }));
+  expect(f.server.submitRemote).not.toHaveBeenCalled();
+});
+
+it.each([undefined, other])('accepts a known team host requester %s after token invalidation', async requester => {
+  const f = await fixture({}, false, { id: host, teamId: user });
+  f.connector.setShared(f.root.sessionId, true); await f.clock.tick();
+  const row = { ...f.row(), requester }; f.setRows([row]);
+  f.platform.claim.mockImplementationOnce(async () => { f.token.invalidate(); return [row]; });
+  f.notify(); await f.clock.tick();
+  expect(f.token.current()).toBeUndefined();
+  expect(f.platform.complete).toHaveBeenCalledWith(row.id, expect.objectContaining({ outcome: 'accepted' }));
+  expect(f.server.submitRemote).toHaveBeenCalledOnce();
+  expect(f.server.submitRemote.mock.calls[0]![1].user).toBe(requester);
 });
 
 it('keeps the journal after transient fallback failure, continues later rows and retries without dispatching twice', async () => {

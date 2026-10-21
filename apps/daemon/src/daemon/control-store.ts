@@ -339,7 +339,6 @@ export class DaemonControlStore {
   }
   putResource(value: unknown): ControlCommit<ControlState['resources'][number]> {
     const resource = parseSchema(ControlResourceSchema, value);
-    if (resource.reference) resource.reference = this.owner.assertOwnsPath(resource.reference);
     return this.commit((state, touched, now) => {
       if (this.findSession(state, resource.session).root !== resource.root) throw new ControlStoreError('invalid_request', 'Resource root mismatch.');
       const previous = state.resources.find(item => item.id === resource.id);
@@ -478,7 +477,7 @@ export class DaemonControlStore {
     repaired.requests = repaired.requests.filter(request => this.validRequest(repaired, request));
     repaired.interactions = repaired.interactions.filter(interaction => this.validInteraction(repaired, interaction));
     repaired.continuations = repaired.continuations.filter(item => this.validContinuation(repaired, item));
-    repaired.resources = repaired.resources.filter(resource => this.validResource(repaired, resource) && (!resource.reference || this.usablePersistedPath(resource.reference)));
+    repaired.resources = repaired.resources.filter(resource => this.validResource(repaired, resource));
     return repaired;
   }
   /** Records directories outside the current roots for re-ownership; a path whose canonical identity changed is unusable. */

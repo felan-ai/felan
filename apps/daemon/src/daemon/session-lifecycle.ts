@@ -116,6 +116,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         await request.ownership.assertOwned(request.resources, target.identity);
         composition = await options.composition.prepare({
           environment: request.resources, session: identity, modelRuntime: models,
+          ...(request.execution ? { execution: request.execution } : {}),
           ...(options.homeDir ? { homeDir: options.homeDir } : {}),
           ...(options.createLogger ? { logger: options.createLogger(createRuntimeStorageRequest(cwd, options.agentDir, root).agentStorageRoot) } : {}),
           extensionPackages: options.extensionPackages, extensionConfigOverrides: request.extensionConfigOverrides ?? [], extensionPaths,
@@ -158,6 +159,8 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
         const context: SessionExtensionContext = {
           updateExtensionConfig, runtime, modelRuntime: models, settingsManager: prepared.settingsManager, sessionManager: manager,
           resources: request.resources, rootSessionId: root, policy: inheritExecutionPolicy(request.services.getExecutionPolicy()), extensionPackages: prepared.extensionPackages,
+          currentRun: () => request.services.currentRun(root),
+          ...(request.execution ? { execution: request.execution } : {}),
           extensionConfigs: composition.extensionConfigs, extensionConfigOverrides: prepared.extensionConfigOverrides ?? [],
           scopedModels: prepared.scopedModels ?? [], skillPaths: prepared.skillPaths ?? [], classifier: runtime.classifier, dynamicThinking: prepared.dynamicThinking ?? false,
           services: options.serviceRegistry, importExtension: prepared.importExtension

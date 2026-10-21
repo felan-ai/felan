@@ -25,7 +25,7 @@ function sanitize(chunks: string[]): TextStreamEvent[] {
   return result;
 }
 const tokens = [
-  'fln_pat_a', 'sk-12345678', 'pk-12345678', 'rk-12345678',
+  'fln_pat_a', 'bzy_team_a', 'sk-12345678', 'pk-12345678', 'rk-12345678',
   'ghp_12345678', 'gho_12345678', 'ghu_12345678', 'ghs_12345678', 'ghr_12345678',
   'github_pat_12345678', 'xoxb-12345678', 'xoxa-12345678', 'xoxp-12345678', 'xoxr-12345678',
   'AKIA12345678', 'AIza12345678901234567890', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhIn0.signature',
@@ -59,7 +59,7 @@ describe('RemoteTextSanitizer', () => {
     expect(sanitizer.push(delta('more!', 11))).toMatchObject({ text: '****!', stream: { offset: 11 } });
   });
 
-  it.each(['fln_pat_', 'sk-1234567', 'pk-1234567', 'rk-1234567', 'ghp_1234567', 'github_pat_1234567', 'xoxb-1234567', 'AKIA1234567', 'AIza1234567890123456789', 'eyJ1234567.a.b', 'eyJ12345678.a', 'eyJ12345678.a.'])('preserves incomplete nonsecrets: %s', text => {
+  it.each(['fln_pat_', 'bzy_team_', 'sk-1234567', 'pk-1234567', 'rk-1234567', 'ghp_1234567', 'github_pat_1234567', 'xoxb-1234567', 'AKIA1234567', 'AIza1234567890123456789', 'eyJ1234567.a.b', 'eyJ12345678.a', 'eyJ12345678.a.'])('preserves incomplete nonsecrets: %s', text => {
     expect(sanitize(Array.from(text)).map(event => event.text).join('')).toBe(text);
     expect(sanitize(Array.from(`${text}!`)).map(event => event.text).join('')).toBe(`${text}!`);
   });

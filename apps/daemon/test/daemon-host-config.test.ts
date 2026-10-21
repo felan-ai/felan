@@ -1,7 +1,7 @@
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadHostConfig, resolveHostComposition, validPackageSpecifier } from '../src/daemon/host-config.js';
+import { loadHostConfig, resolveHostComposition, validPackageSpecifier, type HostConfig } from '../src/daemon/host-config.js';
 
 const roots: string[] = [];
 const config = (extensions: string[] = []) => JSON.stringify({ version: 1, services: [], extensions: extensions.map(packageName => ({ package: packageName })), policy: { projectTrust: 'ask' } });
@@ -17,6 +17,43 @@ async function fixture(): Promise<string> {
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
 describe('trusted host configuration', () => {
+  it('accepts an optional positive integer interaction hold in seconds', async () => {
+    const root = await fixture(); const agentDir = join(root, 'agent');
+    const save = (policy: unknown) => writeFile(join(agentDir, 'host.json'), JSON.stringify({
+      version: 1, services: [], extensions: [], policy,
+    }), { mode: 0o600 });
+    await save({});
+    expect((await loadHostConfig({ agentDir })).config.policy?.interactionHoldSeconds).toBeUndefined();
+    for (const interactionHoldSeconds of [1, 600]) {
+      await save({ interactionHoldSeconds });
+      expect((await loadHostConfig({ agentDir })).config.policy?.interactionHoldSeconds).toBe(interactionHoldSeconds);
+    }
+    for (const interactionHoldSeconds of [0, -1, 0.5, '600', null, Number.MAX_SAFE_INTEGER + 1]) {
+      await save({ interactionHoldSeconds });
+      await expect(loadHostConfig({ agentDir })).rejects.toMatchObject({ code: 'invalid_host_config' });
+    }
+  });
+
+  it('loads optional authoritative remote settings and rejects malformed or duplicate projects', async () => {
+    const root = await fixture(); const agentDir = join(root, 'agent');
+    const remote = { share: 'all', projects: [{ id: 'workspace', name: 'Team workspace', path: '/home/agent/workspace' }] };
+    const save = (value: unknown) => writeFile(join(agentDir, 'host.json'), JSON.stringify({ version: 1, services: [], extensions: [], remote: value }), { mode: 0o600 });
+    await save(remote);
+    expect((await loadHostConfig({ agentDir })).config.remote).toEqual(remote);
+    await save({ share: 'on-request', projects: [] });
+    expect((await loadHostConfig({ agentDir })).config.remote).toEqual({ share: 'on-request', projects: [] });
+    for (const value of [
+      { ...remote, share: 'none' }, { ...remote, token: 'secret' },
+      { ...remote, projects: [{ ...remote.projects[0], path: 'relative' }] },
+      { ...remote, projects: [{ ...remote.projects[0], path: '/a/../b' }] },
+      { ...remote, projects: [remote.projects[0], { ...remote.projects[0], path: '/other' }] },
+      { ...remote, projects: [remote.projects[0], { ...remote.projects[0], id: 'other' }] },
+    ]) {
+      await save(value);
+      await expect(loadHostConfig({ agentDir })).rejects.toMatchObject({ code: 'invalid_host_config' });
+    }
+  });
+
   it('uses explicit, agent-directory and launcher-supplied defaults in order without writing files', async () => {
     const root = await fixture();
     const explicit = join(root, 'explicit.json');

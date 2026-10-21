@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
-  LIMITS, OriginSchema, PUBLISHED_TOOL_OUTPUT_CHARACTERS, RemoteCommandRowSchema, parseClientEnvelope, parseHostRegistration, parseHostTokenClaims, parseHostTokenResponse, parsePublishedEvent,
-  parsePublishedSession, parseRealtimeNotification, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema,
+  LIMITS, OriginSchema, PUBLISHED_TOOL_OUTPUT_CHARACTERS, REMOTE_FEATURES, RemoteCommandRowSchema, parseClientEnvelope, parseHostRegistration, parseHostTokenClaims, parseHostTokenResponse, parseOperationResult, parsePublishedEvent,
+  parsePublishedSession, parseRealtimeNotification, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema, parseServerEnvelope,
+  type HostTokenClaims, type HostTokenResponse, type OperationParams, type RemoteCommand, type RemoteCommandRow,
 } from '../src/index.js';
 import { tool } from './fixtures.js';
 
@@ -50,6 +51,36 @@ describe('remote commands', () => {
     expect(() => parseRemoteCommand({ op: 'close', session, params: {} })).toThrow();
     expect(() => parseRemoteCommand({ op: 'prompt', params: { text: 'hi' } })).toThrow();
   });
+  it('accepts follow-up commands, notifications and correlated queue results', () => {
+    const input = { op: 'follow_up', session, params: { text: 'Continue', attachments: [{ type: 'image', mimeType: 'image/png', data: 'YQ==' }] } };
+    expect(parseRemoteCommand(input)).toEqual(input);
+    expectTypeOf<Extract<RemoteCommand, { op: 'follow_up' }>['params']>().toEqualTypeOf<OperationParams<'follow_up'>>();
+    expect(parseRealtimeNotification({ event: 'command', payload: { id: command, op: 'follow_up' } })).toEqual({ event: 'command', payload: { id: command, op: 'follow_up' } });
+    const registration = { name: 'host', daemonVersion: '0.3.0', rowSchemaVersion: 1, projects: [],
+      capabilities: { operations: ['follow_up'], interactionKinds: [] } };
+    expect(parseHostRegistration(registration)).toEqual(registration);
+    for (const result of [{ itemId: 'queued' }, { status: 'handled' }]) {
+      expect(parseOperationResult('follow_up', result)).toEqual(result);
+      const response = { v: 1, re: command, outcome: 'accepted', result };
+      expect(parseServerEnvelope(response, 'follow_up')).toEqual(response);
+    }
+    expect(() => parseRemoteCommand({ ...input, session: undefined })).toThrow();
+    expect(() => parseRemoteCommand({ ...input, params: {} })).toThrow();
+    expect(() => parseOperationResult('follow_up', { itemId: 'queued', status: 'handled' })).toThrow();
+  });
+  it('accepts only lowercase UUIDs for optional client-created session IDs', () => {
+    const create = { op: 'sessions.create', params: { project: 'workspace', sessionId: session } };
+    expect(parseRemoteCommand(create)).toEqual(create);
+    for (const sessionId of ['', 'not-a-uuid', session.toUpperCase(), command + '\n']) {
+      expect(() => parseRemoteCommand({ ...create, params: { ...create.params, sessionId } })).toThrow();
+    }
+    expectTypeOf<Extract<RemoteCommand, { op: 'sessions.create' }>['params']['sessionId']>().toEqualTypeOf<string | undefined>();
+  });
+  it.each(['prompt', 'steer', 'follow_up', 'sessions.create'] as const)('validates image data in remote %s prompts', op => {
+    const prompt = { text: 'Inspect', attachments: [{ type: 'image', mimeType: 'image/png', data: 'invalid' }] };
+    const input = op === 'sessions.create' ? { op, params: { project: 'workspace', prompt } } : { op, session, params: prompt };
+    expect(() => parseRemoteCommand(input)).toThrow(/base64/);
+  });
   it('adds an expired outcome to protocol responses', () => {
     expect(parseRemoteCommandOutcome({ v: 1, re: command, outcome: 'expired' }).outcome).toBe('expired');
     expect(parseRemoteCommandOutcome({ v: 1, re: command, outcome: 'rejected', error: { code: 'forbidden', message: 'no', retryable: false } }).outcome).toBe('rejected');
@@ -67,6 +98,18 @@ describe('remote commands', () => {
     }
     for (const provider of ['', 'Slack', 'slack\nadmin', 'a'.repeat(65)]) expect(() => parseSchema(OriginSchema, { ...origin, provider })).toThrow();
     expect(() => parseSchema(OriginSchema, { kind: 'channel', user: host, command })).toThrow();
+  });
+  it('records channel origins without an identified user', () => {
+    const origin = { kind: 'channel', provider: 'slack', command };
+    expect(parseSchema(OriginSchema, origin)).toEqual(origin);
+    for (const change of [{ type: 'run.updated', run: { state: 'running', id: command, origin } },
+      { type: 'queue.updated', queue: [{ id: command, kind: 'follow_up', prompt: { text: 'Next' }, origin }] },
+      { type: 'message.completed', message: { id: command, entryId: command, role: 'user', content: [], timestamp: 0, origin } }]) {
+      expect(parsePublishedEvent({ ...event, change }).change).toEqual(change);
+    }
+    expect(() => parseSchema(OriginSchema, { ...origin, user: null })).toThrow();
+    expect(() => parseSchema(OriginSchema, { ...origin, command: undefined })).toThrow();
+    expect(() => parseSchema(OriginSchema, { kind: 'web', command })).toThrow();
   });
 });
 
@@ -86,9 +129,25 @@ describe('channel commands and session instructions', () => {
     expect(parseSchema(RemoteCommandRowSchema, row)).toEqual(row);
     expect(() => parseSchema(RemoteCommandRowSchema, { ...row, channel: {} })).toThrow();
   });
+  it('accepts automated commands and commands without a requester', () => {
+    const row: RemoteCommandRow = { id: command, host, command: { op: 'sessions.create', params: { project: 'workspace' } }, createdAt: 1, expiresAt: 2 };
+    expect(parseSchema(RemoteCommandRowSchema, row)).toEqual(row);
+    for (const source of ['schedule', 'x'.repeat(256), 'é'.repeat(128)]) {
+      const automated = { ...row, automation: { source } };
+      expect(parseSchema(RemoteCommandRowSchema, automated)).toEqual(automated);
+      expect(parseSchema(OriginSchema, { kind: 'automation', source })).toEqual({ kind: 'automation', source });
+    }
+    for (const source of [null, 1, '', 'x'.repeat(257), 'é'.repeat(129)]) {
+      expect(() => parseSchema(RemoteCommandRowSchema, { ...row, automation: { source } })).toThrow();
+      expect(() => parseSchema(OriginSchema, { kind: 'automation', source })).toThrow();
+    }
+    expect(() => parseSchema(RemoteCommandRowSchema, { ...row, requester: null })).toThrow();
+    expect(() => parseSchema(RemoteCommandRowSchema, { ...row, automation: {} })).toThrow();
+  });
   it('advertises optional host features and keeps unknown ones for forward compatibility', () => {
-    const registration = { name: 'host', daemonVersion: '0.2.0', rowSchemaVersion: 1, projects: [],
-      capabilities: { operations: ['sessions.create'], interactionKinds: [], features: ['sessions.create.instructions'] } };
+    expect(REMOTE_FEATURES).toContain('sessions.create.session-id');
+    const registration = { name: 'host', daemonVersion: '0.3.0', rowSchemaVersion: 1, projects: [],
+      capabilities: { operations: ['sessions.create'], interactionKinds: [], features: [...REMOTE_FEATURES] } };
     expect(parseHostRegistration(registration)).toEqual(registration);
     const { features: _, ...legacy } = registration.capabilities;
     expect(parseHostRegistration({ ...registration, capabilities: legacy }).capabilities).toEqual(legacy);
@@ -110,6 +169,19 @@ describe('realtime and tokens', () => {
     expect(() => parseHostTokenClaims({ ...claims, sub: session })).toThrow(/subject/);
     expect(() => parseHostTokenClaims({ ...claims, exp: 1001 })).toThrow(/lifetime/);
     expect(() => parseHostTokenClaims({ ...claims, role: 'service_role' })).toThrow();
+  });
+  it('accepts team-host claims and token responses without a user', () => {
+    const claims: HostTokenClaims = { iss: 'https://felan.ai', aud: 'authenticated', role: 'authenticated', sub: host, iat: 100, exp: 1000,
+      felan: { kind: 'host', host_id: host, team_id: host } };
+    expect(parseHostTokenClaims(claims)).toEqual(claims);
+    expect(() => parseHostTokenClaims({ ...claims, sub: session })).toThrow(/subject/);
+    expect(() => parseHostTokenClaims({ ...claims, exp: 1001 })).toThrow(/lifetime/);
+    expect(() => parseHostTokenClaims({ ...claims, felan: { ...claims.felan, user_id: null } })).toThrow();
+    const response: HostTokenResponse = { token: 't', expiresAt: 10, refreshAt: 5, host: { id: host, teamId: host },
+      supabase: { url: 'https://x.supabase.co', publishableKey: 'sb_publishable_x' } };
+    expect(parseHostTokenResponse(response)).toEqual(response);
+    expect(() => parseHostTokenResponse({ ...response, refreshAt: 11 })).toThrow(/refresh/);
+    expect(() => parseHostTokenResponse({ ...response, host: { ...response.host, userId: null } })).toThrow();
   });
   it('rejects a refresh time after expiry', () => {
     const response = { token: 't', expiresAt: 10, refreshAt: 5, host: { id: host, teamId: host, userId: host }, supabase: { url: 'https://x.supabase.co', publishableKey: 'sb_publishable_x' } };

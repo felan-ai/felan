@@ -65,7 +65,7 @@ async function fixture(builtins: BuiltinExtensionName[] = ['subagents', 'askUser
       return input => { requests.push(input.request); return services(input); };
     } });
   cleanups.push(async () => { await broker!.drain(); await f.dispose(); });
-  return { ...f, broker: broker!, requests, scopes, host: (id: string) => f.registry.executionHost(id) };
+  return { ...f, broker: broker!, composition, requests, scopes, host: (id: string) => f.registry.executionHost(id) };
 }
 
 it('assembles real root tools and a registered root subagent host', async () => {
@@ -109,6 +109,21 @@ it('scopes execution controls to each child session', async () => {
   expect((await childHost.getResult(second.value.executionId)).ok).toBe(false);
   expect((await host.scopeToSession(childId).getResult(second.value.executionId)).ok).toBe(false);
   expect(() => host.scopeToSession('unknown-session')).toThrow();
+});
+
+it('passes the child definition label to local preparation and extension binding', async () => {
+  const f = await fixture();
+  const prepare = vi.spyOn(f.composition, 'prepare');
+  const bindExtensions = vi.spyOn(f.composition, 'bindExtensions');
+  const host = f.host(f.root.sessionId);
+  const child = await host.spawnSession({ label: 'explore', description: 'Inspect', prompt: 'Inspect the implementation',
+    model: { provider: 'offline', id: 'fixture' } });
+  if (!child.ok) throw new Error(child.error.message);
+  const id = child.value.executionId;
+  expect(prepare.mock.calls.find(([context]) => context.session.id === id)?.[0].execution).toEqual({ label: 'explore' });
+  expect(bindExtensions.mock.calls.find(([context]) => context.sessionManager.getSessionId() === id)?.[0].execution).toEqual({ label: 'explore' });
+  await vi.waitFor(() => expect(host.getExecution(id)?.status).toBe('completed'));
+  await host.settle();
 });
 
 it('disposes explicitly idle-safe services during eviction and rebuilds them on restore', async () => {
