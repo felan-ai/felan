@@ -1,6 +1,7 @@
 import type { FelanExtensionAPI } from '@felan-ai/agent-core';
 import { execFile } from 'node:child_process';
-import { access, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
+import { access, mkdtemp, readFile, readdir, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -45,7 +46,7 @@ describe('built Web Access runtime', () => {
   });
 
   it('packs only the public package surface and executes both packed tools offline', async () => {
-    const temporary = await mkdtemp(resolve(packageRoot, '.packed-test-'));
+    const temporary = await mkdtemp(resolve(tmpdir(), 'felan-web-access-pack-'));
     try {
       const pnpm = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
       const packageManager = process.env.npm_execpath;
@@ -71,6 +72,7 @@ describe('built Web Access runtime', () => {
         .toBe(true);
 
       await execFileAsync('tar', ['-xzf', archiveName!], { cwd: temporary });
+      await symlink(resolve(packageRoot, 'node_modules'), resolve(temporary, 'node_modules'), 'junction');
       const entry = resolve(temporary, 'package/dist/index.js');
       const packedExtension = (await import(`${pathToFileURL(entry).href}?packed=${Date.now()}`)).default;
       const packedTools = await registeredTools(packedExtension);
