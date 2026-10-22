@@ -2,7 +2,7 @@
  * Tests for MODELS construction + resolveModel.
  * Pins: catalog-driven picker excludes pi-ai's dated snapshot aliases, family
  * shortcuts resolve newest-first regardless of sort order, projection strips
- * pi-ai's baseUrl/api/provider/headers, and the runtime policy gates [1m] ids
+ * pi-ai's baseUrl/api/provider/headers but keeps catalog prices, and the runtime policy gates [1m] ids
  * on measurement and plan settings.
  */
 import { describe, it } from "vitest";
@@ -32,14 +32,16 @@ const find = (models, id) => models.find((m) => m.id === id);
 
 describe("MODELS projection", () => {
 	it("driven by pi-ai's real anthropic catalog, minus dated snapshot aliases", () => {
-		const models = buildModels(getModels("anthropic"));
+		const catalog = getModels("anthropic");
+		const models = buildModels(catalog);
 		for (const m of models) {
 			assert.doesNotMatch(m.id, /-20\d{6}$/, "no dated snapshot ids in the picker");
 			assert.equal(m.baseUrl, undefined);
 			assert.equal(m.api, undefined);
 			assert.equal(m.provider, undefined);
 			assert.equal(m.headers, undefined);
-			assert.deepEqual(m.cost, { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 });
+			// Catalog prices, so session cost is an API-equivalent estimate.
+			assert.deepEqual(m.cost, find(catalog, m.id).cost);
 		}
 		// Spot-check coverage of every current family.
 		assert.ok(find(models, "claude-opus-5"), "opus-5 present");

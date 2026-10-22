@@ -99,6 +99,24 @@ describe("updateUsage", () => {
 		assert.equal(output.usage.cost.total, 210);
 	});
 
+	it("bills 1h cache writes at twice the input rate", () => {
+		const output = emptyOutput();
+		const priced = { ...pricedModel, cost: { ...pricedModel.cost, cacheWrite: 1_250_000 } };
+		updateUsage(output, { cache_creation_input_tokens: 10, cache_creation: { ephemeral_1h_input_tokens: 6 } }, priced);
+
+		assert.equal(output.usage.cacheWrite1h, 6);
+		// 4 short-retention writes at 1.25 plus 6 1h writes at 2x the input rate of 1.
+		assert.equal(output.usage.cost.cacheWrite, 17);
+	});
+
+	it("keeps the 1h split when a later frame omits it", () => {
+		const output = emptyOutput();
+		updateUsage(output, { cache_creation_input_tokens: 10, cache_creation: { ephemeral_1h_input_tokens: 10 } }, model);
+		updateUsage(output, { cache_creation_input_tokens: 10, output_tokens: 5 }, model);
+
+		assert.equal(output.usage.cacheWrite1h, 10);
+	});
+
 	it("reports the thinking count carried by this frame", () => {
 		const output = emptyOutput();
 		const report = updateUsage(output, { output_tokens: 100, output_tokens_details: { thinking_tokens: 40 } }, model);

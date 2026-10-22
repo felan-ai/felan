@@ -56,11 +56,12 @@ Models come from Agent Core's Anthropic catalog. Dated snapshot aliases are
 omitted. Model availability still depends on your Claude plan and Claude Code;
 a catalog entry is not an entitlement guarantee.
 
-The bridge registers zero API-token prices because it does not use Felan's
-Anthropic API credentials. This is not a promise of free usage: Claude plan
-limits, Extra Usage, and Anthropic's billing classification still apply. Plan
-usage events are forwarded as `anthropic-ratelimit-unified-*` response headers
-for compatible footer extensions.
+Models keep the catalog's Anthropic API prices, so session cost in the footer
+and usage reports is an API-equivalent estimate at list prices, including
+Claude Code's 1-hour cache writes. It is not your bill: usage is charged
+against your Claude plan limits and Extra Usage, not these rates. Plan usage
+events are forwarded as `anthropic-ratelimit-unified-*` response headers for
+compatible footer extensions.
 
 ## Settings
 

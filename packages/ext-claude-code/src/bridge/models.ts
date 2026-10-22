@@ -46,12 +46,14 @@ export function buildModels<T extends { id: string; [key: string]: any }>(piAiMo
 		})
 		// Forward thinkingLevelMap so pi-ai's per-model overrides (e.g. opus-4-8
 		// mapping xhigh→xhigh and max→max) are visible to the effort lookup.
-		.map(({ id, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap }) => ({
+		// Forward catalog cost so session cost is an API-equivalent estimate; usage
+		// is billed against the Claude plan, not these rates.
+		.map(({ id, name, reasoning, input, contextWindow, maxTokens, thinkingLevelMap, cost }) => ({
 			id,
 			name,
 			reasoning, input, contextWindow, maxTokens,
 			thinkingLevelMap,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			cost,
 		}));
 }
 

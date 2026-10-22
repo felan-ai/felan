@@ -31,9 +31,9 @@ In Felan:
    and plan/long-context settings. `/claude-code` alone also shows status.
 
 Models come from Agent Core's Anthropic catalog, excluding dated snapshot
-aliases. A catalog entry does not guarantee access on your account. The bridge
-registers zero API-token prices, but **zero displayed cost does not mean free
-usage**. Anthropic's [October 7, 2026 support update][plan-usage] says Agent SDK,
+aliases. A catalog entry does not guarantee access on your account. Models keep
+the catalog's API prices, so the session cost in the footer is an
+**API-equivalent estimate at list prices, not your bill**. Anthropic's [October 7, 2026 support update][plan-usage] says Agent SDK,
 `claude -p`, and third-party apps can still use subscription limits. Plan limits,
 Extra Usage, and billing classification remain Anthropic's responsibility;
 Felan does not guarantee quota eligibility or savings.

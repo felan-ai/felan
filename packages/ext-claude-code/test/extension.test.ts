@@ -221,7 +221,7 @@ describe('Claude Code extension activation', () => {
     expect(provider).toMatchObject({ api: 'claude-code', baseUrl: 'claude-code' });
     expect(provider.models.length).toBeGreaterThan(0);
     expect(provider.models.every((model) => !/-20\d{6}$/.test(model.id))).toBe(true);
-    expect(provider.models.every((model) => Object.values(model.cost).every((cost) => cost === 0))).toBe(true);
+    expect(provider.models.every((model) => model.cost.input > 0 && model.cost.output > 0)).toBe(true);
     const opus = provider.models.find((model) => model.id === 'claude-opus-4-6');
     expect(opus && 'contextWindow' in opus ? opus.contextWindow : undefined).toBe(200_000);
     expect(claudeAgentSdk().query).toBeTypeOf('function');

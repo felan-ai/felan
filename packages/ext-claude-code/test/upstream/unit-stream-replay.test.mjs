@@ -15,16 +15,17 @@
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { builtinProviders } from "@felan-ai/agent-core";
 import { QueryContext } from "../../src/bridge/query-state.ts";
 
 const { __test } = await import("../../src/bridge/index.ts");
 
 // `cost` matters: a recorded stream carries real usage, so consumeQuery reaches
-// pi-ai's cost calculation, which the hand-built streams never exercise. Zeros are
-// what buildModels ships (src/models.ts) since Claude Code billing is per-plan.
+// pi-ai's cost calculation, which the hand-built streams never exercise. Catalog
+// rates are what buildModels ships (src/bridge/models.ts).
 const model = {
 	api: "anthropic-messages", provider: "anthropic", id: "claude-haiku-4-5",
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	cost: builtinProviders().find((p) => p.id === "anthropic").getModels().find((m) => m.id === "claude-haiku-4-5").cost,
 };
 
 function fixture(name) {
@@ -83,6 +84,19 @@ describe("replaying a recorded text-only turn", () => {
 		assert.ok(ctx.turnOutput.usage.output > 0, "output tokens");
 		assert.ok(ctx.turnOutput.usage.input + ctx.turnOutput.usage.cacheRead + ctx.turnOutput.usage.cacheWrite > 0, "prompt tokens");
 		assert.match(capturedSessionId ?? "", /^[0-9a-f-]{36}$/);
+	});
+
+	// Recorded on a subscription, where Claude Code writes its prompt cache with 1h
+	// retention, billed at 2x input rather than the 1.25x cacheWrite rate; dropping that
+	// split undercounts this turn by ~37%.
+	it("estimates the cost Claude Code itself reports at list prices", async () => {
+		const { ctx, messages } = await replay("text");
+		const result = messages.find((m) => m.type === "result");
+
+		assert.equal(result.modelUsage["claude-haiku-4-5"].costBasis, "list");
+		assert.ok(ctx.turnOutput.usage.cacheWrite1h > 0, "fixture must carry 1h cache writes");
+		assert.ok(Math.abs(ctx.turnOutput.usage.cost.total - result.total_cost_usd) < 1e-9,
+			`${ctx.turnOutput.usage.cost.total} !== ${result.total_cost_usd}`);
 	});
 });
 
