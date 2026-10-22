@@ -38,7 +38,10 @@ runtime's explicit POSIX shell flavor.
 - `bash({ command, timeout: 120 })` waits in the tool, then promotes the same process without restarting it.
 - `bash({ command, timeout: 0, tty: true })` starts an interactive PTY immediately.
 - `write_background_bash({ id, chars })` sends exact stdin/control bytes to a PTY job.
-- `list_background_bash` lists workspace processes and statuses.
+- `list_background_bash` returns 10 recent workspace processes. Optional
+  `limit` (1–100), `cursor`, `status`, and
+  `search` select broader pages. Follow the returned `nextCursor` while
+  `hasMore` is true, including after an empty filtered page.
 - `read_background_bash` reads trailing process output, capped at 128 KiB of log content. Larger files use POSIX `tail` without loading the whole log.
 - `wait_background_bash` waits for terminal status without returning log output.
 - `stop_background_bash` sends `SIGTERM` or `SIGKILL`.
@@ -65,6 +68,64 @@ returned directly by `list_background_bash`, `read_background_bash`,
 `wait_background_bash`, or `stop_background_bash` suppresses the duplicate
 completion message.
 
+## Listing API and retention
+
+`BackgroundBashManager.query(options)` and the optional
+`BackgroundProcessViewSource.query(options)` return a `BackgroundBashPage`:
+
+```ts
+const page = await source.query?.({ limit: 10 });
+// { jobs, hasMore, nextCursor?, scanned }
+const next = page?.nextCursor
+  ? await source.query?.({ limit: 10, cursor: page.nextCursor })
+  : undefined;
+```
+
+`BackgroundBashQuery` accepts `limit` (default 10, maximum 100), an exclusive
+job-ID `cursor`, `status`, and `search` (case-insensitive ID/command substring, at
+most 256 characters). The query/page types
+are exported from the package root and `./data`. `source.list(status)` and
+`manager.list(status)` retain their full-history, running-first semantics for
+existing callers. New views should open with `query({ limit: 10 })` and expose
+broader history/search explicitly.
+
+Queries enumerate immediate job-directory names, without walking logs or
+reading all metadata. IDs sort by UTC start second, with the random suffix as
+a stable tie-breaker within that second. Each page reads at most 100 candidate
+records and stops when its requested result count is reached. A cursor tracks
+the last scanned ID, not the last match, so sparse searches can return empty
+pages with more history remaining. Newer insertions do not shift later pages;
+deletions are skipped. Queries are live rather than snapshot-isolated.
+
+The default is recent history, not an exhaustive running-process view. Use
+`query({ status: 'running' })` and follow its cursors to find older running jobs.
+No durable index or background full-history scan is required.
+
+The list tool's complete serialized response (text and details together) is
+capped at 64 KiB. Commands
+and optional signals are clipped by JSON-encoded byte size, with explicit
+truncation notices. Compact `details.jobs[].meta.id/command` and status records
+preserve client command-linking compatibility; full paths, shell arguments,
+tokens, and duplicate metadata are omitted. Full commands remain in job records.
+
+Retention runs only after every 32 successful creations/status changes, never
+on a recent query. One serialized workspace batch considers at most 32 records;
+large stores converge over subsequent writes rather than blocking a listing.
+Verified terminal jobs beyond the newest 1,000, or older than seven days, are
+eligible. A five-minute completion grace period protects recent notifications.
+Running, unknown, malformed, legacy-only, mismatched, or otherwise unverified
+records are retained. Matching `info.json` and `completion.json` terminal
+status/timestamps are required; any recorded PID and process group must be
+positively absent. Records with a PID but no verifiable group are preserved.
+Uncertain process probes retain the record. Removal optionally uses `python3`
+through `AgentRuntime.exec`, opening the complete directory chain with
+`O_NOFOLLOW` and unlinking only known flat job files relative to pinned directory
+descriptors. It never follows symlinks or recursively walks unexpected entries.
+Missing Python/POSIX descriptor support, symlinked ancestors (including above
+the session root), and unexpected files all disable deletion conservatively.
+No utility is installed. All inspection and removal use `AgentRuntime`; no
+migration or startup cleanup runs.
+
 ## Development
 
 Source: `packages/ext-background-bash` in <https://github.com/felan-ai/felan>.
@@ -74,7 +135,7 @@ corepack enable
 pnpm install --frozen-lockfile
 pnpm --filter @felan-ai/ext-background-bash build
 pnpm --filter @felan-ai/ext-background-bash type-check
-pnpm --filter @felan-ai/ext-background-bash test
+scripts/test-isolated.sh pnpm --filter @felan-ai/ext-background-bash test
 ```
 
 ## Attribution

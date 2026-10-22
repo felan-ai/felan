@@ -101,6 +101,17 @@ list provided by the pinned Pi version.
 | `Enter` in `/model` | Set the highlighted model as the default for future sessions |
 | `Ctrl+S` in `/model` | Use the highlighted model for this session only |
 
+Process views open with the newest 10 processes, without loading all history.
+Press `h` to browse all history in bounded pages, or return to the recent 10.
+`Ctrl+R` opens search across process IDs and commands; submit an empty query to
+browse all history. Search runs only on submission, not ordinary typing.
+Use `]` / `Ctrl+D` for the next page or scan batch and `[` / `Ctrl+U` to go back.
+A batch with no matches can still have more history to scan; the view reports
+scan progress and keeps the next action available. `Enter` reads output,
+`r` refreshes the current page, `a` opens all actions, and `q` / `Esc` closes.
+In output, `s` stops, `k` kills, and `[` / `]` moves through bounded log chunks.
+The same history, search, and paging actions are available to generic UI clients.
+
 Prompt history starts with the current session. Press `Ctrl+R`, `Cmd+R`, or
 `Ctrl+S` inside the picker to cycle through the current project and all
 projects. Search is fuzzy, incremental, and bounded to the newest 50 unique

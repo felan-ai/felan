@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
-import { stripVTControlCharacters } from 'node:util';
+import { isDeepStrictEqual, stripVTControlCharacters } from 'node:util';
 import { DEFAULT_MAX_BYTES, getShellConfig, truncateTail } from '@earendil-works/pi-coding-agent';
 import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeStorage, AgentRuntimeTerminationSignal } from '@felan-ai/agent-core';
 import { LIMITS, canonicalRequestPayload, type OperationParams, type Process as ProcessView } from '@felan-ai/session-protocol';
@@ -145,11 +145,7 @@ export class RegistryProcesses {
   }
 
   list(root: string): ProcessView[] {
-    return this.options.store.resources().filter(row => row.root === root).map(row => {
-      const known = this.views.get(row.id);
-      return known ?? { id: row.id, session: row.session, root, kind: row.kind as ProcessView['kind'],
-        state: row.state === 'reconciling' ? 'interrupted' : row.state, command: '', startedAt: row.updatedAt, controllable: false, outputOffset: 0 };
-    });
+    return this.options.store.resources(root).map(row => this.views.get(row.id) ?? resourceView(row));
   }
 
   prepareForeground(session: string, settings: { shell?: string | undefined; prefix?: string | undefined } = {}) {
@@ -251,14 +247,16 @@ export class RegistryProcesses {
           : readOwnedOutputRange(this.options.store.owner, info.outputPath, offset, limit);
         if (!(data instanceof Uint8Array) || data.byteLength > limit || !Number.isSafeInteger(offset + data.byteLength)) throw new Error('Invalid process output range.');
         this.assertLifetime(lifetime); this.assertLifetime(root); this.authorizeResource(requester, id);
-        const state = current.state === 'reconciling' ? 'interrupted' : info.status === 'unknown' ? 'missing'
+        const state = current.state === 'exited' ? 'exited' : current.state === 'reconciling' ? 'interrupted' : info.status === 'unknown' ? 'missing'
           : info.status !== 'running' ? 'exited' : current.state;
+        const exitCode = current.state === 'exited' ? current.exitCode ?? info.exitCode : info.exitCode;
         return { data, offset, nextOffset: offset + data.byteLength, state,
-          ...(state === 'exited' && typeof info.exitCode === 'number' && Number.isInteger(info.exitCode) ? { exitCode: info.exitCode } : {}) };
+          ...(state === 'exited' && typeof exitCode === 'number' && Number.isInteger(exitCode) ? { exitCode } : {}) };
       })(), lifetime.scope);
     }
     const live = this.live.get(id);
-    if (!live) return { data: new Uint8Array(), offset, nextOffset: offset, state: row.state === 'interrupted' ? 'interrupted' : 'missing' };
+    if (!live) return { data: new Uint8Array(), offset, nextOffset: offset, state: row.state === 'exited' ? 'exited' : row.state === 'interrupted' ? 'interrupted' : 'missing',
+      ...(row.exitCode === undefined ? {} : { exitCode: row.exitCode }) };
     const lifetime = this.creatorLifetime(row);
     this.assertLifetime(lifetime);
     this.assertLiveIdentity(row, live);
@@ -356,7 +354,7 @@ export class RegistryProcesses {
   /** In-flight runtime operations plus running or unverified processes of a root; stdio service transports are excluded. */
   activeCount(root: string): number {
     return [...this.operations.values()].filter(({ scope, passive }) => scope.root === root && !passive).length
-      + this.options.store.resources().filter(row => row.root === root && !this.live.get(row.id)?.transport && (row.state === 'running' || row.state === 'reconciling')).length;
+      + this.options.store.resources(root).filter(row => !this.live.get(row.id)?.transport && (row.state === 'running' || row.state === 'reconciling')).length;
   }
   /** Work a daemon stop would interrupt: in-flight runtime operations and live non-transport processes. Detached jobs survive the daemon. */
   async interruptibleCount(): Promise<number> {
@@ -374,9 +372,10 @@ export class RegistryProcesses {
 
   /** Reconciles a root's processes; a failed per-process probe leaves that row unchanged, while store and ownership failures propagate. */
   async refresh(root: string): Promise<void> {
-    for (const row of this.options.store.resources().filter(row => row.root === root)) {
+    for (const row of this.options.store.resources(root)) {
       const live = this.live.get(row.id);
       if (live) { await this.observe(live); continue; }
+      if (row.state === 'exited') continue;
       // Live handles end with the daemon that started them.
       if (row.kind !== 'detached' && row.state === 'running' && !this.starting.has(row.id)) { this.update(row, 'interrupted'); continue; }
       if (row.kind !== 'detached' || !row.reference || !row.startIdentity) continue;
@@ -393,7 +392,12 @@ export class RegistryProcesses {
       const job = await Promise.resolve().then(() => adapter.inspectDetached(runtime, row.id)).catch(() => undefined);
       this.options.assertCurrent();
       if (!job) continue;
-      if (job.status !== 'running') { this.update(row, job.status === 'unknown' ? 'missing' : 'exited'); continue; }
+      if (job.status !== 'running') {
+        const state = job.status === 'unknown' ? 'missing' : 'exited';
+        this.update(row, state, { ...resourceView(row), state, command: boundedText(info.command, 16384), startedAt: info.startedAt,
+          ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }) });
+        continue;
+      }
       const pid = job.pid;
       const inspection = pid ? await runtime.exec('ps', ['-o', 'command=', '-p', String(pid)]).catch(() => null) : undefined;
       this.options.assertCurrent();
@@ -446,8 +450,8 @@ export class RegistryProcesses {
         item.settled = true;
         if (!fenced) {
           item.view = { ...item.view, state: 'exited', controllable: false, outputOffset: snapshot.nextOffset, ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }) };
-          const row = this.options.store.resource(item.view.id)!;
-          this.update(row, 'exited', item.view);
+          const row = this.options.store.resource(item.view.id);
+          if (row) this.update(row, 'exited', item.view);
         }
         await item.raw.dispose(); item.disposed = true;
       }));
@@ -528,12 +532,13 @@ export class RegistryProcesses {
     this.update(row, info.status === 'running' ? 'running' : info.status === 'unknown' ? 'missing' : 'exited', {
       id: info.id, session: row.session, root: row.root, kind: row.kind as ProcessView['kind'], state: info.status === 'running' ? 'running' : info.status === 'unknown' ? 'missing' : 'exited',
       command: boundedText(info.command, 16384), startedAt: info.startedAt, controllable: this.live.has(info.id), outputOffset: 0,
+      ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }),
     });
   }
   private record(live: LiveProcess, row: ControlResource, snapshot: { running: boolean; nextOffset: number; exitCode?: number }, advance: boolean): void {
     live.settled ||= !snapshot.running;
     live.view = { ...live.view, state: live.settled ? 'exited' : 'running', controllable: !live.settled, outputOffset: advance ? Math.max(live.view.outputOffset, snapshot.nextOffset) : live.view.outputOffset, ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }) };
-    this.update(row, live.view.state, live.view);
+    if (this.options.store.resource(row.id)) this.update(row, live.view.state, live.view);
   }
 
   /** Records an exit nobody has read yet, e.g. a PTY kept across reload; a failed probe leaves the handle as it was. */
@@ -549,19 +554,30 @@ export class RegistryProcesses {
   private update(row: ControlResource, state: ControlResource['state'], view?: ProcessView): void {
     this.options.assertCurrent();
     const old = this.options.store.resource(row.id);
-    const known = view ?? this.views.get(row.id);
-    const next: ProcessView = known ? { ...known, state: state === 'reconciling' ? 'interrupted' : state, controllable: state === 'running' && known.controllable }
-      : { id: row.id, session: row.session, root: row.root, kind: row.kind as ProcessView['kind'], state: state === 'reconciling' ? 'interrupted' : state,
-        command: '', startedAt: row.updatedAt, controllable: false, outputOffset: 0 };
-    if (!old || old.state !== state || JSON.stringify(this.views.get(row.id)) !== JSON.stringify(next)) {
-      const commit = this.options.store.putResource({ ...row, state });
-      this.views.set(row.id, next);
-      this.options.changed(row.session, next, commit.revisions[row.session]!);
-    }
+    const previous = this.views.get(row.id) ?? resourceView(old ?? row);
+    const known = view ?? previous;
+    const next: ProcessView = { ...known, state: state === 'reconciling' ? 'interrupted' : state, controllable: state === 'running' && known.controllable };
+    const resource: ControlResource = { ...(old ?? row), state,
+      ...(view ? { command: next.command, startedAt: next.startedAt } : {}),
+      ...(next.exitCode === undefined ? {} : { exitCode: next.exitCode }) };
+    if (state !== 'exited') delete resource.exitCode;
+    const resourceChanged = !old || !isDeepStrictEqual(old, resource);
+    const viewChanged = !isDeepStrictEqual(previous, next);
+    if (!resourceChanged && !viewChanged) return;
+    const revision = resourceChanged ? this.options.store.putResource(resource).revisions[row.session]!
+      : this.options.store.advanceTransientRevision(row.session);
+    this.views.set(row.id, next);
+    this.options.changed(row.session, next, revision);
   }
   private track<T>(operation: Promise<T>, scope: Scope, passive = false): Promise<T> {
     this.operations.set(operation, { scope, passive }); void operation.then(() => this.operations.delete(operation), () => this.operations.delete(operation)); return operation;
   }
+}
+
+function resourceView(row: ControlResource): ProcessView {
+  return { id: row.id, session: row.session, root: row.root, kind: row.kind,
+    state: row.state === 'reconciling' ? 'interrupted' : row.state, command: row.command ?? '', startedAt: row.startedAt ?? row.updatedAt,
+    controllable: false, outputOffset: 0, ...(row.exitCode === undefined ? {} : { exitCode: row.exitCode }) };
 }
 
 function processFault(code: string, message: string): Error & { code: string } { return Object.assign(new Error(message), { code }); }

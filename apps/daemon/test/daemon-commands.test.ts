@@ -366,10 +366,11 @@ describe('registry-backed command dispatch', () => {
 
   it('reaps the foreground-attempt guard across 4097 sequential completed dispatches without permitting redispatch', async () => {
     const resources = new Map<string, Record<string, unknown>>(); let request: Record<string, unknown> | undefined;
-    const session = { id: 'root', root: 'root', state: 'open' };
+    const session = { id: 'root', root: 'root', state: 'open', revision: 0 };
     const store = { session: () => session, sessionMetadata: () => session, sessionMetadatas: () => [session], request: (id: string) => request?.id === id ? request : undefined,
       resource: (id: string) => resources.get(id), resources: () => [...resources.values()],
-      putResource: (row: { id: string }) => { resources.set(row.id, row); return { value: row, revisions: { root: 1 } }; } } as unknown as DaemonControlStore;
+      advanceTransientRevision: () => ++session.revision,
+      putResource: (row: { id: string }) => { resources.set(row.id, row); return { value: row, revisions: { root: ++session.revision } }; } } as unknown as DaemonControlStore;
     const tracker = new RegistryProcesses({ store, assertCurrent() {}, changed() {} });
     const start = vi.fn(async (): Promise<AgentRuntimeProcess> => ({ pid: undefined,
       read: async offset => ({ output: new Uint8Array(), nextOffset: offset, running: false, exitCode: 0 }),

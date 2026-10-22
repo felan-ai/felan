@@ -56,6 +56,44 @@ async function fixture(options: ControlStoreOptions = {}) {
 }
 
 describe('ordered durable admission', () => {
+  it('routes admission maintenance to its submitter once without replacing dispatch publication', async () => {
+    let time = now; const f = await fixture({ now: () => time });
+    f.store.putResource({ id: 'expired', session: 's', root: 's', kind: 'detached', state: 'exited', updatedAt: 0 });
+    time += LIMITS.requestRetentionMs + 1;
+    const committed = vi.fn(); const dispatched = vi.fn(); const submitted = vi.fn();
+    const admission = new OrderedAdmission(f.store, { committed, dispatched });
+    const request = prompt('offline', 's', requestId(time));
+    const revision = f.store.session('s').revision;
+    const response = await admission.submit(request, 'owner', command => {
+      expect(submitted).toHaveBeenCalledExactlyOnceWith({ s: revision + 1 });
+      return command.dispatch(() => ({ response: accepted(request.id) }));
+    }, submitted);
+    expect(committed).not.toHaveBeenCalled();
+    expect(dispatched).toHaveBeenCalledExactlyOnceWith({ s: revision + 2 });
+    expect(await admission.submit(request, 'owner', undefined, submitted)).toEqual(response);
+    expect(submitted).toHaveBeenCalledOnce();
+  });
+
+  it('commits maintenance but leaves no request identity when pre-admission resync interrupts', async () => {
+    let time = now; const f = await fixture({ now: () => time });
+    f.store.putResource({ id: 'expired', session: 's', root: 's', kind: 'detached', state: 'exited', updatedAt: 0 });
+    time += LIMITS.requestRetentionMs + 1;
+    const request = prompt('retry safely', 's', requestId(time));
+    const admission = new OrderedAdmission(f.store); const handler = vi.fn((command: AdmittedCommand) =>
+      command.dispatch(() => ({ response: accepted(request.id) })));
+    const beforeAdmission = vi.fn(() => {
+      expect(f.store.request(request.id)).toBeUndefined();
+      expect(f.disk().requests).toEqual([]);
+      expect(f.store.resources()).toEqual([]);
+      throw new ControlStoreError('resync_required', 'Reconnect before admitting this request.');
+    });
+    await expect(admission.submit(request, 'owner', handler, beforeAdmission)).rejects.toMatchObject({ code: 'resync_required' });
+    expect(f.store.request(request.id)).toBeUndefined(); expect(handler).not.toHaveBeenCalled();
+    expect(await admission.submit(request, 'owner', handler)).toEqual(accepted(request.id));
+    expect(await admission.submit(request, 'owner', handler, beforeAdmission)).toEqual(accepted(request.id));
+    expect(handler).toHaveBeenCalledOnce(); expect(beforeAdmission).toHaveBeenCalledOnce();
+  });
+
   it('commits intent, dispatch and sanitized outcome in order before returning', async () => {
     const f = await fixture(); const admission = new OrderedAdmission(f.store); const request = prompt();
     const order: string[] = [];

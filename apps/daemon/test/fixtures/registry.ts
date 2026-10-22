@@ -98,6 +98,7 @@ export async function fixture(options: ControlStoreOptions = {}, processAdapter:
         resourceLoader: { getSkills: () => ({ skills: [], diagnostics: [] }) } satisfies Pick<AgentSession['resourceLoader'], 'getSkills'>,
         refreshContext: () => {}, setActiveToolsByName: () => {},
         getSteeringMessages: () => queue.steering, getFollowUpMessages: () => queue.followUp,
+        clearQueue: () => { const pending = { steering: [...queue.steering], followUp: [...queue.followUp] }; queue.steering.length = 0; queue.followUp.length = 0; return pending; },
         extensionRunner: { getRegisteredCommands: () => [] }, subscribe: (listener: (event: AgentSessionEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
         abort, prompt: async (text: string) => {
           idle = false; emit({ type: 'agent_start' });

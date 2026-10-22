@@ -141,5 +141,5 @@ export function parseProcessViewAction(value: unknown, request: ProcessViewReque
 }
 
 export const PROCESSES_HINT = Object.freeze({ id: 'felan.processes', version: '1' });
-export type { BackgroundBashJob, BackgroundBashStatus } from './job-store.js';
+export type { BackgroundBashJob, BackgroundBashStatus, BackgroundBashQuery, BackgroundBashPage } from './job-store.js';
 export { BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE, type BackgroundProcessViewSource } from './presentation.js';

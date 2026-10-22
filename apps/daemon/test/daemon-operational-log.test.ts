@@ -34,3 +34,16 @@ it('rejects stale pages and does not expose arbitrary persisted text', async () 
   expect(new DaemonOperationalLog(sink).page({}).entries).toEqual([]);
   sink.close(); expect(() => sink.read('stdout')).toThrow('closed');
 });
+
+it('records original projection failures with bounded, redacted diagnostics', async () => {
+  const f = await serverFixture(); cleanup.push(() => f.dispose());
+  const sink = new BoundedDaemonLogs(f.owner); cleanup.push(async () => sink.close());
+  const log = new DaemonOperationalLog(sink, () => 42);
+  const error = new Error('projection failed token=private-token\n\u001b[31m' + 'x'.repeat(5000));
+  log.failure({ scope: 'projection', session: 'fixture', error });
+  const entry = log.page({}).entries.at(-1)!;
+  expect(entry.message).toContain('Daemon failure in projection (session fixture): Error: projection failed token=[redacted]');
+  expect(entry.message).not.toContain('private-token');
+  expect(entry.message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/u);
+  expect(Buffer.byteLength(entry.message)).toBeLessThanOrEqual(2000);
+});

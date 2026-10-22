@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStdioProcess } from '@felan-ai/agent-core';
 import { LIMITS } from '@felan-ai/session-protocol';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
+import { ControlDatabase } from '../src/daemon/persistence.js';
 import { RegistryProcesses } from '../src/daemon/processes.js';
 import type { SessionRegistry } from '../src/daemon/registry.js';
 import { FakeBackgroundProcessProvider as BackgroundBashManager, fakeProcessAdapter } from './fixtures/process-provider.js';
@@ -12,6 +13,93 @@ import { deferred, fixture, fixtures, now, requestId, supported } from './fixtur
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
 describe.skipIf(!supported)('registry process ownership', () => {
+  it('skips thousands of terminal records without probes, writes or renewed timestamps', async () => {
+    let time = now; const f = await fixture({ now: () => time }); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42 }));
+    const readFile = vi.fn(async () => new Uint8Array());
+    const exec = vi.fn(async () => ({ stdout: 'worker launch', stderr: '', code: 0, killed: false }));
+    const adapter = { ...fakeProcessAdapter(), inspectDetached,
+      describeJob: (_runtime: AgentRuntime, path: string) => ({ id: path.split('/').at(-1)!, kind: 'detached' as const,
+        status: 'running' as const, command: 'worker', startedAt: now - 100, startIdentity: 'launch', commandIdentity: ['worker'], outputPath: path }),
+    };
+    const changed = vi.fn();
+    const processes = new RegistryProcesses({ store: f.store, processAdapter: adapter, assertCurrent: () => f.owner.assertCurrent(), changed });
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, raw => ({ exec, storage: () => ({ ...raw.storage(), readFile }) }), processes);
+    const directory = adapter.storageDirectory(runtime);
+    for (let index = 0; index < 2100; index++) f.store.putResource({ id: `terminal-${index}`, session: b.sessionId, root: b.rootSessionId,
+      kind: 'detached', state: 'exited', reference: join(directory, `terminal-${index}`), startIdentity: 'launch', updatedAt: now,
+      ...(index ? { command: `worker ${index}`, startedAt: now - 100, exitCode: 0 } : {}) });
+    const before = f.store.resources(b.rootSessionId); const revision = f.store.sessionMetadata(b.sessionId).revision;
+    const write = vi.spyOn(ControlDatabase.prototype, 'write');
+    const clone = vi.spyOn(globalThis, 'structuredClone');
+    time += 1000;
+    await processes.refresh(b.rootSessionId); await processes.refresh(b.rootSessionId);
+    expect(inspectDetached).not.toHaveBeenCalled(); expect(readFile).not.toHaveBeenCalled(); expect(exec).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled(); expect(changed).not.toHaveBeenCalled(); expect(clone).not.toHaveBeenCalled();
+    clone.mockRestore(); write.mockRestore();
+    expect(f.store.resources(b.rootSessionId)).toEqual(before); expect(f.store.sessionMetadata(b.sessionId).revision).toBe(revision);
+    expect(processes.list(b.rootSessionId)).toContainEqual(expect.objectContaining({ id: 'terminal-1', command: 'worker 1', startedAt: now - 100, state: 'exited', controllable: false }));
+    expect(processes.list(b.rootSessionId)).toContainEqual(expect.objectContaining({ id: 'terminal-0', command: '', state: 'exited' }));
+
+    for (const state of ['running', 'reconciling'] as const) f.store.putResource({ id: state, session: b.sessionId, root: b.rootSessionId,
+      kind: 'detached', state, reference: join(directory, state), startIdentity: 'launch', updatedAt: now });
+    await processes.refresh(b.rootSessionId);
+    expect(inspectDetached).toHaveBeenCalledTimes(2); expect(exec).toHaveBeenCalledTimes(2);
+    expect(processes.activeCount(b.rootSessionId)).toBe(2);
+    changed.mockClear(); const activeRevision = f.store.sessionMetadata(b.sessionId).revision;
+    const activeRows = f.store.resources(b.rootSessionId); const activeWrite = vi.spyOn(ControlDatabase.prototype, 'write');
+    time += 1000;
+    await processes.refresh(b.rootSessionId);
+    expect(inspectDetached).toHaveBeenCalledTimes(4); expect(exec).toHaveBeenCalledTimes(4);
+    expect(activeWrite).not.toHaveBeenCalled(); expect(changed).not.toHaveBeenCalled(); activeWrite.mockRestore();
+    expect(f.store.sessionMetadata(b.sessionId).revision).toBe(activeRevision); expect(f.store.resources(b.rootSessionId)).toEqual(activeRows);
+  }, 30_000);
+
+  it('keeps probing live handles without renewing terminal timestamps or recreating pruned resources', async () => {
+    let time = now; let running = true;
+    const f = await fixture({ now: () => time }); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const read = vi.fn(async () => ({ output: new Uint8Array(), nextOffset: 0, running, ...(running ? {} : { exitCode: 0 }) }));
+    const dispose = vi.fn(async () => {});
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, {
+      processes: { startShell: async () => ({ read, dispose, write: async () => {}, terminate: async () => { running = false; } }) },
+    });
+    const process = await runtime.processes!.startShell('live worker');
+    const row = f.store.resources(b.rootSessionId)[0]!; const revision = f.store.sessionMetadata(b.sessionId).revision;
+    const write = vi.spyOn(ControlDatabase.prototype, 'write'); time += 1000;
+    await f.registry.processes.refresh(b.rootSessionId); await f.registry.processes.refresh(b.rootSessionId);
+    expect(read).toHaveBeenCalledTimes(2); expect(write).not.toHaveBeenCalled();
+    expect(f.store.sessionMetadata(b.sessionId).revision).toBe(revision); expect(f.store.resource(row.id)?.updatedAt).toBe(now);
+    running = false; await f.registry.processes.refresh(b.rootSessionId);
+    expect(f.store.resource(row.id)).toMatchObject({ state: 'exited', updatedAt: time, command: 'live worker', exitCode: 0 });
+    write.mockRestore(); time += LIMITS.requestRetentionMs + 1; f.store.compact();
+    expect(f.store.resource(row.id)).toBeUndefined();
+    await process.read(0);
+    await f.registry.processes.settle(b.rootSessionId);
+    expect(f.store.resource(row.id)).toBeUndefined(); expect(dispose).toHaveBeenCalledOnce();
+  });
+
+  it('reconstructs terminal metadata without a probe and validates detached output only on demand', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42 }));
+    const readOutputRange = vi.fn(async () => new TextEncoder().encode('done'));
+    const adapter = { ...fakeProcessAdapter(), inspectDetached, readOutputRange,
+      describeJob: (_runtime: AgentRuntime, path: string) => ({ id: 'terminal', kind: 'detached' as const, status: 'running' as const,
+        command: 'saved command', startedAt: now - 100, startIdentity: 'launch', commandIdentity: [], outputPath: path }),
+    };
+    const processes = new RegistryProcesses({ store: f.store, processAdapter: adapter, assertCurrent: () => f.owner.assertCurrent(), changed() {} });
+    const readFile = vi.fn(async () => new Uint8Array());
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, raw => ({ storage: () => ({ ...raw.storage(), readFile }) }), processes);
+    const reference = join(adapter.storageDirectory(runtime), 'terminal');
+    f.store.putResource({ id: 'terminal', kind: 'detached', session: b.sessionId, root: b.rootSessionId, state: 'exited', reference,
+      startIdentity: 'launch', command: 'saved command', startedAt: now - 100, exitCode: 0, updatedAt: now });
+    await processes.refresh(b.rootSessionId);
+    expect(readFile).not.toHaveBeenCalled(); expect(inspectDetached).not.toHaveBeenCalled();
+    expect(await processes.read(b.sessionId, 'terminal', 0, 4)).toMatchObject({ state: 'exited', exitCode: 0, nextOffset: 4 });
+    expect(readFile).toHaveBeenCalledOnce(); expect(readOutputRange).toHaveBeenCalledOnce();
+    f.store.putResource({ id: 'foreground', kind: 'foreground', session: b.sessionId, root: b.rootSessionId, state: 'exited', exitCode: 0, updatedAt: now });
+    expect(await processes.read(b.sessionId, 'foreground', 0, 4)).toMatchObject({ state: 'exited', exitCode: 0, nextOffset: 0 });
+  });
+
   it('evicts idle stdio transports, joining their readers, but retains in-flight writes', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const stopped = deferred(); const written = deferred(); f.releases.add(written.resolve);

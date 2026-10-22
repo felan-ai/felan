@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { MemoryRunRetentionOptions } from '../../src/local/run-retention.js';
+import { createRetainedRunFixture as createRun, type RetainedRunFixture as RunFixture } from './retained-run-fixture.js';
 
 const temporaryPaths: string[] = [];
 
@@ -69,13 +70,6 @@ describe('pruneMemoryRuns', () => {
 });
 
 interface Fixture extends MemoryRunRetentionOptions { readonly root: string }
-interface RunFixture {
-  readonly id: string;
-  readonly directory: string;
-  readonly workspace: string;
-  readonly manifestPath: string;
-  readonly sessionPath: string;
-}
 
 async function createFixture(): Promise<Fixture> {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'felan-memory-retention-')));
@@ -85,27 +79,6 @@ async function createFixture(): Promise<Fixture> {
   await mkdir(join(projectDirectory, 'runs'), { recursive: true });
   await mkdir(sessionDirectory);
   return { root, projectDirectory, sessionDirectory, projectKey: 'a'.repeat(64) };
-}
-
-async function createRun(fixture: Fixture, overrides: Record<string, unknown> = {}): Promise<RunFixture> {
-  const id = String(overrides.sessionId ?? randomUUID());
-  const directory = join(fixture.projectDirectory, 'runs', id);
-  const workspace = join(directory, 'workspace');
-  const sessionFile = `${id}.jsonl`;
-  const manifestPath = join(directory, 'manifest.json');
-  const sessionPath = join(fixture.sessionDirectory, sessionFile);
-  const metadata = {
-    version: 1, kind: 'memory', sessionId: id, projectKey: fixture.projectKey, sessionFile,
-    startedAt: iso(0), finishedAt: iso(1), status: 'completed', ...overrides,
-  };
-  await mkdir(join(workspace, '.memory'), { recursive: true });
-  await writeFile(join(workspace, '.memory', 'summary.md'), 'output');
-  await writeFile(manifestPath, `${JSON.stringify(metadata)}\n`);
-  await writeFile(sessionPath, `${JSON.stringify({ type: 'session', version: 3, id, timestamp: metadata.startedAt, cwd: '/workspace' })}\n${JSON.stringify({
-    type: 'custom', id: 'marker', parentId: null, timestamp: metadata.startedAt,
-    customType: 'felan-memory-run', data: metadata,
-  })}\n`);
-  return { id, directory, workspace, manifestPath, sessionPath };
 }
 
 async function expectRecordDeleted(run: RunFixture): Promise<void> {

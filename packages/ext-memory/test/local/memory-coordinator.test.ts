@@ -115,28 +115,72 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it('notifies status subscribers when the pending count changes', async () => {
+  it.each([false, true])('notifies status subscribers when the pending count changes (monitor refresh: %s)', async (refreshDuringRun) => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
+    const entered = deferred();
+    const release = deferred();
+    const monitorChanged = deferred();
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
-      dreamRunner: async () => updatedArtifact(),
+      dreamRunner: async () => {
+        entered.resolve();
+        await release.promise;
+        return updatedArtifact();
+      },
     });
-    const statusChanged = vi.fn();
+    const fixture = trackMemoryFixture(coordinator, release.resolve);
+    fixture.restoreWith(() => vi.useRealTimers());
+    let awaitingMonitor = false;
+    const statusChanged = vi.fn(() => {
+      if (awaitingMonitor) monitorChanged.resolve();
+    });
     const unsubscribe = coordinator.subscribeStatusChanges(statusChanged);
     const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
 
-    await host.recordCheckpoint(checkpointFor(sessionFile));
-    expect(statusChanged).toHaveBeenCalledTimes(1);
-    await coordinator.runNow(cwd);
-    expect(statusChanged).toHaveBeenCalledTimes(3);
+    try {
+      await host.recordCheckpoint(checkpointFor(sessionFile));
+      expect(statusChanged).toHaveBeenCalledTimes(1);
+      expect(await host.status()).toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
 
-    unsubscribe();
-    await coordinator.dispose();
+      const running = fixture.runNow(cwd);
+      await waitForMemoryMilestone(entered.promise, running, 'runner entry');
+      expect(statusChanged).toHaveBeenCalledTimes(2);
+      expect(await host.status()).toMatchObject({ state: 'processing', pendingCheckpoints: 1 });
+
+      if (refreshDuringRun) {
+        awaitingMonitor = true;
+        vi.advanceTimersByTime(2_000);
+        await waitForMemoryMilestone(monitorChanged.promise, running, 'monitor status refresh');
+        awaitingMonitor = false;
+        expect(statusChanged).toHaveBeenCalledTimes(3);
+        expect(await host.status()).toMatchObject({ state: 'processing', pendingCheckpoints: 1 });
+      }
+
+      release.resolve();
+      await expect(running).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+      const expectedNotifications = refreshDuringRun ? 4 : 3;
+      expect(statusChanged).toHaveBeenCalledTimes(expectedNotifications);
+
+      unsubscribe();
+      const remainingSubscriber = vi.fn();
+      coordinator.subscribeStatusChanges(remainingSubscriber);
+      await writeResumedSession(sessionFile, cwd);
+      await host.recordCheckpoint(resumedCheckpointFor(sessionFile));
+      expect(remainingSubscriber).toHaveBeenCalledTimes(1);
+      expect(await host.status()).toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
+      await expect(fixture.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+      expect(remainingSubscriber).toHaveBeenCalledTimes(3);
+      expect(statusChanged).toHaveBeenCalledTimes(expectedNotifications);
+    } finally {
+      unsubscribe();
+      await fixture.cleanup();
+    }
   });
 
   it('runs explicit processing and ignores duplicate cursors', async () => {

@@ -40,12 +40,12 @@ async function fixture(extension?: (pi: ExtensionAPI) => void) {
     await f.dispose();
   });
   const scope = { kind: 'session', session: f.root.sessionId, root: f.root.sessionId } as const;
-  async function client(kind: 'tui' | 'acp' | 'headless' = 'tui', attach = true, forms = true) {
+  async function client(kind: 'tui' | 'acp' | 'headless' = 'tui', attach = true, forms = true, options: { retries?: number; actions?: boolean } = {}) {
     const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
       expected: f.owner.identity, clientVersion: 'fixture', kind, interactionKinds: kind === 'headless' ? [] : ['select', 'confirm', 'input', 'tool_approval', 'dependency',
         ...(forms ? ['form' as const] : [])],
-      capabilities: [],
-      requestTimeoutMs: 1000, retries: 0 });
+      capabilities: options.actions ? ['ui.action'] : [],
+      requestTimeoutMs: 1000, retries: options.retries ?? 0 });
     clients.push(client);
     await client.connect();
     if (attach) expect((await client.attach(f.root.sessionId)).outcome).toBe('accepted');
@@ -77,6 +77,56 @@ function askUserHost(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe('InteractionBroker', () => {
+  it.each([true, false])('returns explicit Pi confirm=%s through pruning and an unpersisted answer retry', async confirmed => {
+    const f = await fixture(); const session = f.root.sessionId;
+    for (let index = 0; index < 1001; index++) f.store.putResource({ id: `finished-${index}`, session, root: session,
+      kind: 'detached', state: 'exited', updatedAt: 0 });
+    const client = await f.client('tui', true, true, { retries: 2 }); const attachment = client.capabilities!.attachmentId;
+    const bridge = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); bridge.activate(() => {});
+    cleanups.push(async () => bridge.dispose());
+    let settled = false;
+    const waiting = bridge.context.confirm('Git Push', 'Synthetic confirmation; no command is executed.').then(value => { settled = true; return value; });
+    await vi.waitFor(() => expect(client.getInteractions({ includeSessions: true })).toHaveLength(1));
+    expect(settled).toBe(false);
+    const interaction = client.getInteractions({ includeSessions: true })[0]!;
+    const admit = vi.spyOn(f.store, 'admit'); const dispatch = vi.spyOn(f.broker, 'dispatch');
+    expect(await client.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'confirm', confirmed } }, { session }))
+      .toMatchObject({ outcome: 'accepted' });
+    await expect(waiting).resolves.toBe(confirmed);
+    await vi.waitFor(() => {
+      expect(client.capabilities!.attachmentId).not.toBe(attachment);
+      expect(client.getAttachment(session)?.state.status).toBe('live');
+    });
+    const attempts = admit.mock.calls.filter(([value]) => (value as { op?: string }).op === 'interaction.answer');
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]![0]).toEqual(attempts[1]![0]);
+    expect(dispatch).toHaveBeenCalledOnce(); expect(f.store.resources(session)).toHaveLength(1000);
+    expect(client.getInteractions({ includeSessions: true })).toEqual([]);
+  });
+
+  it.each([true, false])('completes a retried UI action with nested Pi confirm=%s after pruning', async confirmed => {
+    const f = await fixture(); const session = f.root.sessionId;
+    const client = await f.client('tui', true, true, { retries: 2, actions: true });
+    const attachment = client.capabilities!.attachmentId;
+    const bridge = createSessionExtensionUi({ port: sessionUiPort(f.broker, f.scope) }); bridge.activate(() => {});
+    cleanups.push(async () => bridge.dispose());
+    const handler = vi.fn(async () => {
+      expect(await bridge.context.confirm('Nested action', 'Synthetic confirmation; no command is executed.')).toBe(confirmed);
+    });
+    const unregister = f.registry.registerUiActions(session, () => handler);
+    cleanups.push(async () => unregister());
+    for (let index = 0; index < 1001; index++) f.store.putResource({ id: `finished-${index}`, session, root: session,
+      kind: 'detached', state: 'exited', updatedAt: 0 });
+    const response = client.request('ui.action', { elementId: 'nested', revision: 1, actionId: 'submit', outcome: 'submit', values: {} }, { session });
+    await vi.waitFor(() => expect(client.getInteractions({ includeSessions: true })).toHaveLength(1));
+    expect(client.capabilities!.attachmentId).not.toBe(attachment);
+    const interaction = client.getInteractions({ includeSessions: true })[0]!;
+    expect(await client.request('interaction.answer', { interactionId: interaction.id, answer: { kind: 'confirm', confirmed } }, { session }))
+      .toMatchObject({ outcome: 'accepted' });
+    expect(await response).toMatchObject({ outcome: 'accepted' });
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
   it.each(['host', 'session'] as const)('answers %s interactions from equally capable clients', async kind => {
     const f = await fixture();
     const scope = kind === 'host' ? { kind: 'host' as const } : f.scope;

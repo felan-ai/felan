@@ -5,6 +5,7 @@ import { AbsolutePathSchema, CounterSchema, IdSchema, InteractionSchema, JsonVal
 export const CONTROL_LIMITS = Object.freeze({
   projections: 256,
   projectionAgeMs: 7 * 24 * 60 * 60 * 1000,
+  terminalResourcesPerRoot: 1000,
 });
 export class ControlStoreError extends Error {
   constructor(readonly code: 'storage_failure' | 'request_capacity' | 'request_conflict' | 'not_found' | 'already_resolved' | 'invalid_request' | 'ownership_lost', message: string) {
@@ -81,6 +82,8 @@ export const ControlResourceSchema = Type.Object({
   // Process references belong to the provider's runtime namespace, not the daemon's local stores.
   reference: Type.Optional(AbsolutePathSchema), pid: Type.Optional(Type.Integer({ minimum: 1, maximum: 2_147_483_647 })),
   startIdentity: Type.Optional(text(128, 1)), updatedAt: CounterSchema,
+  command: Type.Optional(text(16384)), startedAt: Type.Optional(CounterSchema),
+  exitCode: Type.Optional(Type.Integer()),
 });
 export type ControlResource = Static<typeof ControlResourceSchema>;
 export const ControlStateSchema = Type.Object({

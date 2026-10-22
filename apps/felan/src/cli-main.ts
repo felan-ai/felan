@@ -5,6 +5,7 @@ import { FELAN_VERSION } from './version.js';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute, resolve } from 'node:path';
+import { suggestTopLevelCommand } from './cli-command-suggestions.js';
 
 export interface CliDependencies {
   readonly writeOutput?: (line: string) => void;
@@ -43,6 +44,12 @@ ${configOptions.map((option) => `  --${option.name}${option.configField.type ===
 export async function runCli(args: readonly string[], dependencies: CliDependencies = {}): Promise<number> {
   const writeOutput = dependencies.writeOutput ?? ((line) => console.log(line));
   const writeError = dependencies.writeError ?? ((line) => console.error(line));
+  const suggestion = suggestTopLevelCommand(args);
+  if (suggestion) {
+    writeError(`Unknown command: ${args[0]}. Did you mean: felan ${[suggestion, ...args.slice(1)].join(' ')}?`);
+    writeError('Use felan -- <message> to send this as a prompt.');
+    return 1;
+  }
   if (args[0] === 'daemon') {
     if (dependencies.launchDaemon) return dependencies.launchDaemon(args.slice(1));
     const { runDaemonCommand } = await import('./daemon-command.js');

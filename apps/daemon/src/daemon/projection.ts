@@ -13,6 +13,7 @@ import type { ControlSessionMetadata } from './control-state.js';
 import type { SessionBinding } from './session-lifecycle-contracts.js';
 import { messageDisplay } from './message-display.js';
 import { sessionTip } from './session-cursor.js';
+import { boundMessage } from './message-bounds.js';
 
 export type ProjectionOutput = SessionEvent | TextStreamEvent;
 export type ProjectionExtras = Pick<SessionSnapshot, 'children' | 'processes' | 'interactions'>;
@@ -513,7 +514,7 @@ export class SessionProjection {
     if (!project) return message;
     const value = parseSchema(MessageSchema, project(entry, message));
     if (value.id !== message.id || value.entryId !== message.entryId) throw new Error('Message projection changed canonical identity.');
-    return value;
+    return boundMessage(value);
   }
 }
 
@@ -552,14 +553,14 @@ export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Or
   // Tool results keep their own details on the tool_result part, so non-object details are replaced to carry display metadata.
   if (display) details = details !== null && typeof details === 'object' && !Array.isArray(details)
     ? { ...details, [MESSAGE_DISPLAY_KEY]: display } : { [MESSAGE_DISPLAY_KEY]: display };
-  return parseSchema(MessageSchema, { id, entryId: entry.id, ...(entry.parentId ? { parentEntryId: entry.parentId } : {}),
+  return boundMessage(parseSchema(MessageSchema, { id, entryId: entry.id, ...(entry.parentId ? { parentEntryId: entry.parentId } : {}),
     role: raw.role === 'toolResult' ? 'tool' : ['user', 'assistant', 'system', 'custom'].includes(raw.role) ? raw.role : 'custom',
     content, timestamp: Math.max(0, Date.parse(entry.timestamp) || 0),
     ...('customType' in raw ? { customType: raw.customType } : {}),
     ...(raw.role === 'bashExecution' ? { customType: 'bashExecution' } : {}),
     ...(details === undefined ? {} : { details }),
     ...(origin ? { origin } : {}),
-  });
+  }));
 }
 export function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value) ?? 'null').digest('hex'); }
 export function boundedText(value: string, bytes: number): string {

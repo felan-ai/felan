@@ -1,4 +1,4 @@
-import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import type { AgentRuntime, AgentRuntimeListFilesOptions, AgentRuntimeStorage } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundBashJobStore, getBackgroundBashJobsDir } from '../src/job-store.js';
 
@@ -301,10 +301,13 @@ class MemoryStorage implements AgentRuntimeStorage {
     this.files.set(path, combined);
   }
 
-  async listFiles(path: string): Promise<string[]> {
-    return [...this.files.keys()]
+  async listFiles(path: string, options?: AgentRuntimeListFilesOptions): Promise<string[]> {
+    const paths = [...this.files.keys()]
       .filter((file) => file.startsWith(`${path}/`))
       .map((file) => file.slice(path.length + 1));
+    return options?.recursive === false
+      ? [...new Set(paths.map(file => file.split('/')[0]!))]
+      : paths;
   }
   async mkdir(): Promise<void> {}
   async remove(): Promise<void> {}

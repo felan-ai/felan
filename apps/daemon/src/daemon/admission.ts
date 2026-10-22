@@ -46,7 +46,7 @@ export class OrderedAdmission {
   }
 
   // The caller supplies an already authorized, stable transport principal, not an attachment ID.
-  async submit(value: unknown, principal: string, handler?: AdmissionHandler): Promise<Response> {
+  async submit(value: unknown, principal: string, handler?: AdmissionHandler, committed = this.options.committed): Promise<Response> {
     this.store.owner.assertCurrent();
     principal = parseSchema(IdSchema, principal);
     const request = parseClientEnvelope(value);
@@ -73,8 +73,7 @@ export class OrderedAdmission {
       || this.bytes + bytes > byteLimit) {
       throw new ControlStoreError('request_capacity', 'Admission capacity reached; retry after pending work settles.');
     }
-    const admitted = this.store.admit(request, principal);
-    this.options.committed?.(admitted.revisions);
+    this.store.admit(request, principal, revisions => committed?.(revisions));
     const lane = request.session ?? '';
     const prepared = (this.lanes.get(lane) ?? Promise.resolve()).then(() => this.prepare(request, handler));
     const tail = prepared.then(() => {}, () => {});

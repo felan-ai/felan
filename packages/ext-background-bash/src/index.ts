@@ -12,11 +12,11 @@ import { normalizeBackgroundCommand } from './command-normalizer.js';
 import {
   isTerminalStatus,
   type BackgroundBashJob,
-  type BackgroundBashStatusFilter,
 } from './job-store.js';
 import { BackgroundBashManager } from './process-manager.js';
 import { inspectBackgroundBashRuntime } from './runtime-support.js';
 import { createCommonProcessPresentation } from './common-ui.js';
+import { formatProcessListResult } from './list-result.js';
 import {
   BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE,
   type BackgroundProcessViewSource,
@@ -48,6 +48,9 @@ const BashParams = Type.Object({
 
 const ListBackgroundBashParams = Type.Object({
   status: Type.Optional(StringEnum(STATUS_VALUES, { description: 'Filter processes by status' })),
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100, description: 'Recent page size. Default: 10.' })),
+  cursor: Type.Optional(Type.String({ pattern: '^bash-[0-9]{14}-[a-f0-9]{6}$', description: 'Continue a previous page using its nextCursor.' })),
+  search: Type.Optional(Type.String({ maxLength: 256, description: 'Search process IDs and commands; scans a bounded page at a time.' })),
 }, { additionalProperties: false });
 
 const ReadBackgroundBashParams = Type.Object({
@@ -132,6 +135,7 @@ export function createBackgroundBashExtension(): FelanExtension {
   const viewLifetime = new AbortController();
   const viewSource: BackgroundProcessViewSource = {
     list: status => manager.list(status), tail: (id, lines) => manager.tail(id, lines), stop: (id, signal) => manager.stop(id, signal),
+    query: options => manager.query(options),
     write: async (id, chars) => { await manager.writeInteractive(id, chars); },
   };
   const watchedJobIds = new Set<string>();
@@ -342,19 +346,16 @@ export function createBackgroundBashExtension(): FelanExtension {
     pi.registerTool({
       name: 'list_background_bash',
       label: 'List background processes',
-      description: 'List processes started in this root session and workspace, including processes started by its subagents.',
+      description: 'List a bounded recent page of root-session workspace processes, including subagents. Follow nextCursor for older results; use status: running to search for older running jobs.',
       promptSnippet: 'List workspace background processes and their status',
       parameters: ListBackgroundBashParams,
       async execute(_toolCallId, params: ListBackgroundBashParams, _signal, _onUpdate, ctx) {
-        const jobs = await manager.list((params.status ?? 'all') as BackgroundBashStatusFilter);
+        const page = await manager.query(params);
+        const jobs = page.jobs;
         for (const job of jobs) {
           if (isTerminalStatus(job.status.status)) suppressCompletion(job.meta.id);
         }
-        await commonPresentation.refresh().catch(() => {});
-        return {
-          content: [{ type: 'text', text: formatJobList(jobs) }],
-          details: { jobs: jobs.map((job) => ({ meta: job.meta, status: job.status })) },
-        };
+        return formatProcessListResult(page);
       },
     });
 
@@ -532,11 +533,6 @@ function formatDuration(job: BackgroundBashJob): string {
   return `${minutes}m${seconds % 60}s`;
 }
 
-function oneLine(value: string, max = 90): string {
-  const compact = value.replace(/\s+/gu, ' ').trim();
-  return compact.length > max ? `${compact.slice(0, max - 1)}…` : compact;
-}
-
 function formatJobDetails(job: BackgroundBashJob): string {
   return [
     `ID: ${job.meta.id}`,
@@ -579,19 +575,6 @@ function completionDetails(job: BackgroundBashJob) {
   };
 }
 
-function formatJobList(jobs: BackgroundBashJob[]): string {
-  if (jobs.length === 0) return 'No background processes found for this workspace.';
-  return jobs.map((job) => {
-    const pid = String(job.status.pid ?? job.meta.pid ?? '-');
-    const exit = job.status.exitCode ?? job.status.signal ?? '-';
-    return [
-      `${job.meta.id}  ${job.status.status}  pid=${pid}  exit=${exit}  started=${formatDate(job.meta.startedAt)}  duration=${formatDuration(job)}`,
-      `  log: ${job.meta.logPath}`,
-      `  command: ${oneLine(job.meta.command)}`,
-    ].join('\n');
-  }).join('\n\n');
-}
-
 function formatWaitResult(job: BackgroundBashJob, timedOut: boolean): string {
   const heading = timedOut
     ? 'Background process is still running.'
@@ -617,6 +600,8 @@ export type {
   BackgroundBashStatus,
   BackgroundBashStatusFile,
   BackgroundBashStatusFilter,
+  BackgroundBashQuery,
+  BackgroundBashPage,
 } from './job-store.js';
 export default backgroundBashExtension;
 associateExtensionConfig(backgroundBashExtension, BACKGROUND_BASH_CONFIG);

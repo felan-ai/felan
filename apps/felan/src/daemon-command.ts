@@ -8,6 +8,7 @@ import { FELAN_VERSION } from './version.js';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { waitForDaemonStop } from './client/daemon-stop.js';
 import { formatHostBlocked, hostBlockedRejection, type DaemonRecovery } from './client/daemon-blocked.js';
+import { DAEMON_COMMANDS, suggestCommand } from './cli-command-suggestions.js';
 
 const usage = 'Usage: felan daemon [status|start|foreground|stop|restart|logs] [--daemon-runtime <dir>] [--host-config <path>] [--force]';
 const absent = (error: unknown) => ['ENOENT', 'stale_endpoint', 'unavailable'].includes((error as { code?: string }).code ?? '');
@@ -16,11 +17,14 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
   createClient?: (options: SessionClientOptions) => SessionClient;
   foreground?: (target: ReturnType<typeof clientDaemonTarget>) => Promise<number>;
 } = {}): Promise<number> {
-  if (args.includes('--help') || args.includes('-h')) { io.writeOutput(usage); return 0; }
   const action = args[0] && !args[0].startsWith('-') ? args[0] : 'status';
   let force = false; let daemonRuntime: string | undefined; let hostConfigPath: string | undefined;
   try {
-    if (!['status', 'start', 'foreground', 'stop', 'restart', 'logs'].includes(action)) throw new Error(usage);
+    if (!DAEMON_COMMANDS.includes(action as typeof DAEMON_COMMANDS[number])) {
+      const suggestion = suggestCommand(action, DAEMON_COMMANDS);
+      throw new Error(`Unknown daemon command: ${action}.${suggestion ? ` Did you mean: felan daemon ${suggestion}?` : ''}\n${usage}`);
+    }
+    if (args.includes('--help') || args.includes('-h')) { io.writeOutput(usage); return 0; }
     for (let i = action === args[0] ? 1 : 0; i < args.length; i++) {
       const arg = args[i];
       if (arg === '--force') force = true;

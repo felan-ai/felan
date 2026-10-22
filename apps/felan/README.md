@@ -106,6 +106,16 @@ acp login           Configure model-provider credentials in a finite terminal fl
 --verbose          Show verbose startup details
 ```
 
+Likely command typos such as `felan deamon stop` produce a suggestion and exit
+with status 1; they never run the suggested command or start a model session.
+Suggestions require one unambiguous single-character edit (including adjacent
+transpositions). At the top level, only command-shaped input is checked: a daemon
+action or command-specific options, or a single word with transposed letters.
+Other words and sentences remain prompts, including `saving` and `updates`.
+Use `felan -- deamon stop` to explicitly send command-shaped text as a prompt.
+Invalid actions after `felan daemon` always fail with usage information and, when
+unambiguous, a suggestion.
+
 `/restart` restarts the daemon and then Felan Code, resuming the current
 session, so rebuilt daemon and client code both take effect. `/daemon restart`
 restarts only the daemon and reattaches the current session in place.

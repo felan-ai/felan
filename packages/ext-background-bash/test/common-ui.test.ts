@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCommonProcessPresentation } from '../src/common-ui.js';
 import type { BackgroundBashJob, BackgroundBashStatus } from '../src/job-store.js';
 import type { BackgroundProcessViewSource } from '../src/presentation.js';
-import { PROCESS_VIEW_PAGE_SIZE, splitProcessLog } from '../src/data.js';
+import { splitProcessLog } from '../src/data.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 const releases: Array<() => void> = [];
@@ -35,9 +35,22 @@ function deferred<T>(fallback: T) {
   return { promise, resolve };
 }
 
-function fixture(initial = [job()]) {
+function fixture(initial = [job()], optimized = false) {
   let jobs = initial;
+  const query = vi.fn<NonNullable<BackgroundProcessViewSource['query']>>(async (options = {}) => {
+    const candidates = jobs.slice(options.cursor ? jobs.findIndex(job => job.meta.id === options.cursor) + 1 : 0);
+    const rows: BackgroundBashJob[] = [];
+    let scanned = 0;
+    for (const candidate of candidates) {
+      scanned++;
+      if (!options.search || `${candidate.meta.id}\n${candidate.meta.command}`.toLowerCase().includes(options.search.toLowerCase())) rows.push(candidate);
+      if (rows.length === (options.limit ?? 10) || scanned === 12) break;
+    }
+    const hasMore = scanned < candidates.length;
+    return { jobs: rows, scanned, hasMore, ...(hasMore ? { nextCursor: candidates[scanned - 1]!.meta.id } : {}) };
+  });
   const source = {
+    ...(optimized ? { query } : {}),
     list: vi.fn<BackgroundProcessViewSource['list']>(async () => jobs),
     tail: vi.fn<BackgroundProcessViewSource['tail']>(async () => 'output'),
     stop: vi.fn<BackgroundProcessViewSource['stop']>(async (id) => {
@@ -95,24 +108,179 @@ function fixture(initial = [job()]) {
     ]) };
     return row.options.onAction(request, context);
   }
-  return { adapter, source, controller, present, rows, history, view, document, invoke,
+  return { adapter, source, query, controller, present, rows, history, view, document, invoke,
     open: () => adapter.show(source, controller.signal), setJobs: (value: BackgroundBashJob[]) => { jobs = value; } };
 }
 
 describe('common process presentation', () => {
+  it('opens only a bounded recent query and fetches history one explicit page at a time', async () => {
+    const f = fixture(Array.from({ length: 35 }, (_, index) => job(index + 1)), true);
+    await f.open();
+    expect(f.query).toHaveBeenCalledExactlyOnceWith({ limit: 10 });
+    expect(f.source.list).not.toHaveBeenCalled();
+    expect(f.view().title).toContain('Recent processes');
+    expect(f.view().items).toHaveLength(10);
+    expect(f.view().paging).toBeUndefined();
+    expect(f.view().query).toEqual({ actionId: 'search', values: { query: '' } });
+    await f.invoke(f.view(), 'history');
+    expect(f.query).toHaveBeenCalledTimes(2);
+    expect(f.view().title).toContain('Process history');
+    expect(f.view().paging).toEqual({ nextActionId: 'next' });
+    await f.invoke(f.view(), 'next');
+    expect(f.query).toHaveBeenLastCalledWith({ limit: 10, cursor: 'job-10' });
+    expect(f.view().items[0]?.id).toBe('job-11');
+    await f.adapter.refresh();
+    expect(f.query).toHaveBeenLastCalledWith({ limit: 10, cursor: 'job-10' });
+    await f.invoke(f.view(), 'previous');
+    expect(f.query).toHaveBeenLastCalledWith({ limit: 10 });
+    expect(f.view().items[0]?.id).toBe('job-1');
+    await f.invoke(f.view(), 'recent');
+    expect(f.view().paging).toBeUndefined();
+    expect(f.source.list).not.toHaveBeenCalled();
+  });
+
+  it('exposes a generic search input and advances empty scan batches only on request', async () => {
+    const jobs = Array.from({ length: 30 }, (_, index) => job(index + 1));
+    jobs[25]!.meta.command = 'Needle in old history';
+    const f = fixture(jobs, true);
+    await f.open();
+    const search = f.view().actions.find(action => action.id === 'search')!;
+    expect(search.input).toMatchObject({ fields: [{ id: 'query', kind: 'string', maxLength: 256, required: true }] });
+    await f.invoke(f.view(), 'search', { values: { query: ' Needle ' } });
+    expect(f.query).toHaveBeenCalledTimes(2);
+    expect(f.query).toHaveBeenLastCalledWith({ limit: 10, search: 'Needle' });
+    expect(f.view().items).toEqual([]);
+    expect(f.view().fallback).toContain('12 records scanned');
+    expect(f.view().fallback).toContain('No matches in this batch; more history remains');
+    expect(f.view().actions.find(action => action.id === 'next')?.label).toBe('Continue scanning');
+    await f.invoke(f.view(), 'next');
+    expect(f.query).toHaveBeenCalledTimes(3);
+    expect(f.view().fallback).toContain('24 records scanned');
+    expect(f.view().items).toEqual([]);
+    await f.invoke(f.view(), 'next');
+    expect(f.view().items.map(item => item.id)).toEqual(['job-26']);
+    expect(f.view().fallback).toContain('30 records scanned');
+    expect(f.view().paging).toEqual({ previousActionId: 'previous' });
+    expect(f.view().query?.values).toEqual({ query: 'Needle' });
+    await f.invoke(f.view(), 'search', { values: { query: '' } });
+    expect(f.view().title).toContain('Process history');
+    expect(f.view().items[0]?.id).toBe('job-1');
+    expect(f.source.list).not.toHaveBeenCalled();
+  });
+
+  it('reports terminal no matches and rejects malformed searches before querying', async () => {
+    const f = fixture([job()], true);
+    await f.open();
+    for (const values of [{}, { query: 3 }, { query: 'x'.repeat(257) }, { query: 'x', extra: true }]) {
+      await expect(f.invoke(f.view(), 'search', { values })).rejects.toThrow();
+    }
+    expect(f.query).toHaveBeenCalledTimes(1);
+    await f.invoke(f.view(), 'search', { values: { query: 'missing' } });
+    expect(f.view().fallback).toContain('No matching processes');
+    expect(f.view().paging).toBeUndefined();
+  });
+
+  it('shows loading, preserves the current page after a query failure, and supports retry', async () => {
+    const f = fixture(Array.from({ length: 20 }, (_, index) => job(index + 1)), true);
+    await f.open(); await f.invoke(f.view(), 'history');
+    const waiting = deferred<Awaited<ReturnType<NonNullable<BackgroundProcessViewSource['query']>>>>({ jobs: [], hasMore: false, scanned: 0 });
+    f.query.mockReturnValueOnce(waiting.promise);
+    const next = f.invoke(f.view(), 'next');
+    await vi.waitFor(() => expect(f.view().fallback).toContain('Loading processes'));
+    waiting.resolve({ jobs: [job(11)], scanned: 1, hasMore: true, nextCursor: 'job-11' });
+    await next;
+    f.query.mockRejectedValueOnce(new Error('query failed'));
+    await expect(f.invoke(f.view(), 'next')).rejects.toThrow('query failed');
+    expect(f.view().items[0]?.id).toBe('job-11');
+    expect(f.view().fallback).toContain('Refresh to retry');
+    await f.invoke(f.view(), 'refresh');
+    expect(f.query).toHaveBeenLastCalledWith({ limit: 10, cursor: 'job-10' });
+    expect(f.view().fallback).not.toContain('Could not');
+  });
+
+  it.each(['stop', 'kill'] as const)('rechecks %s through a bounded query and never loads the full list', async control => {
+    const f = fixture([job(), job(2)], true);
+    await f.open(); await f.invoke(f.view(), 'read', { itemId: 'job-2' });
+    await f.invoke(f.document(), control);
+    expect(f.query).toHaveBeenNthCalledWith(2, { limit: 10, search: 'job-2' });
+    expect(f.source.stop).toHaveBeenCalledWith('job-2', control === 'stop' ? 'SIGTERM' : 'SIGKILL');
+    expect(f.source.list).not.toHaveBeenCalled();
+    expect(f.document().actions.some(action => action.id === control)).toBe(false);
+  });
+
+  it('rejects stale control state and aborted queries without action leaks', async () => {
+    const f = fixture([job()], true);
+    await f.open(); await f.invoke(f.view(), 'read', { itemId: 'job-1' });
+    f.setJobs([job(1, 'completed')]);
+    await expect(f.invoke(f.document(), 'stop')).rejects.toThrow('no longer running');
+    expect(f.source.stop).not.toHaveBeenCalled();
+    const waiting = deferred<Awaited<ReturnType<NonNullable<BackgroundProcessViewSource['query']>>>>({ jobs: [], hasMore: false, scanned: 0 });
+    f.query.mockReturnValueOnce(waiting.promise);
+    const caller = new AbortController();
+    const control = f.invoke(f.document(), 'kill', {}, caller.signal);
+    const rejected = expect(control).rejects.toThrow();
+    await vi.waitFor(() => expect(f.query).toHaveBeenCalledTimes(3));
+    caller.abort(); waiting.resolve({ jobs: [job()], scanned: 1, hasMore: false });
+    await rejected;
+    expect(f.source.stop).not.toHaveBeenCalled();
+    expect(f.source.list).not.toHaveBeenCalled();
+  });
+
+  it('joins an aborted history query before closing its handles without publishing late rows', async () => {
+    const f = fixture([job()], true);
+    await f.open();
+    const waiting = deferred<Awaited<ReturnType<NonNullable<BackgroundProcessViewSource['query']>>>>({ jobs: [], hasMore: false, scanned: 0 });
+    f.query.mockReturnValueOnce(waiting.promise);
+    const history = f.invoke(f.view(), 'history');
+    const rejected = expect(history).rejects.toThrow();
+    await vi.waitFor(() => expect(f.query).toHaveBeenCalledTimes(2));
+    f.controller.abort();
+    let disposed = false;
+    const cleanup = f.adapter.dispose().then(() => { disposed = true; });
+    await Promise.resolve();
+    expect(disposed).toBe(false);
+    waiting.resolve({ jobs: [job(2)], hasMore: false, scanned: 1 });
+    await rejected; await cleanup;
+    expect(f.view().items[0]?.id).toBe('job-1');
+    expect(f.rows.get(f.view().id)?.handle.close).toHaveBeenCalledOnce();
+    expect(f.source.stop).not.toHaveBeenCalled();
+    expect(f.source.write).not.toHaveBeenCalled();
+  });
+
+  it('restores the previous page after cancelling a pending search', async () => {
+    const f = fixture([job()], true);
+    await f.open();
+    const waiting = deferred<Awaited<ReturnType<NonNullable<BackgroundProcessViewSource['query']>>>>({ jobs: [], hasMore: false, scanned: 0 });
+    f.query.mockReturnValueOnce(waiting.promise);
+    const caller = new AbortController();
+    const search = f.invoke(f.view(), 'search', { values: { query: 'new' } }, caller.signal);
+    const rejected = expect(search).rejects.toThrow();
+    await vi.waitFor(() => expect(f.view().fallback).toContain('Loading'));
+    caller.abort(); waiting.resolve({ jobs: [], hasMore: false, scanned: 1 });
+    await rejected;
+    expect(f.view().title).toContain('Recent processes');
+    expect(f.view().fallback).not.toContain('Loading');
+    expect(f.view().fallback).not.toContain('Could not');
+    expect(f.view().items[0]?.id).toBe('job-1');
+    await expect(f.invoke(f.view(), 'refresh')).resolves.toBeUndefined();
+  });
+
   it('publishes bounded normalized rows with explicit paging, without private job metadata', async () => {
     const jobs = Array.from({ length: 20 }, (_, index) => job(index + 1));
     jobs[0]!.meta.command = 'x'.repeat(1000);
     const f = fixture(jobs);
     await f.open();
-    expect(f.view().items).toHaveLength(PROCESS_VIEW_PAGE_SIZE);
+    expect(f.view().items).toHaveLength(10);
     expect(f.view().items[0]?.values.clipped).toBe(true);
+    expect(f.view().paging).toBeUndefined();
+    expect(f.view().actions.map(action => action.id)).toEqual(['read', 'history', 'search', 'refresh', 'close']);
+    await f.invoke(f.view(), 'history');
     expect(f.view().paging).toEqual({ nextActionId: 'next' });
-    expect(f.view().actions.map(action => action.id)).toEqual(['read', 'next', 'refresh', 'close']);
     const original = f.view();
     await f.invoke(original, 'next');
-    expect(f.view()).toMatchObject({ id: original.id, revision: original.revision + 1, paging: { previousActionId: 'previous' } });
-    expect(f.view().items.map(item => item.id)).toEqual(['job-19', 'job-20']);
+    expect(f.view()).toMatchObject({ id: original.id, paging: { previousActionId: 'previous' } });
+    expect(f.view().revision).toBeGreaterThan(original.revision);
+    expect(f.view().items.map(item => item.id)).toEqual(Array.from({ length: 10 }, (_, index) => `job-${index + 11}`));
     await f.invoke(f.view(), 'previous');
     expect(f.view().items[0]?.id).toBe('job-1');
     expect(f.view().hint).toEqual({ id: 'felan.processes', version: '1' });
@@ -127,7 +295,7 @@ describe('common process presentation', () => {
     const list = f.view();
     await f.invoke(list, 'read', { itemId: 'job-1' });
     expect(f.view()).toEqual(list);
-    expect(f.history.filter(element => element.kind === 'view')).toHaveLength(1);
+    expect(f.history.filter(element => element.kind === 'view')).toHaveLength(2);
     const output = f.document();
     await f.invoke(output, 'previous-output');
     expect(f.view()).toEqual(list);
@@ -342,16 +510,20 @@ it('acknowledges unchanged list refreshes and then publishes process completion'
 });
 
 
-it('pushes off-page completions without unchanged list revisions and stops after close', async () => {
-  const jobs = Array.from({ length: PROCESS_VIEW_PAGE_SIZE + 1 }, (_, index) => job(index + 1));
+it('refreshes only visible rows, avoids unchanged revisions, and stops after close', async () => {
+  const jobs = Array.from({ length: 11 }, (_, index) => job(index + 1));
   const f = fixture(jobs); await f.open();
   const first = f.view();
   await f.adapter.refresh();
   expect(f.view().revision).toBe(first.revision);
   f.setJobs(jobs.map((value, index) => index === jobs.length - 1 ? job(index + 1, 'completed') : value));
   await f.adapter.refresh();
+  expect(f.view().revision).toBe(first.revision);
+  expect(f.view().title).toContain('10 running on page');
+  f.setJobs(jobs.map((value, index) => index === 0 ? job(1, 'completed') : value));
+  await f.adapter.refresh();
   expect(f.view().revision).toBe(first.revision + 1);
-  expect(f.view().title).toContain(`${PROCESS_VIEW_PAGE_SIZE} running`);
+  expect(f.view().title).toContain('9 running on page');
   expect(f.present).toHaveBeenCalledOnce();
   await f.invoke(f.view(), 'close');
   const calls = f.source.list.mock.calls.length;

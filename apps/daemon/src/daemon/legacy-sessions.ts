@@ -7,6 +7,7 @@ import { parseSchema } from '@felan-ai/session-protocol';
 import type { ControlSession } from './control-state.js';
 import type { DaemonOwnership } from './ownership.js';
 import { isConversationEntry, sessionHeaderSchema } from './session-files.js';
+import { LegacySummaryCache } from './legacy-summary-cache.js';
 
 /** An unregistered pre-daemon transcript; `LegacySessionIndex.summary` supplies its title and preview. */
 export interface LegacySession {
@@ -15,7 +16,7 @@ export interface LegacySession {
 /** Display snippets of the latest Pi session name and the first user message. */
 export interface LegacySummary { readonly title: string; readonly preview: string }
 
-type Owner = Pick<DaemonOwnership, 'target'>;
+type Owner = Pick<DaemonOwnership, 'target'> & Partial<Pick<DaemonOwnership, 'assertCurrent' | 'assertOwnsPath'>>;
 type Header = { id: string; cwd: string };
 type Transcript = Header & LegacySummary;
 const sessionId = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/u;
@@ -43,8 +44,9 @@ export class LegacySessionIndex {
   private readonly reading = new Map<string, Promise<Transcript | undefined>>();
   // Listing pages and the warm-up share these, so neither can flood the file system.
   private readonly reads = new Slots(SUMMARY_READS);
+  private readonly cache: LegacySummaryCache;
 
-  constructor(private readonly owner: Owner) {}
+  constructor(private readonly owner: Owner) { this.cache = new LegacySummaryCache(owner); }
 
   /** Newest first. Malformed and registered files are skipped; a duplicated ID keeps only its newest file. */
   async discover(registered: readonly Pick<ControlSession, 'id' | 'piPath'>[], options: { cwd?: string; signal?: AbortSignal } = {}): Promise<LegacySession[]> {
@@ -81,17 +83,28 @@ export class LegacySessionIndex {
   }
 
   /** Empty when the file is gone, unreadable or no longer holds this session. */
-  async summary(session: Pick<LegacySession, 'id' | 'path'>): Promise<LegacySummary> {
+  async summary(session: Pick<LegacySession, 'id' | 'path'>, signal?: AbortSignal): Promise<LegacySummary> {
+    signal?.throwIfAborted();
     let info: Stats;
     try { info = await stat(session.path); } catch { return EMPTY; }
+    signal?.throwIfAborted();
     const version = fileVersion(info);
     const cached = this.summaries.get(session.path);
     if (cached?.version === version) return cached.id === session.id ? cached.summary : EMPTY;
+    const persisted = this.cache.get(session.path, version, session.id);
+    if (persisted) return persisted;
     const key = `${version}:${session.path}`;
     let read = this.reading.get(key);
     if (!read) {
-      read = this.reads.run(() => readTranscript(session.path, false)).then(result => {
-        if (result) this.summaries.set(session.path, { version, id: result.id, summary: { title: result.title, preview: result.preview } });
+      read = this.reads.run(() => readTranscript(session.path, false, signal)).then(async result => {
+        signal?.throwIfAborted();
+        if (result && await stat(session.path).then(after => fileVersion(after) === version, () => false)) {
+          const summary = { title: result.title, preview: result.preview };
+          this.summaries.delete(session.path);
+          this.summaries.set(session.path, { version, id: result.id, summary });
+          if (this.summaries.size > 2048) this.summaries.delete(this.summaries.keys().next().value!);
+          this.cache.set(session.path, version, result.id, summary);
+        }
         return result;
       }).finally(() => this.reading.delete(key));
       this.reading.set(key, read);
@@ -102,7 +115,8 @@ export class LegacySessionIndex {
 
   /** Reads summaries in the given order, a few at a time, so listings rarely wait for a whole transcript. */
   async warm(sessions: readonly LegacySession[], signal: AbortSignal): Promise<void> {
-    await limited(sessions, WARM_READS, signal, session => this.summary(session));
+    await limited(sessions, WARM_READS, signal, session => this.summary(session, signal));
+    this.cache.save(signal);
   }
 
   private async header(path: string, info: Stats): Promise<Header | undefined> {
@@ -176,11 +190,13 @@ function parseHeader(line: string): Header | undefined {
   } catch { return undefined; }
 }
 
-async function readTranscript(path: string, previewOnly: boolean): Promise<Transcript | undefined> {
+async function readTranscript(path: string, previewOnly: boolean, signal?: AbortSignal): Promise<Transcript | undefined> {
+  signal?.throwIfAborted();
   try {
     const handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK);
-    const input = handle.createReadStream({ encoding: 'utf8', autoClose: false });
+    const input = handle.createReadStream({ encoding: 'utf8', autoClose: false, ...(signal ? { signal } : {}) });
     try {
+      signal?.throwIfAborted();
       if (!(await handle.stat()).isFile()) return undefined;
       let header: Header | undefined;
       const summary = summarizer();
@@ -195,7 +211,7 @@ async function readTranscript(path: string, previewOnly: boolean): Promise<Trans
       }
       return header && { ...header, ...summary.result() };
     } finally { input.destroy(); await handle.close(); }
-  } catch { return undefined; }
+  } catch { signal?.throwIfAborted(); return undefined; }
 }
 
 // Latest Pi session name and first user message.

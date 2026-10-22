@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionManager, type ModelsService } from '@felan-ai/agent-core';
 import { digestActiveBranch } from '@felan-ai/ext-memory';
 import { memoryRunUsage } from './backend.js';
+import { createRetainedRunFixture } from './retained-run-fixture.js';
 
 
 
@@ -128,13 +129,22 @@ describe('retained memory runs', () => {
 
   it('enforces the terminal run count without needing another attempt to start', async () => {
     const options = await fixture();
-    for (let index = 0; index < 51; index += 1) {
-      const run = await LocalMemoryRun.create(options);
-      await run.finish('completed');
-    }
-    expect(await readdir(join(options.projectDirectory, 'runs'))).toHaveLength(50);
-    expect(await readdir(options.sessionDirectory)).toHaveLength(50);
-  }, 60_000);
+    await mkdir(options.sessionDirectory, { recursive: true });
+    const previous = await Promise.all(Array.from({ length: 50 }, (_, index) =>
+      createRetainedRunFixture(options, { finishedAt: new Date(index).toISOString() })));
+    const run = await LocalMemoryRun.create(options);
+    expect(await readdir(join(options.projectDirectory, 'runs'))).toHaveLength(51);
+    await run.finish('completed');
+
+    expect((await readdir(join(options.projectDirectory, 'runs'))).sort()).toEqual([
+      ...previous.slice(1).map(({ id }) => id), run.metadata.sessionId,
+    ].sort());
+    expect((await readdir(options.sessionDirectory)).sort()).toEqual([
+      ...previous.slice(1).map(({ id }) => `${id}.jsonl`), run.metadata.sessionFile,
+    ].sort());
+    await expect(lstat(previous[0]!.directory)).rejects.toMatchObject({ code: 'ENOENT' });
+    await expect(lstat(previous[0]!.sessionPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
 
   it('reconciles a pre-attempt crash without consuming the retry budget or requiring pending work', async () => {
     const options = await fixture();

@@ -18,6 +18,8 @@ import {
   type BackgroundBashJob,
 } from '../src/index.js';
 import { withOwnedTerminals } from './owned-terminals.js';
+import { getBackgroundBashJobsDir } from '../src/job-store.js';
+import { PROCESS_LIST_RESULT_BYTES } from '../src/list-result.js';
 
 const TEST_TIMEOUT_MS = 45_000;
 const OPERATION_TIMEOUT_MS = 5_000;
@@ -45,6 +47,32 @@ type LiveFixture = {
 };
 
 describe('registered Background Bash tools with live host PTYs', () => {
+  it('returns compact recent pages through the registered list tool', async () => {
+    await withLiveTools(async ({ runtime, owner }) => {
+      const storage = runtime.storage('session');
+      const jobsDir = getBackgroundBashJobsDir(storage.root, runtime.cwd);
+      const command = '\u0000\\"\n'.repeat(20_000);
+      for (let n = 0; n < 45; n++) {
+        const id = `bash-20260101000000-${n.toString(16).padStart(6, '0')}`;
+        const jobDir = join(jobsDir, id);
+        await storage.mkdir(jobDir, { recursive: true });
+        const record = new TextEncoder().encode(JSON.stringify({ id, command, cwd: runtime.cwd,
+          startedAt: Date.now(), status: 'completed', completedAt: Date.now(), exitCode: 0 }));
+        await storage.writeFile(join(jobDir, 'info.json'), record);
+        await storage.writeFile(join(jobDir, 'completion.json'), record);
+      }
+      const first = await call(owner, 'list_background_bash', {});
+      expect(jobs(first)).toHaveLength(10);
+      expect(new TextEncoder().encode(JSON.stringify(first)).length).toBeLessThan(PROCESS_LIST_RESULT_BYTES);
+      expect(text(first)).toContain('Output clipped');
+      const cursor = (first.details as { nextCursor: string }).nextCursor;
+      const second = await call(owner, 'list_background_bash', { cursor, limit: 12 });
+      expect(jobs(second)).toHaveLength(12);
+      expect(jobs(second).some(job => jobs(first).some(previous => previous.meta.id === job.meta.id))).toBe(false);
+      await expect(call(owner, 'list_background_bash', { cursor: '../outside' })).rejects.toThrow('Invalid process query cursor');
+    });
+  }, TEST_TIMEOUT_MS);
+
   it.each([
     { mode: 'foreground', params: {}, background: false },
     { mode: 'detached', params: { background: true }, background: true },

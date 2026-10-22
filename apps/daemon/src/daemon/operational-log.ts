@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { DiagnosticTextSchema, PageRequestSchema, parseSchema, type HostBlocked, type OperationParams, type OperationResult } from '@felan-ai/session-protocol';
 import { commandError } from './commands.js';
 import { BoundedDaemonLogs } from './supervisor.js';
-import { shutdownText } from './shutdown-error.js';
+import { shutdownMessage, shutdownStack, shutdownText } from './shutdown-error.js';
 
 const messages = {
   started: 'Daemon is ready.',
@@ -17,6 +17,7 @@ const messages = {
 } as const;
 type Entry = OperationResult<'host.logs'>['entries'][number];
 const blockedPrefix = 'Daemon shutdown failed at ';
+const diagnosticPrefix = 'Daemon failure in ';
 
 export class DaemonOperationalLog {
   constructor(private readonly sink: BoundedDaemonLogs, private readonly now: () => number = Date.now) {}
@@ -32,6 +33,11 @@ export class DaemonOperationalLog {
     this.sink.write('stdout', JSON.stringify({ timestamp: this.now(), level: 'error', message } satisfies Entry));
   }
 
+  failure(event: { scope: 'projection' | 'registry'; session?: string; error: unknown }): void {
+    const message = shutdownText(`${diagnosticPrefix}${event.scope}${event.session ? ` (session ${event.session})` : ''}: ${shutdownMessage(event.error)} ${shutdownStack(event.error)}`, 2000);
+    this.sink.write('stdout', JSON.stringify({ timestamp: this.now(), level: 'error', message } satisfies Entry));
+  }
+
   page(input: OperationParams<'host.logs'>): OperationResult<'host.logs'> {
     const params = parseSchema(PageRequestSchema, input);
     const known = new Set<string>(Object.values(messages));
@@ -42,7 +48,7 @@ export class DaemonOperationalLog {
       const row = value as Partial<Entry>;
       if (!Number.isSafeInteger(row.timestamp) || row.timestamp! < 0 || !['info', 'warning', 'error'].includes(row.level ?? '')) continue;
       if (!known.has(row.message ?? '')) {
-        if (row.level !== 'error' || typeof row.message !== 'string' || !row.message.startsWith(blockedPrefix) || row.message.length > 2000) continue;
+        if (row.level !== 'error' || typeof row.message !== 'string' || ![blockedPrefix, diagnosticPrefix].some(prefix => row.message!.startsWith(prefix)) || row.message.length > 2000) continue;
         try { parseSchema(DiagnosticTextSchema, row.message); } catch { continue; }
         if (shutdownText(row.message, 2000) !== row.message) continue;
       }

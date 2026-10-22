@@ -6,7 +6,11 @@ import { PROCESS_VIEW_PAGE_SIZE, parseProcessViewRequest, processViewAction,
   type ProcessViewAction, type ProcessViewRequest } from '@felan-ai/ext-background-bash/data';
 
 type Theme = ExtensionContext['ui']['theme'];
-export interface ProcessViewNavigation { selectedId?: string; detailKey?: string; scroll: number }
+export interface ProcessViewNavigation { selectedId?: string; detailKey?: string; scroll: number; scope?: string }
+
+function elementScope(source: UiView | UiDocument): string {
+  return source.kind === 'view' ? JSON.stringify([source.query?.values, source.actions.some(action => action.id === 'recent')]) : source.id;
+}
 
 export class ProcessViewPanel {
   private selected: number;
@@ -19,7 +23,8 @@ export class ProcessViewPanel {
     navigation?: ProcessViewNavigation,
     private readonly element?: { source: UiView | UiDocument; action(id?: string, itemId?: string): void; dismiss(): void }) {
     if (element) {
-      this.selected = element.source.kind === 'view' ? Math.max(0, element.source.items.findIndex(item => item.id === navigation?.selectedId)) : 0;
+      this.selected = element.source.kind === 'view' && (!navigation?.scope || navigation.scope === elementScope(element.source))
+        ? Math.max(0, element.source.items.findIndex(item => item.id === navigation?.selectedId)) : 0;
       this.scroll = navigation?.scroll ?? 0; this.lines = []; return;
     }
     if (!state) throw new Error('Process state is required.');
@@ -32,12 +37,12 @@ export class ProcessViewPanel {
     this.scroll = Math.max(0, Math.min(detailKey && detailKey === navigation?.detailKey ? navigation.scroll : initialScroll, this.lines.length - 28));
   }
   get navigation(): ProcessViewNavigation {
-    if (this.element) return { ...(this.element.source.kind === 'view' && this.element.source.items[this.selected] ? { selectedId: this.element.source.items[this.selected]!.id } : {}), scroll: this.scroll };
+    if (this.element) return { ...(this.element.source.kind === 'view' && this.element.source.items[this.selected] ? { selectedId: this.element.source.items[this.selected]!.id } : {}), scroll: this.scroll, scope: elementScope(this.element.source) };
     return { ...(this.state.jobs[this.selected] ? { selectedId: this.state.jobs[this.selected]!.id } : {}),
     ...(this.state.detail ? { detailKey: `${this.state.detail.id}:${this.state.detail.index}` } : {}), scroll: this.scroll }; }
   update(source: UiView | UiDocument): void {
     if (!this.element || this.closed) return;
-    const selectedId = this.navigation.selectedId;
+    const selectedId = elementScope(source) === elementScope(this.element.source) ? this.navigation.selectedId : undefined;
     this.element.source = source;
     this.selected = source.kind === 'view' ? Math.max(0, source.items.findIndex(item => item.id === selectedId)) : 0;
     this.redraw();
@@ -92,7 +97,10 @@ export class ProcessViewPanel {
     const shortcuts: Record<string, string> = { r: 'refresh', s: 'stop', k: 'kill',
       '[': source.kind === 'document' ? 'previous-output' : 'previous',
       ']': source.kind === 'document' ? 'next-output' : 'next' };
-    const id = shortcuts[key];
+    const id = source.kind === 'view' && matchesKey(key, 'ctrl+r') ? 'search'
+      : source.kind === 'view' && key === 'h' ? source.actions.some(entry => entry.id === 'recent') ? 'recent' : 'history'
+      : source.kind === 'view' && matchesKey(key, 'ctrl+d') ? 'next'
+      : source.kind === 'view' && matchesKey(key, 'ctrl+u') ? 'previous' : shortcuts[key];
     if (key === 'a') { action(); return; }
     if (id && source.actions.some(entry => entry.id === id)) { action(id); return; }
     if (source.kind === 'document') {
@@ -100,7 +108,9 @@ export class ProcessViewPanel {
       this.scroll += matchesKey(key, 'up') ? -1 : matchesKey(key, 'down') ? 1 : matchesKey(key, 'ctrl+u') ? -28 : matchesKey(key, 'ctrl+d') ? 28 : 0;
       this.scroll = Math.max(0, Math.min(this.scroll, this.lines.length - 28));
     } else {
-      this.selected = Math.max(0, Math.min(this.selected + (matchesKey(key, 'up') ? -1 : matchesKey(key, 'down') ? 1 : 0), source.items.length - 1));
+      if (matchesKey(key, 'home')) this.selected = 0;
+      else if (matchesKey(key, 'end')) this.selected = Math.max(0, source.items.length - 1);
+      else this.selected = Math.max(0, Math.min(this.selected + (matchesKey(key, 'up') ? -1 : matchesKey(key, 'down') ? 1 : 0), source.items.length - 1));
       if ((matchesKey(key, 'return') || matchesKey(key, 'right')) && source.items[this.selected]) {
         action('read', source.items[this.selected]!.id); return;
       }
@@ -109,8 +119,14 @@ export class ProcessViewPanel {
   }
   private renderElement(width: number): string[] {
     const source = this.element!.source;
-    const lines = [this.theme.fg('accent', this.theme.bold(plain(source.title))),
-      '↑↓ navigate · enter output · [/] page · r refresh · a all actions · q/esc close'];
+    const lines = [this.theme.fg('accent', this.theme.bold(plain(source.title)))];
+    if (source.kind === 'view') {
+      lines.push(plain(source.fallback), '↑↓ select · enter output · r refresh · a actions · q/esc close');
+      const shortcuts = [source.actions.some(entry => entry.id === 'search') ? 'ctrl+r search history' : '',
+        source.actions.some(entry => entry.id === 'recent') ? 'h recent 10' : source.actions.some(entry => entry.id === 'history') ? 'h all history' : '',
+        source.paging?.previousActionId ? '[ / ctrl+u previous' : '', source.paging?.nextActionId ? '] / ctrl+d next/scan' : ''].filter(Boolean);
+      if (shortcuts.length) lines.push(shortcuts.join(' · '));
+    } else lines.push('← list · ↑↓ scroll · ctrl+u/d page · [/] chunks · s stop · k kill · r refresh · a actions · q/esc close');
     if (source.kind === 'document') {
       this.lines = plain(decodeUiMarkdown(source.markdown, { plainText: true })).split('\n');
       lines.push(...this.lines.slice(this.scroll, this.scroll + 28));

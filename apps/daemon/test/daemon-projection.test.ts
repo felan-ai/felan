@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LIMITS, MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, codePointLength, encodeFrame, parseOperationResult, parseSessionSnapshot, readMessageDisplay, type SessionEvent, type TextStreamEvent } from '@felan-ai/session-protocol';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { LIMITS, MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, codePointLength, encodeFrame, parseOperationResult, parseSessionEvent, parseSessionSnapshot, readMessageDisplay, type SessionEvent, type TextStreamEvent } from '@felan-ai/session-protocol';
 import { ControlStoreError } from '../src/daemon/control-state.js';
 import { projectPiMessage, SessionProjection } from '../src/daemon/projection.js';
 import type { SessionEntry } from '@felan-ai/agent-core';
@@ -7,6 +7,11 @@ import { assistant, deferred, fixture, fixtures, offlineModel, requestId, suppor
 import { readControlDatabase } from './fixtures/control-database.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
+
+function escapedTextAboveJsonBytes(limit: number): string {
+  const unit = '\u0000\\"😀';
+  return unit.repeat(Math.floor(limit / (Buffer.byteLength(JSON.stringify(unit)) - 2)) + 1);
+}
 
 describe('tool result content projection', () => {
   const image = { type: 'image' as const, mimeType: 'image/png', data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1EAAAAASUVORK5CYII=' };
@@ -55,6 +60,130 @@ it('projects compaction summaries without interpreting feature-specific details'
 });
 
 describe.skipIf(!supported)('Pi protocol projection', () => {
+  describe('oversized canonical entries', () => {
+    const cleanups: Array<() => Promise<void>> = [];
+    let state: Awaited<ReturnType<typeof setup>>;
+
+    async function setup() {
+      // Keep the shared fixture alive across these checks, outside the file's per-test cleanup.
+      const cleanupStart = fixtures.length;
+      let f: Awaited<ReturnType<typeof fixture>>;
+      try { f = await fixture(); } finally { cleanups.push(...fixtures.splice(cleanupStart)); }
+      const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+      const projection = f.registry.projection(b.sessionId); const runtime = f.instances.get(b.sessionId)!;
+      const events: SessionEvent[] = [];
+      f.registry.subscribe(b.sessionId, event => { if ('change' in event) events.push(event); });
+      const text = 'x'.repeat(9_151_053);
+      const detailText = escapedTextAboveJsonBytes(LIMITS.structuredBytes);
+      const details = { escaped: detailText };
+      const manager = b.runtime.session.sessionManager;
+      const first = manager.appendMessage({ role: 'toolResult', toolCallId: 'large-result', toolName: 'list_background_bash',
+        content: [{ type: 'text', text }], details, timestamp: 0, isError: false });
+      const secondText = escapedTextAboveJsonBytes(LIMITS.pageBytes / 4);
+      const secondMessage = assistant(secondText);
+      runtime.emit({ type: 'message_start', message: secondMessage });
+      runtime.emit({ type: 'message_end', message: secondMessage });
+      const second = manager.appendMessage(secondMessage);
+      manager.appendMessage({ role: 'user', content: 'later entry', timestamp: 1 });
+      projection.refresh();
+      return { f, b, projection, events, text, detailText, details, manager, first, secondText, secondMessage, second };
+    }
+
+    beforeAll(async () => { state = await setup(); }, 5_000);
+    afterAll(async () => { for (const cleanup of cleanups) await cleanup(); });
+
+    it('bounds attach snapshots and paged history while preserving IDs, order and escaped text prefixes', async () => {
+      const { f, b, projection, manager, first, second, text, detailText, details, secondText, secondMessage, events } = state;
+      expect(Buffer.byteLength(text)).toBe(9_151_053);
+      expect(Buffer.byteLength(JSON.stringify(details))).toBeGreaterThan(LIMITS.structuredBytes);
+      expect(Buffer.byteLength(JSON.stringify(secondText))).toBeGreaterThan(LIMITS.pageBytes / 4);
+      const attached = await f.registry.attach(b.sessionId, { principal: 'fixture', kind: 'headless' });
+      const result = { attachmentId: attached.attachment, snapshot: attached.snapshot };
+      expect(parseOperationResult('attach', result)).toEqual(result);
+      const all = [...attached.snapshot.history.entries];
+      let page = attached.snapshot.history;
+      expect(page.cursor).toBeDefined();
+      while (page.cursor) {
+        page = projection.history(page.cursor);
+        expect(parseOperationResult('session.history', page)).toEqual(page);
+        expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThan(LIMITS.pageBytes);
+        all.unshift(...page.entries);
+      }
+      expect(all.map(message => message.entryId)).toEqual([first, second, manager.getLeafId()]);
+      expect(JSON.stringify(all[0])).toContain('Clipped for display');
+      expect(JSON.stringify(all[1])).toContain('Clipped for display');
+      expect(all[0]).toMatchObject({ id: first, entryId: first, content: [expect.objectContaining({ type: 'tool_result', id: 'large-result' }), expect.anything()] });
+      expect(all[0]!.content[0]).toMatchObject({ details: { projectionNotice: expect.stringContaining('Clipped') } });
+      expect(all[0]!.details).toMatchObject({ projectionNotice: expect.stringContaining('Clipped') });
+      const clipped = all[1]!.content[0]!;
+      expect(clipped.type).toBe('text');
+      if (clipped.type === 'text') {
+        expect(clipped.text.length).toBeGreaterThan(0);
+        expect(clipped.text.length).toBeLessThan(secondText.length);
+        expect(secondText.startsWith(clipped.text)).toBe(true);
+        expect(Buffer.from(clipped.text).toString('utf8')).toBe(clipped.text);
+      }
+      const secondCompletion = events.find(event => event.change.type === 'message.completed' && event.change.message.entryId === second)!;
+      expect(secondCompletion.change).toMatchObject({ message: { id: all[1]!.id } });
+      expect(manager.getEntry(first)).toMatchObject({ message: { content: [{ type: 'text', text }], details: { escaped: detailText } } });
+      expect(manager.getEntry(second)).toMatchObject({ message: { ...secondMessage, content: [{ type: 'text', text: secondText }] } });
+      expect(() => f.registry.assertAdmission()).not.toThrow();
+    });
+
+    it('bounds branch and live completion events', () => {
+      const { f, events } = state;
+      const completions = events.filter(event => event.change.type === 'message.completed');
+      expect(completions).toHaveLength(3);
+      expect(events.some(event => event.change.type === 'branch.updated')).toBe(true);
+      for (const event of events) { expect(parseSessionEvent(event)).toEqual(event); expect(Buffer.byteLength(JSON.stringify(event))).toBeLessThan(LIMITS.pageBytes); }
+      expect(() => f.registry.assertAdmission()).not.toThrow();
+    });
+  });
+
+  it('bounds oversized tool arguments and images without mutating canonical content', () => {
+    const argumentText = escapedTextAboveJsonBytes(LIMITS.structuredBytes);
+    const argumentsValue = { text: argumentText };
+    const imageData = 'AAAA'.repeat(LIMITS.pageBytes / 16 + 1);
+    expect(Buffer.byteLength(JSON.stringify(argumentsValue))).toBeGreaterThan(LIMITS.structuredBytes);
+    expect(Buffer.byteLength(imageData)).toBeGreaterThan(LIMITS.pageBytes / 4);
+    const message = { ...assistant(), content: [{ type: 'toolCall' as const, id: 'call', name: 'tool', arguments: argumentsValue },
+      { type: 'image' as const, mimeType: 'image/png', data: imageData }] };
+    const projected = projectPiMessage({ type: 'message', id: 'entry', parentId: null, timestamp: new Date(0).toISOString(), message });
+    expect(projected.content[0]).toMatchObject({ type: 'tool_call', id: 'call', name: 'tool', arguments: { projectionNotice: expect.stringContaining('Clipped') } });
+    expect(JSON.stringify(projected)).toContain('Image omitted');
+    expect(Buffer.byteLength(JSON.stringify(projected))).toBeLessThan(LIMITS.pageBytes / 4);
+    expect(message.content[0]).toMatchObject({ arguments: { text: argumentText } });
+    expect(message.content[1]).toMatchObject({ data: imageData });
+  });
+
+  it('isolates asynchronous projection data failures and admits another session', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const diagnostic = vi.fn(); f.registry.options.onDiagnostic = diagnostic;
+    const failure = new Error('original projection failure');
+    const spy = vi.spyOn(b.runtime.session.sessionManager, 'getBranch').mockImplementation(() => { throw failure; });
+    b.runtime.session.sessionManager.appendMessage(assistant());
+    f.instances.get(b.sessionId)!.emit({ type: 'message_start', message: assistant() });
+    expect(diagnostic).toHaveBeenCalledWith({ scope: 'projection', session: b.sessionId, error: failure });
+    expect(f.registry.fenced).toBe(false);
+    const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    await other.runtime.session.prompt('still available');
+    expect(f.registry.projection(other.sessionId).snapshot().history.entries).toHaveLength(2);
+    spy.mockRestore();
+    expect(f.registry.projection(b.sessionId).snapshot().history.entries).toHaveLength(1);
+  });
+
+  it.each(['storage_failure', 'ownership_lost'] as const)('still globally fences %s during projection', async code => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const error = new ControlStoreError(code, 'integrity failure');
+    const spy = vi.spyOn(f.store, 'updateSession').mockImplementationOnce(() => { throw error; });
+    f.instances.get(b.sessionId)!.emit({ type: 'agent_start' });
+    spy.mockRestore();
+    expect(f.registry.fenced).toBe(true);
+    expect(() => f.registry.assertAdmission()).toThrow('not admitting');
+    await f.registry.settleWriters();
+    const fault = f.registry as unknown as { failure?: unknown; failureSettlement?: Promise<void> };
+    delete fault.failure; delete fault.failureSettlement;
+  });
   it.runIf(process.env.FELAN_ATTACH_BENCHMARK === '1')('benchmarks attach snapshot validation at five MiB', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const projection = f.registry.projection(b.sessionId); const runtime = f.instances.get(b.sessionId)!;

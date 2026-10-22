@@ -4,10 +4,11 @@ import {
   type UiDocument, type UiElementHandle, type UiView,
 } from '@felan-ai/agent-core';
 import { parseUiPresentation, validateUiAction } from '@felan-ai/session-protocol';
-import type { BackgroundBashJob } from './job-store.js';
+import type { BackgroundBashJob, BackgroundBashPage, BackgroundBashQuery } from './job-store.js';
 import type { BackgroundProcessViewSource } from './presentation.js';
-import { parseProcessViewRequest, PROCESS_VIEW_PAGE_SIZE, processViewJob, splitProcessLog } from './data.js';
+import { processViewJob, splitProcessLog } from './data.js';
 
+const PAGE_SIZE = 10;
 
 export function createCommonProcessPresentation(ui: ExtensionUi) {
   let active: ProcessUiView | undefined;
@@ -46,7 +47,13 @@ class ProcessUiView {
   private viewRevision = 0;
   private documentRevision = 0;
   private jobs: BackgroundBashJob[] = [];
-  private offset = 0;
+  private history = false;
+  private search = '';
+  private pages: Array<{ cursor?: string; scannedBefore: number }> = [{ scannedBefore: 0 }];
+  private pageIndex = 0;
+  private page: BackgroundBashPage = { jobs: [], hasMore: false, scanned: 0 };
+  private loading = false;
+  private error = false;
   private selected: string | undefined;
   private chunks = [''];
   private chunk = 0;
@@ -111,8 +118,16 @@ class ProcessUiView {
       if (!source) throw new Error('Unknown process view element.');
       const action = validateUiAction(source, request);
       if (action.actionId === 'close') { this.close(); return; }
-      if (action.actionId === 'previous' || action.actionId === 'next') {
-        this.offset += action.actionId === 'previous' ? -PROCESS_VIEW_PAGE_SIZE : PROCESS_VIEW_PAGE_SIZE;
+      if (['previous', 'next', 'history', 'recent', 'search'].includes(action.actionId)) {
+        const next = action.actionId === 'next';
+        const index = next ? this.pageIndex + 1 : action.actionId === 'previous' ? this.pageIndex - 1 : 0;
+        const pages = next ? [...this.pages.slice(0, index), {
+          cursor: this.page.nextCursor!, scannedBefore: this.pages[this.pageIndex]!.scannedBefore + this.page.scanned,
+        }] : action.actionId === 'previous' ? this.pages : [{ scannedBefore: 0 }];
+        const search = action.actionId === 'search' ? ((action.values.query as string | undefined) ?? '').trim()
+          : action.actionId === 'recent' || action.actionId === 'history' ? '' : this.search;
+        const history = action.actionId === 'recent' ? false : action.actionId === 'history' || action.actionId === 'search' || this.history;
+        await this.load({ history, search, pages, index }, context);
         this.selected = undefined;
         await this.publish(context);
         await this.closeLog();
@@ -137,10 +152,15 @@ class ProcessUiView {
         await this.refresh(context);
       } else {
         const id = action.itemId ?? this.selected;
-        const jobs = await this.source.list('all');
+        if (!id) throw new Error('No process is selected.');
+        const cursor = this.pages[this.pageIndex]!.cursor;
+        const jobs = this.source.query ? (await this.source.query({ limit: PAGE_SIZE, search: id,
+          ...(cursor ? { cursor } : {}),
+        })).jobs : await this.source.list('all');
         this.assertOpen(context);
         const job = jobs.find(job => job.meta.id === id);
-        if (!job || job.status.status !== 'running') throw new Error('The process is no longer running.');
+        if (!job) throw new Error('The process is no longer available in this view. Refresh and try again.');
+        if (job.status.status !== 'running') throw new Error('The process is no longer running.');
         if (action.actionId === 'write') {
           if (!this.source.write || job.meta.executionMode !== 'pty') throw new Error('Process stdin is unavailable.');
           await this.source.write(job.meta.id, action.values.chars as string);
@@ -163,13 +183,12 @@ class ProcessUiView {
 
   private async refresh(context?: UiActionContext): Promise<void> {
     this.assertOpen(context);
-    this.jobs = await this.source.list('all');
+    await this.load({ history: this.history, search: this.search, pages: this.pages, index: this.pageIndex }, context, !this.viewHandle || !!context);
     this.assertOpen(context);
     if (this.selected) {
       const index = this.jobs.findIndex(job => job.meta.id === this.selected);
       if (index < 0) this.selected = undefined;
       else {
-        this.offset = Math.floor(index / PROCESS_VIEW_PAGE_SIZE) * PROCESS_VIEW_PAGE_SIZE;
         const output = await this.source.tail(this.selected, 2000);
         this.assertOpen(context);
         this.chunks = splitProcessLog(output);
@@ -180,6 +199,35 @@ class ProcessUiView {
     if (!this.selected) await this.closeLog();
   }
 
+  private async query(options: BackgroundBashQuery): Promise<BackgroundBashPage> {
+    if (this.source.query) return this.source.query(options);
+    const jobs = (await this.source.list('all')).filter(job => !options.search
+      || `${job.meta.id}\n${job.meta.command}`.toLowerCase().includes(options.search.toLowerCase()));
+    const offset = Number(options.cursor ?? 0);
+    const rows = jobs.slice(offset, offset + PAGE_SIZE);
+    const hasMore = offset + rows.length < jobs.length;
+    return { jobs: rows, hasMore, scanned: rows.length, ...(hasMore ? { nextCursor: String(offset + rows.length) } : {}) };
+  }
+
+  private async load(target: { history: boolean; search: string; pages: Array<{ cursor?: string; scannedBefore: number }>; index: number },
+    context?: UiActionContext, showLoading = true): Promise<void> {
+    this.error = false;
+    if (showLoading) { this.loading = true; await this.publish(context); }
+    try {
+      const cursor = target.pages[target.index]!.cursor;
+      const page = await this.query({ limit: PAGE_SIZE, ...(cursor ? { cursor } : {}), ...(target.search ? { search: target.search } : {}) });
+      this.assertOpen(context);
+      this.history = target.history; this.search = target.search;
+      this.pages = target.pages; this.pageIndex = target.index;
+      this.page = page; this.jobs = page.jobs;
+    } catch (error) {
+      this.error = !context?.signal.aborted;
+      this.loading = false;
+      if (!this.closed && !this.signal.aborted) await this.publish();
+      throw error;
+    } finally { this.loading = false; }
+  }
+
   private async publish(context?: UiActionContext): Promise<void> {
     try { await this.publishCurrent(context); }
     catch (error) { this.close(); throw error; }
@@ -187,34 +235,39 @@ class ProcessUiView {
 
   private async publishCurrent(context?: UiActionContext): Promise<void> {
     this.assertOpen(context);
-    this.offset = Math.min(this.offset, Math.max(0, Math.floor((this.jobs.length - 1) / PROCESS_VIEW_PAGE_SIZE) * PROCESS_VIEW_PAGE_SIZE));
-    const request = parseProcessViewRequest({
-      viewId: this.id, sequence: this.viewRevision + 1, offset: this.offset, total: this.jobs.length,
-      running: this.jobs.filter(job => job.status.status === 'running').length,
-      jobs: this.jobs.slice(this.offset, this.offset + PROCESS_VIEW_PAGE_SIZE).map(processViewJob),
-      ...(this.selected ? { selectedId: this.selected, detail: { id: this.selected, index: this.chunk, chunks: this.chunks.length, text: this.chunks[this.chunk]! } } : {}),
-    });
-    const first = this.offset + 1;
-    const last = this.offset + request.jobs.length;
+    const rows = this.jobs.map(processViewJob);
+    const running = this.jobs.filter(job => job.status.status === 'running').length;
+    const hasNext = this.history && this.page.hasMore && !!this.page.nextCursor;
+    const scanned = this.pages[this.pageIndex]!.scannedBefore + this.page.scanned;
     const navigation: UiAction[] = [
-      ...(this.offset > 0 ? [{ id: 'previous', label: 'Previous processes', target: 'element' as const, outcome: 'submit' as const }] : []),
-      ...(last < request.total ? [{ id: 'next', label: 'Next processes', target: 'element' as const, outcome: 'submit' as const }] : []),
+      ...(this.pageIndex > 0 ? [{ id: 'previous', label: 'Previous processes', target: 'element' as const, outcome: 'submit' as const }] : []),
+      ...(hasNext ? [{ id: 'next', label: rows.length ? 'Next processes' : 'Continue scanning', target: 'element' as const, outcome: 'submit' as const }] : []),
     ];
+    const scope = this.search ? `Process search: ${plainText(this.search)}` : this.history ? 'Process history' : 'Recent processes';
     const view: UiView = {
       id: this.id, kind: 'view', hint: PROCESSES_HINT, revision: this.viewRevision + 1,
-      title: request.total ? `Processes ${first}–${last} of ${request.total} (${request.running} running)` : 'No background processes',
-      fallback: `${request.total} background processes; ${request.running} running. Read logs or refresh the list.`,
+      title: `${scope} · ${rows.length} shown (${running} running on page)`,
+      fallback: this.loading ? 'Loading processes…' : this.error ? 'Could not load processes. Refresh to retry, or choose a scope again.'
+        : `${this.history ? `Page ${this.pageIndex + 1} · ${scanned} records scanned. ` : 'Newest 10. '}${!rows.length
+          ? this.page.hasMore ? 'No matches in this batch; more history remains.' : this.search ? 'No matching processes.' : 'No background processes.'
+          : this.page.hasMore ? 'More history available.' : 'End of history.'}`,
       fields: [{ id: 'command', label: 'Command', valueKind: 'text' }, { id: 'clipped', label: 'Command clipped', valueKind: 'boolean' },
         { id: 'status', label: 'State', valueKind: 'text' }, { id: 'started', label: 'Started (epoch ms)', valueKind: 'number' },
         { id: 'stdin', label: 'Interactive stdin', valueKind: 'boolean' }],
-      items: request.jobs.map(job => ({ id: job.id, values: { command: plainText(job.command), clipped: job.commandTruncated,
+      items: rows.map(job => ({ id: job.id, values: { command: plainText(job.command), clipped: job.commandTruncated,
         status: job.status, started: job.startedAt, stdin: this.jobs.find(source => source.meta.id === job.id)?.meta.executionMode === 'pty' },
       fallback: `${job.id}: ${job.status}` })),
       actions: [{ id: 'read', label: 'Read output', target: 'item', outcome: 'submit' },
-        ...navigation, { id: 'refresh', label: 'Refresh', target: 'element', outcome: 'submit' },
+        ...navigation,
+        { id: this.history ? 'recent' : 'history', label: this.history ? 'Recent 10' : 'Show all history', target: 'element', outcome: 'submit' },
+        { id: 'search', label: 'Search all history', target: 'element', outcome: 'submit', input: { fields: [
+          { id: 'query', label: 'Command or process ID (empty for all history)', kind: 'string', required: true, maxLength: 256 },
+        ], defaults: { query: this.search } } },
+        { id: 'refresh', label: 'Refresh', target: 'element', outcome: 'submit' },
         { id: 'close', label: 'Close process view', target: 'element', outcome: 'cancel' }],
+      query: { actionId: 'search', values: { query: this.search } },
       ...(navigation.length ? { paging: {
-        ...(this.offset > 0 ? { previousActionId: 'previous' } : {}), ...(last < request.total ? { nextActionId: 'next' } : {}),
+        ...(this.pageIndex > 0 ? { previousActionId: 'previous' } : {}), ...(hasNext ? { nextActionId: 'next' } : {}),
       } } : {}),
     };
     parseUiPresentation(view);
@@ -225,8 +278,8 @@ class ProcessUiView {
       else this.viewHandle = await this.ui.present(view, { signal: this.signal, onAction: this.dispatch });
     }
     this.assertOpen(context);
-    if (!request.detail) return;
-    const job = this.jobs.find(job => job.meta.id === request.detail!.id)!;
+    const job = this.jobs.find(job => job.meta.id === this.selected);
+    if (!job) return;
     const controls: UiAction[] = job.status.status === 'running' ? [
       { id: 'stop', label: 'Stop process', target: 'element', outcome: 'submit', destructive: true },
       { id: 'kill', label: 'Kill process', target: 'element', outcome: 'submit', destructive: true },
@@ -234,9 +287,9 @@ class ProcessUiView {
         input: { fields: [{ id: 'chars', kind: 'string' as const, label: 'Exact text or control bytes', required: true, maxLength: 32 * 1024, multiline: true }] } }] : []),
     ] : [];
     const document: UiDocument = {
-      id: this.logId, kind: 'document', hint: PROCESSES_HINT, revision: ++this.documentRevision, title: `Output: ${request.detail.id}`,
+      id: this.logId, kind: 'document', hint: PROCESSES_HINT, revision: ++this.documentRevision, title: `Output: ${job.meta.id}`,
       fallback: `Output page ${this.chunk + 1} of ${this.chunks.length}; process ${job.status.status}.`,
-      markdown: `State: ${job.status.status}\n\nCommand${request.jobs.find(row => row.id === job.meta.id)?.commandTruncated ? ' (clipped)' : ''}: ${markdownText(processViewJob(job).command)}\n\nOutput page ${this.chunk + 1} of ${this.chunks.length}:\n\n${markdownText(request.detail.text) || '(no output)'}`,
+      markdown: `State: ${job.status.status}\n\nCommand${processViewJob(job).commandTruncated ? ' (clipped)' : ''}: ${markdownText(processViewJob(job).command)}\n\nOutput page ${this.chunk + 1} of ${this.chunks.length}:\n\n${markdownText(this.chunks[this.chunk]!) || '(no output)'}`,
       actions: [{ id: 'list', label: 'Back to processes', target: 'element', outcome: 'submit' },
         ...(this.chunk > 0 ? [{ id: 'previous-output', label: 'Previous output', target: 'element' as const, outcome: 'submit' as const }] : []),
         ...(this.chunk + 1 < this.chunks.length ? [{ id: 'next-output', label: 'Next output', target: 'element' as const, outcome: 'submit' as const }] : []),

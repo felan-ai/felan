@@ -1,9 +1,10 @@
-import type { BackgroundBashJob, BackgroundBashStatusFilter } from './job-store.js';
+import type { BackgroundBashJob, BackgroundBashPage, BackgroundBashQuery, BackgroundBashStatusFilter } from './job-store.js';
 
 export const BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE = 'felan-background-bash-completion';
 
 export interface BackgroundProcessViewSource {
   list(status: BackgroundBashStatusFilter): Promise<BackgroundBashJob[]>;
+  query?(options?: BackgroundBashQuery): Promise<BackgroundBashPage>;
   tail(id: string, lines?: number): Promise<string>;
   stop(id: string, signal?: 'SIGTERM' | 'SIGKILL'): Promise<BackgroundBashJob>;
   write?(id: string, chars: string): Promise<void>;

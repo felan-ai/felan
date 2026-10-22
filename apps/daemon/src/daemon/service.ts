@@ -84,6 +84,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const models = await makeModels(owner.target.agentDir);
     let services: RegistryOptions['services'];
     registry = new SessionRegistry({ owner, store, lifecycle: sessionLifecycle, services: context => services(context),
+      onDiagnostic: event => log.failure(event),
       ...(sessionRuntime.acquireRun ? { acquireRun: sessionRuntime.acquireRun.bind(sessionRuntime) } : {}),
       onViewCancellationDiagnostic: event => sink!.write('stderr', JSON.stringify({ event: 'view_cancellation', ...event })),
       ...(sessionRuntime.processAdapter ? { processAdapter: sessionRuntime.processAdapter } : {}) });

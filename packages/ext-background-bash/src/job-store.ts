@@ -1,9 +1,27 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { basename, join, resolve } from 'node:path';
 import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import { BackgroundBashRetention } from './retention.js';
 
 export type BackgroundBashStatus = 'running' | 'completed' | 'failed' | 'killed' | 'unknown';
 export type BackgroundBashStatusFilter = BackgroundBashStatus | 'all';
+
+export interface BackgroundBashQuery {
+  limit?: number;
+  cursor?: string;
+  status?: BackgroundBashStatusFilter;
+  search?: string;
+}
+
+export interface BackgroundBashPage {
+  jobs: BackgroundBashJob[];
+  hasMore: boolean;
+  nextCursor?: string;
+  scanned: number;
+}
+
+export const BACKGROUND_BASH_QUERY_LIMIT = 100;
+export const BACKGROUND_BASH_SCAN_LIMIT = 100;
 
 export interface BackgroundBashInfo {
   id: string;
@@ -130,6 +148,7 @@ export class BackgroundBashJobStore {
   readonly rootDir: string;
   readonly jobsDir: string;
   readonly #storage: AgentRuntimeStorage;
+  readonly #retention: BackgroundBashRetention;
 
   constructor(
     private readonly runtime: AgentRuntime,
@@ -138,6 +157,7 @@ export class BackgroundBashJobStore {
     this.#storage = storage;
     this.rootDir = getBackgroundBashRoot(this.#storage.root, runtime.cwd);
     this.jobsDir = getBackgroundBashJobsDir(this.#storage.root, runtime.cwd);
+    this.#retention = new BackgroundBashRetention(runtime, storage, this.jobsDir, () => this.listIds(), (id, operation) => this.withJob(id, operation));
   }
 
   async createJob(command: string, executionMode: 'detached' | 'pty' = 'detached'): Promise<BackgroundBashJob> {
@@ -177,10 +197,12 @@ export class BackgroundBashJobStore {
       processToken: randomBytes(16).toString('hex'),
     };
 
-    return this.withJob(id, async () => {
+    const job = await this.withJob(id, async () => {
       await this.writeInfo(info);
       return jobFromInfo(info);
     });
+    await this.#retention.recordMutation();
+    return job;
   }
 
   async readJob(id: string): Promise<BackgroundBashJob | undefined> {
@@ -188,16 +210,7 @@ export class BackgroundBashJobStore {
   }
 
   async listJobs(status: BackgroundBashStatusFilter = 'all'): Promise<BackgroundBashJob[]> {
-    await this.#storage.mkdir(this.jobsDir, { recursive: true });
-    const files = await this.#storage.listFiles(this.jobsDir, { recursive: true });
-    const ids = new Set<string>();
-    for (const file of files) {
-      const [id, name] = file.replaceAll('\\', '/').split('/');
-      if (id && (name === 'info.json' || name === 'meta.json') && isBackgroundBashJobId(id)) {
-        ids.add(id);
-      }
-    }
-
+    const ids = await this.listIds();
     const jobs: BackgroundBashJob[] = [];
     for (const id of ids) {
       const job = await this.readJob(id);
@@ -207,6 +220,52 @@ export class BackgroundBashJobStore {
     }
     jobs.sort((a, b) => b.meta.startedAt - a.meta.startedAt);
     return jobs;
+  }
+
+  async query(
+    options: BackgroundBashQuery = {},
+    refresh?: (job: BackgroundBashJob) => Promise<BackgroundBashJob>,
+  ): Promise<BackgroundBashPage> {
+    const limit = options.limit ?? 10;
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > BACKGROUND_BASH_QUERY_LIMIT) {
+      throw new Error(`Process query limit must be between 1 and ${BACKGROUND_BASH_QUERY_LIMIT}.`);
+    }
+    if (options.cursor !== undefined && !isBackgroundBashJobId(options.cursor)) throw new Error('Invalid process query cursor.');
+    if (options.status !== undefined && options.status !== 'all' && !STATUS_VALUES.has(options.status)) throw new Error('Invalid process query status.');
+    if (options.search !== undefined && (typeof options.search !== 'string' || options.search.length > 256)) throw new Error('Process search must be at most 256 characters.');
+    const ids = await this.listIds();
+    const candidates = options.cursor === undefined ? ids : ids.filter(id => id < options.cursor!);
+    const search = options.search?.trim().toLowerCase();
+    const cache = new Map<string, BackgroundBashJob | undefined>();
+    const read = async (id: string) => {
+      if (!cache.has(id)) {
+        const job = await this.readJob(id);
+        cache.set(id, job && refresh ? await refresh(job) : job);
+      }
+      return cache.get(id);
+    };
+    const matches = (job: BackgroundBashJob) => (options.status === undefined || options.status === 'all' || job.status.status === options.status)
+      && (!search || `${job.meta.id}\n${job.meta.command}`.toLowerCase().includes(search));
+    const jobs: BackgroundBashJob[] = [];
+    let scanned = 0;
+    for (const id of candidates) {
+      const job = await read(id);
+      scanned++;
+      if (job && matches(job)) jobs.push(job);
+      if (jobs.length === limit || scanned === BACKGROUND_BASH_SCAN_LIMIT) break;
+    }
+    const hasMore = scanned < candidates.length;
+    const page: BackgroundBashPage = {
+      jobs, hasMore, scanned,
+      ...(hasMore ? { nextCursor: candidates[scanned - 1]! } : {}),
+    };
+    return page;
+  }
+
+  private async listIds(): Promise<string[]> {
+    await this.#storage.mkdir(this.jobsDir, { recursive: true });
+    const entries = await this.#storage.listFiles(this.jobsDir, { recursive: false, includeDirectories: true });
+    return [...new Set(entries.filter(isBackgroundBashJobId))].sort().reverse();
   }
 
   async updatePid(
@@ -235,7 +294,8 @@ export class BackgroundBashJobStore {
     id: string,
     patch: Partial<BackgroundBashStatusFile> & { status: BackgroundBashStatus },
   ): Promise<BackgroundBashJob | undefined> {
-    return this.withJob(id, async () => {
+    let changed = false;
+    const result = await this.withJob(id, async () => {
       const job = await this.readStoredJob(id);
       if (!job) return undefined;
       if (isTerminalStatus(job.status.status)) return job;
@@ -254,8 +314,11 @@ export class BackgroundBashJobStore {
       const info = mergeStatus(job.info, status);
       await this.writeStatus(info.completionPath, status);
       await this.writeInfo(info);
+      changed = true;
       return jobFromInfo(info);
     });
+    if (changed) await this.#retention.recordMutation();
+    return result;
   }
 
   async markRunning(

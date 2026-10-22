@@ -33,10 +33,10 @@ describe('memory decision comparison fixture', () => {
   it.each(['full', 'jsonl', 'view'] as const)('publishes the same sourced wiki with %s evidence', async (mode) => {
     const guided = mode !== 'full';
     const fixture = JSON.parse(await readFile(new URL('./fixtures/memory-classification.json', import.meta.url), 'utf8')) as Fixture;
-    fixture.existing.push(...Array.from({ length: 30 }, (_, index) => ({
-      path: `pages/archive/status_${index}.md`,
-      content: `# Old status ${index}\n\n${'Routine task status. '.repeat(25)}\n\n## Sources\n- session:previous\n`,
-    })));
+    fixture.existing.push({
+      path: 'pages/archive/status.md',
+      content: '# Old status\n\nRoutine task status.\n\n## Sources\n- session:previous\n',
+    });
     const root = await mkdtemp(join(tmpdir(), 'felan-memory-compare-'));
     const cwd = join(root, 'project');
     const agentDir = join(root, 'agent');

@@ -6,6 +6,8 @@ import { createOutputLog, readLogTail } from './logs.js';
 import {
   BackgroundBashJobStore,
   type BackgroundBashJob,
+  type BackgroundBashPage,
+  type BackgroundBashQuery,
   type BackgroundBashStatusFilter,
   isBackgroundBashJobId,
   isTerminalStatus,
@@ -151,7 +153,7 @@ export class BackgroundBashManager {
     const jobs = await this.#store.listJobs('all');
     const normalized: BackgroundBashJob[] = [];
     for (const job of jobs) {
-      normalized.push(await this.get(job.meta.id));
+      normalized.push(await this.#refreshJob(job));
     }
     const filtered = status === 'all'
       ? normalized
@@ -160,11 +162,21 @@ export class BackgroundBashManager {
     return filtered;
   }
 
+  async query(options: BackgroundBashQuery = {}): Promise<BackgroundBashPage> {
+    return this.#store.query(options, job => this.#refreshJob(job));
+  }
+
   async get(id: string): Promise<BackgroundBashJob> {
     const wasStarting = pendingLaunches.has(join(this.#store.jobsDir, id));
     const job = await this.#store.readJob(id);
     if (!job) throw new Error(`Background process not found: ${id}`);
-    if (wasStarting || pendingLaunches.has(job.meta.jobDir) || this.#coordinator.isStarting(id)) return job;
+    if (wasStarting) return job;
+    return this.#refreshJob(job);
+  }
+
+  async #refreshJob(job: BackgroundBashJob): Promise<BackgroundBashJob> {
+    const id = job.meta.id;
+    if (pendingLaunches.has(job.meta.jobDir) || this.#coordinator.isStarting(id)) return job;
     if (this.#coordinator.has(id)) {
       await this.readInteractive(id);
       const refreshed = await this.#store.readJob(id);

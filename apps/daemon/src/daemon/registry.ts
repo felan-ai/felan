@@ -10,7 +10,8 @@ import type { ExecutionMetadata } from './control-state.js';
 import type { ProcessAdapter } from './process-adapter.js';
 import type { SessionRuntime } from './session-runtime.js';
 import type { ControlCommit, DaemonControlStore } from './control-store.js';
-import { SessionProfileSchema, type ControlSession, type ControlSessionMetadata, type SessionProfile } from './control-state.js';
+import { ControlStoreError, SessionProfileSchema, type ControlSession, type ControlSessionMetadata, type SessionProfile } from './control-state.js';
+import { DaemonSecurityError } from './native-ownership.js';
 import { LegacySessionIndex, readTranscriptPreview, transcriptHasConversation, transcriptPreview, type LegacySession, type LegacySummary } from './legacy-sessions.js';
 import type { DaemonOwnership } from './ownership.js';
 import type { SessionLifecycle, DaemonSessionServices, SessionOpenRequest, SessionResources, SessionBinding, SessionTargetIdentity, SessionExecutionPolicy } from './session-lifecycle-contracts.js';
@@ -49,6 +50,7 @@ export interface RegistryOptions {
   acquireRun?: SessionRuntime['acquireRun'];
   commandAvailable?(session: string, name: string): boolean;
   onViewCancellationDiagnostic?(event: { session: string; elementId: string; reason: 'failed' | 'timeout' | 'limit' }): void;
+  onDiagnostic?(event: { scope: 'projection' | 'registry'; session?: string; error: unknown }): void;
 }
 export interface RegistryMutationContext {
   readonly session: AgentSession;
@@ -68,6 +70,8 @@ interface Entry {
   disposing?: Promise<void>;
   runtimeDisposed?: boolean;
   cancelling?: Promise<void>;
+  projectionFailed?: boolean;
+  projectionCancellation?: Promise<void>;
   runAbort?: AbortController;
   runPending?: boolean;
   cancellingViews?: Promise<void>;
@@ -149,6 +153,7 @@ export class SessionRegistry {
     this.assertAdmission();
     const session = this.options.store.sessionMetadata(id);
     if (session.deletedAt !== undefined) throw registryError('not_found', 'Session was deleted.');
+    if (this.entries.get(id)?.projectionFailed) throw registryError('unavailable', 'Session projection failed; further work is disabled.');
     if (this.reservations.has(session.piPath) && !activatingBinding) throw registryError('busy', 'Session has a lifecycle operation in progress.');
     if (session.state !== 'open' || this.entries.get(id)?.disposing || this.entries.get(id)?.cancelling || this.closing.has(id) || this.closing.has(session.root) || this.copyClaims.has(session.piPath)) throw new Error('Session is closing, cancelling or has a pinned copy in progress.');
   }
@@ -182,6 +187,7 @@ export class SessionRegistry {
       for (const entry of this.entries.values()) {
         await entry.host?.settle();
         await entry.cancelling;
+        await entry.projectionCancellation;
         if (!entry.binding.runtime.session.isIdle) await entry.binding.runtime.session.waitForIdle();
         await this.join([...entry.writers]);
         for (const service of entry.services) await service.settle('drain');
@@ -249,7 +255,7 @@ export class SessionRegistry {
     const settled = work.then(() => {}, () => {});
     entry.writers.add(settled);
     try { return await work; }
-    finally { entry.writers.delete(settled); entry.projection.refresh(); }
+    finally { entry.writers.delete(settled); if (!entry.projectionFailed) entry.projection.refresh(); }
   }
 
   async validateConfiguration(request: RegistryOpenRequest, resources?: SessionResources): Promise<void> {
@@ -390,6 +396,7 @@ export class SessionRegistry {
   async attach(id: string, metadata: { principal: string; kind: 'tui' | 'acp' | 'headless' }): Promise<{ attachment: string; snapshot: SessionSnapshot }> {
     await this.restore(id); this.assertAdmission();
     const entry = this.require(id); const attachment = randomUUID();
+    if (entry.projectionFailed) throw registryError('unavailable', 'Session projection failed; close and reopen the session before attaching.');
     const snapshot = entry.projection.snapshot();
     entry.attachments.set(attachment, { ...metadata });
     return { attachment, snapshot };
@@ -478,11 +485,11 @@ export class SessionRegistry {
       try {
         entry.dispatches.delete(requestId);
         if (entry.command?.runId === run.id) delete entry.command;
-        if (!this.failure) {
+        if (!this.failure && !entry.projectionFailed) {
           if (!entry.cancelling) entry.projection.settleRun(run.id);
           entry.projection.refresh();
         }
-      } catch (error) { this.fence(error); throw error; }
+      } catch (error) { this.projectionFailed(id, error); throw error; }
       finally { entry.writers.delete(writer); finish(); }
     }
   }
@@ -511,11 +518,11 @@ export class SessionRegistry {
     } finally {
       try {
         entry.dispatches.delete(continuationId);
-        if (!this.failure) {
+        if (!this.failure && !entry.projectionFailed) {
           if (!entry.cancelling) entry.projection.settleRun(run.id);
           entry.projection.refresh();
         }
-      } catch (error) { this.fence(error); throw error; }
+      } catch (error) { this.projectionFailed(id, error); throw error; }
       finally { entry.writers.delete(writer); finish(); }
     }
   }
@@ -564,12 +571,12 @@ export class SessionRegistry {
       active = false;
       entry.dispatches.delete(requestId);
       try {
-        if (!this.failure) {
+        if (!this.failure && !entry.projectionFailed) {
           if (!entry.cancelling) entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id);
           entry.projection.refresh();
         }
       }
-      catch (error) { this.fence(error); throw error; }
+      catch (error) { this.projectionFailed(id, error); throw error; }
       finally { entry.writers.delete(writer); finish(); }
     }
   }
@@ -774,11 +781,12 @@ export class SessionRegistry {
     if (entry.disposing) throw new Error('Session runtime is being evicted.');
     const stored = this.options.store.sessionMetadata(id);
     if (runId && stored.run.id !== runId) throw registryError('not_found', 'Run not found.');
+    if (entry.projectionFailed) return entry.projectionCancellation;
     if (entry.cancelling) return entry.cancelling;
     if (['idle', 'interrupted'].includes(stored.run.state) && entry.binding.runtime.session.isIdle) return;
     entry.runAbort?.abort();
     const operation = Promise.resolve().then(async () => {
-      entry.projection.transitionForSafety('cancelling', stored.run.id);
+      if (!entry.projectionFailed) entry.projection.transitionForSafety('cancelling', stored.run.id);
       this.settleInteractions(id, 'cancel');
       await this.cancelViews(id);
       await entry.binding.runtime.session.abort();
@@ -786,8 +794,10 @@ export class SessionRegistry {
       await this.join([...entry.writers]);
       this.options.owner.assertCurrent();
       if (!entry.binding.runtime.session.isIdle) throw new Error('Cancelled session has not settled.');
-      entry.projection.transitionForSafety('idle', stored.run.id);
-      entry.projection.refresh();
+      if (!entry.projectionFailed) {
+        entry.projection.transitionForSafety('idle', stored.run.id);
+        entry.projection.refresh();
+      }
     });
     entry.cancelling = operation;
     try { await operation; }
@@ -796,7 +806,7 @@ export class SessionRegistry {
       delete entry.cancelling;
       if (!this.draining && !this.stopping && !this.closing.has(id)) delete entry.viewCancellation;
     }
-    if (!this.stopping && !this.failure && !this.closing.has(id) && !this.closing.has(stored.root)) this.entries.get(stored.root)?.host?.resumeQueued();
+    if (!this.stopping && !this.failure && !entry.projectionFailed && !this.entries.get(stored.root)?.projectionFailed && !this.closing.has(id) && !this.closing.has(stored.root)) this.entries.get(stored.root)?.host?.resumeQueued();
   }
 
   /** Applies ACP approval policy to the open session tree; running tool calls keep the approvals they already had. */
@@ -890,10 +900,11 @@ export class SessionRegistry {
     if (entry) {
       entry.runAbort?.abort();
       await entry.cancelling;
+      await entry.projectionCancellation;
       await entry.binding.runtime.session.abort();
       await this.processes.cancelForeground(id);
       await Promise.all(entry.writers);
-      entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id);
+      if (!entry.projectionFailed) entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id);
       await this.processes.settle(stored.root, false, id === stored.root ? undefined : new Set([id]));
       for (const service of entry.services) await this.processes.withCleanup(id, () => service.settle());
       await this.disposeEntry(id, true);
@@ -933,6 +944,7 @@ export class SessionRegistry {
     }
     for (const [id, entry] of this.entries) {
       this.closing.add(id);
+      await entry.projectionCancellation;
       await shutdownStep('session-interactions', () => this.settleInteractions(id, 'shutdown'), id);
       if (!options.interrupt) {
         entry.runAbort?.abort();
@@ -954,7 +966,7 @@ export class SessionRegistry {
         }
         await shutdownStep('session-writers', async () => { await entry.cancelling; await this.join([...entry.writers]); }, id);
       }
-      await shutdownStep('session-run', () => entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id), id);
+      if (!entry.projectionFailed) await shutdownStep('session-run', () => entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id), id);
       await shutdownStep('session-dispose', () => this.disposeEntry(id, false), id);
     }
     // A failed reload leaves its kept PTYs without a resident root.
@@ -1101,10 +1113,10 @@ export class SessionRegistry {
         }) } : {}),
       });
       else this.options.store.updateSession(binding.sessionId, { residency: 'warm' });
-      const projection = new SessionProjection({ binding, store: this.options.store, extras: () => this.extras(binding!.sessionId), publish: event => this.publish(event), onError: error => { this.fence(error); },
+      const projection = new SessionProjection({ binding, store: this.options.store, extras: () => this.extras(binding!.sessionId), publish: event => this.publish(event), onError: error => { this.projectionFailed(binding!.sessionId, error); },
         commandAvailable: name => this.options.commandAvailable?.(binding!.sessionId, name) === false ? false
           : this.commandDispatcher?.(binding!.sessionId, name) ?? this.options.commandAvailable?.(binding!.sessionId, name) ?? false,
-        canSettle: () => { const current = this.entries.get(binding!.sessionId); return !current?.dispatches.size && !current?.cancelling; },
+        canSettle: () => { const current = this.entries.get(binding!.sessionId); return !current?.dispatches.size && !current?.cancelling && !current?.projectionFailed; },
         onRefresh: () => {
           const current = this.entries.get(binding!.sessionId);
           if (current) this.updateCommandState(current);
@@ -1169,6 +1181,7 @@ export class SessionRegistry {
 
   private cancelViews(id: string): Promise<void> {
     const entry = this.require(id);
+    if (entry.projectionFailed) return Promise.resolve();
     if (entry.cancellingViews) return entry.cancellingViews;
     for (const controller of entry.viewActions ?? []) controller.abort();
     const cancellation = entry.viewCancellation ??= { attempted: new Set(), rounds: 0 };
@@ -1221,7 +1234,7 @@ export class SessionRegistry {
   }
 
   private updateCommandState(entry: Entry): void {
-    if (!entry.command) return;
+    if (entry.projectionFailed || !entry.command) return;
     const run = this.options.store.sessionMetadata(entry.binding.sessionId).run;
     if (run.id !== entry.command.runId || run.state !== 'running' && run.state !== 'waiting') return;
     const state = entry.command.views.size && entry.binding.runtime.session.isIdle ? 'waiting' : 'running';
@@ -1275,7 +1288,8 @@ export class SessionRegistry {
     const entry = this.require(id);
     if (entry.disposing) return entry.disposing;
     entry.disposing = (async () => {
-      entry.projection.refresh();
+      if (entry.projectionCancellation) await entry.projectionCancellation;
+      if (!entry.projectionFailed) entry.projection.refresh();
       if (close) this.processes.seal(id);
       for (const service of [...entry.services]) if (service.disposeWhenIdle) {
         await this.processes.withCleanup(id, async () => { await service.settle(close ? 'force' : 'drain'); await service.dispose(); });
@@ -1290,13 +1304,71 @@ export class SessionRegistry {
       this.options.owner.assertCurrent();
       const stored = this.options.store.sessionMetadata(id);
       const closed = close || this.closes.has(id);
-      entry.projection.transitionForSafety(closed ? 'closed' : 'evicted');
+      if (entry.projectionFailed) this.options.store.transitionSessionForSafety(id, closed ? 'closed' : 'evicted');
+      else entry.projection.transitionForSafety(closed ? 'closed' : 'evicted');
       entry.projection.dispose(); this.entries.delete(id); if (!preserveView) this.listeners.delete(id); this.pathClaims.delete(stored.piPath);
       if (!close && entry.services.size) this.retainedServices.set(id, entry.services);
     })();
     try { await entry.disposing; } catch (error) { delete entry.disposing; this.fence(error); throw error; }
   }
+  private projectionFailed(session: string, error: unknown): void {
+    this.diagnostic({ scope: 'projection', session, error });
+    if (!this.projectionIntegrityIntact(error)) return;
+    const entry = this.entries.get(session);
+    if (!entry || entry.projectionFailed) return;
+    entry.projectionFailed = true;
+    this.processes.seal(session);
+    const attempt = async (operation: () => unknown): Promise<void> => {
+      try { await operation(); }
+      catch (cleanup) {
+        this.diagnostic({ scope: 'registry', session, error: cleanup });
+        this.cancellationFailures.add(cleanup);
+        this.projectionIntegrityIntact(cleanup);
+      }
+    };
+    entry.projectionCancellation = Promise.resolve().then(async () => {
+      await attempt(() => entry.projection.dispose());
+      await attempt(() => entry.runAbort?.abort());
+      for (const controller of entry.viewActions ?? []) await attempt(() => controller.abort());
+      await attempt(() => entry.binding.runtime.session.clearQueue());
+      const transitionRun = (state: 'cancelling' | 'idle') => {
+        const commit = this.options.store.transitionSessionForSafety(session, state);
+        if (commit.revisions[session] !== undefined) this.publish({ v: 1, session, rev: commit.value.revision, change: { type: 'run.updated', run: commit.value.run } });
+      };
+      await attempt(() => {
+        const run = this.options.store.sessionMetadata(session).run;
+        if (['running', 'waiting', 'cancelling'].includes(run.state)) transitionRun('cancelling');
+      });
+      await attempt(() => this.settleInteractions(session, 'cancel'));
+      // Abort and foreground termination must run together: a tool may be waiting for its process to exit.
+      await Promise.all([
+        attempt(() => entry.binding.runtime.session.abort()),
+        attempt(() => this.processes.cancelForeground(session)),
+      ]);
+      await attempt(() => this.join([...entry.writers]));
+      await attempt(() => {
+        if (this.failure) return;
+        if (!entry.binding.runtime.session.isIdle) throw new Error('Projection-failed session has not settled.');
+        transitionRun('idle');
+      });
+    }).finally(() => { delete entry.projectionCancellation; });
+  }
+  private projectionIntegrityIntact(error: unknown): boolean {
+    if (error instanceof AggregateError) {
+      for (const nested of error.errors) if (!this.projectionIntegrityIntact(nested)) return false;
+    }
+    if (error instanceof DaemonSecurityError || error instanceof ControlStoreError && ['storage_failure', 'ownership_lost'].includes(error.code)) {
+      this.fence(error); return false;
+    }
+    try { this.options.owner.assertCurrent(); this.options.store.assertCurrent(); }
+    catch (integrityError) { this.fence(integrityError); return false; }
+    return true;
+  }
+  private diagnostic(event: Parameters<NonNullable<RegistryOptions['onDiagnostic']>>[0]): void {
+    try { this.options.onDiagnostic?.(event); } catch {}
+  }
   private fence(error: unknown): void {
+    this.diagnostic({ scope: 'registry', error });
     this.failure = error;
     this.processes.sealAll();
     for (const entry of this.entries.values()) { entry.runAbort?.abort(); entry.projection.dispose(); }
@@ -1318,7 +1390,7 @@ export class SessionRegistry {
     const roots = new Set([...this.entries.values()].map(entry => entry.binding.rootSessionId).concat([...this.processes.liveRoots()]));
     const pending: Promise<unknown>[] = [...this.opening.values(), ...this.closes.values(), ...[...roots].map(root => this.processes.settle(root, true))];
     for (const entry of this.entries.values()) {
-      pending.push(entry.binding.runtime.session.abort(), ...(entry.disposing ? [entry.disposing] : []), ...(entry.cancelling ? [entry.cancelling] : []));
+      pending.push(entry.binding.runtime.session.abort(), ...(entry.disposing ? [entry.disposing] : []), ...(entry.cancelling ? [entry.cancelling] : []), ...(entry.projectionCancellation ? [entry.projectionCancellation] : []));
       if (entry.host) pending.push((async () => {
         try { await entry.host!.shutdown(); } finally { await entry.host!.settle(); }
       })());
@@ -1333,11 +1405,11 @@ export class SessionRegistry {
   }
 
   private pendingWriters(): Promise<unknown>[] {
-    return [...this.opening.values(), ...this.lifecycleWriters, ...[...this.entries.values()].flatMap(entry => [...entry.writers, ...(entry.cancelling ? [entry.cancelling] : [])])];
+    return [...this.opening.values(), ...this.lifecycleWriters, ...[...this.entries.values()].flatMap(entry => [...entry.writers, ...(entry.cancelling ? [entry.cancelling] : []), ...(entry.projectionCancellation ? [entry.projectionCancellation] : [])])];
   }
 
   private hasPendingWriters(): boolean {
-    return this.opening.size > 0 || this.lifecycleWriters.size > 0 || [...this.entries.values()].some(entry => entry.writers.size > 0 || entry.cancelling !== undefined);
+    return this.opening.size > 0 || this.lifecycleWriters.size > 0 || [...this.entries.values()].some(entry => entry.writers.size > 0 || entry.cancelling !== undefined || entry.projectionCancellation !== undefined);
   }
 
   private async join(operations: readonly Promise<unknown>[], failures?: unknown[], allowCancelled = false): Promise<void> {

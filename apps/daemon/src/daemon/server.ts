@@ -4,7 +4,7 @@ import type { Socket } from 'node:net';
 import type { ModelRuntime } from '@felan-ai/agent-core';
 import { BootstrapHelloSchema, OriginSchema, ERROR_CODES, IdSchema, JsonLineDecoder, LIMITS, OPERATION_CATALOG, PresentationEventSchema, UI_CAPABILITIES, canonicalRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse, parseRemoteCommand,
   parseSchema, type ClientEnvelope, type Interaction, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
-import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand, type AdmissionOutcome } from './admission.js';
+import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand, type AdmissionHandler, type AdmissionOutcome } from './admission.js';
 import { accepted, commandError, SessionCommands, type RemoteControl, type RootPreparation } from './commands.js';
 import { SessionFanout } from './fanout.js';
 import { listenLocalIpc, type LocalIpcListener } from './ipc.js';
@@ -89,7 +89,7 @@ export class SessionServer {
     const { registry } = options; registry.assertAdmission();
     this.principal = parseSchema(IdSchema, `local:${registry.options.owner.target.uid}:${registry.options.owner.target.namespaceId}`);
     this.commands = new SessionCommands({ ...options, invalidated: revisions => this.invalidate(revisions) });
-    this.admission = new OrderedAdmission(registry.options.store, { committed: revisions => this.invalidate(revisions), dispatched: revisions => registry.publishCommitted(revisions) });
+    this.admission = new OrderedAdmission(registry.options.store, { committed: revisions => this.invalidateConnections(revisions), dispatched: revisions => registry.publishCommitted(revisions) });
     this.unbindCommands = registry.bindCommandDispatcher(() => true);
     this.unbindInvalidation = registry.subscribeInvalidation(revisions => this.invalidate(revisions));
     this.unbindBroker = registry.subscribeInteractions(interaction => {
@@ -214,13 +214,21 @@ export class SessionServer {
   }
 
   invalidate(revisions: Readonly<Record<string, number>>): void {
+    this.invalidateConnections(revisions);
+  }
+
+  private invalidateConnections(revisions: Readonly<Record<string, number>>): void {
     const store = this.options.registry.options.store;
     for (const [id, revision] of Object.entries(revisions)) {
       if (!Number.isSafeInteger(revision) || revision < 0 || store.session(id).revision < revision) throw new Error('Invalidation must name an actual committed revision.');
     }
+    const close: Connection[] = [];
     for (const connection of this.connections) {
-      if (Object.keys(revisions).some(id => connection.attachments.has(id))) connection.out.close('resync_required');
+      const affected = Object.keys(revisions).flatMap(id => connection.attachments.get(id) ?? []);
+      if (!affected.length) continue;
+      close.push(connection);
     }
+    for (const connection of close) connection.out.close('resync_required');
   }
 
   private acceptLocalConsole(socket: Socket): void {
@@ -269,9 +277,16 @@ export class SessionServer {
     let ownsPreparation = false;
     const deferred: Array<Readonly<Record<string, number>>> = [];
     const invalidateAfterSend = () => { for (const revisions of deferred.splice(0)) this.invalidate(revisions); };
+    const submit = (request: unknown, handler?: AdmissionHandler) => {
+      return this.admission.submit(request, this.principal, handler, revisions => {
+        this.invalidateConnections(revisions);
+        if (connection.closed) throw commandError('resync_required');
+      });
+    };
     try {
       if (frame === null || typeof frame !== 'object') throw commandError('invalid_request');
       id = parseSchema(IdSchema, 'id' in frame ? frame.id : undefined);
+      if (connection.closed) return;
       if (this.sealed && this.options.management?.lifecycle.state !== 'blocked'
         && !('control' in frame && 'op' in frame && frame.op === 'host.status')) throw commandError('busy');
       if ('control' in frame) {
@@ -280,7 +295,7 @@ export class SessionServer {
         let result: Response | undefined;
         if (request.op !== 'host.status' && this.options.management) {
           const command = parseClientEnvelope({ v: 1, id: request.id, op: request.op, params: request.params });
-          try { result = await this.admission.submit(command, this.principal, admitted => this.options.management!.lifecycle.prepare(admitted)); }
+          try { result = await submit(command, admitted => this.options.management!.lifecycle.prepare(admitted)); }
           catch (error) { result = this.options.management.lifecycle.state === 'blocked'
             ? rejected(id, this.options.management.lifecycle.blockedError()) : rejected(id, error, true); }
         }
@@ -289,7 +304,7 @@ export class SessionServer {
           ...(this.options.management?.lifecycle.blocked ? { blocked: this.options.management.lifecycle.blocked } : {}),
           ...(request.op === 'host.status' || result?.outcome === 'accepted' ? { outcome: 'accepted' }
             : { outcome: 'rejected', error: result ? result.error : { code: 'unavailable', message: 'Host management is unavailable.', retryable: false } }) };
-        connection.out.send(parseControlResponse(response), () => this.options.management?.lifecycle.afterResponse(request.id, result?.outcome === 'accepted')); return;
+        connection.out.send(parseControlResponse(response), () => { invalidateAfterSend(); this.options.management?.lifecycle.afterResponse(request.id, result?.outcome === 'accepted'); }); return;
       }
       if ('op' in frame && frame.op === 'hello') {
         const bootstrap = parseSchema(BootstrapHelloSchema, frame);
@@ -343,7 +358,7 @@ export class SessionServer {
       const attachment = request.session && connection.attachments.get(request.session);
       const origin = { kind: connection.kind, attachment: attachment ? attachment.id : connection.id };
       admissionAttempt = true;
-      const response = await this.admission.submit(frame, this.principal, !this.available(connection.capabilities).includes(request.op) ? undefined : command => {
+      const response = await submit(frame, !this.available(connection.capabilities).includes(request.op) ? undefined : command => {
         if ((request.op === 'host.stop' || request.op === 'host.restart') && this.options.management) return this.options.management.lifecycle.prepare(command);
         if (this.stopping() && !safety) throw this.stoppingError();
         if (request.op === 'interaction.answer') return this.options.broker!.dispatch(command, { principal: this.principal, kind: connection.kind!, attachment: connection.id,

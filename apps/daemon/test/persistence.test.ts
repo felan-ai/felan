@@ -393,6 +393,49 @@ describe.skipIf(!supported)('atomic interaction winners and continuation intents
 });
 
 describe.skipIf(!supported)('control retention and cancellation boundaries', () => {
+  it('does not rewrite unchanged resources or renew their transition timestamp for metadata updates', async () => {
+    let time = now; const { store } = await open({ now: () => time });
+    const resource = store.putResource({ id: 'process', session: 's', root: 's', kind: 'detached', state: 'exited', updatedAt: 0 }).value;
+    const revision = store.sessionMetadata('s').revision; const write = vi.spyOn(ControlDatabase.prototype, 'write');
+    time += 1000;
+    expect(store.putResource({ ...resource, updatedAt: time }).revisions).toEqual({});
+    expect(write).not.toHaveBeenCalled(); expect(store.sessionMetadata('s').revision).toBe(revision);
+    expect(store.putResource({ ...resource, command: 'restored command', startedAt: now - 100 }).value.updatedAt).toBe(now);
+    expect(store.putResource({ ...store.resource('process'), state: 'running' }).value.updatedAt).toBe(time);
+    write.mockRestore();
+    const copies = store.resources('s'); copies[0]!.state = 'missing';
+    expect(store.resource('process')?.state).toBe('running'); expect(store.resources('another-root')).toEqual([]);
+  });
+
+  for (const pruning of ['compact', 'admit', 'recover'] as const) it(`bounds terminal resources per root during ${pruning}, retaining unverified evidence and session references`, async () => {
+    const { owner, store } = await open();
+    store.createSession({ id: 'other', root: 'other', cwd: '/fixture', piPath: join(owner.target.agentDir, 'other.jsonl'), state: 'open', residency: 'warm', run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, title: '' });
+    store.close();
+    const state = readControlDatabase(store.directory);
+    const recent = Array.from({ length: 2200 }, (_, index) => ({ id: `recent-${index}`, session: 's', root: 's', kind: 'detached', state: 'exited', updatedAt: now }));
+    const other = Array.from({ length: 1100 }, (_, index) => ({ id: `other-${index}`, session: 'other', root: 'other', kind: 'pty', state: 'exited', updatedAt: now - index }));
+    const protectedRows = ['running', 'reconciling', 'missing', 'interrupted'].map(value => ({ id: value, session: 's', root: 's', kind: 'detached', state: value, updatedAt: now - 2 * LIMITS.requestRetentionMs }));
+    writeControlDatabase(store.directory, { ...state, resources: [...recent, ...other, ...protectedRows,
+      { id: 'expired', session: 's', root: 's', kind: 'foreground', state: 'exited', updatedAt: now - LIMITS.requestRetentionMs - 1 },
+      { id: 'boundary', session: 'other', root: 'other', kind: 'foreground', state: 'exited', updatedAt: now - LIMITS.requestRetentionMs },
+    ] });
+    const reloaded = reopen(owner);
+    if (pruning === 'recover') reloaded.recover();
+    else {
+      reloaded.recover();
+      reloaded.putResource({ id: 'overflow', session: 's', root: 's', kind: 'detached', state: 'exited', updatedAt: now });
+      if (pruning === 'compact') reloaded.compact(); else reloaded.admit(prompt(), 'owner');
+    }
+    const rows = reloaded.resources('s');
+    expect(rows.filter(row => row.state === 'exited')).toHaveLength(1000);
+    expect(rows.filter(row => row.state !== 'exited').map(row => row.id)).toEqual(protectedRows.map(row => row.id));
+    expect(reloaded.resource('expired')).toBeUndefined(); expect(reloaded.resource('recent-0')).toBeUndefined();
+    expect(reloaded.resource('recent-2199')).toBeDefined(); expect(reloaded.resources('other')).toHaveLength(1000);
+    expect(reloaded.snapshot().resources.every(row => reloaded.findSessionMetadata(row.session)?.root === row.root)).toBe(true);
+    const revision = reloaded.sessionMetadata('s').revision; const write = vi.spyOn(ControlDatabase.prototype, 'write');
+    reloaded.compact(); expect(write).not.toHaveBeenCalled(); expect(reloaded.sessionMetadata('s').revision).toBe(revision); write.mockRestore();
+  });
+
   it('advances revisions when compacting visible projections but never discards revision high-water', async () => {
     let time = now; const { owner, store } = await open({ now: () => time });
     store.project('s', [{ type: 'message', id: 'old', entryId: 'old-entry', state: 'observed' }]);

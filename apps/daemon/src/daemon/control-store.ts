@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { Type } from 'typebox';
 import { canonicalProspectivePath, pathInside } from './target.js';
 import { CONTROL_LIMITS, ControlResourceSchema, ControlSessionMetadataSchema, ControlSessionSchema, ControlStoreError, SessionProfileSchema, assertControlRow, parseControlState, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlResource, type ControlSession, type ControlSessionMetadata, type ControlState, type SessionProfile } from './control-state.js';
@@ -94,8 +95,11 @@ export class DaemonControlStore {
   findSessionMetadata(id: string): ControlSessionMetadata | undefined { this.file.assertCurrent(); const item = this.state.sessions.find(item => item.id === id); return item && metadataCopy(item); }
   interactions(): Interaction[] { this.file.assertCurrent(); return structuredClone(this.state.interactions); }
   request(id: string): ControlRequest | undefined { this.file.assertCurrent(); const item = this.state.requests.find(item => item.id === id); return item && structuredClone(item); }
-  resource(id: string): ControlResource | undefined { this.file.assertCurrent(); const item = this.state.resources.find(item => item.id === id); return item && structuredClone(item); }
-  resources(): ControlResource[] { this.file.assertCurrent(); return structuredClone(this.state.resources); }
+  resource(id: string): ControlResource | undefined { this.file.assertCurrent(); const item = this.state.resources.find(item => item.id === id); return item && { ...item }; }
+  resources(root?: string): ControlResource[] {
+    this.file.assertCurrent();
+    return this.state.resources.filter(item => root === undefined || item.root === root).map(item => ({ ...item }));
+  }
   assertCurrent(): void { this.file.assertCurrent(); }
   createSession(input: Omit<ControlSession, 'revision' | 'updatedAt' | 'projections'>): ControlCommit<ControlSession> {
     const session = parseSchema(ControlSessionSchema, { ...input, revision: 0, updatedAt: this.time(this.state.clock), projections: [] });
@@ -210,7 +214,7 @@ export class DaemonControlStore {
     for (const projection of session.projections) if (projection.value.type === 'message' && observation.absentEntryIds.includes(projection.value.entryId)) values.push({ ...projection.value, state: 'missing' });
     return this.project(id, values);
   }
-  admit(value: unknown, principal: string): ControlCommit<ControlRequest> {
+  admit(value: unknown, principal: string, beforeAdmission?: (revisions: Readonly<Record<string, number>>) => void): ControlCommit<ControlRequest> {
     this.file.assertCurrent();
     if (this.recoveryRequired) throw new ControlStoreError('storage_failure', 'Recover the persisted control state before admitting mutations.');
     const request = parseClientEnvelope(value);
@@ -229,8 +233,13 @@ export class DaemonControlStore {
       if (target.deletedAt !== undefined && request.op !== 'session.delete') throw new ControlStoreError('not_found', 'Session was deleted.');
     }
     const record: ControlRequest = { id: request.id, principal, ...(session ? { session } : {}), op: request.op, admittedAt: now, retainUntil: requestRetainUntil(request.id, now), identity, phase: 'intent' };
+    if (beforeAdmission) {
+      // A transport may need to reconnect after pruning; its retry must not find an undispatched intent.
+      const maintenance = this.commit((state, touched) => this.prune(state, now, touched));
+      beforeAdmission(maintenance.revisions);
+    }
     return this.commit((state, touched) => {
-      this.prune(state, now, touched);
+      if (!beforeAdmission) this.prune(state, now, touched);
       state.requests.push(record); return record;
     });
   }
@@ -343,7 +352,9 @@ export class DaemonControlStore {
       if (this.findSession(state, resource.session).root !== resource.root) throw new ControlStoreError('invalid_request', 'Resource root mismatch.');
       const previous = state.resources.find(item => item.id === resource.id);
       if (previous && (previous.kind !== resource.kind || previous.session !== resource.session || previous.reference !== resource.reference || previous.pid !== resource.pid || previous.startIdentity !== resource.startIdentity)) throw new ControlStoreError('request_conflict', 'Resource identity cannot be replaced.');
-      const next = { ...resource, updatedAt: now };
+      // Reconstructing metadata must not extend terminal retention.
+      const next = { ...resource, updatedAt: previous?.state === resource.state ? previous.updatedAt : now };
+      if (previous && isDeepStrictEqual(previous, next)) return previous;
       state.resources = state.resources.filter(item => item.id !== resource.id); state.resources.push(next); touched.add(resource.session); return next;
     });
   }
@@ -352,7 +363,8 @@ export class DaemonControlStore {
     this.recoveryRequired = false;
     try { return this.commit((state, touched, now) => {
       const { changedSessions, ...plan } = recoverControlState(state, now);
-      for (const id of changedSessions) touched.add(id); return plan;
+      for (const id of changedSessions) touched.add(id);
+      this.prune(state, now, touched); return plan;
     }, true); } catch (error) { this.recoveryRequired = true; throw error; }
   }
   compact(): ControlCommit<void> { return this.commit((state, touched, now) => this.prune(state, now, touched)); }
@@ -551,8 +563,19 @@ export class DaemonControlStore {
       if (!keep && item.scope.kind === 'session') touched.add(item.scope.session);
       return keep;
     });
+    const terminalByRoot = new Map<string, ControlResource[]>();
+    for (const item of state.resources) if (item.state === 'exited' && item.updatedAt + LIMITS.requestRetentionMs >= now) {
+      const rows = terminalByRoot.get(item.root) ?? [];
+      rows.push(item); terminalByRoot.set(item.root, rows);
+    }
+    const retainedTerminal = new Set<string>();
+    for (const rows of terminalByRoot.values()) {
+      rows.reverse().sort((a, b) => b.updatedAt - a.updatedAt);
+      for (const item of rows.slice(0, CONTROL_LIMITS.terminalResourcesPerRoot)) retainedTerminal.add(item.id);
+    }
     state.resources = state.resources.filter(item => {
-      const keep = item.state !== 'exited' || item.updatedAt + LIMITS.requestRetentionMs >= now;
+      // Missing, interrupted and reconciling rows may still represent unverified work.
+      const keep = item.state !== 'exited' || retainedTerminal.has(item.id);
       if (!keep) touched.add(item.session);
       return keep;
     });

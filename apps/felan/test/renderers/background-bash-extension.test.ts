@@ -74,7 +74,7 @@ describe('background bash extension activation', () => {
   });
 
   it('publishes process vocabulary without native dialogs or status polling', async () => {
-    vi.spyOn(BackgroundBashManager.prototype, 'list').mockResolvedValue([]);
+    const query = vi.spyOn(BackgroundBashManager.prototype, 'query').mockResolvedValue({ jobs: [], hasMore: false, scanned: 0 });
     const interval = vi.spyOn(globalThis, 'setInterval');
     const harness = createHarness(unusedRuntime());
     const close = vi.fn(async () => {});
@@ -88,6 +88,7 @@ describe('background bash extension activation', () => {
         handler: (args: string, context: ExtensionContext) => Promise<void>;
       };
       await command.handler('', ctx);
+      expect(query).toHaveBeenCalledExactlyOnceWith({ limit: 10 });
       expect(present).toHaveBeenCalledOnce();
       expect(present.mock.calls[0]).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'view', items: [] })]));
       expect(interval).not.toHaveBeenCalled();
@@ -386,7 +387,7 @@ describe('background bash extension activation', () => {
     vi.spyOn(BackgroundBashManager.prototype, 'start').mockResolvedValue(running);
     let current = running;
     vi.spyOn(BackgroundBashManager.prototype, 'get').mockImplementation(async () => { current = completed; return current; });
-    vi.spyOn(BackgroundBashManager.prototype, 'list').mockImplementation(async () => [current]);
+    vi.spyOn(BackgroundBashManager.prototype, 'query').mockImplementation(async () => ({ jobs: [current], hasMore: false, scanned: 1 }));
     const harness = createHarness();
     const update = vi.fn(async () => {}); const close = vi.fn(async () => {});
     const present = vi.fn(async () => ({ update, close }));
@@ -421,8 +422,8 @@ describe('background bash extension activation', () => {
       const message = harness.sendMessage.mock.calls[0]?.[0] as { content: string; details: unknown };
       expect(message.content).toContain('Background process reached terminal status: completed.');
       expect(JSON.stringify(message.details)).not.toContain('processToken');
-      await vi.waitFor(() => expect(update).toHaveBeenCalledOnce());
-      expect(update).toHaveBeenCalledWith(expect.objectContaining({ title: expect.stringContaining('0 running') }));
+      await vi.waitFor(() => expect(update).toHaveBeenLastCalledWith(expect.objectContaining({ title: expect.stringContaining('0 running') })));
+      expect(update).toHaveBeenCalledTimes(2);
       expect(present).toHaveBeenCalledOnce();
     } finally {
       await harness.emit('session_shutdown', {}, ctx);
