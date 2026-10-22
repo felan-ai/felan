@@ -1115,7 +1115,7 @@ function assertSingleAgentCoreInstallation() {
 function assertPinnedPiInstallation() {
   const core = JSON.parse(readFileSync(join(installDir, 'node_modules', '@felan-ai', 'agent-core', 'package.json'), 'utf8'));
   const expected = core.dependencies['@earendil-works/pi-coding-agent'];
-  const packages = ['pi-agent-core', 'pi-ai', 'pi-codemode', 'pi-coding-agent', 'pi-mcp', 'pi-protocol', 'pi-server', 'pi-telemetry', 'pi-tui'];
+  const packages = ['pi-agent-core', 'pi-ai', 'pi-codemode', 'pi-coding-agent', 'pi-mcp', 'pi-telemetry', 'pi-tui'];
   for (const name of packages) {
     if (core.dependencies[`@earendil-works/${name}`] !== expected) {
       throw new Error(`Agent Core must pin ${name} to ${expected}`);

@@ -69,17 +69,42 @@ function harness(
 }
 
 describe('dynamic thinking session lifecycle', () => {
+  it('ignores custom turns without classifying or changing thinking', async () => {
+    const { emit, classify, getLevel } = harness(['low']);
+    await emit('before_agent_start', {
+      messageType: 'custom',
+      message: { role: 'custom', customType: 'test', content: 'Continue', display: false, timestamp: 1 },
+    });
+    expect(classify).not.toHaveBeenCalled();
+    expect(getLevel()).toBe('medium');
+  });
+
+  it('preserves pending savings when a custom turn starts', async () => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, classify, getLevel, assistant, settle } = harness(['medium'], true, { report }, 'high');
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Fix the bug' });
+    await emit('turn_end', { message: assistant() });
+    await emit('before_agent_start', {
+      messageType: 'custom',
+      message: { role: 'custom', customType: 'test', content: 'Continue', display: false, timestamp: 1 },
+    });
+    expect(classify).toHaveBeenCalledOnce();
+    expect(getLevel()).toBe('medium');
+    await settle();
+    expect(report).toHaveBeenCalledOnce();
+  });
+
   it('pauses while owned and resumes after automated promotion and restoration', async () => {
     const { emit, classify, getLevel, setLevel, scope } = harness(['low', 'high']);
-    await emit('before_agent_start', { prompt: 'Ordinary request' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Ordinary request' });
     expect(getLevel()).toBe('low');
     const release = scope.acquire('workflow');
     scope.run(false, () => setLevel('high'));
-    await emit('before_agent_start', { prompt: 'Planning request' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Planning request' });
     expect(classify).toHaveBeenCalledOnce();
     scope.run(false, () => setLevel('low'));
     release();
-    await emit('before_agent_start', { prompt: 'Next ordinary request' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Next ordinary request' });
     expect(classify).toHaveBeenCalledTimes(2);
     expect(getLevel()).toBe('high');
   });
@@ -90,7 +115,7 @@ describe('dynamic thinking session lifecycle', () => {
     manager.appendMessage({ role: 'user', content: [{ type: 'text', text: 'Earlier task' }], timestamp: 1 });
     await emit('input', { text: 'Simple edit', source: 'interactive' });
     await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
-    await emit('before_agent_start', { prompt: 'Simple edit' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Simple edit' });
     expect(classify).toHaveBeenCalledOnce();
     expect(classify.mock.calls[0]?.[0]).toMatchObject({
       request: 'Simple edit', image_count: 0,
@@ -110,7 +135,7 @@ describe('dynamic thinking session lifecycle', () => {
     });
     await emit('input', { text: '/skill:task', source: 'interactive' });
     await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
-    await emit('before_agent_start', { prompt: 'Expanded task' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Expanded task' });
     expect(oldSignal?.aborted).toBe(true);
     expect(classify).toHaveBeenCalledTimes(2);
     release({ answers: { 'thinking:effort': { type: 'choice', choice: 'low' } } });
@@ -121,7 +146,7 @@ describe('dynamic thinking session lifecycle', () => {
     const { emit, classify, getLevel, model } = harness(['low'], false);
     Object.assign(model, { provider, api });
     await emit('input', { text: 'Summarize the file', source: 'interactive' });
-    await emit('before_agent_start', { prompt: 'Summarize the file' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Summarize the file' });
     expect(classify).not.toHaveBeenCalled();
     expect(getLevel()).toBe('medium');
   });
@@ -130,7 +155,7 @@ describe('dynamic thinking session lifecycle', () => {
     const { emit, classify, getLevel, model } = harness(['low']);
     model.reasoning = false;
     await emit('input', { text: 'Summarize the file', source: 'interactive' });
-    await emit('before_agent_start', { prompt: 'Summarize the file' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Summarize the file' });
     expect(classify).not.toHaveBeenCalled();
     expect(getLevel()).toBe('medium');
   });
@@ -154,14 +179,14 @@ describe('dynamic thinking session lifecycle', () => {
 
   it('classifies only at agent start, not queued messages or tool continuations', async () => {
     const { manager, emit, classify, getLevel } = harness(['low', 'high']);
-    await emit('before_agent_start', { prompt: 'Simple edit' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Simple edit' });
     expect(getLevel()).toBe('low');
     manager.appendMessage({ role: 'user', content: [{ type: 'text', text: 'Simple edit' }], timestamp: 1 });
     manager.appendMessage({ role: 'user', content: [{ type: 'text', text: 'Now debug the race' }], timestamp: 2 });
     await emit('turn_start', { turnIndex: 1 });
     expect(getLevel()).toBe('low');
     expect(classify).toHaveBeenCalledOnce();
-    await emit('before_agent_start', { prompt: 'New independent request' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'New independent request' });
     expect(getLevel()).toBe('high');
     expect(classify).toHaveBeenCalledTimes(2);
   });
@@ -170,7 +195,7 @@ describe('dynamic thinking session lifecycle', () => {
     const { emit, classify, getLevel, setLevel, model } = harness(['low']);
     Object.assign(model, { provider, api });
     setLevel('max');
-    await emit('before_agent_start', { prompt: 'Do something' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Do something' });
     expect(getLevel()).toBe('max');
     expect(classify).not.toHaveBeenCalled();
   });
@@ -180,7 +205,7 @@ describe('dynamic thinking session lifecycle', () => {
     Object.assign(model, { provider, api });
     let release!: (value: unknown) => void;
     classify.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
-    const pending = emit('before_agent_start', { prompt: 'Fresh request' });
+    const pending = emit('before_agent_start', { messageType: 'user', prompt: 'Fresh request' });
     await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
     await emit('session_shutdown', {});
     release({ answers: { 'thinking:effort': { type: 'choice', choice: 'high' } } });
@@ -197,7 +222,7 @@ describe('dynamic thinking session lifecycle', () => {
       answers: { 'thinking:effort': { type: 'choice', choice: 'medium' } },
       metadata: { usage: { requests: 1, costUsd: 0.0002 } },
     });
-    await emit('before_agent_start', { prompt: 'Fix the bug' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Fix the bug' });
     await emit('turn_end', { message: assistant() });
     await emit('turn_end', { message: assistant() });
     expect(report).not.toHaveBeenCalled();
@@ -224,27 +249,27 @@ describe('dynamic thinking session lifecycle', () => {
   it('does not report unchanged, upshifted, failed, or invalid responses', async () => {
     const report = vi.fn().mockResolvedValue(undefined);
     const noChange = harness(['high'], true, { report }, 'high');
-    await noChange.emit('before_agent_start', { prompt: 'No-op' });
+    await noChange.emit('before_agent_start', { messageType: 'user', prompt: 'No-op' });
     await noChange.emit('turn_end', { message: noChange.assistant() });
     await noChange.settle();
 
     const unsupported = harness(['low'], true, { report });
-    await unsupported.emit('before_agent_start', { prompt: 'Not high to low' });
+    await unsupported.emit('before_agent_start', { messageType: 'user', prompt: 'Not high to low' });
     await unsupported.emit('turn_end', { message: unsupported.assistant() });
     await unsupported.settle();
 
     const returned = harness(['high'], true, { report });
-    await returned.emit('before_agent_start', { prompt: 'Back to high' });
+    await returned.emit('before_agent_start', { messageType: 'user', prompt: 'Back to high' });
     await returned.emit('turn_end', { message: returned.assistant() });
     await returned.settle();
 
     const failed = harness(['medium'], true, { report }, 'high');
-    await failed.emit('before_agent_start', { prompt: 'Failed response' });
+    await failed.emit('before_agent_start', { messageType: 'user', prompt: 'Failed response' });
     await failed.emit('turn_end', { message: failed.assistant('error') });
     await failed.settle('error');
 
     const invalid = harness(['medium'], true, { report }, 'high');
-    await invalid.emit('before_agent_start', { prompt: 'Invalid reasoning' });
+    await invalid.emit('before_agent_start', { messageType: 'user', prompt: 'Invalid reasoning' });
     await invalid.emit('turn_end', { message: invalid.assistant('stop', {
       input: 50, output: 1_000, reasoning: 1_001, cacheRead: 0, cacheWrite: 0,
       cost: { total: 0.08, output: 0.05 },
@@ -256,18 +281,18 @@ describe('dynamic thinking session lifecycle', () => {
   it('invalidates a pending measurement after a manual override, aborted turn or model mismatch', async () => {
     const report = vi.fn().mockResolvedValue(undefined);
     const manual = harness(['medium'], true, { report }, 'high');
-    await manual.emit('before_agent_start', { prompt: 'Short task' });
+    await manual.emit('before_agent_start', { messageType: 'user', prompt: 'Short task' });
     manual.setLevel('low');
     await manual.emit('turn_end', { message: manual.assistant() });
     await manual.settle();
 
     const aborted = harness(['medium'], true, { report }, 'high');
-    await aborted.emit('before_agent_start', { prompt: 'Interrupted task' });
+    await aborted.emit('before_agent_start', { messageType: 'user', prompt: 'Interrupted task' });
     await aborted.emit('turn_end', { message: aborted.assistant('aborted') });
     await aborted.settle('aborted');
 
     const switched = harness(['medium'], true, { report }, 'high');
-    await switched.emit('before_agent_start', { prompt: 'Switch models' });
+    await switched.emit('before_agent_start', { messageType: 'user', prompt: 'Switch models' });
     await switched.emit('turn_end', { message: { ...switched.assistant(), model: 'gpt-6-sol' } });
     await switched.emit('turn_end', { message: switched.assistant() });
     await switched.settle();
@@ -281,7 +306,7 @@ describe('dynamic thinking session lifecycle', () => {
       answers: { 'thinking:effort': { type: 'choice', choice: 'medium' } },
       metadata: { usage: { requests: 1, costUsd: 0.002 } },
     });
-    await emit('before_agent_start', { prompt: 'Simple task' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Simple task' });
     await emit('turn_end', { message: assistant() });
     await settle();
     expect(report).not.toHaveBeenCalled();
@@ -290,7 +315,7 @@ describe('dynamic thinking session lifecycle', () => {
   it('does not let savings storage failures affect the assistant turn', async () => {
     const report = vi.fn().mockRejectedValue(new Error('Storage unavailable'));
     const { emit, assistant } = harness(['low'], true, { report }, 'high');
-    await emit('before_agent_start', { prompt: 'Simple task' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Simple task' });
     await emit('turn_end', { message: assistant() });
     await expect(emit('agent_before_settle', {
       outcome: 'completed', continue: false, context: { pendingMessages: [] },
@@ -301,7 +326,7 @@ describe('dynamic thinking session lifecycle', () => {
   it('skips a failed tool or a later aborted continuation instead of reporting prematurely', async () => {
     const report = vi.fn().mockResolvedValue(undefined);
     const failedTool = harness(['medium'], true, { report }, 'high');
-    await failedTool.emit('before_agent_start', { prompt: 'Fix with a tool' });
+    await failedTool.emit('before_agent_start', { messageType: 'user', prompt: 'Fix with a tool' });
     await failedTool.emit('turn_end', {
       message: failedTool.assistant('toolUse'), toolResults: [{ isError: true }],
     });
@@ -310,7 +335,7 @@ describe('dynamic thinking session lifecycle', () => {
     });
 
     const aborted = harness(['medium'], true, { report }, 'high');
-    await aborted.emit('before_agent_start', { prompt: 'Fix with a tool' });
+    await aborted.emit('before_agent_start', { messageType: 'user', prompt: 'Fix with a tool' });
     await aborted.emit('turn_end', {
       message: aborted.assistant('toolUse'), toolResults: [{ isError: false }],
     });
@@ -323,7 +348,7 @@ describe('dynamic thinking session lifecycle', () => {
   it('waits for a successful completed run and counts only its first assistant response', async () => {
     const report = vi.fn().mockResolvedValue(undefined);
     const { emit, assistant } = harness(['low'], true, { report }, 'high');
-    await emit('before_agent_start', { prompt: 'Use a tool' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Use a tool' });
     await emit('turn_end', { message: assistant('toolUse'), toolResults: [{ isError: false }] });
     await emit('turn_end', { message: assistant(), toolResults: [] });
     await emit('agent_before_settle', {

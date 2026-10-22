@@ -8,6 +8,7 @@ import sessionTitleExtension, {
 } from '../src/index.js';
 
 const pendingTasks: Promise<unknown>[] = [];
+type BeforeStartEvent = { messageType: 'user'; prompt: string } | { messageType: 'custom'; message: unknown };
 
 afterEach(async () => {
   await Promise.allSettled(pendingTasks.splice(0));
@@ -29,6 +30,25 @@ describe('Session Title service-backed root entry', () => {
 });
 
 describe('Session Title explicit host lifecycle', () => {
+  it('ignores custom turns without consuming a title attempt', async () => {
+    const complete = vi.fn().mockResolvedValue(response('First user request'));
+    const host = testHost(complete);
+    const setSessionName = vi.fn();
+    const handlers = install(createSessionTitleExtension(host, { maxAttempts: 1 }), setSessionName);
+    const ctx = context({ entries: [] });
+
+    handlers.before({ messageType: 'custom', message: {
+      role: 'custom', customType: 'background', content: 'Background update', display: false, timestamp: 0,
+    } }, ctx);
+    expect(host.prepare).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    expect(setSessionName).not.toHaveBeenCalled();
+
+    handlers.before({ prompt: 'First user request' }, ctx);
+    await vi.waitFor(() => expect(setSessionName).toHaveBeenCalledWith('First user request'));
+    await handlers.shutdown();
+  });
+
   it('uses the provider asynchronously and awaits persistence before setting the title', async () => {
     const complete = vi.fn().mockResolvedValue(response('Generated session title'));
     let finishPersistence!: (persisted: boolean) => void;
@@ -321,10 +341,10 @@ function install(
   setSessionName: ReturnType<typeof vi.fn>,
   options: Partial<Parameters<typeof context>[0]> = {},
 ): {
-  before: (event: { prompt: string }, ctx: ExtensionContext) => void;
+  before: (event: { prompt: string } | Extract<BeforeStartEvent, { messageType: 'custom' }>, ctx: ExtensionContext) => void;
   shutdown: () => Promise<void>;
 } {
-  let beforeHandler: ((event: { prompt: string }, ctx: ExtensionContext) => void) | undefined;
+  let beforeHandler: ((event: BeforeStartEvent, ctx: ExtensionContext) => void) | undefined;
   let shutdownHandler: (() => Promise<void>) | undefined;
   const pi = {
     setSessionName,
@@ -336,7 +356,7 @@ function install(
   } as unknown as FelanExtensionAPI;
   extension(pi);
   return {
-    before: (event, ctx) => beforeHandler?.(event, ctx),
+    before: (event, ctx) => beforeHandler?.({ messageType: 'user', ...event }, ctx),
     shutdown: async () => { await shutdownHandler?.(); },
   };
 }

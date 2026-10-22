@@ -72,18 +72,21 @@ Pi includes GPT-6 Astra in its built-in OpenAI and OpenAI Codex catalogs.
 The existing GPT policy enables this extension's structured tools and native
 Responses controls without a custom `models.json` entry.
 
-For GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using `openai-responses` on `openai`
-or `openai-codex-responses` on either eligible provider, changing the thinking
-level between turns keeps the initial request-level reasoning effort
-and projects a native `configuration_update` before the next user message in
-the provider request. Updates are retained across session resume and forks;
-after Pi compaction,
-the new context establishes its own effort baseline. A queued user follow-up
-receives its change before its next response; a tool-only continuation does
-not. Changes without another user turn are recorded when the run settles.
-These updates require standard, single-agent Responses requests; pro mode,
-server-side multi-agent mode, Chat Completions, other GPT models, and Anthropic
-are not supported. Automatic server truncation
+For GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using `openai-responses` with an
+OpenAI API key, Pi sends native `configuration_update` items itself and keeps
+request-level `reasoning.effort` fixed at `medium`. For `openai-codex-responses`
+on either eligible provider, this extension keeps the initial request-level
+effort and projects a `configuration_update` before the next user message.
+Older `openai`/`openai-responses` sessions ignore persisted
+`codex-reasoning-update` entries and resume at Pi's fixed `medium` request effort,
+so expect one prompt-cache miss if their original initial effort was not `medium`.
+The extension's updates are retained across session resume and forks; after
+Pi compaction, the new context establishes its own effort baseline. A queued
+user follow-up receives its change before its next response; a tool-only
+continuation does not. Changes without another user turn are recorded when
+the run settles. These extension updates require standard, single-agent
+Responses requests; pro mode, server-side multi-agent mode, Chat Completions,
+other GPT models, and Anthropic are not supported. Automatic server truncation
 and compaction cannot be combined with native updates; Pi's existing local
 compaction remains available. Actual cache hits also depend on provider cache
 eligibility and can be checked using response usage cached-token counts.

@@ -42,6 +42,23 @@ describe('capability guidance', () => {
 });
 
 describe('shared discovery routing', () => {
+  it('ignores custom turns without consuming a routing decision', async () => {
+    const harness = createHarness();
+    extensionFor(harness.host)(harness.pi);
+    const event = {
+      type: 'before_agent_start', messageType: 'custom',
+      message: { role: 'custom', customType: 'background', content: 'Background update', display: false, timestamp: 0 },
+      systemPrompt: 'base', systemPromptOptions: { sections: {} },
+    };
+
+    await harness.handlers.get('before_agent_start')!(event, context());
+
+    expect(harness.registry.result).not.toHaveBeenCalled();
+    expect(harness.classify).not.toHaveBeenCalled();
+    expect(harness.host.executions).not.toHaveBeenCalled();
+    expect(event.systemPromptOptions.sections).toEqual({});
+  });
+
   it('uses static guidance without a registry, even with a direct classifier', () => {
     const harness = createHarness();
     delete (harness.pi as any).turnClassification;
@@ -448,6 +465,7 @@ function recordingLogger(logs: LogRecord[] = []) {
 function routingEvent(overrides: { prompt: string; images?: unknown[] }) {
   return {
     type: 'before_agent_start',
+    messageType: 'user',
     systemPrompt: 'base',
     systemPromptOptions: { sections: {} as Record<string, string> },
     ...overrides,

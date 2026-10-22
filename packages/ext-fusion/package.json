@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-fusion",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Review parallel model answers and explicitly fuse them with a selected model",
   "license": "MIT",
   "type": "module",
@@ -38,7 +38,7 @@
     "@felan-ai/session-protocol": "workspace:*"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.13.0"
+    "@felan-ai/agent-core": "^0.14.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

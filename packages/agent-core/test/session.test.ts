@@ -15,6 +15,7 @@ import {
   createUnavailableExtensionUi,
   defineExtensionConfig,
   defineServiceContract,
+  type Classifier,
   type ConfiguredFelanExtension,
   type FelanExtension,
   type ExtensionUi,
@@ -707,6 +708,43 @@ describe('Agent Core session composition', () => {
       extension.path === '<inline:@felan-ai/agent-core/dynamic-thinking>'
     ))).toBe(true);
     result.session.dispose();
+  });
+
+  it('ignores custom starts in the session-owned classification registry', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent-dir');
+    await mkdir(cwd, { recursive: true });
+    const classify = vi.fn<Classifier['classify']>(async () => ({ answers: {} }));
+    const prepare = vi.fn(() => ({ questions: {
+      needed: { type: 'bool' as const, instructions: 'Is work needed?', criteria: { true: 'yes', false: 'no' } },
+    } }));
+    const result = await createAgentCoreSession({
+      runtime: Object.assign(new TestAgentRuntime(cwd), { classifier: { classify } }),
+      agentDir,
+      extensionPackages: ['@felan-ai/test-contribution'],
+      importExtension: async () => ({ default: ((pi) => {
+        pi.turnClassification?.register({ id: 'test', prepare });
+      }) satisfies FelanExtension }),
+      modelRuntime: await createModelRuntime(agentDir),
+      settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory(cwd),
+    });
+    try {
+      await result.session.bindExtensions({ mode: 'print' });
+      await result.session.extensionRunner.emitBeforeAgentStart({
+        messageType: 'custom',
+        message: { role: 'custom', customType: 'test', content: 'Continue', display: false, timestamp: 1 },
+      }, { cwd });
+      expect(prepare).not.toHaveBeenCalled();
+      expect(classify).not.toHaveBeenCalled();
+
+      await result.session.extensionRunner.emitBeforeAgentStart({ messageType: 'user', prompt: 'Fix the build' }, { cwd });
+      await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(classify.mock.calls[0]?.[0]).toMatchObject({ request: 'Fix the build', image_count: 0 });
+    } finally {
+      result.session.dispose();
+    }
   });
 
   it('binds a session-owned classification registry only to roots with a classifier', async () => {

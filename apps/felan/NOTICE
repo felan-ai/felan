@@ -63,8 +63,6 @@ The terminal application uses @earendil-works/pi-coding-agent and
 @earendil-works/pi-tui from https://github.com/earendil-works/pi,
 licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.
-It also uses @earendil-works/pi-server from the same project under the
-MIT License.
 
 This package uses @agentclientprotocol/sdk 1.4.0 from
 https://github.com/agentclientprotocol/typescript-sdk, licensed under the

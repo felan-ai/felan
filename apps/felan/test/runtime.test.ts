@@ -135,13 +135,13 @@ describe('local provider runtime', () => {
     await runtime.dispose();
   });
 
-  it.each(['openai-codex', 'openai'] as const)('records a cache-safe %s effort change before the next user turn', async (provider) => {
+  it('records a cache-safe Codex effort change before the next user turn', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent');
     await Promise.all([cwd, agentDir].map((path) => mkdir(path, { recursive: true })));
     const modelRuntime = await createLocalModelRuntime(agentDir);
-    const model = modelRuntime.getModel(provider, 'gpt-6-sol');
+    const model = modelRuntime.getModel('openai-codex', 'gpt-6-sol');
     expect(model).toBeDefined();
     vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
     const effortChoices = ['low', 'high'];
@@ -237,38 +237,36 @@ describe('local provider runtime', () => {
 
       expect(fetch).toHaveBeenCalledTimes(4);
       expect(classify.mock.calls.filter(([, questions]) => Object.hasOwn(questions, 'thinking:effort'))).toHaveLength(3);
-      const [first, second, third, fourth] = requests;
-      expect(first!.input.some((item) => item.type === 'configuration_update')).toBe(false);
-      expect(first!.prompt_cache_options).toEqual({ ttl: '30m' });
+      const first = requests[0]!;
+      const efforts = ['low', 'high', 'high', 'medium'];
+      expect(first.prompt_cache_options).toEqual({ ttl: '30m' });
+      expect(first.prompt_cache_retention).toBeUndefined();
       for (const [index, payload] of requests.entries()) {
         expect(payload).toMatchObject({
-          reasoning: { effort: 'low' },
-          prompt_cache_key: first!.prompt_cache_key,
+          reasoning: { effort: 'medium' },
+          prompt_cache_key: first.prompt_cache_key,
         });
-        expect(payload.prompt_cache_options).toEqual(first!.prompt_cache_options);
-        expect(payload.prompt_cache_retention).toBe(first!.prompt_cache_retention);
+        expect(payload.prompt_cache_options).toEqual(first.prompt_cache_options);
+        expect(payload.prompt_cache_retention).toBe(first.prompt_cache_retention);
         expect(payload.prompt_cache_key).toBe(runtime.session.sessionManager.getSessionId());
         expect(JSON.stringify(payload)).not.toContain('<codex-reasoning-update:');
+        expect(payload.input.filter((item) => item.type === 'configuration_update')).toEqual(
+          efforts.slice(0, index + 1).map((effort) => ({ type: 'configuration_update', reasoning: { effort } })),
+        );
+        expect(payload.input.slice(-2)).toMatchObject([
+          { role: 'user' }, { type: 'configuration_update', reasoning: { effort: efforts[index] } },
+        ]);
+        expect(payload.input.some((item, itemIndex) => item.type === 'configuration_update'
+          && payload.input[itemIndex - 1]?.type === 'configuration_update')).toBe(false);
         if (index > 0) {
           const previous = requests[index - 1]!;
+          expect(payload.input.length).toBeGreaterThan(previous.input.length);
           expect(payload.input.slice(0, previous.input.length)).toEqual(previous.input);
         }
       }
-      expect(second!.input.slice(-2)).toMatchObject([
-        { type: 'configuration_update', reasoning: { effort: 'high' } }, { role: 'user' },
-      ]);
-      expect(third!.input.filter((item) => item.type === 'configuration_update')).toEqual([
-        { type: 'configuration_update', reasoning: { effort: 'high' } },
-      ]);
-      expect(fourth!.input.slice(-2)).toMatchObject([
-        { type: 'configuration_update', reasoning: { effort: 'medium' } }, { role: 'user' },
-      ]);
       expect(runtime.session.sessionManager.getBranch().filter((entry) => (
         entry.type === 'custom' && entry.customType === 'codex-reasoning-update'
-      ))).toMatchObject([
-        { data: { initialEffort: 'low', effort: 'high' } },
-        { data: { initialEffort: 'low', effort: 'medium' } },
-      ]);
+      ))).toEqual([]);
     } finally {
       await runtime.dispose();
     }

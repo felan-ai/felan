@@ -41,7 +41,7 @@ fallback.
 > The local host uses the current user's filesystem and process permissions. It
 > is not a sandbox.
 
-Felan Code uses Pi 1.1.0 for its agent, provider, and TUI runtime. Pi's model
+Felan Code uses Pi 1.4.0 for its agent, provider, and TUI runtime. Pi's model
 catalog and terminal color detection are available through that runtime.
 Pi-native MCP, codemode, and tool search are not automatically loaded in Felan:
 MCP remains the explicit OAuth-only HTTP gateway described in

@@ -421,8 +421,10 @@ dynamic thinking, which resumes after restoration and ownership release.
 Only GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using official OpenAI
 `openai-responses` or `openai-codex-responses` with the Codex extension enabled,
 and Anthropic models marked for mid-conversation effort by the installed Pi
-adapter, qualify. Eligible GPT models use history `configuration_update`
-items. Eligible Claude models use per-message `output_config` while retaining a
+adapter, qualify. With an OpenAI API key, Pi sends history `configuration_update`
+items itself on `openai-responses`; the Codex extension adds them on
+`openai-codex-responses`. Both keep request-level effort fixed.
+Eligible Claude models use per-message `output_config` while retaining a
 fixed request-level effort. Other GPT models, Chat Completions, older Claude
 models, and other providers keep their existing thinking behavior. Prompt caching
 still depends on the provider's eligibility, prefix, and retention; check
@@ -664,13 +666,16 @@ timing. Set it to `false` to use Pi's standard timing. Manual and
 overflow-recovery compaction are unchanged. Pi continues to generate the
 compaction summary; this is not OpenAI native Responses compaction.
 
-On GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol with `openai-responses` on `openai`
-or `openai-codex-responses` on either eligible provider, changing thinking
-level between turns persists a `configuration_update` that appears
-before the next user message in the provider request, while leaving the
-initial request-level reasoning effort unchanged. This can preserve the prompt
-cache across a level change, including after resuming a session. These updates
-require standard, single-agent Responses requests; pro mode, server-side
+On GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol with `openai-responses` and an OpenAI
+API key, Pi sends `configuration_update` items itself, keeping request-level
+`reasoning.effort` fixed at `medium`. For `openai-codex-responses` on either
+eligible provider, the Codex extension persists updates before the next user
+message while keeping the initial request-level effort unchanged. Both paths
+can preserve the prompt cache across level changes and session resume.
+Older `openai`/`openai-responses` sessions ignore persisted
+`codex-reasoning-update` entries and resume at Pi's fixed `medium` request effort,
+so expect one prompt-cache miss if their original initial effort was not `medium`.
+Extension updates require standard, single-agent Responses requests; pro mode, server-side
 multi-agent mode, Chat Completions, other models, and Anthropic are not supported. A queued user
 follow-up can receive an update at its next safe turn boundary. Changes during
 a tool continuation remain deferred until a new user turn or the run settles.

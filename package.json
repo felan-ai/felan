@@ -44,8 +44,6 @@
       "@earendil-works/pi-codemode": "catalog:pi",
       "@earendil-works/pi-coding-agent": "catalog:pi",
       "@earendil-works/pi-mcp": "catalog:pi",
-      "@earendil-works/pi-protocol": "catalog:pi",
-      "@earendil-works/pi-server": "catalog:pi",
       "@earendil-works/pi-telemetry": "catalog:pi",
       "@earendil-works/pi-tui": "catalog:pi"
     }

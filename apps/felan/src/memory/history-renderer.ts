@@ -1,6 +1,6 @@
 import type { KeybindingsManager, Theme } from '@earendil-works/pi-coding-agent';
 import { formatMemoryText as safeMemoryText } from '@felan-ai/ext-memory/data';
-import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI } from '@earendil-works/pi-tui';
+import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from '@earendil-works/pi-tui';
 import { LocalSessionPicker, type SessionPickerNavigation } from '../session-picker.js';
 import { AgentTranscript } from '../subagents/agent-transcript.js';
 import type { LocalSessionHistory, MemoryHistorySession, MemoryHistorySnapshot } from './history.js';
@@ -101,10 +101,7 @@ export class MemoryHistoryView implements Component, Focusable {
   handleInput(data: string): void {
     if (this.#closed) return;
     if (!this.#selected) { this.#picker.handleInput(data); return; }
-    const wheelDirection = parseWheelDirection(data);
-    if (wheelDirection !== undefined) {
-      this.#scroll = Math.max(0, Math.min(this.#maximumScroll, this.#scroll + wheelDirection));
-    } else if (matchesKey(data, Key.escape)) {
+    if (matchesKey(data, Key.escape)) {
       if (this.options.onBack) { this.options.onBack(); return; }
       this.#generation += 1;
       this.#selected = undefined;
@@ -119,6 +116,12 @@ export class MemoryHistoryView implements Component, Focusable {
     else if (matchesKey(data, Key.end)) this.#scroll = this.#maximumScroll;
     else this.#transcript?.handleInput(data);
     this.tui.requestRender();
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.#closed || !this.#selected || event.type !== 'wheel') return undefined;
+    this.#scroll = Math.max(0, Math.min(this.#maximumScroll, this.#scroll + Math.sign(event.wheelDelta ?? 0)));
+    return { handled: true };
   }
 
   #frame(lines: readonly string[], width: number): string[] {
@@ -197,20 +200,4 @@ function snapshotDetails(snapshot: MemoryDisplaySnapshot): string[] {
   if (snapshot.messages.length === 0) details.push('No messages were retained. The run may have stopped before the worker started.');
   else if (!snapshot.messages.some((message) => message.role === 'assistant')) details.push('No assistant response was retained.');
   return details;
-}
-
-function parseWheelDirection(data: string): -1 | 1 | undefined {
-  const sgr = /^\x1b\[<(\d+);\d+;\d+[Mm]$/u.exec(data);
-  const button = sgr?.[1];
-  if (button !== undefined) return wheelDirection(Number.parseInt(button, 10));
-  if (data.length === 6 && data.startsWith('\x1b[M')) return wheelDirection(data.charCodeAt(3) - 32);
-  return undefined;
-}
-
-function wheelDirection(button: number): -1 | 1 | undefined {
-  if ((button & 64) === 0) return undefined;
-  const direction = button & 3;
-  if (direction === 0) return -1;
-  if (direction === 1) return 1;
-  return undefined;
 }

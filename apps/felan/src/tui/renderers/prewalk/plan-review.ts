@@ -145,11 +145,6 @@ export class PlanReview implements Component, Focusable {
   handleInput(data: string): void {
     if (this.#closed) return;
     this.#validationError = undefined;
-    const wheelDirection = parseWheelDirection(data);
-    if (wheelDirection !== undefined) {
-      this.#scrollBy(wheelDirection);
-      return;
-    }
     if (this.keybindings.matches(data, 'tui.select.cancel')) {
       if (this.#editingFeedback) this.#setEditingFeedback(false);
       else this.#finish(undefined);
@@ -435,24 +430,6 @@ function bindingLabel(
 
 function normalizeDimension(value: number): number {
   return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : 1;
-}
-
-function parseWheelDirection(data: string): -1 | 1 | undefined {
-  const sgr = /^\x1b\[<(\d+);\d+;\d+[Mm]$/u.exec(data);
-  const button = sgr?.[1];
-  if (button !== undefined) return wheelDirection(Number.parseInt(button, 10));
-  if (data.length === 6 && data.startsWith('\x1b[M')) {
-    return wheelDirection(data.charCodeAt(3) - 32);
-  }
-  return undefined;
-}
-
-function wheelDirection(button: number): -1 | 1 | undefined {
-  if ((button & 64) === 0) return undefined;
-  const direction = button & 3;
-  if (direction === 0) return -1;
-  if (direction === 1) return 1;
-  return undefined;
 }
 
 function fitLine(line: string, width: number): string {

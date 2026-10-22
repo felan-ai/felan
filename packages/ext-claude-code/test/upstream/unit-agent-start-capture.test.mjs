@@ -28,7 +28,7 @@ const WIDENED = "You are pi.\n# Tools\n- read: Read a file\n- Agent: Launch a su
 describe("agent_start widened-prompt capture", () => {
 	it("records ctx.getSystemPrompt() so the widened prompt itself resolves", () => {
 		const handlers = activateWithMockPi();
-		handlers.get("before_agent_start")({ systemPrompt: PRE_WIDEN, systemPromptOptions: {} });
+		handlers.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: PRE_WIDEN, systemPromptOptions: {} });
 
 		// Before agent_start, only the pre-widen prompt is known; the widened one is not.
 		assert.throws(
@@ -46,7 +46,7 @@ describe("agent_start widened-prompt capture", () => {
 
 	it("lets a child embedding the widened parent resolve by inheritance", () => {
 		const handlers = activateWithMockPi();
-		handlers.get("before_agent_start")({ systemPrompt: PRE_WIDEN, systemPromptOptions: {} });
+		handlers.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: PRE_WIDEN, systemPromptOptions: {} });
 		handlers.get("agent_start")({}, { getSystemPrompt: () => WIDENED });
 
 		// pi-subagents embeds the widened parent prompt verbatim as the child's prefix.
@@ -63,6 +63,7 @@ describe("agent_start widened-prompt capture", () => {
 		const handlers = activateWithMockPi();
 		const contextFiles = [{ path: "/AGENTS.md", content: "project rules" }];
 		handlers.get("before_agent_start")({
+			messageType: "user", prompt: "",
 			systemPrompt: PRE_WIDEN,
 			systemPromptOptions: { contextFiles, skills: [], selectedTools: ["read"] },
 		});
@@ -80,6 +81,7 @@ describe("turn_start prompt capture", () => {
 		const handlers = activateWithMockPi();
 		const contextFiles = [{ path: "/AGENTS.md", content: "project rules" }];
 		handlers.get("before_agent_start")({
+			messageType: "user", prompt: "",
 			systemPrompt: PRE_WIDEN,
 			systemPromptOptions: { contextFiles, skills: [], selectedTools: ["read"] },
 		});
@@ -98,7 +100,7 @@ describe("turn_start prompt capture", () => {
 
 	it("is idempotent when the same prompt is re-fired", () => {
 		const handlers = activateWithMockPi();
-		handlers.get("before_agent_start")({ systemPrompt: PRE_WIDEN, systemPromptOptions: {} });
+		handlers.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: PRE_WIDEN, systemPromptOptions: {} });
 		handlers.get("agent_start")({}, { getSystemPrompt: () => WIDENED });
 
 		const before = __test.promptCaptures.size;

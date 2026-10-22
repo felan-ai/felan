@@ -11,7 +11,7 @@ function harness(config: Record<string, unknown> = {}) {
     services: createExtensionServiceAccess(services, extension.serviceRequirements!),
   } as unknown as FelanExtensionAPI;
   const section = () => {
-    const event = { systemPrompt: 'Base', systemPromptOptions: { sections: {} as Record<string, string> } };
+    const event = { messageType: 'user', prompt: '', systemPrompt: 'Base', systemPromptOptions: { sections: {} as Record<string, string> } };
     on.mock.calls.find(([name]) => name === 'before_agent_start')![1](event);
     return event.systemPromptOptions.sections.output_style;
   };

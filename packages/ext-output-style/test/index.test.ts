@@ -146,6 +146,8 @@ function applyExtension(
   } as FelanExtensionAPI);
 
   const event = {
+    messageType: 'user',
+    prompt: '',
     systemPrompt: base,
     systemPromptOptions: { sections: {} as Record<string, string> },
   };

@@ -20,6 +20,8 @@ import {
   type Focusable,
   type OverlayOptions,
   type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from '@earendil-works/pi-tui';
 import { AgentTranscript, type AgentToolPresentation } from './agent-transcript.js';
 import { registerSubagentCompletionRenderer } from './completion-presentation.js';
@@ -253,12 +255,6 @@ export class AgentNavigator implements Component, Focusable {
       return;
     }
 
-    const wheelDirection = parseWheelDirection(data);
-    if (wheelDirection !== undefined) {
-      if (this.#scrollBy(wheelDirection)) this.tui.requestRender();
-      return;
-    }
-
     if (this.#inputFocused) {
       if (matchesKey(data, Key.tab)) this.#focusNavigation();
       else this.#input.handleInput(data);
@@ -290,6 +286,12 @@ export class AgentNavigator implements Component, Focusable {
       return;
     }
     this.tui.requestRender();
+  }
+
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (this.#closed || event.type !== 'wheel') return undefined;
+    this.#scrollBy(Math.sign(event.wheelDelta ?? 0));
+    return { handled: true };
   }
 
   render(width: number): string[] {
@@ -495,14 +497,11 @@ export class AgentNavigator implements Component, Focusable {
     }
   }
 
-  #scrollBy(delta: number): boolean {
+  #scrollBy(delta: number): void {
     const maxScroll = Math.max(0, this.#lastContentLength - this.#lastViewportHeight);
     const nextOffset = Math.max(0, Math.min(maxScroll, this.#scrollOffset + delta));
-    const nextAutoScroll = nextOffset >= maxScroll;
-    if (nextOffset === this.#scrollOffset && nextAutoScroll === this.#autoScroll) return false;
     this.#scrollOffset = nextOffset;
-    this.#autoScroll = nextAutoScroll;
-    return true;
+    this.#autoScroll = nextOffset >= maxScroll;
   }
 
   #renderTranscript(
@@ -726,24 +725,6 @@ export function registerLocalSubagentNavigator(
 function activeSubagents(host: Pick<AgentNavigatorHost, 'listLocalSubagents'>): AgentNavigatorRecord[] {
   return [...host.listLocalSubagents()]
     .filter((record) => record.state === 'queued' || record.state === 'running');
-}
-
-function parseWheelDirection(data: string): -1 | 1 | undefined {
-  const sgr = /^\x1b\[<(\d+);\d+;\d+[Mm]$/u.exec(data);
-  const button = sgr?.[1];
-  if (button !== undefined) return wheelDirection(Number.parseInt(button, 10));
-  if (data.length === 6 && data.startsWith('\x1b[M')) {
-    return wheelDirection(data.charCodeAt(3) - 32);
-  }
-  return undefined;
-}
-
-function wheelDirection(button: number): -1 | 1 | undefined {
-  if ((button & 64) === 0) return undefined;
-  const direction = button & 3;
-  if (direction === 0) return -1;
-  if (direction === 1) return 1;
-  return undefined;
 }
 
 function renderAgentRow(

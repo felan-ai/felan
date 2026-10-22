@@ -84,6 +84,7 @@ export function registerClassifierRouting(pi: FelanExtensionAPI, sessions: Sessi
   });
 
   pi.on('before_agent_start', async (event, ctx) => {
+    if (event.messageType !== 'user') return;
     if (subagent || isOneShotSession(ctx)) return;
     const routingAttempt = ++attempt;
     const sessionId = ctx.sessionManager.getSessionId();

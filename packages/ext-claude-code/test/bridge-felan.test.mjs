@@ -555,6 +555,7 @@ describe('Felan prompt-only calls', () => {
     bridge.start(sessionId);
     const systemPrompt = `${PI_PREAMBLE}: Felan capture routing test.`;
     bridge.emit('before_agent_start', {
+      messageType: 'user', prompt: '',
       systemPrompt,
       systemPromptOptions: { customPrompt: 'Retain captured instructions.' },
     });

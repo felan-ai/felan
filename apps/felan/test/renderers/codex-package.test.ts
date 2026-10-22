@@ -9,7 +9,7 @@ it('publishes portable entries without client code with the declared peer and so
   const manifest = JSON.parse(await readFile(new URL('../../../../packages/ext-codex/package.json', import.meta.url), 'utf8'));
   expect(manifest).toMatchObject({
     name: '@felan-ai/ext-codex',
-    peerDependencies: { '@felan-ai/agent-core': '^0.13.0' },
+    peerDependencies: { '@felan-ai/agent-core': '^0.14.0' },
     exports: {
       '.': { types: './dist/index.d.ts', import: './dist/index.js' },
       './runtime': { types: './dist/runtime.d.ts', import: './dist/runtime.js' },

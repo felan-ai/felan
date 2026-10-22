@@ -246,7 +246,7 @@ does not enable it automatically. Felan's local host supports `codemode.mode`
 values `off`, `on`, and `only`, defaults to `off`, and disables the sandbox's
 extra model helpers with `models: false`.
 
-Agent Core 0.13 follows Pi 1.1's public contracts. Extension integrations must
+Agent Core 0.14 follows Pi 1.4's public contracts. Extension integrations must
 handle `aborted` on `agent_settled` events, include `durationMs` and `outputPad`
 when implementing Pi tool-render callbacks, and provide
 `ToolLoadout.getPromptGuidelines()`. Custom stream functions should return an

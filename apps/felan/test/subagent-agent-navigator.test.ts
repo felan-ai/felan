@@ -15,6 +15,7 @@ import {
   visibleWidth,
   type Component,
   type Terminal,
+  type TuiMouseEvent,
 } from '@earendil-works/pi-tui';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { AgentTranscript } from '../src/subagents/agent-transcript.js';
@@ -173,7 +174,7 @@ describe('AgentNavigator', () => {
     harness.navigator.dispose();
   });
 
-  it('scrolls the selected transcript with SGR and legacy mouse-wheel input', () => {
+  it('scrolls the selected transcript one line per normalized mouse-wheel event', () => {
     const session = sessionWithMessages(
       Array.from({ length: 30 }, (_, index) => ({
         role: 'user',
@@ -189,18 +190,16 @@ describe('AgentNavigator', () => {
 
     const first = visibleLines(harness.navigator, 80).join('\n');
     harness.tui.requestRender.mockClear();
-    harness.navigator.handleInput('\x1b[<64;20;5M');
+    expect(harness.navigator.handleMouse(wheelEvent(-4))).toEqual({ handled: true });
     const afterWheelUp = visibleLines(harness.navigator, 80).join('\n');
 
     expect(afterWheelUp).not.toEqual(first);
     expect(afterWheelUp).toContain('Viewing reviewer');
     expect(afterWheelUp).toContain('✓ reviewer');
-    expect(harness.tui.requestRender).toHaveBeenCalledOnce();
-
-    harness.navigator.handleInput('\x1b[M' + String.fromCharCode(65 + 32, 33, 33));
+    expect(harness.navigator.handleMouse(wheelEvent(1))).toEqual({ handled: true });
     const afterWheelDown = visibleLines(harness.navigator, 80).join('\n');
     expect(withoutElapsedDurations(afterWheelDown)).toEqual(withoutElapsedDurations(first));
-    expect(harness.tui.requestRender).toHaveBeenCalledTimes(2);
+    expect(harness.tui.requestRender).not.toHaveBeenCalled();
     harness.navigator.dispose();
   });
 
@@ -217,20 +216,23 @@ describe('AgentNavigator', () => {
 
     const first = visibleLines(harness.navigator, 80).join('\n');
     harness.tui.requestRender.mockClear();
-    harness.navigator.handleInput('\x1b[<0;20;5M');
+    expect(harness.navigator.handleMouse({ ...wheelEvent(0), type: 'press', button: 'left' })).toBeUndefined();
     expect(withoutElapsedDurations(visibleLines(harness.navigator, 80).join('\n')))
       .toEqual(withoutElapsedDurations(first));
     expect(harness.tui.requestRender).not.toHaveBeenCalled();
 
     harness.navigator.handleInput('\r');
     harness.tui.requestRender.mockClear();
-    harness.navigator.handleInput('\x1b[<64;20;5M');
+    expect(harness.navigator.handleMouse(wheelEvent(-1))).toEqual({ handled: true });
     expect(visibleLines(harness.navigator, 80).join('\n')).not.toEqual(first);
-    expect(harness.tui.requestRender).toHaveBeenCalledOnce();
+    expect(harness.tui.requestRender).not.toHaveBeenCalled();
     harness.navigator.dispose();
   });
 
-  it('receives wheel input through a focused fullscreen TUI overlay', () => {
+  it.each([
+    ['SGR', '\x1b[<64;20;5M', '\x1b[<65;20;5M'],
+    ['legacy', '\x1b[M' + String.fromCharCode(64 + 32, 52, 37), '\x1b[M' + String.fromCharCode(65 + 32, 52, 37)],
+  ])('receives %s wheel input through a focused fullscreen TUI overlay', (_protocol, wheelUp, wheelDown) => {
     const terminal = new TestTerminal();
     const tui = new TuiAltScreen(terminal);
     const session = sessionWithMessages(
@@ -255,11 +257,19 @@ describe('AgentNavigator', () => {
     try {
       tui.renderNow(true);
       const first = visibleLines(navigator, terminal.columns).join('\n');
-      terminal.send('\x1b[<64;20;5M');
+      const requestRender = vi.spyOn(tui, 'requestRender');
+      expect(tui.isOverlayFocused()).toBe(true);
+      terminal.send(wheelUp);
       const afterWheelUp = visibleLines(navigator, terminal.columns).join('\n');
 
       expect(afterWheelUp).not.toEqual(first);
       expect(afterWheelUp).toContain('Viewing reviewer');
+      expect(requestRender).toHaveBeenCalledOnce();
+
+      terminal.send(wheelDown);
+      expect(withoutElapsedDurations(visibleLines(navigator, terminal.columns).join('\n')))
+        .toEqual(withoutElapsedDurations(first));
+      expect(requestRender).toHaveBeenCalledTimes(2);
     } finally {
       navigator.dispose();
       tui.stop();
@@ -656,6 +666,14 @@ type CompletionRenderer = (
 
 function visibleLines(component: Pick<Component, 'render'>, width: number): string[] {
   return component.render(width).map(stripTerminalSequences);
+}
+
+function wheelEvent(wheelDelta: number): TuiMouseEvent {
+  return {
+    type: 'wheel', button: 'none', wheelDelta,
+    x: 19, y: 4, screenX: 19, screenY: 4, width: 80, height: 12,
+    shift: false, alt: false, ctrl: false,
+  };
 }
 
 function createHarness(initialRecords: LocalSubagentView[], rows = 14, columns = 80) {

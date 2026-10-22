@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-claude-code",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Claude Code plan-backed model provider for Felan",
   "license": "MIT",
   "type": "module",
@@ -31,7 +31,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.13.3"
+    "@felan-ai/agent-core": "^0.14.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-powerline",
-  "version": "0.14.1",
+  "version": "0.15.0",
   "description": "Portable session, Git and usage data for client-owned Powerline displays",
   "license": "MIT",
   "type": "module",
@@ -44,7 +44,7 @@
   },
   "dependencies": {},
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.13.0"
+    "@felan-ai/agent-core": "^0.14.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

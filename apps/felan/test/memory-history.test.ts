@@ -8,7 +8,7 @@ import {
   SessionManager,
   type SessionInfo,
 } from '@earendil-works/pi-coding-agent';
-import { Key, type TUI } from '@earendil-works/pi-tui';
+import { Key, TuiAltScreen, type Terminal, type TUI, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { HostAgentRuntime, type SessionsService } from '@felan-ai/agent-core';
 import { listLocalSessionHistory as listHistory, readMemoryHistorySnapshot as readSnapshot, localMemoryProjectDirectory, resolveLocalMemoryProject as resolveProject, MEMORY_RUN_ENTRY, type MemoryRunMetadata, type LocalSessionHistory, type MemoryHistorySession } from '@felan-ai/ext-memory';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -101,7 +101,110 @@ describe('local memory history', () => {
     await vi.waitFor(() => expect(view.render(120).join('\n')).toContain('No assistant response was retained.'));
     view.dispose();
   });
+
+  it('scrolls a retained transcript one line per normalized wheel event', async () => {
+    const tui = fakeTui();
+    const view = await scrollableMemoryView(tui);
+    try {
+      const first = view.render(80);
+      view.handleInput('\x1b[B');
+      const afterOneLine = view.render(80);
+      expect(afterOneLine).not.toEqual(first);
+      view.handleInput('\x1b[H');
+      vi.mocked(tui.requestRender).mockClear();
+
+      expect(view.handleMouse({ ...wheelEvent(0), type: 'press', button: 'left' })).toBeUndefined();
+      expect(tui.requestRender).not.toHaveBeenCalled();
+      expect(view.handleMouse(wheelEvent(4))).toEqual({ handled: true });
+      expect(view.render(80)).toEqual(afterOneLine);
+
+      expect(view.handleMouse(wheelEvent(-1))).toEqual({ handled: true });
+      expect(view.render(80)).toEqual(first);
+      expect(tui.requestRender).not.toHaveBeenCalled();
+    } finally {
+      view.dispose();
+    }
+    vi.mocked(tui.requestRender).mockClear();
+    expect(view.handleMouse(wheelEvent(1))).toBeUndefined();
+    expect(tui.requestRender).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['SGR', '\x1b[<64;20;5M', '\x1b[<65;20;5M'],
+    ['legacy', '\x1b[M' + String.fromCharCode(64 + 32, 52, 37), '\x1b[M' + String.fromCharCode(65 + 32, 52, 37)],
+  ])('receives %s wheel input through a focused fullscreen TUI overlay', async (_protocol, wheelUp, wheelDown) => {
+    const terminal = new TestTerminal();
+    const tui = new TuiAltScreen(terminal);
+    const view = await scrollableMemoryView(tui);
+    tui.showOverlay(view, { width: '100%', maxHeight: '100%', margin: 0 });
+    tui.start();
+    try {
+      tui.renderNow(true);
+      const first = view.render(terminal.columns);
+      const requestRender = vi.spyOn(tui, 'requestRender');
+      expect(tui.isOverlayFocused()).toBe(true);
+
+      terminal.send(wheelDown);
+      expect(view.render(terminal.columns)).not.toEqual(first);
+      expect(requestRender).toHaveBeenCalledOnce();
+
+      terminal.send(wheelUp);
+      expect(view.render(terminal.columns)).toEqual(first);
+      expect(requestRender).toHaveBeenCalledTimes(2);
+    } finally {
+      view.dispose();
+      tui.stop();
+    }
+  });
 });
+
+async function scrollableMemoryView(tui: TUI): Promise<MemoryHistoryView> {
+  const fixture = await memoryFixture();
+  const history = await listLocalSessionHistory({ ...fixture, memoryOnly: true });
+  const memory = history.memorySessions.get(fixture.memoryFile)!;
+  const snapshot = await readMemoryHistorySnapshot(memory);
+  return new MemoryHistoryView(tui, history, vi.fn(), {
+    memoryOnly: true,
+    snapshot: {
+      ...snapshot,
+      messages: [{
+        role: 'user',
+        content: Array.from({ length: 40 }, (_, index) => `Transcript line ${index + 1}`).join('\n'),
+        timestamp: 1,
+      }],
+    },
+  });
+}
+
+function wheelEvent(wheelDelta: number): TuiMouseEvent {
+  return {
+    type: 'wheel', button: 'none', wheelDelta,
+    x: 19, y: 4, screenX: 19, screenY: 4, width: 80, height: 12,
+    shift: false, alt: false, ctrl: false,
+  };
+}
+
+class TestTerminal implements Terminal {
+  readonly columns = 80;
+  readonly rows = 12;
+  readonly kittyProtocolActive = false;
+  #onInput?: (data: string) => void;
+
+  start(onInput: (data: string) => void): void { this.#onInput = onInput; }
+  stop(): void {}
+  async drainInput(): Promise<void> {}
+  write(): void {}
+  moveBy(): void {}
+  hideCursor(): void {}
+  showCursor(): void {}
+  clearLine(): void {}
+  clearFromCursor(): void {}
+  clearScreen(): void {}
+  setTitle(): void {}
+  setProgramStatus(): void {}
+  setProgress(): void {}
+  send(data: string): void { this.#onInput?.(data); }
+}
 
 async function memoryFixture() {
   const root = await temporaryDirectory();

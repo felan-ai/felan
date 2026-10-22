@@ -54,7 +54,7 @@ describe("agent_start capture — documented gaps", () => {
 		const child = activateWithMockPi(activateFresh);
 
 		const isolatedPrompt = "You are an isolated smoke-test agent. Respond with ZZ_ISO_OK.";
-		child.get("before_agent_start")({ systemPrompt: isolatedPrompt, systemPromptOptions: {} });
+		child.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: isolatedPrompt, systemPromptOptions: {} });
 		child.get("agent_start")({}, { getSystemPrompt: () => isolatedPrompt });
 
 		assert.ok(freshTest.promptCaptures.resolve(isolatedPrompt), "the child instance recorded its own prompt");
@@ -67,7 +67,7 @@ describe("agent_start capture — documented gaps", () => {
 
 	it("does not match a child embedding a tail-stripped parent prompt (#88)", () => {
 		const handlers = activateWithMockPi();
-		handlers.get("before_agent_start")({ systemPrompt: PARENT_PROMPT, systemPromptOptions: {} });
+		handlers.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: PARENT_PROMPT, systemPromptOptions: {} });
 		handlers.get("agent_start")({}, { getSystemPrompt: () => PARENT_PROMPT });
 
 		// gotgenes/pi-subagents inheritedIdentity embeds the parent minus the per-session tail.
@@ -80,12 +80,13 @@ describe("agent_start capture — documented gaps", () => {
 
 	it("fails loudly when a recorded tail-stripped child has no inheritance edge (#88)", () => {
 		const handlers = activateWithMockPi();
-		handlers.get("before_agent_start")({ systemPrompt: PARENT_PROMPT, systemPromptOptions: {} });
+		handlers.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: PARENT_PROMPT, systemPromptOptions: {} });
 		handlers.get("agent_start")({}, { getSystemPrompt: () => PARENT_PROMPT });
 
 		// The child is recorded at both production capture boundaries, but its custom
 		// prompt contains only the tail-stripped parent shape, so no edge is matched.
 		handlers.get("before_agent_start")({
+			messageType: "user", prompt: "",
 			systemPrompt: STRIPPED_CHILD,
 			systemPromptOptions: { customPrompt: STRIPPED_CHILD },
 		});
@@ -103,7 +104,7 @@ describe("agent_start capture — documented gaps", () => {
 
 	it("does capture a handler-returned wholesale replacement: it resolves via the agent_start key", () => {
 		const handlers = activateWithMockPi();
-		handlers.get("before_agent_start")({ systemPrompt: "pi rendered prompt", systemPromptOptions: {} });
+		handlers.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: "pi rendered prompt", systemPromptOptions: {} });
 		// A before_agent_start handler that RETURNS a system prompt forces it as the request
 		// head, and pi renders ctx.getSystemPrompt() as exactly that forced text
 		// (buildSystemPromptState returns forceSystemPrompt verbatim).
@@ -118,7 +119,7 @@ describe("agent_start capture — documented gaps", () => {
 
 	it("does not rescue a prompt composed outside the before_agent_start pipeline (#102 shape)", () => {
 		const handlers = activateWithMockPi();
-		handlers.get("before_agent_start")({ systemPrompt: "pi rendered prompt", systemPromptOptions: {} });
+		handlers.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: "pi rendered prompt", systemPromptOptions: {} });
 		handlers.get("agent_start")({}, { getSystemPrompt: () => "pi rendered prompt" });
 
 		// A host composing the prompt from its own template outside pi's pipeline —
@@ -132,7 +133,7 @@ describe("agent_start capture — documented gaps", () => {
 
 	it("does not see a prompt replaced between turn_start and the stream call (#91 remaining shape)", () => {
 		const handlers = activateWithMockPi();
-		handlers.get("before_agent_start")({ systemPrompt: "turn-1 prompt", systemPromptOptions: {} });
+		handlers.get("before_agent_start")({ messageType: "user", prompt: "", systemPrompt: "turn-1 prompt", systemPromptOptions: {} });
 		handlers.get("agent_start")({}, { getSystemPrompt: () => "turn-1 prompt" });
 		handlers.get("turn_start")({}, { getSystemPrompt: () => "turn-2 rendered prompt" });
 		assert.ok(__test.promptCaptures.resolveOrDerive("turn-2 rendered prompt"), "the turn_start record resolves");

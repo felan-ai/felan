@@ -49,6 +49,7 @@ export function createSessionTitleExtension(
     let activeTask: Promise<void> | undefined;
 
     pi.on('before_agent_start', (event, ctx) => {
+      if (event.messageType !== 'user') return;
       const maxAttempts = normalizeMaxAttempts(options.maxAttempts);
       if (attempts >= maxAttempts || activeTask !== undefined) return;
       const precheck = precheckSession(ctx.sessionManager.getEntries(), pi.getSessionName());

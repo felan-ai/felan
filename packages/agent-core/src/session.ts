@@ -185,6 +185,7 @@ async function composeAgentCoreSession(
           turnClassification.start({ prompt: event.text, imageCount: event.images?.length ?? 0 }, ctx);
         });
         pi.on('before_agent_start', (event, ctx) => {
+          if (event.messageType !== 'user') return;
           turnClassification.start({ prompt: event.prompt, imageCount: event.images?.length ?? 0 }, ctx);
         });
         pi.on('turn_start', () => turnClassification.finish());

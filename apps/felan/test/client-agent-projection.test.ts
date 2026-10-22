@@ -52,8 +52,11 @@ it('preserves the selected transcript scroll position when a live projection arr
   data.messages = Array.from({ length: 35 }, (_, index) => ({ role: 'user', content: `line-${index}`, timestamp: index }));
   const h = setup(record(data));
   try {
-    h.view.render(100); h.view.handleInput('\x1b[<64;20;5M');
+    const initial = h.view.render(100).slice(1, 8);
+    expect(h.view.handleMouse({ type: 'wheel', button: 'none', wheelDelta: -1, x: 19, y: 4, screenX: 19, screenY: 4,
+      width: 100, height: 14, shift: false, alt: false, ctrl: false })).toEqual({ handled: true });
     const before = h.view.render(100).slice(1, 8);
+    expect(before).not.toEqual(initial);
     const next = structuredClone(data); next.messages.push({ role: 'user', content: 'new tail', timestamp: 99 });
     h.update(record(next));
     expect(h.view.render(100).slice(1, 8)).toEqual(before);

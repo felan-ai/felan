@@ -136,15 +136,18 @@ describe("PromptCaptures", () => {
 		assert.equal(diagnostics[0].matches[0].firstDivergent, 14);
 	});
 
-	it("names pi#5581 when a prompt is a recorded key with its tail missing", () => {
+	it("reports missing extension additions when a prompt is a recorded key with its tail missing", () => {
 		const captures = new PromptCaptures();
-		// The issue #144 shape: the next turn's prompt is the last recorded key with the
-		// extension's additions gone, because the idle triggerTurn skipped before_agent_start.
-		captures.record(`${PARENT_KEY}\n\n<skills>extension additions</skills>`, capture(), "turn_start");
+		const key = `${PARENT_KEY}\n\n<skills>extension additions</skills>`;
+		captures.record(key, capture(), "turn_start");
 
 		assert.throws(
 			() => captures.resolveOrDerive(PARENT_KEY),
-			/pi#5581/,
+			{
+				message: `prompt-capture: this ${PARENT_KEY.length}-char prompt is the ${key.length}-char capture recorded at `
+					+ `turn_start with its final ${key.length - PARENT_KEY.length} chars missing. `
+					+ `The prompt lacks extension additions present at capture time. The turn fails; later turns may resolve.`,
+			},
 		);
 	});
 

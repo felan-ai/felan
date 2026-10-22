@@ -78,10 +78,10 @@ published by a partially successful attempt. Releases require no Git tag.
 The services migration targets
 `@felan-ai/session-protocol` 0.1.0 (its first release), `@felan-ai/daemon` 0.1.0, `@felan-ai/agent-core` 0.13.0 and
 `@felan-ai/felan` 0.30.0. These are incompatible `0.x` minor transitions, not
-patches to the prior profile/presenter APIs. Extensions use the Core 0.13
-compatible-minor peer range and their coordinated next-minor versions;
-Prewalk uses the Tasks 0.9 peer range. Programmatic callers must review the
-configured-service and generic-UI contracts rather than carry forward old
+patches to the prior profile/presenter APIs. For the current Pi 1.4.0 release,
+extensions use the Core 0.14 compatible-minor peer range and their coordinated
+next-minor versions; Prewalk uses the Tasks 0.10 peer range. Programmatic callers
+must review the configured-service and generic-UI contracts rather than carry forward old
 application host factories.
 
 If the daemon or protocol package has not yet been bootstrapped on npm, it

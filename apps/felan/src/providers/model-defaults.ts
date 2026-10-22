@@ -10,7 +10,7 @@ export const FELAN_DEFAULT_MODEL_PER_PROVIDER = {
   azure: 'gpt-5.6-sol',
   'openai-codex': 'gpt-5.6-sol',
   radius: 'balanced',
-  nvidia: 'nvidia/nemotron-3-ultra-550b-a55b',
+  nvidia: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
   deepseek: 'deepseek-v4-pro',
   google: 'gemini-3.8-flash',
   'google-vertex': 'gemini-3.8-flash',
@@ -40,10 +40,10 @@ export const FELAN_DEFAULT_MODEL_PER_PROVIDER = {
   'qwen-token-plan': 'qwen3.8-max',
   'qwen-token-plan-cn': 'qwen3.8-max',
   'qwen-token-plan-individual': 'qwen3.8-max',
-  xiaomi: 'mimo-v2.5-pro',
-  'xiaomi-token-plan-cn': 'mimo-v2.5-pro',
-  'xiaomi-token-plan-ams': 'mimo-v2.5-pro',
-  'xiaomi-token-plan-sgp': 'mimo-v2.5-pro',
+  xiaomi: 'mimo-v2.6-pro',
+  'xiaomi-token-plan-cn': 'mimo-v2.6-pro',
+  'xiaomi-token-plan-ams': 'mimo-v2.6-pro',
+  'xiaomi-token-plan-sgp': 'mimo-v2.6-pro',
 } as const satisfies Readonly<Record<string, string>>;
 
 interface PiModelResolverModule {

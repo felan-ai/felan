@@ -88,6 +88,7 @@ export function createDynamicThinkingSession(
         pi.on('session_shutdown', () => local.dispose());
       }
       pi.on('before_agent_start', async (event, ctx) => {
+        if (event.messageType !== 'user') return;
         pendingSavings = undefined;
         const request = { prompt: event.prompt, imageCount: event.images?.length ?? 0 };
         local?.start(request, ctx);

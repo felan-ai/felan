@@ -216,7 +216,7 @@ function harness(models: ModelsService, options: {
   const debug = vi.fn(); const warn = vi.fn(); const notify = vi.fn(() => { throw new Error('No UI required'); });
   const registry = createFelanServiceRegistry();
   registry.set(MODELS_SERVICE, models);
-  let before!: (event: { prompt: string }, context: ExtensionContext) => void;
+  let before!: (event: { messageType: 'user'; prompt: string }, context: ExtensionContext) => void;
   let shutdown!: () => Promise<void>;
   const context = {
     mode: options.mode ?? 'rpc', hasUI: false,
@@ -236,7 +236,7 @@ function harness(models: ModelsService, options: {
       if (event === 'session_shutdown') shutdown = handler as typeof shutdown;
     },
   } as unknown as FelanExtensionAPI);
-  return { state, rename, debug, warn, notify, start: (prompt: string) => before({ prompt }, context), shutdown: () => shutdown() };
+  return { state, rename, debug, warn, notify, start: (prompt: string) => before({ messageType: 'user', prompt }, context), shutdown: () => shutdown() };
 }
 
 function userEntry(): SessionEntry {

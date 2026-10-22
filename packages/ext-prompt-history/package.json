@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-prompt-history",
-  "version": "0.7.2",
+  "version": "0.8.0",
   "description": "TUI prompt-history picker for Felan",
   "license": "MIT",
   "type": "module",
@@ -43,7 +43,7 @@
     "@felan-ai/session-protocol": "workspace:*"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.13.0"
+    "@felan-ai/agent-core": "^0.14.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

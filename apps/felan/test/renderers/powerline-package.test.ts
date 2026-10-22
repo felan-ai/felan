@@ -10,7 +10,7 @@ it('publishes generic-data root and runtime entries with a compatible Core peer'
     exports: { '.': { import: './dist/extension.js', types: './dist/extension.d.ts' },
       './extension': { import: './dist/extension.js' },
       './runtime': { import: './dist/runtime.js' } },
-    peerDependencies: { '@felan-ai/agent-core': '^0.13.0' },
+    peerDependencies: { '@felan-ai/agent-core': '^0.14.0' },
   });
 });
 

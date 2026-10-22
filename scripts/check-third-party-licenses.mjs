@@ -84,8 +84,6 @@ const piPackageNames = [
   '@earendil-works/pi-codemode',
   '@earendil-works/pi-coding-agent',
   '@earendil-works/pi-mcp',
-  '@earendil-works/pi-protocol',
-  '@earendil-works/pi-server',
   '@earendil-works/pi-telemetry',
   '@earendil-works/pi-tui',
 ];
@@ -109,7 +107,6 @@ for (const requiredNotice of [
   'Apache License 2.0',
   'Copyright 2025 Zed Industries, Inc. and contributors',
   'Pi from https://github.com/earendil-works/pi',
-  '@earendil-works/pi-server',
   '@lydell/node-pty 1.2.0-beta.14',
   'TypeBox 1.1.38',
   'pi-mcp-adapter 2.21.0',

@@ -21,7 +21,7 @@ describe('@felan-ai/ext-codebase-memory package boundary', () => {
       },
     });
     expect(notice).toContain('pi-cbm 1.2.1');
-    expect(await readFile(join(packageRoot, '../../pnpm-workspace.yaml'), 'utf8')).toContain("'@felan-ai/agent-core': ^0.13.0");
+    expect(await readFile(join(packageRoot, '../../pnpm-workspace.yaml'), 'utf8')).toContain("'@felan-ai/agent-core': ^0.14.0");
     expect(notice).toContain('921a749d5cea74bda8f647542627ef9518fec272');
     expect(notice).toContain('codebase-memory-mcp 0.11.0');
     expect(notice).toContain('8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798');

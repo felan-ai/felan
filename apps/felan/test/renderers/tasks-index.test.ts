@@ -105,12 +105,12 @@ describe('@felan-ai/ext-tasks', () => {
 
   it('injects only active task state into the next model call', async () => {
     const harness = await createHarness();
-    const noTasks = await harness.emit('before_agent_start', { systemPrompt: 'base' });
+    const noTasks = await harness.emit('before_agent_start', { messageType: 'user', prompt: '', systemPrompt: 'base' });
     expect(noTasks[0]).toBeUndefined();
     expect(harness.promptOptions.sections.session_tasks).toBeUndefined();
 
     await harness.execute('TaskCreate', { title: 'Plan implementation' });
-    const withTasks = await harness.emit('before_agent_start', { systemPrompt: 'base' });
+    const withTasks = await harness.emit('before_agent_start', { messageType: 'user', prompt: '', systemPrompt: 'base' });
     expect(withTasks[0]).toBeUndefined();
     expect(harness.promptOptions.sections.session_tasks).toMatch(/# Session Tasks.*Plan implementation/su);
     await harness.shutdown();

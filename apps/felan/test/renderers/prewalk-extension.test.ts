@@ -264,7 +264,7 @@ function createHarness(
     if (type === 'input' && ['interactive', 'rpc'].includes(event.source)) {
       turnClassification?.start({ prompt: event.text, imageCount: event.images?.length ?? 0 }, ctx);
     }
-    if (type === 'before_agent_start') {
+    if (type === 'before_agent_start' && event.messageType === 'user') {
       turnClassification?.start({ prompt: event.prompt, imageCount: event.images?.length ?? 0 }, ctx);
     }
     if (type === 'turn_start') turnClassification?.finish();
@@ -366,6 +366,7 @@ async function startPlanning(harness: ReturnType<typeof createHarness>, task = '
   await harness.command.handler(task, harness.ctx);
   await harness.emit('before_agent_start', {
     type: 'before_agent_start',
+    messageType: 'user',
     prompt: task,
     systemPrompt: 'system',
     systemPromptOptions: {},
@@ -686,10 +687,30 @@ describe('flags and commands', () => {
 
     await harness.emit('before_agent_start', {
       type: 'before_agent_start',
+      messageType: 'user',
       prompt: 'Next prompt',
       systemPrompt: 'system',
       systemPromptOptions: {},
     });
+    expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLANNING_MESSAGE_TYPE);
+  });
+
+  it('ignores custom turns while waiting for the next user prompt', async () => {
+    const harness = createHarness();
+    await harness.command.handler('', harness.ctx);
+
+    expect(await harness.emit('before_agent_start', {
+      type: 'before_agent_start',
+      messageType: 'custom',
+      message: { role: 'custom', customType: 'background', content: 'Background update', display: false, timestamp: 0 },
+      systemPrompt: 'system',
+      systemPromptOptions: { sections: {} },
+    })).toBeUndefined();
+    expect(harness.setModel).not.toHaveBeenCalled();
+    expect(harness.setThinkingLevel).not.toHaveBeenCalled();
+    expect(await contextMessages(harness, [])).toEqual([]);
+
+    await harness.emit('before_agent_start', beforeStartEvent('Next user prompt'));
     expect((await contextMessages(harness, [])).at(-1)?.customType).toBe(PLANNING_MESSAGE_TYPE);
   });
 
@@ -2462,6 +2483,7 @@ const entryTools = ['read', 'TaskCreate', 'TaskUpdate', 'edit', 'write', 'enter_
 function beforeStartEvent(prompt: string) {
   return {
     type: 'before_agent_start',
+    messageType: 'user',
     prompt,
     systemPrompt: 'system',
     systemPromptOptions: { sections: {} as Record<string, string> },

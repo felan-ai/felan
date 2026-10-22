@@ -52,9 +52,8 @@ hosts is an intentional I/O exception.
 
 This product uses Pi from https://github.com/earendil-works/pi,
 licensed under the MIT License. Copyright (c) 2025 Mario Zechner.
-It also uses @earendil-works/pi-server, @earendil-works/pi-mcp,
-@earendil-works/pi-codemode, and @earendil-works/chord from the same
-project under the MIT License. The bundled codemode dependency uses
+It also uses @earendil-works/pi-mcp and @earendil-works/pi-codemode from the
+same project under the MIT License. The bundled codemode dependency uses
 quickjs-wasi from https://github.com/vercel-labs/quickjs-wasi under the
 MIT License.
 

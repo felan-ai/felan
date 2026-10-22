@@ -1023,6 +1023,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
   });
 
   pi.on('before_agent_start', async (event, ctx) => {
+    if (event.messageType !== 'user') return;
     lastPrompt = event.prompt;
     const guidance = await applyEntryGuidance(event.prompt, event.images?.length ?? 0, ctx);
     if (state.phase === 'armed') {

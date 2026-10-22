@@ -22,7 +22,7 @@ describe('@felan-ai/ext-rtk-optimizer package boundary', () => {
       exports: { '.': { import: './dist/index.js', types: './dist/index.d.ts' } },
     });
     expect(notice).toContain('pi-rtk-optimizer 0.9.0');
-    expect(await readFile(join(packageRoot, '../../pnpm-workspace.yaml'), 'utf8')).toContain("'@felan-ai/agent-core': ^0.13.0");
+    expect(await readFile(join(packageRoot, '../../pnpm-workspace.yaml'), 'utf8')).toContain("'@felan-ai/agent-core': ^0.14.0");
     expect(notice).toContain('d155d253cb2f1358e34e717d47a82ebccb08cb8e');
   });
 

@@ -63,8 +63,8 @@ function openFeedback(review: PlanReview): void {
   review.handleInput('\r');
 }
 
-function legacyWheel(button: 64 | 65): string {
-  return `\x1b[M${String.fromCharCode(button + 32, 33, 33)}`;
+function wheelEvent(wheelDelta: number): TuiMouseEvent {
+  return mouseEvent(19, 4, { type: 'wheel', button: 'none', wheelDelta });
 }
 
 function mouseEvent(x: number, y: number, overrides: Partial<TuiMouseEvent> = {}): TuiMouseEvent {
@@ -141,25 +141,22 @@ describe('PlanReview', () => {
     expect(last).toContain('lines');
   });
 
-  it('scrolls the Markdown pane with SGR and legacy mouse-wheel input', () => {
+  it('scrolls the Markdown pane one line per normalized mouse-wheel event', () => {
     const harness = createHarness();
     const first = harness.review.render(64).join('\n');
-    harness.tui.requestRender.mockClear();
 
-    harness.review.handleInput('\x1b[<65;20;5M');
-    const afterSgrWheelDown = harness.review.render(64).join('\n');
+    expect(harness.review.handleMouse(wheelEvent(4))).toEqual({ handled: true });
+    const afterWheelDown = harness.review.render(64).join('\n');
 
     expect(first).toContain('lines 1-4/34');
-    expect(afterSgrWheelDown).toContain('lines 2-5/34');
-    expect(afterSgrWheelDown).not.toEqual(first);
-    expect(afterSgrWheelDown).toContain('Approve plan');
-    expect(afterSgrWheelDown).toContain('Provide feedback');
-    expect(afterSgrWheelDown).toContain('Cancel Prewalk');
-    expect(harness.tui.requestRender).toHaveBeenCalledTimes(1);
+    expect(afterWheelDown).toContain('lines 2-5/34');
+    expect(afterWheelDown).not.toEqual(first);
+    expect(afterWheelDown).toContain('Approve plan');
+    expect(afterWheelDown).toContain('Provide feedback');
+    expect(afterWheelDown).toContain('Cancel Prewalk');
 
-    harness.review.handleInput(legacyWheel(64));
+    expect(harness.review.handleMouse(wheelEvent(-1))).toEqual({ handled: true });
     expect(harness.review.render(64).join('\n')).toEqual(first);
-    expect(harness.tui.requestRender).toHaveBeenCalledTimes(2);
   });
 
   it('ignores non-wheel mouse input', () => {
@@ -167,7 +164,7 @@ describe('PlanReview', () => {
     const first = harness.review.render(64).join('\n');
     harness.tui.requestRender.mockClear();
 
-    harness.review.handleInput('\x1b[<0;20;5M');
+    expect(harness.review.handleMouse(mouseEvent(19, 4, { type: 'press' }))).toBeUndefined();
 
     expect(harness.review.render(64).join('\n')).toEqual(first);
     expect(harness.tui.requestRender).not.toHaveBeenCalled();
@@ -189,6 +186,7 @@ describe('PlanReview', () => {
     try {
       tui.renderNow(true);
       const first = review.render(terminal.columns).join('\n');
+      const requestRender = vi.spyOn(tui, 'requestRender');
       terminal.send('\x1b[<65;20;5M');
       const afterWheelDown = review.render(terminal.columns).join('\n');
 
@@ -196,6 +194,7 @@ describe('PlanReview', () => {
       expect(afterWheelDown).toContain('lines 2-5/42');
       expect(afterWheelDown).toContain('Approve plan');
       expect(afterWheelDown).toContain('Cancel Prewalk');
+      expect(requestRender).toHaveBeenCalled();
     } finally {
       tui.stop();
     }
@@ -341,9 +340,9 @@ describe('PlanReview', () => {
     expect(scrolled).toContain('jk draft');
     harness.review.handleInput('\x1b[5~');
     expect(harness.review.render(64).join('\n')).toEqual(initial);
-    harness.review.handleInput('\x1b[<65;20;5M');
+    expect(harness.review.handleMouse(wheelEvent(1))).toEqual({ handled: true });
     expect(harness.review.render(64).join('\n')).not.toEqual(initial);
-    harness.review.handleInput(legacyWheel(64));
+    expect(harness.review.handleMouse(wheelEvent(-1))).toEqual({ handled: true });
     expect(harness.review.render(64).join('\n')).toEqual(initial);
 
     harness.review.handleInput('\x1b[H');
@@ -431,12 +430,12 @@ describe('PlanReview', () => {
     const initial = harness.review.render(64).join('\n');
     expect(harness.review.handleMouse(mouseEvent(1, 2))).toBeUndefined();
     expect(harness.review.handleMouse(mouseEvent(0, 9))).toBeUndefined();
-    expect(harness.review.handleMouse(mouseEvent(1, 2, { type: 'wheel', wheelDelta: 1 })))
+    expect(harness.review.handleMouse(wheelEvent(1)))
       .toEqual({ handled: true });
     const scrolled = harness.review.render(64).join('\n');
     expect(scrolled).not.toEqual(initial);
     expect(scrolled).toContain('Draft');
-    harness.review.handleMouse(mouseEvent(1, 2, { type: 'wheel', wheelDelta: -1 }));
+    expect(harness.review.handleMouse(wheelEvent(-1))).toEqual({ handled: true });
     expect(harness.review.render(64).join('\n')).toEqual(initial);
     harness.review.handleInput('!');
     harness.review.handleInput('\r');

@@ -175,10 +175,8 @@ export class PromptCaptures {
 		if (embedded.length === 0) {
 			const matches = this.closestKnown(systemPrompt);
 			this.onDiagnose({ systemPrompt, matches });
-			// The query is a recorded key minus its tail. That shape is the signature of
-			// pi#5581: an extension-triggered idle turn (sendMessage with triggerTurn) skips
-			// before_agent_start, so the prompt renders without that turn's extension
-			// additions. The capture cannot serve this turn either way, so name the bug.
+			// Felan: a truncated capture omits extension additions present at capture time;
+			// fail this turn rather than silently lose instructions. Later turns may resolve.
 			const truncated = matches.find(
 				(m) => m.firstDivergent === systemPrompt.length && m.key.length > systemPrompt.length,
 			);
@@ -186,9 +184,7 @@ export class PromptCaptures {
 				throw new Error(
 					`prompt-capture: this ${systemPrompt.length}-char prompt is the ${truncated.key.length}-char capture recorded at `
 					+ `${truncated.source ?? "an unknown boundary"} with its final ${truncated.key.length - systemPrompt.length} chars missing. `
-					+ `That shape matches pi#5581: an extension-triggered idle turn (sendMessage with triggerTurn) skips before_agent_start, `
-					+ `so the prompt lacks that turn's extension additions. The turn fails; the next user-typed turn resolves normally. `
-					+ `Workaround: when idle, send a user message instead of triggerTurn.`,
+					+ `The prompt lacks extension additions present at capture time. The turn fails; later turns may resolve.`,
 				);
 			}
 			// Felan: npm installs ship the README, not the repository's user guide.

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-session-title",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Portable automatic session title generation for Felan",
   "license": "MIT",
   "type": "module",
