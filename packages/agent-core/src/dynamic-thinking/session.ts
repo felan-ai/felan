@@ -67,7 +67,7 @@ export function createDynamicThinkingSession(
         prepare(input, ctx) {
           prepared = undefined;
           if (!input.prompt.trim() || options.selectionScope?.owner || manualOverride || lifetime.signal.aborted
-            || !supportsDynamicThinking(ctx.model) || !canClassify(ctx.model)) return undefined;
+            || !supportsDynamicThinking(ctx.model, supportsNativeThinkingUpdates) || !canClassify(ctx.model)) return undefined;
           const original = pi.getThinkingLevel();
           if (lastAutomaticLevel !== undefined && original !== lastAutomaticLevel) {
             manualOverride = true;

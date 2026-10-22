@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { CombinedAutocompleteProvider, type AutocompleteProvider, type SlashCommand } from '@earendil-works/pi-tui';
-import { ThinkingSchema, parseSchema, parseOperationResult, type Prompt } from '@felan-ai/session-protocol';
+import { ThinkingSchema, parseSchema, parseOperationResult } from '@felan-ai/session-protocol';
 import type { TuiSessionController } from './controller.js';
 import type { Theme } from '@earendil-works/pi-coding-agent';
 import type { NavigationDialogs } from './session-navigator.js';
@@ -30,7 +30,6 @@ const BUILTINS: SlashCommand[] = [
   { name: 'rename', description: 'Set session display name' },
   { name: 'reconnect', description: 'Reconnect to the daemon now, starting it if needed' },
   { name: 'restart', description: 'Restart the daemon and Felan Code, resuming this session' },
-  { name: 'queue', description: 'Show queued messages' },
   { name: 'steer', description: 'Steer the active run' },
   { name: 'follow-up', description: 'Queue a follow-up message' },
   { name: 'cancel', description: 'Interrupt the active run' },
@@ -311,20 +310,12 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
       }
       return false;
     }
-    case 'queue':
-      await dialogs.select('Queue (read-only; targeted editing is unavailable)', snapshot.queue.map(item => ({ value: item.id, label: `${item.kind}: ${queueLabel(item.prompt)}` })));
-      return true;
     default: {
       const command = snapshot.catalog.commands.find(command => command.name === name);
       if (!command) throw new Error(`Unknown or unavailable command: /${name}`);
       return (await controller.perform('command.invoke', { name, arguments: argument }, session)).outcome === 'accepted';
     }
   }
-}
-
-function queueLabel(prompt: Prompt): string {
-  const parts = [prompt.text, ...(prompt.attachments ?? []).map(part => part.type === 'text' ? part.text : part.type === 'image' ? '[image]' : part.name ?? part.uri)];
-  return parts.filter(Boolean).join(' ').replace(/\s+/gu, ' ').trim();
 }
 
 function requireSession(controller: TuiSessionController): string {

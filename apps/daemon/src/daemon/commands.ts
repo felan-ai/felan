@@ -6,7 +6,7 @@ import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type
 import type { SessionRegistry } from './registry.js';
 import type { LegacySession } from './legacy-sessions.js';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
-import { boundedText, digest } from './projection.js';
+import { boundedText, digest, promptInput } from './projection.js';
 import { projectTreeEntries } from './tree.js';
 import { prepareExport, prepareImport, publishExport, stageImport } from './session-files.js';
 import { sha256 } from './persistence.js';
@@ -45,7 +45,7 @@ export class SessionCommands {
   readonly operations = new Set<Operation>(['sessions.list', 'sessions.create', 'close', 'prompt', 'steer', 'follow_up', 'cancel', 'set_model', 'set_thinking',
     'compact', 'fork', 'command.invoke', 'session.rename', 'session.tree', 'session.branch.select', 'session.entry.label', 'session.history', 'session.clone', 'shell.execute',
     'config.get', 'config.set', 'processes.list', 'processes.read', 'processes.write', 'processes.stop', 'executions.list', 'executions.read', 'executions.steer', 'executions.cancel',
-    'session.delete', 'session.reload', 'session.import', 'session.export', 'ui.action']);
+    'session.delete', 'session.reload', 'session.import', 'session.export', 'queue.clear', 'ui.action']);
   constructor(private readonly options: CommandOptions) {
     if (options.setup) for (const op of ['host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link'] as const) this.operations.add(op);
     if (options.prepareOpenInteraction) this.operations.add('host.open_interaction');
@@ -325,7 +325,7 @@ export class SessionCommands {
       }
       case 'compact': {
         if (request.params.method && request.params.method !== 'summary') throw commandError('unavailable');
-        return this.start(request, context.origin, async session => { await session.compact(request.params.instructions); });
+        return this.start(request, context.origin, session => this.compact(request.session, session, request.params.instructions));
       }
       case 'command.invoke': {
         const target = registry.projection(request.session).catalog().commands.find(item => item.name === request.params.name);
@@ -347,12 +347,14 @@ export class SessionCommands {
         return this.start(request, context.origin, invoke);
       }
       case 'steer': case 'follow_up': {
-        if (request.op === 'follow_up' && context.remote && registry.binding(request.session)!.runtime.session.isIdle) {
+        const projection = registry.projection(request.session);
+        if (request.op === 'follow_up' && context.remote && !projection.holdsCompactionInput && registry.binding(request.session)!.runtime.session.isIdle) {
           return this.prompt(request, context.origin);
         }
-        const projection = registry.projection(request.session);
-        if (!projection.canObserveQueue) throw commandError('unavailable');
+        if (!projection.holdsCompactionInput && !projection.canObserveQueue) throw commandError('unavailable');
+        const hold = projection.holdsCompactionInput ? projection.prepareCompactionInput(request.op, request.params, context.origin, request.id) : undefined;
         const work = registry.mutateAdmitted(request.id, request.session, async ({ session, assertCurrent }) => {
+          if (hold) return { itemId: hold() };
           const input = promptInput(request.params);
           const result = await projection.withQueueOrigin(context.origin, () => request.op === 'steer'
             ? session.steer(input.text, input.images, { source: 'rpc' }) : session.followUp(input.text, input.images, { source: 'rpc' }));
@@ -362,6 +364,17 @@ export class SessionCommands {
           return { itemId: result.ids[0]! };
         });
         return { response: work.then(result => accepted(request, result)) };
+      }
+      case 'queue.clear': {
+        const projection = registry.projection(request.session);
+        let response: Response;
+        try { response = accepted(request, projection.queueRestoreResult(request.id)); }
+        catch { throw commandError('unavailable', 'Queued input exceeds protocol limits; nothing was cleared.'); }
+        // No await may separate this preflight from the clear: both queues must match the restore result.
+        return { response: registry.mutateAdmitted(request.id, request.session, async ({ session }) => {
+          session.clearQueue(); projection.discardCompactionInput(); projection.refresh();
+          return response;
+        }) };
       }
       case 'set_model': {
         const model = await this.model(request.params, registry.binding(request.session)!.runtime.session);
@@ -404,6 +417,50 @@ export class SessionCommands {
 
   private mutate(request: ClientEnvelope & { session: string }, effect: Parameters<SessionRegistry['mutateAdmitted']>[2]): AdmissionOutcome {
     return { response: this.options.registry.mutateAdmitted(request.id, request.session, effect).then(() => accepted(request, {})) };
+  }
+
+  private async compact(id: string, session: AgentSession, instructions?: string): Promise<void> {
+    const { registry } = this.options; const projection = registry.projection(id);
+    let failed = false; let failure: unknown;
+    const started: Promise<unknown>[] = [];
+    let delivering: Promise<unknown> | undefined; let deliveryFailure: { error: unknown } | undefined;
+    projection.beginManualCompaction();
+    try {
+      try {
+        try { await session.compact(instructions); }
+        catch (error) { failed = true; failure = error; }
+        while (projection.compactionInputs.length) {
+          if (registry.options.store.sessionMetadata(id).run.state === 'cancelling') {
+            const count = projection.discardCompactionInput();
+            projection.setPresentation({ id: 'queue-discarded', kind: 'notification', level: 'warning',
+              text: `${count} queued message${count === 1 ? ' was' : 's were'} discarded because compaction was cancelled.` });
+            break;
+          }
+          registry.assertDispatch(id);
+          if (deliveryFailure) throw deliveryFailure.error;
+          const item = projection.takeCompactionInput()!; const input = promptInput(item.prompt);
+          let report!: (value: 'handled' | 'queued' | 'started') => void;
+          const preflight = new Promise<'handled' | 'queued' | 'started'>(resolve => { report = resolve; });
+          if (!session.isStreaming) projection.setOrigin(item.origin);
+          delivering = projection.withQueueOrigin(item.origin, () => session.prompt(input.text, { images: input.images, source: 'rpc',
+            expandPromptTemplates: false, streamingBehavior: item.kind === 'steer' ? 'steer' : 'followUp', preflightResult: report }));
+          const disposition = await Promise.race([preflight, delivering.then(() => 'handled' as const), ...started.map(run => run.then(() => preflight))]);
+          if (disposition === 'started') {
+            started.push(delivering);
+            void delivering.catch(error => { deliveryFailure ??= { error }; });
+            if (registry.options.store.sessionMetadata(id).run.state === 'cancelling') await session.abort();
+          } else await delivering;
+        }
+      } finally { projection.endManualCompaction(); }
+      await Promise.all(started);
+      if (deliveryFailure) throw deliveryFailure.error;
+    } catch (error) {
+      projection.discardCompactionInput();
+      projection.setPresentation({ id: 'queue-delivery-error', kind: 'notification', level: 'error',
+        text: boundedText(`Queued input could not be sent after compaction: ${error instanceof Error ? error.message : String(error)}`, LIMITS.statusTextBytes) });
+      await Promise.allSettled([...started, ...(delivering ? [delivering] : [])]);
+    }
+    if (failed && registry.options.store.sessionMetadata(id).run.state !== 'cancelling') throw failure;
   }
 
   private start(request: ClientEnvelope & { session: string }, origin: Origin, effect: (session: AgentSession) => Promise<unknown>): AdmissionOutcome {
@@ -514,15 +571,6 @@ function page<T>(entries: readonly T[], params: { cursor?: string; limit?: numbe
     result.push(row); bytes += size; end++;
   }
   return { entries: result, ...(end < entries.length ? { cursor: Buffer.from(JSON.stringify([identity, end])).toString('base64url') } : {}) };
-}
-
-function promptInput(prompt: OperationParams<'prompt'>) {
-  const text = [prompt.text]; const images: NonNullable<Parameters<AgentSession['prompt']>[1]>['images'] = [];
-  for (const part of prompt.attachments ?? []) {
-    if (part.type === 'image') images.push({ type: 'image', data: part.data, mimeType: part.mimeType });
-    else text.push(part.type === 'text' ? part.text : `${part.name ?? 'Resource'}: ${part.uri}${part.description ? `\n${part.description}` : ''}`);
-  }
-  return { text: text.join('\n'), images };
 }
 
 async function executionRequest<T>(operation: () => Promise<T>): Promise<T> {

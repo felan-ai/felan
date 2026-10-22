@@ -125,6 +125,40 @@ describe('queued and handled input results', () => {
   });
 });
 
+describe('clearing queued input', () => {
+  it('accepts empty params as a durable session mutation', () => {
+    const value = request('queue.clear');
+    expect(parseClientEnvelope(value)).toEqual(value);
+    expect(OPERATION_CATALOG['queue.clear']).toEqual({ scope: 'session', mutation: true, storage: 'durable' });
+    const { session: _session, ...missing } = value;
+    expect(() => parseClientEnvelope(missing)).toThrowError(ProtocolValidationError);
+    expect(() => parseClientEnvelope({ ...value, id: 'read-only-request' })).toThrowError(ProtocolValidationError);
+  });
+
+  it('preserves full prompt texts in queue order and accepts empty queues', () => {
+    const result = { steering: ['first\nline', '😀'.repeat(32 * 1024), 'first\nline'], followUp: ['', 'follow up'] };
+    expect(parseOperationResult('queue.clear', result)).toEqual(result);
+    const response = { v: 1, re: request('queue.clear').id, outcome: 'accepted', result };
+    expect(parseServerEnvelope(response, 'queue.clear')).toEqual(response);
+    expect(parseOperationResult('queue.clear', { steering: [], followUp: [] })).toEqual({ steering: [], followUp: [] });
+    expectTypeOf<OperationResult<'queue.clear'>>().toEqualTypeOf<{ steering: string[]; followUp: string[] }>();
+  });
+
+  it('rejects missing queues, non-text entries and malformed Unicode', () => {
+    for (const result of [{}, { steering: [] }, { steering: 'text', followUp: [] },
+      { steering: [], followUp: [1] }, { steering: [null], followUp: [] }, { steering: ['\ud800'], followUp: [] }]) {
+      expect(() => parseOperationResult('queue.clear', result)).toThrowError(ProtocolValidationError);
+      expect(() => parseServerEnvelope({ v: 1, re: request('queue.clear').id, outcome: 'accepted', result }, 'queue.clear')).toThrowError(ProtocolValidationError);
+    }
+  });
+
+  it.each(['steering', 'followUp'] as const)('bounds the %s queue length', kind => {
+    const result = { steering: [], followUp: [], [kind]: Array.from({ length: LIMITS.pageEntries }, () => 'text') };
+    expect(parseOperationResult('queue.clear', result)).toEqual(result);
+    expect(() => parseOperationResult('queue.clear', { ...result, [kind]: [...result[kind], 'extra'] })).toThrowError(ProtocolValidationError);
+  });
+});
+
 describe('locked configuration field merge contract', () => {
   it('accepts updates without CAS and retains ordinary additive-field tolerance', () => {
     const value = request('config.set');

@@ -167,7 +167,6 @@ The table includes commands only; both lists also contain 29/29 skill rows (old/
 | `/processes` | yes | yes |  |
 | `/progressive-context` | yes | yes |  |
 | `/prompt-history` | no | yes | new-only in live list |
-| `/queue` | no | yes | new-only in live list |
 | `/quit` | yes | no | old-only in live list |
 | `/reconnect` | no | yes | new-only in live list |
 | `/reload` | yes | yes |  |
@@ -191,6 +190,10 @@ The table includes commands only; both lists also contain 29/29 skill rows (old/
 <!-- command-comparison:end -->
 
 The captured list shows `/restart` only on 0.28.3; absence from autocomplete does not establish whether a typed command is supported.
+
+The current daemon TUI displays queued `Steering:` and `Follow-up:` lines above the editor instead of a read-only queue command. Alt+Up restores all queued messages before the current draft. Escape restores them before cancelling a running turn; cancellation still runs if restoration fails. Restoration requires the daemon's `queue.clear` capability, and its hint is hidden when that capability or keybinding is absent.
+
+Model cycling defaults are Ctrl+P forward and Ctrl+Shift+P backward. Alt+P is not a default model shortcut because its legacy terminal sequence, `\x1bp`, also matches Alt+Up.
 
 Known intentional differences: daemon commands (`/daemon`, `/restart`, `/close` versus `/exit` detach), the version string, and model-generated prose.
 

@@ -3,8 +3,8 @@ import { isConversationEntry } from './session-files.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getSupportedThinkingLevels, type AgentSession, type AgentSessionEvent, type SessionEntry } from '@felan-ai/agent-core';
 import {
-  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, OPERATION_CATALOG, PresentationSchema, PromptSchema, parseSchema, trimSnapshotLists, validateBase64, validatePrompt,
-  type KnownSessionChange, type Message, type Origin, type Presentation, type SessionEvent,
+  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, OPERATION_CATALOG, PresentationSchema, PromptSchema, parseOperationResult, parseSchema, trimSnapshotLists, validateBase64, validatePrompt,
+  type KnownSessionChange, type Message, type OperationResult, type Origin, type Presentation, type SessionEvent,
   type SessionSnapshot, type TextStreamEvent,
   MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,
 } from '@felan-ai/session-protocol';
@@ -54,6 +54,8 @@ export class SessionProjection {
   private readonly completedStreams = new Set<string>();
   private queue: QueueItem[] = [];
   private readonly queued = new Map<string, { message: QueuedMessage; item: QueueItem }>();
+  private readonly compactionQueue: QueueItem[] = [];
+  private manualCompaction = false;
   private readonly queueContext = new AsyncLocalStorage<{ origin: Origin; ids: string[] }>();
   private readonly restoreQueueMethods: Array<() => void> = [];
   private queueLost = false;
@@ -102,9 +104,43 @@ export class SessionProjection {
   setOrigin(origin: Origin): void { this.origin = structuredClone(origin); }
 
   get canObserveQueue(): boolean { return this.queueObserved && !this.queueLost; }
+  get holdsCompactionInput(): boolean { return this.manualCompaction; }
+  get compactionInputs(): readonly QueueItem[] { return this.compactionQueue; }
+
+  beginManualCompaction(): void { this.manualCompaction = true; }
+  endManualCompaction(): void { this.manualCompaction = false; }
+
+  prepareCompactionInput(kind: QueueItem['kind'], prompt: QueueItem['prompt'], origin: Origin, requestId: string): () => string {
+    const input = parseSchema(PromptSchema, prompt); validatePrompt(input);
+    const item = { id: randomUUID(), kind, prompt: structuredClone(input), origin: structuredClone(origin) };
+    const next = [...this.queued.values()].map(entry => entry.item).concat(this.compactionQueue.map(compactionPreview), compactionPreview(item));
+    if (next.length > LIMITS.pageEntries || Buffer.byteLength(JSON.stringify(next)) > LIMITS.pageBytes / 2) {
+      throw Object.assign(new Error('Compaction input queue is full.'), { code: 'busy' });
+    }
+    try { this.queueRestoreResult(requestId, item); }
+    catch { throw Object.assign(new Error('Compaction input queue is full.'), { code: 'busy' }); }
+    return () => { this.compactionQueue.push(item); this.refresh(); return item.id; };
+  }
+
+  queueRestoreResult(requestId: string, additional?: QueueItem): OperationResult<'queue.clear'> {
+    const held = additional ? [...this.compactionQueue, additional] : this.compactionQueue;
+    const result = { steering: [...this.session.getSteeringMessages(), ...held.filter(item => item.kind === 'steer').map(item => promptInput(item.prompt).text)],
+      followUp: [...this.session.getFollowUpMessages(), ...held.filter(item => item.kind === 'follow_up').map(item => promptInput(item.prompt).text)] };
+    if (result.steering.length + result.followUp.length > LIMITS.pageEntries) throw new Error('Too many queued messages.');
+    const parsed = parseOperationResult('queue.clear', result);
+    if (Buffer.byteLength(JSON.stringify({ v: 1, re: requestId, outcome: 'accepted', result: parsed })) > LIMITS.pageBytes / 2) throw new Error('Queued input exceeds the response byte limit.');
+    return parsed;
+  }
+
+  takeCompactionInput(): QueueItem | undefined {
+    const item = this.compactionQueue.shift(); this.refresh(); return item;
+  }
+
+  discardCompactionInput(): number {
+    const count = this.compactionQueue.length; this.compactionQueue.length = 0; this.refresh(); return count;
+  }
 
   async withQueueOrigin<T>(origin: Origin, effect: () => Promise<T>): Promise<{ value: T; ids: string[] }> {
-    if (!this.canObserveQueue) throw new Error('Queue observation is unavailable.');
     const context = { origin: structuredClone(origin), ids: [] as string[] };
     const value = await this.queueContext.run(context, effect);
     this.refresh();
@@ -269,7 +305,7 @@ export class SessionProjection {
     if (this.timer) clearTimeout(this.timer);
     this.unsubscribe();
     for (const restore of this.restoreQueueMethods.reverse()) restore();
-    this.restoreQueueMethods.length = 0; this.queued.clear();
+    this.restoreQueueMethods.length = 0; this.queued.clear(); this.compactionQueue.length = 0;
     this.streams.clear(); this.streamsBytes = 0; this.completionOnly.clear(); this.dirtyCompletionOnly.clear();
   }
 
@@ -292,8 +328,8 @@ export class SessionProjection {
     }
     if (event.type === 'agent_start') {
       const previous = this.options.store.sessionMetadata(this.id).run;
-      const continuesRun = (previous.state === 'running' || previous.state === 'waiting') && previous.id;
-      const run = { state: 'running' as const, id: continuesRun || randomUUID(),
+      const continuesRun = (previous.state === 'running' || previous.state === 'waiting' || previous.state === 'cancelling') && previous.id;
+      const run = { state: previous.state === 'cancelling' ? 'cancelling' as const : 'running' as const, id: continuesRun || randomUUID(),
         ...(continuesRun && previous.turnId ? { turnId: previous.turnId } : {}), ...(this.origin ? { origin: this.origin } : {}) };
       this.publish({ type: 'run.updated', run }, { run });
       this.runtimeRunId = run.id;
@@ -405,10 +441,11 @@ export class SessionProjection {
   }
   private refreshQueue(): void {
     if (this.queueObserved && this.session.isIdle && !this.session.agent.hasQueuedMessages()) { this.queued.clear(); this.queueLost = false; }
-    const next = [...this.queued.values()].map(entry => entry.item);
+    const held = this.compactionQueue.map(compactionPreview);
+    const next = [...this.queued.values()].map(entry => entry.item).concat(held);
     const key = digest(next);
     if (key !== this.queueKey) {
-      const input = [...this.queued.values()].flatMap(entry => entry.message.role === 'user' ? [entry.item] : []);
+      const input = [...this.queued.values()].flatMap(entry => entry.message.role === 'user' ? [entry.item] : []).concat(held);
       const commit = this.options.store.project(this.id, [{ type: 'queue', ids: input.map(item => item.id), identity: { sha256: digest(input), bytes: Buffer.byteLength(JSON.stringify(input)) } }]);
       this.queue = next; this.queueKey = key;
       this.options.publish({ v: 1, session: this.id, rev: commit.value.revision, change: { type: 'queue.updated', queue: next } });
@@ -459,7 +496,7 @@ export class SessionProjection {
 
   private observeEnqueue(message: QueuedMessage, kind: QueueItem['kind']): void {
     if (message.role === 'custom' && !message.display) return;
-    if (this.queued.size >= LIMITS.pageEntries) { this.loseQueueObservation(); return; }
+    if (this.queued.size + this.compactionQueue.length >= LIMITS.pageEntries) { this.loseQueueObservation(); return; }
     const id = randomUUID(); const context = this.queueContext.getStore();
     const item: QueueItem = { id, kind, prompt: queuedPrompt(message), origin: context?.origin ?? { kind: 'automation', source: 'runtime' } };
     this.queued.set(id, { message, item });
@@ -467,7 +504,7 @@ export class SessionProjection {
       if (context.ids.length >= LIMITS.pageEntries) this.loseQueueObservation();
       else context.ids.push(id);
     }
-    if (Buffer.byteLength(JSON.stringify([...this.queued.values()].map(entry => entry.item))) > LIMITS.pageBytes / 2) this.loseQueueObservation();
+    if (Buffer.byteLength(JSON.stringify([...this.queued.values()].map(entry => entry.item).concat(this.compactionQueue.map(compactionPreview)))) > LIMITS.pageBytes / 2) this.loseQueueObservation();
     this.schedule();
   }
 
@@ -569,6 +606,14 @@ export function boundedText(value: string, bytes: number): string {
   for (const point of value) { size += Buffer.byteLength(point); if (size > bytes) break; result += point; }
   return result;
 }
+export function promptInput(prompt: QueueItem['prompt']) {
+  const text = [prompt.text]; const images: NonNullable<Parameters<AgentSession['prompt']>[1]>['images'] = [];
+  for (const part of prompt.attachments ?? []) {
+    if (part.type === 'image') images.push({ type: 'image', data: part.data, mimeType: part.mimeType });
+    else text.push(part.type === 'text' ? part.text : `${part.name ?? 'Resource'}: ${part.uri}${part.description ? `\n${part.description}` : ''}`);
+  }
+  return { text: text.join('\n'), images };
+}
 function queuedPrompt(message: QueuedMessage): QueueItem['prompt'] {
   if (message.role === 'user' || message.role === 'custom') {
     try {
@@ -585,6 +630,13 @@ function queuedPrompt(message: QueuedMessage): QueueItem['prompt'] {
   const text = (parts.filter(Boolean).join('\n') as string & { toWellFormed(): string }).toWellFormed();
   const preview = boundedText(text, LIMITS.statusTextBytes);
   return { text: preview === text ? text || `[${message.role} message]` : `${preview}…` };
+}
+function compactionPreview(item: QueueItem): QueueItem {
+  if (Buffer.byteLength(JSON.stringify(item.prompt)) <= LIMITS.statusTextBytes) return item;
+  const parts = [item.prompt.text, ...(item.prompt.attachments ?? []).map(part => part.type === 'text' ? part.text
+    : part.type === 'image' ? '[image omitted]' : `${part.name ?? 'Resource'}: ${part.uri}${part.description ? `\n${part.description}` : ''}`)];
+  const text = parts.filter(Boolean).join('\n'); const preview = boundedText(text, LIMITS.statusTextBytes);
+  return { ...item, prompt: { text: preview === text ? text : `${preview}…` } };
 }
 function resultText(value: unknown): string {
   if (!value || typeof value !== 'object' || !('content' in value) || !Array.isArray(value.content)) return '';

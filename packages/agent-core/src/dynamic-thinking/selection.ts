@@ -13,15 +13,20 @@ import type { FelanThinkingLevel } from '../thinking.js';
 const CODEX_MODELS = new Set(['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna']);
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
-export function supportsDynamicThinking(model: Model<Api> | undefined): model is Model<Api> {
+export function supportsDynamicThinking(
+  model: Model<Api> | undefined,
+  supportsNativeThinkingUpdates?: (model: Model<Api>) => boolean,
+): model is Model<Api> {
   if (!model?.reasoning) return false;
   if (model.api === 'openai-codex-responses'
     || (model.provider === 'openai' && model.api === 'openai-responses')) {
     return (model.provider === 'openai-codex' || model.provider === 'openai') && CODEX_MODELS.has(model.id);
   }
-  return model.provider === 'anthropic' && model.api === 'anthropic-messages'
-    && model.compat !== undefined && 'supportsMidConvoEffort' in model.compat
-    && model.compat.supportsMidConvoEffort === true;
+  if (model.provider === 'anthropic' && model.api === 'anthropic-messages') {
+    return model.compat !== undefined && 'supportsMidConvoEffort' in model.compat
+      && model.compat.supportsMidConvoEffort === true;
+  }
+  return supportsNativeThinkingUpdates?.(model) === true;
 }
 
 export async function selectDynamicThinkingLevel(
@@ -31,8 +36,11 @@ export async function selectDynamicThinkingLevel(
   session: ClassifierSessionEvidence,
   current: FelanThinkingLevel,
   signal?: AbortSignal,
+  supportsNativeThinkingUpdates?: (model: Model<Api>) => boolean,
 ): Promise<FelanThinkingLevel | undefined> {
-  return (await evaluateDynamicThinkingLevel(classifier, model, request, session, current, signal))?.level;
+  return (await evaluateDynamicThinkingLevel(
+    classifier, model, request, session, current, signal, supportsNativeThinkingUpdates,
+  ))?.level;
 }
 
 export interface DynamicThinkingDecision {
@@ -47,8 +55,9 @@ export async function evaluateDynamicThinkingLevel(
   session: ClassifierSessionEvidence,
   current: FelanThinkingLevel,
   signal?: AbortSignal,
+  supportsNativeThinkingUpdates?: (model: Model<Api>) => boolean,
 ): Promise<DynamicThinkingDecision | undefined> {
-  if (!supportsDynamicThinking(model) || signal?.aborted) return undefined;
+  if (!supportsDynamicThinking(model, supportsNativeThinkingUpdates) || signal?.aborted) return undefined;
   const question = dynamicThinkingQuestion(model);
   if (!question) return undefined;
   try {
@@ -62,13 +71,13 @@ export async function evaluateDynamicThinkingLevel(
   }
 }
 
+// Callers check eligibility first; an extension may opt a model in that the built-in rules exclude.
 export function dynamicThinkingQuestion(model: Model<Api>): ClassifierQuestion | undefined {
-  if (!supportsDynamicThinking(model)) return undefined;
   const supported = getSupportedThinkingLevels(model);
   const candidates = LEVELS.filter((level) => supported.includes(level));
   if (candidates.length < 2) return undefined;
 
-  const descriptions: Record<typeof LEVELS[number], string> = model.provider === 'anthropic' ? {
+  const descriptions: Record<typeof LEVELS[number], string> = model.provider === 'anthropic' || model.id.startsWith('claude-') ? {
     low: 'Routine, straightforward or latency-sensitive tasks where a concise answer suffices.',
     medium: 'Ordinary work needing moderate thought, tool use or light planning; balance quality and speed.',
     high: 'Complex coding, careful planning and decisions where reliability matters more than latency. Default starting point for supported Claude models.',

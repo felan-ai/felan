@@ -234,6 +234,38 @@ describe('Agent Core session composition', () => {
     },
   );
 
+  it.each([true, false])('lets an extension opt another provider\'s model into dynamic thinking: %s', async (declared) => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(join(root, 'agent-dir'));
+    const { compat: _compat, ...claude } = modelRuntime.getModel('anthropic', 'claude-opus-5-5')!;
+    const model = { ...claude, provider: 'claude-code', api: 'claude-code' };
+    vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
+    vi.spyOn(modelRuntime, 'getAuth').mockResolvedValue({ auth: { apiKey: 'test' } });
+    const classify = vi.fn(async () => ({
+      answers: { 'thinking:effort': { type: 'choice' as const, choice: 'low' } },
+    }));
+    const extension: ConfiguredFelanExtension = Object.assign(() => {}, {
+      execution: () => ({ supportsNativeThinkingUpdates: (candidate: { provider: string }) => declared && candidate.provider === 'claude-code' }),
+    });
+    const result = await createAgentCoreSession({
+      runtime: Object.assign(new TestAgentRuntime(cwd), { classifier: { classify } }),
+      modelRuntime, model, thinkingLevel: 'high', dynamicThinking: true,
+      extensionPackages: ['example'], importExtension: async () => ({ default: extension }),
+      settingsManager: SettingsManager.inMemory(), sessionManager: SessionManager.inMemory(cwd),
+      wrapStreamFunction: () => completedStream,
+    });
+    try {
+      await result.session.bindExtensions({ mode: 'print' });
+      await result.session.prompt('Summarize the file');
+      expect(classify).toHaveBeenCalledTimes(declared ? 1 : 0);
+      expect(result.session.thinkingLevel).toBe(declared ? 'low' : 'high');
+    } finally {
+      result.session.dispose();
+    }
+  });
+
   it('composes an inactive session, preserves app settings, and wraps streaming last', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');

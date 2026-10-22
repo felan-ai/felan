@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/felan",
-  "version": "0.33.0",
+  "version": "0.34.0",
   "description": "Felan Code: an open-source, model-portable coding agent built for cost-efficient, verifiable software work",
   "keywords": [
     "ai",
@@ -92,7 +92,7 @@
     "prepack": "pnpm build"
   },
   "dependencies": {
-    "@felan-ai/daemon": "workspace:0.4.0",
+    "@felan-ai/daemon": "workspace:0.4.1",
     "@agentclientprotocol/sdk": "1.4.0",
     "@earendil-works/pi-coding-agent": "catalog:pi",
     "@earendil-works/pi-tui": "catalog:pi",

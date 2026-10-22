@@ -42,8 +42,8 @@ Both protocol selectors preserve the existing interactive `/fork` meaning:
 [ADR 0024](../decisions/0024-serialize-configuration-field-updates.md) selects
 locked unconditional field merges with last-writer-wins behavior on the same
 field. `config.set.expectedRevision` is obsolete and must be rejected explicitly.
-Tree label, branch selection and delete carry no expected revision either; only
-history paging and queue edits keep revision checks.
+Tree label, branch selection, delete and `queue.clear` carry no expected revision
+either; history paging and the deferred targeted queue-edit contract keep revision checks.
 
 The approved target/lifetime boundaries are:
 
@@ -74,10 +74,17 @@ native return value, not input text or the absence of a queue event, determines
 whether an input was handled. Retained retries return the same accepted result
 without running the handler again.
 
-This corrects the unpublished v1 result contract to represent existing input
-handler behavior. It does not add queue editing or a new execution mode. The
-wider result type must be included in the public-contract release assessment;
-consumers cannot assume every accepted input contains `itemId`.
+During manual compaction, the daemon instead holds validated input, attachments
+and origin until every held item is handed to Pi, including input arriving during
+delivery. Held items have queue IDs and the same bounded previews and recovery
+records as native input. After `compact()` settles, they are delivered in order
+like the daemon `prompt` operation, without prompt-template or skill expansion
+(`expandPromptTemplates: false`), unlike native steer. Delivery skips handled input
+and awaits started prompts in the same daemon run. Once handoff finishes, streaming
+input uses the native queue; auto-compaction is unchanged.
+Compaction failure still flushes held input before reporting the run error.
+Cancellation discards held input with a warning; delivery failure discards the
+remaining held input with an error notification.
 
 Queued items mirror the native queue for the client. Queued custom messages with
 `display: false` are model context only, as in the transcript, so they are neither listed nor
@@ -88,6 +95,16 @@ budget ends with `…`. Previews are display-only and must not be resubmitted as
 Queue observation is reported as incomplete only when the daemon loses track of the queue
 (more than 256 items, more than half the page byte budget, or input queued before
 observation began).
+
+`queue.clear` atomically returns all queued text as `{steering, followUp}` and
+removes it through Pi's public `clearQueue()`, including native custom messages.
+Within each kind, native text precedes daemon-held text. Text and resource attachments
+are merged into the restored text; images are not restored. The operation works
+even when native observation is incomplete; it rejects without clearing anything
+if the result exceeds 256 items or half the page byte budget. Held input is
+rejected if adding it would exceed these restore
+limits. A retained result keeps the restored text in the control store until request
+retention expires, so retries return the same text.
 
 ## Fan-out and snapshot cutover
 
@@ -116,12 +133,11 @@ than fabricated history. Detaching a subscription never cancels session work.
 
 ## Pending boundaries
 
-The public-Pi spike established that observation is possible but safe atomic
-queue editing lacks a public SDK boundary. The user explicitly deferred targeted
-`queue.update` for Story 1; it remains unavailable and unadvertised. Existing
-enqueue and faithful observation remain required, without claims of atomic edit
-or selection notification. No upstream SDK change is required. No private queue
-access, clearing/replay or replacement scheduler is permitted.
+Pi's public `clearQueue()` supports restoring all queued input, not targeted
+editing. `queue.update` remains unavailable and unadvertised. Enqueue and faithful
+observation remain required, without private queue access, clear-and-replay
+editing or a replacement scheduler. Manual-compaction holding only bridges the
+period when Pi cannot accept a prompt; it does not replace native run scheduling.
 Actual broker arbitration belongs to S1.08; host stop/restart/logs belong to
 S1.14. None may be implemented as a silently successful placeholder.
 

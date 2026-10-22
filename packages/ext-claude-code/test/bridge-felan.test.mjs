@@ -2,7 +2,7 @@ import { setImmediate } from 'node:timers/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { activateClaudeCodeBridge, __test } from '../src/bridge/index.js';
+import { activateClaudeCodeBridge, supportsPerTurnEffort, __test } from '../src/bridge/index.js';
 import { PI_PREAMBLE } from '../src/bridge/prompt-capture.js';
 import { diagLogPath } from '../src/bridge/log-paths.js';
 import { QueryContext, resetCtx } from '../src/bridge/query-state.js';
@@ -76,7 +76,7 @@ async function run(bridge, input = context, options) {
 }
 
 // Answers each prompt read from stdin, like the CLI in streaming-input mode, until stdin closes.
-function injectLiveQuery(turns = []) {
+function injectLiveQuery(turns = [], applyFlagSettings = async () => {}, afterInputClosed = []) {
   const calls = [];
   __test.setQuery((request) => {
     const call = { ...request, prompts: [], exited: false };
@@ -94,12 +94,17 @@ function injectLiveQuery(turns = []) {
           if (turn.crash) throw new Error('Claude Code process exited with code 1');
           if (turn.hold && await Promise.race([turn.hold.then(() => false), closed.then(() => true)])) return;
         }
+        for (const message of afterInputClosed) yield message;
       } finally {
         call.exited = true;
       }
     })();
     query.interrupt = vi.fn(async () => {});
     query.close = vi.fn(() => close());
+    query.applyFlagSettings = vi.fn(async (settings) => {
+      call.flagSettings = [...call.flagSettings ?? [], { settings, promptsBefore: call.prompts.length }];
+      return applyFlagSettings(settings);
+    });
     calls.push(Object.assign(call, { query }));
     return query;
   });
@@ -304,6 +309,153 @@ describe('Felan live Claude Code process', () => {
     expect(calls).toHaveLength(2);
     expect(calls[0].exited).toBe(true);
     expect(calls[1].options.resume).toBe('cc-live');
+  });
+
+  it('applies another thinking level to the running process before writing the prompt', async () => {
+    const bridge = activate();
+    bridge.start('effort');
+    const calls = injectLiveQuery();
+    const model = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
+    const first = capturedContext();
+    const answer = (await bridge.provider.streamSimple(model, first, { sessionId: 'effort', reasoning: 'high' }).result());
+    await setImmediate();
+    const second = await bridge.provider.streamSimple(model, followUp(first, answer, 'Quick one.'), { sessionId: 'effort', reasoning: 'low' }).result();
+    expect(second.content).toEqual([{ type: 'text', text: 'Answer 2.' }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].options.effort).toBe('high');
+    expect(calls[0].flagSettings).toEqual([{ settings: { effortLevel: 'low' }, promptsBefore: 1 }]);
+    expect(calls[0].prompts).toHaveLength(2);
+    expect(__test.liveQueries.get('effort')?.config.effort).toBe('low');
+  });
+
+  it.each([
+    ['nothing', []],
+    ['a stray frame', [{ type: 'system', subtype: 'status', status: null }]],
+  ])('reruns the turn on a fresh process when the running one refuses the thinking level and sends %s', async (_label, afterInputClosed) => {
+    const bridge = activate();
+    bridge.start('refused');
+    const calls = injectLiveQuery([], async () => { throw new Error('unsupported control request'); }, afterInputClosed);
+    const model = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
+    const first = capturedContext();
+    const answer = await bridge.provider.streamSimple(model, first, { sessionId: 'refused', reasoning: 'high' }).result();
+    await setImmediate();
+    const output = await bridge.provider.streamSimple(model, followUp(first, answer, 'Quick one.'), { sessionId: 'refused', reasoning: 'low' }).result();
+    expect(output.content).toEqual([{ type: 'text', text: 'Answer 1.' }]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].prompts).toHaveLength(1);
+    expect(calls[0].exited).toBe(true);
+    expect(calls[1].options).toMatchObject({ effort: 'low', resume: 'cc-live' });
+  });
+
+  it('reruns the turn on a fresh process when the query cannot change the thinking level', async () => {
+    const bridge = activate();
+    bridge.start('no-flags');
+    const calls = injectLiveQuery();
+    const model = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
+    const first = capturedContext();
+    const answer = await bridge.provider.streamSimple(model, first, { sessionId: 'no-flags', reasoning: 'high' }).result();
+    await setImmediate();
+    delete calls[0].query.applyFlagSettings;
+    const output = await bridge.provider.streamSimple(model, followUp(first, answer, 'Quick one.'), { sessionId: 'no-flags', reasoning: 'low' }).result();
+    expect(output.content).toEqual([{ type: 'text', text: 'Answer 1.' }]);
+    expect(calls).toHaveLength(2);
+    expect(calls[0].prompts).toHaveLength(1);
+    expect(calls[1].options).toMatchObject({ effort: 'low', resume: 'cc-live' });
+  });
+
+  it('ends an aborted turn without writing its prompt while the thinking level is pending', async () => {
+    const bridge = activate();
+    bridge.start('pending-effort');
+    const calls = injectLiveQuery([], () => new Promise(() => {}));
+    const model = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
+    const first = capturedContext();
+    const answer = await bridge.provider.streamSimple(model, first, { sessionId: 'pending-effort', reasoning: 'high' }).result();
+    await setImmediate();
+    const controller = new AbortController();
+    const pending = bridge.provider.streamSimple(model, followUp(first, answer, 'Never sent.'), {
+      sessionId: 'pending-effort', reasoning: 'max', signal: controller.signal,
+    }).result();
+    await setImmediate();
+    expect(calls[0].flagSettings).toEqual([{ settings: { effortLevel: 'max' }, promptsBefore: 1 }]);
+    controller.abort();
+    expect((await pending).stopReason).toBe('aborted');
+    await setImmediate();
+    expect(calls).toHaveLength(1);
+    expect(calls[0].prompts).toHaveLength(1);
+    expect(calls[0].exited).toBe(true);
+  });
+
+  it('reruns the turn on a fresh process when the thinking level gets no answer', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const bridge = activate();
+      bridge.start('silent');
+      const calls = injectLiveQuery([], () => new Promise(() => {}));
+      const model = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
+      const first = capturedContext();
+      const answer = await bridge.provider.streamSimple(model, first, { sessionId: 'silent', reasoning: 'high' }).result();
+      await setImmediate();
+      const pending = bridge.provider.streamSimple(model, followUp(first, answer, 'Quick one.'), { sessionId: 'silent', reasoning: 'xhigh' }).result();
+      await setImmediate();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect((await pending).content).toEqual([{ type: 'text', text: 'Answer 1.' }]);
+      expect(calls).toHaveLength(2);
+      expect(calls[0].prompts).toHaveLength(1);
+      expect(calls[1].options).toMatchObject({ effort: 'xhigh', resume: 'cc-live' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops declaring cache-safe thinking changes for a model Claude Code reports without per-turn effort', async () => {
+    const bridge = activate();
+    bridge.start('reported');
+    const model = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
+    const declared = () => supportsPerTurnEffort({ provider: 'claude-code', id: model.id, reasoning: true });
+    const init = (active) => [
+      { type: 'system', subtype: 'init', session_id: 'cc-reported', per_turn_effort_active: active },
+      { type: 'result', subtype: 'success', result: 'Done.' },
+    ];
+    injectQuery(init(false));
+    await bridge.provider.streamSimple(model, capturedContext(), { sessionId: 'reported', reasoning: 'high' }).result();
+    expect(declared()).toBe(false);
+    __test.resetSharedSession('reported');
+    bridge.start('reported-again');
+    injectQuery(init(true));
+    await bridge.provider.streamSimple(model, capturedContext(), { sessionId: 'reported-again', reasoning: 'high' }).result();
+    expect(declared()).toBe(true);
+  });
+
+  it('disables thinking for the off level on a fresh process where the model allows it', async () => {
+    const bridge = activate();
+    bridge.start('off');
+    const calls = injectLiveQuery();
+    const model = bridge.provider.models.find(({ id }) => id === 'claude-haiku-5-5');
+    const first = capturedContext();
+    const answer = await bridge.provider.streamSimple(model, first, { sessionId: 'off', reasoning: 'high' }).result();
+    await setImmediate();
+    await bridge.provider.streamSimple(model, followUp(first, answer, 'No thinking.'), { sessionId: 'off' }).result();
+    expect(calls).toHaveLength(2);
+    expect(calls[0].options).not.toHaveProperty('thinking');
+    expect(calls[0].options.extraArgs['thinking-display']).toBe('summarized');
+    expect(calls[1].options).toMatchObject({ thinking: { type: 'disabled' }, resume: 'cc-live' });
+    expect(calls[1].options).not.toHaveProperty('effort');
+    expect(calls[1].options.extraArgs).not.toHaveProperty('thinking-display');
+    expect(calls[0].query.applyFlagSettings).not.toHaveBeenCalled();
+
+    bridge.start('forced-adaptive');
+    const forced = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
+    await bridge.provider.streamSimple(forced, capturedContext(), { sessionId: 'forced-adaptive' }).result();
+    expect(calls[2].options).not.toHaveProperty('thinking');
+  });
+
+  it('declares cache-safe thinking changes only for per-turn effort Claude Code models', () => {
+    const reasoning = true;
+    expect(supportsPerTurnEffort({ provider: 'claude-code', id: 'claude-opus-5-5', reasoning })).toBe(true);
+    expect(supportsPerTurnEffort({ provider: 'claude-code', id: 'claude-sonnet-5-5', reasoning })).toBe(true);
+    expect(supportsPerTurnEffort({ provider: 'claude-code', id: 'claude-opus-4-8', reasoning })).toBe(false);
+    expect(supportsPerTurnEffort({ provider: 'anthropic', id: 'claude-opus-5-5', reasoning })).toBe(false);
+    expect(supportsPerTurnEffort({ provider: 'claude-code', id: 'claude-opus-5-5', reasoning: false })).toBe(false);
   });
 
   it('retires an idle process when the session switches to another model', async () => {

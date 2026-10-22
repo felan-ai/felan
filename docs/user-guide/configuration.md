@@ -420,8 +420,11 @@ dynamic thinking, which resumes after restoration and ownership release.
 
 Only GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using official OpenAI
 `openai-responses` or `openai-codex-responses` with the Codex extension enabled,
-and Anthropic models marked for mid-conversation effort by the installed Pi
-adapter, qualify. With an OpenAI API key, Pi sends history `configuration_update`
+Anthropic models marked for mid-conversation effort by the installed Pi
+adapter, and the same Claude models through the [Claude Code extension](claude-code.md),
+which applies the change with Claude Code's per-turn effort, qualify. Other
+providers qualify only when an extension declares native thinking updates for
+the model. With an OpenAI API key, Pi sends history `configuration_update`
 items itself on `openai-responses`; the Codex extension adds them on
 `openai-codex-responses`. Both keep request-level effort fixed.
 Eligible Claude models use per-message `output_config` while retaining a
@@ -433,7 +436,9 @@ latency and may incur a separate provider charge. The shared Agent Core evidence
 builder caps text and excludes image data, raw thinking, and tool-result bodies;
 recognized secret patterns are redacted on a best-effort basis only.
 
-Savings accounting uses the same per-token price at every effort level. Only
+Savings accounting uses the same per-token price at every effort level. It
+excludes models that qualify only through an extension, such as Claude Code
+models billed against a Claude plan. Only
 an automatic `high` → `low` or `high` → `medium` change on a supported model
 with observed reasoning-token usage on its first assistant response yields a
 possible estimated saving only after the run settles without tool failures.

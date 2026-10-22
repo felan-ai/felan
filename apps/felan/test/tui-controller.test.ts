@@ -3,6 +3,7 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { KeybindingsManager, TUI_KEYBINDINGS, TuiAltScreen, setKeybindings, stripTerminalSequences, visibleWidth, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { SessionClient } from '../src/client/client.js';
 import { TuiSessionController } from '../src/tui/controller.js';
+import { DaemonTuiScreen } from '../src/tui/screen.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
 import { HerdrPane, type HerdrRequest } from '../src/tui/herdr.js';
 import { createCommandAutocomplete, submitTuiInput } from '../src/tui/commands.js';
@@ -412,26 +413,27 @@ it('does not clear a newly selected session when an older close finishes', async
   expect(controller.sessionId).toBe(next.sessionId); expect(controller.client.getAttachment(next.sessionId)).toBeDefined();
 });
 
-it('keeps the queue read-only and rejects unavailable commands instead of sending them as prompts', async () => {
+it('rejects the removed queue command and unavailable commands instead of sending them as prompts', async () => {
   const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
   const dialogs = fakeDialogs(); const before = f.root.runtime.session.messages.length;
-  await submitTuiInput(controller, dialogs, '/queue', { cwd: f.cwd, exit: vi.fn() });
+  await expect(submitTuiInput(controller, dialogs, '/queue', { cwd: f.cwd, exit: vi.fn() })).rejects.toThrow('unavailable');
   await expect(submitTuiInput(controller, dialogs, '/unknown', { cwd: f.cwd, exit: vi.fn() })).rejects.toThrow('unavailable');
   expect(f.root.runtime.session.messages).toHaveLength(before);
-  expect(dialogs.select).toHaveBeenCalledWith(expect.stringContaining('read-only'), []);
+  expect(dialogs.select).not.toHaveBeenCalled();
 });
 
 it('labels queued steers stored as attachments and visible extension messages on one line', async () => {
   const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
-  const dialogs = fakeDialogs(); const session = f.root.runtime.session;
+  const session = f.root.runtime.session;
   session.agent.steer({ role: 'user', content: [{ type: 'text', text: 'first\nline' }, { type: 'text', text: 'second' }], timestamp: Date.now() });
   session.agent.followUp({ role: 'custom', customType: 'completion', content: 'Execution completion: done', display: true, timestamp: Date.now() });
   await vi.waitFor(() => expect(controller.snapshot?.queue).toHaveLength(2));
-  await submitTuiInput(controller, dialogs, '/queue', { cwd: f.cwd, exit: vi.fn() });
-  expect(dialogs.select).toHaveBeenCalledWith(expect.stringContaining('read-only'), [
-    { value: expect.any(String), label: 'steer: first line second' },
-    { value: expect.any(String), label: 'follow_up: Execution completion: done' },
-  ]);
+  const tui = new TuiAltScreen(new TestTerminal());
+  const screen = new DaemonTuiScreen(controller, tui, { cwd: f.cwd, exit: vi.fn() });
+  cleanup.push(() => screen.dispose());
+  const text = stripTerminalSequences(screen.component.render(90).join('\n'));
+  expect(text).toContain('Steering: first line second');
+  expect(text).toContain('Follow-up: Execution completion: done');
   session.clearQueue();
 });
 

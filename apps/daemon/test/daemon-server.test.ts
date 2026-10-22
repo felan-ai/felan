@@ -6,7 +6,7 @@ import { appendFile, chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, sta
 import { renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { JsonLineDecoder, encodeFrame, parseServerEnvelope, type Operation, type OperationParams, type SessionSnapshot } from '@felan-ai/session-protocol';
+import { JsonLineDecoder, LIMITS, encodeFrame, parseServerEnvelope, type Operation, type OperationParams, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { SessionClient, newRequestId } from '../../felan/src/client/client.js';
 import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { accepted, SessionCommands } from '../src/daemon/commands.js';
@@ -143,6 +143,24 @@ async function completedPrompt(f: Awaited<ReturnType<typeof fixture>>, client: S
   });
 }
 
+async function compactingFixture(options: { extension?: (pi: ExtensionAPI) => void; onStream?: () => Promise<void>; release?: () => void; compactionError?: Error } = {}) {
+  const entered = gate(); const release = gate();
+  const f = await fixture({ compaction: { reserveTokens: 256, keepRecentTokens: 16 }, onStream: options.onStream,
+    release: () => { release.resolve(); options.release?.(); },
+    extension: pi => { options.extension?.(pi); pi.on('session_before_compact', async () => { entered.resolve(); await release.promise; }); } });
+  const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
+  await completedPrompt(f, client, 'earlier context '.repeat(80)); await completedPrompt(f, client, 'retained context '.repeat(80));
+  if (options.compactionError) {
+    const compact = f.root.runtime.session.compact.bind(f.root.runtime.session);
+    vi.spyOn(f.root.runtime.session, 'compact').mockImplementation(async instructions => { await compact(instructions); throw options.compactionError; });
+  }
+  const result = await client.request('compact', {}, { session });
+  expect(result).toMatchObject({ outcome: 'accepted' });
+  if (result.outcome !== 'accepted') throw new Error('Compaction did not start');
+  await entered.promise;
+  return { ...f, createClient: f.client, client, session, release: release.resolve, runId: result.result.runId };
+}
+
 it('serves attach, session reads and a prompt turn without copying the whole control state', async () => {
   const f = await fixture(); const client = await f.client(); const session = f.root.sessionId;
   const snapshot = vi.spyOn(f.store, 'snapshot');
@@ -232,7 +250,7 @@ function supportedRequests(f: Awaited<ReturnType<typeof fixture>>): Array<{ op: 
     { op: 'attach', session, params: { expected: f.owner.identity } },
     { op: 'detach', session, params: { attachmentId: 'not-attached' } }, { op: 'close', session, params: {} },
     { op: 'prompt', session, params: { text: 'must not execute' } }, { op: 'steer', session, params: { text: 'must not queue' } },
-    { op: 'follow_up', session, params: { text: 'must not queue' } }, { op: 'cancel', session, params: {} },
+    { op: 'follow_up', session, params: { text: 'must not queue' } }, { op: 'queue.clear', session, params: {} }, { op: 'cancel', session, params: {} },
     { op: 'set_model', session, params: { provider: 'offline', id: 'fixture' } }, { op: 'set_thinking', session, params: { thinking: 'off' } },
     { op: 'compact', session, params: {} }, { op: 'fork', session, params: { from: { kind: 'position', position: 0 } } },
     { op: 'command.invoke', session, params: { name: 'not-registered', arguments: '' } }, { op: 'session.rename', session, params: { name: 'must not rename' } },
@@ -738,6 +756,221 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(compact).toHaveBeenCalledOnce();
   });
 
+  it('delivers input held during manual compaction before the daemon run settles', async () => {
+    const f = await compactingFixture(); const { client, session } = f;
+    const queued = await client.request('steer', { text: 'after compaction' }, { session });
+    expect(queued).toMatchObject({ outcome: 'accepted', result: { itemId: expect.any(String) } });
+    await vi.waitFor(() => expect(client.getAttachment(session)?.state.snapshot?.queue).toHaveLength(1));
+    f.release();
+    await vi.waitFor(() => {
+      const entries = f.root.runtime.session.sessionManager.getEntries();
+      const index = entries.findIndex(entry => entry.type === 'message' && entry.message.role === 'user' && JSON.stringify(entry.message.content).includes('after compaction'));
+      expect(index).toBeGreaterThan(-1);
+      expect(entries.slice(index + 1).some(entry => entry.type === 'message' && entry.message.role === 'assistant')).toBe(true);
+      expect(f.store.session(session).run.state).toBe('idle');
+      expect(f.registry.projection(session).snapshot().queue).toEqual([]);
+    });
+  });
+
+  it.each(['started', 'handled'] as const)('holds late steering until earlier compaction input finishes preflight (%s)', async disposition => {
+    const entered = gate(); const release = gate(); const seen: string[] = [];
+    const f = await compactingFixture({ release: release.resolve, extension: pi => { pi.on('input', async event => {
+      if (!event.text.includes('held')) return undefined;
+      seen.push(event.text);
+      if (event.text === 'first held') { entered.resolve(); await release.promise; if (disposition === 'handled') return { action: 'handled' }; }
+      return undefined;
+    }); } });
+    const { client, session } = f; const runtime = f.root.runtime.session; const projection = f.registry.projection(session);
+    const steer = vi.spyOn(runtime, 'steer');
+    for (const text of ['first held', 'second held']) await client.request('steer', { text }, { session });
+    f.release(); await entered.promise;
+    expect(runtime.isStreaming).toBe(false);
+    expect(await client.request('steer', { text: 'late held' }, { session })).toMatchObject({ outcome: 'accepted', result: { itemId: expect.any(String) } });
+    expect(steer).not.toHaveBeenCalled(); expect(seen).toEqual(['first held']);
+    expect(projection.compactionInputs.map(item => item.prompt.text)).toEqual(['second held', 'late held']);
+    release.resolve();
+    await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    expect(seen).toEqual(['first held', 'second held', 'late held']);
+    const users = projection.snapshot().history.entries.filter(entry => entry.role === 'user').map(entry => JSON.stringify(entry.content));
+    for (const text of ['second held', 'late held']) expect(users.some(content => content.includes(text))).toBe(true);
+    expect(runtime.getSteeringMessages()).toEqual([]); expect(projection.holdsCompactionInput).toBe(false);
+  });
+
+  it('attributes a later held prompt to its origin after the preceding Pi run settles', async () => {
+    const f = await compactingFixture(); const { client, session } = f; const runtime = f.root.runtime.session;
+    const second = await f.createClient(); await second.attach(session);
+    await client.request('steer', { text: 'first held run' }, { session });
+    await second.request('follow_up', { text: 'second held run' }, { session });
+    const held = f.registry.projection(session).snapshot().queue;
+    const prompt = runtime.prompt.bind(runtime);
+    vi.spyOn(runtime, 'prompt').mockImplementation(async (text, options) => {
+      if (text !== 'first held run') { expect(runtime.isStreaming).toBe(false); return prompt(text, options); }
+      await prompt(text, { ...options, preflightResult: undefined }); options?.preflightResult?.('started');
+    });
+    f.release(); await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    const users = f.registry.projection(session).snapshot().history.entries.filter(entry => entry.role === 'user');
+    expect(users.find(entry => JSON.stringify(entry.content).includes('first held run'))?.origin).toEqual(held[0]!.origin);
+    expect(users.find(entry => JSON.stringify(entry.content).includes('second held run'))?.origin).toEqual(held[1]!.origin);
+  });
+
+  it('delivers compaction steering and follow-up in one run with their origins and attachments', async () => {
+    const entered = gate(); const release = gate(); let calls = 0;
+    const f = await compactingFixture({ release: release.resolve, onStream: async () => { if (++calls === 4) { entered.resolve(); await release.promise; } } });
+    const { client, session } = f; const second = await f.createClient(); await second.attach(session);
+    const steer = vi.spyOn(f.root.runtime.session, 'steer'); const followUp = vi.spyOn(f.root.runtime.session, 'followUp');
+    const prompt = vi.spyOn(f.root.runtime.session, 'prompt');
+    const image = { type: 'image' as const, mimeType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1EAAAAASUVORK5CYII=' };
+    expect(await client.request('steer', { text: 'first held', attachments: [{ type: 'text', text: 'attached text' }, image] }, { session })).toMatchObject({ outcome: 'accepted' });
+    expect(await second.request('follow_up', { text: 'second held' }, { session })).toMatchObject({ outcome: 'accepted' });
+    const held = f.registry.projection(session).snapshot().queue;
+    expect(held.map(item => item.kind)).toEqual(['steer', 'follow_up']);
+    expect(steer).not.toHaveBeenCalled(); expect(followUp).not.toHaveBeenCalled();
+    expect(f.store.session(session).projections.find(row => row.value.type === 'queue')?.value).toMatchObject({ ids: held.map(item => item.id) });
+    f.release(); await entered.promise;
+    expect(f.store.session(session).run).toMatchObject({ id: f.runId, state: 'running', origin: held[0]!.origin });
+    await vi.waitFor(() => expect(f.root.runtime.session.getFollowUpMessages()).toEqual(['second held']));
+    expect(await client.request('steer', { text: 'native while streaming' }, { session })).toMatchObject({ outcome: 'accepted' });
+    expect(steer).toHaveBeenCalledOnce();
+    release.resolve();
+    await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    const snapshot = f.registry.projection(session).snapshot(); const users = snapshot.history.entries.filter(entry => entry.role === 'user');
+    const first = users.find(entry => JSON.stringify(entry.content).includes('first held'))!;
+    const last = users.find(entry => JSON.stringify(entry.content).includes('second held'))!;
+    expect(prompt).toHaveBeenCalledWith('first held\nattached text', expect.objectContaining({ images: [image], source: 'rpc', expandPromptTemplates: false, streamingBehavior: 'steer' }));
+    expect(first.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'text', text: expect.stringContaining('first held\nattached text') })]));
+    expect(first.origin).toEqual(held[0]!.origin); expect(last.origin).toEqual(held[1]!.origin);
+    expect(users.indexOf(first)).toBeLessThan(users.indexOf(last)); expect(snapshot.queue).toEqual([]);
+  });
+
+  it('atomically clears native and held compaction input as text and retains the restore result', async () => {
+    const f = await compactingFixture(); const { client, session } = f; const runtime = f.root.runtime.session;
+    await runtime.steer('native steering'); await runtime.followUp('native follow-up');
+    await client.request('steer', { text: 'held steering', attachments: [{ type: 'text', text: 'attached text' },
+      { type: 'resource_link', uri: 'https://example.com/resource', name: 'Reference', description: 'attached resource' }] }, { session });
+    await client.request('follow_up', { text: 'held follow-up' }, { session });
+    const id = newRequestId(); const response = await client.request('queue.clear', {}, { session, id });
+    expect(response).toMatchObject({ outcome: 'accepted', result: { steering: ['native steering', 'held steering\nattached text\nReference: https://example.com/resource\nattached resource'],
+      followUp: ['native follow-up', 'held follow-up'] } });
+    expect(runtime.agent.hasQueuedMessages()).toBe(false);
+    await vi.waitFor(() => expect(client.getAttachment(session)?.state.snapshot?.queue).toEqual([]));
+    expect(await client.request('queue.clear', {}, { session, id })).toEqual(response);
+    f.release(); await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    expect(runtime.sessionManager.getEntries().some(entry => entry.type === 'message' && entry.message.role === 'user' && /held|native/.test(JSON.stringify(entry.message.content)))).toBe(false);
+  });
+
+  it.each(['items', 'encoded bytes'] as const)('rejects held input exceeding queue.clear %s without changing either queue', async limit => {
+    const f = await compactingFixture(); const { client, session } = f; const runtime = f.root.runtime.session;
+    await runtime.steer('native retained'); await client.request('follow_up', { text: 'held retained' }, { session });
+    const projection = f.registry.projection(session); const before = projection.snapshot().queue;
+    const messages = vi.spyOn(runtime, 'getSteeringMessages').mockReturnValue(limit === 'items'
+      ? Array.from({ length: LIMITS.pageEntries - 1 }, () => 'native retained') : ['"'.repeat(LIMITS.pageBytes / 4 - 1024)]);
+    try {
+      expect(await client.request('steer', { text: 'must not hold', attachments: [{ type: 'text', text: 'x'.repeat(LIMITS.statusTextBytes + 1) }] }, { session }))
+        .toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
+      expect(projection.snapshot().queue).toEqual(before);
+      expect(projection.compactionInputs.map(item => item.prompt.text)).toEqual(['held retained']);
+    } finally { messages.mockRestore(); }
+    expect(await client.request('queue.clear', {}, { session })).toMatchObject({ outcome: 'accepted', result: { steering: ['native retained'], followUp: ['held retained'] } });
+    f.release(); await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+  });
+
+  it('aborts a held prompt when cancellation arrives during its preflight', async () => {
+    const entered = gate(); const release = gate(); const finish = gate(); let calls = 0;
+    const f = await compactingFixture({ release: () => { release.resolve(); finish.resolve(); },
+      onStream: async () => { if (++calls >= 4) await finish.promise; },
+      extension: pi => { pi.on('input', async event => { if (event.text === 'cancelled held') { entered.resolve(); await release.promise; } return undefined; }); } });
+    const { client, session } = f; const runtime = f.root.runtime.session; const abort = vi.spyOn(runtime, 'abort');
+    const starts: SessionSnapshot['run'][] = [];
+    runtime.subscribe(event => { if (event.type === 'agent_start') starts.push(f.store.session(session).run); });
+    await client.request('steer', { text: 'cancelled held' }, { session });
+    await client.request('follow_up', { text: 'discarded held' }, { session });
+    f.release(); await entered.promise;
+    const cancelled = client.request('cancel', { runId: f.runId }, { session });
+    await vi.waitFor(() => expect(abort).toHaveBeenCalledOnce());
+    expect(runtime.isStreaming).toBe(false); expect(f.store.session(session).run.state).toBe('cancelling');
+    release.resolve(); await vi.waitFor(() => expect(abort).toHaveBeenCalledTimes(2)); finish.resolve();
+    expect(await cancelled).toMatchObject({ outcome: 'accepted' });
+    expect(starts).toMatchObject([{ id: f.runId, state: 'cancelling' }]);
+    const entries = runtime.sessionManager.getEntries();
+    expect(entries.some(entry => entry.type === 'message' && entry.message.role === 'user' && JSON.stringify(entry.message.content).includes('discarded held'))).toBe(false);
+    expect(f.registry.projection(session).snapshot()).toMatchObject({ queue: [], run: { state: 'idle' } });
+    expect(f.registry.projection(session).holdsCompactionInput).toBe(false);
+  });
+
+  it.each([1, 2])('discards %i held compaction input(s) on cancellation without starting a prompt', async count => {
+    const f = await compactingFixture(); const { client, session } = f;
+    for (let index = 0; index < count; index++) await client.request('steer', { text: `discard ${index}` }, { session });
+    const prompt = vi.spyOn(f.root.runtime.session, 'prompt');
+    const cancelled = client.request('cancel', { runId: f.runId }, { session });
+    await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('cancelling'));
+    f.release(); expect(await cancelled).toMatchObject({ outcome: 'accepted' });
+    expect(prompt).not.toHaveBeenCalled();
+    expect(f.registry.projection(session).snapshot()).toMatchObject({ queue: [], run: { state: 'idle' },
+      presentation: expect.arrayContaining([{ id: 'queue-discarded', kind: 'notification', level: 'warning',
+        text: `${count} queued message${count === 1 ? ' was' : 's were'} discarded because compaction was cancelled.` }]) });
+    expect(f.registry.projection(session).presentations().some(item => item.id === 'run-error')).toBe(false);
+    expect(f.registry.projection(session).holdsCompactionInput).toBe(false);
+  });
+
+  it.each(['close', 'shutdown'] as const)('does not deliver held compaction input during %s', async action => {
+    const f = await compactingFixture(); const { client, session } = f;
+    await client.request('steer', { text: 'must not start during teardown' }, { session });
+    const prompt = vi.spyOn(f.root.runtime.session, 'prompt'); const abort = vi.spyOn(f.root.runtime.session, 'abort');
+    const closing = action === 'close' ? client.request('close', {}, { session }) : f.registry.shutdown({ interrupt: true });
+    await vi.waitFor(() => expect(abort).toHaveBeenCalled());
+    f.release(); await closing;
+    expect(prompt).not.toHaveBeenCalled();
+  });
+
+  it('continues past handled compaction input and still delivers after compaction fails', async () => {
+    const f = await compactingFixture({ compactionError: new Error('compaction failed'),
+      extension: pi => { pi.on('input', async event => event.text === 'handled after compaction' ? { action: 'handled' } : undefined); } });
+    const { client, session } = f; const runtime = f.root.runtime.session;
+    await client.request('steer', { text: 'handled after compaction' }, { session });
+    await client.request('follow_up', { text: 'delivered after compaction' }, { session });
+    f.release();
+    await vi.waitFor(() => {
+      expect(f.store.session(session).run.state).toBe('idle');
+      expect(runtime.sessionManager.getEntries().some(entry => entry.type === 'message' && entry.message.role === 'user' && JSON.stringify(entry.message.content).includes('delivered after compaction'))).toBe(true);
+    });
+    expect(f.registry.projection(session).snapshot()).toMatchObject({ queue: [], presentation: expect.arrayContaining([
+      expect.objectContaining({ id: 'run-error', level: 'error' }),
+    ]) });
+  });
+
+  it('stops and discards remaining held input when delivery after compaction rejects', async () => {
+    const f = await compactingFixture(); const { client, session } = f;
+    await client.request('steer', { text: 'cannot deliver' }, { session });
+    await client.request('follow_up', { text: 'must not deliver' }, { session });
+    const prompt = vi.spyOn(f.root.runtime.session, 'prompt').mockRejectedValue(new Error('model unavailable'));
+    f.release();
+    await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    expect(prompt).toHaveBeenCalledOnce(); prompt.mockRestore();
+    expect(f.registry.projection(session).snapshot()).toMatchObject({ queue: [], presentation: expect.arrayContaining([
+      { id: 'queue-delivery-error', kind: 'notification', level: 'error', text: 'Queued input could not be sent after compaction: model unavailable' },
+    ]) });
+    expect(f.registry.projection(session).holdsCompactionInput).toBe(false);
+  });
+
+  it('retains a started delivery failure while later compaction input is in preflight', async () => {
+    const f = await compactingFixture(); const { client, session } = f;
+    for (const text of ['first started', 'later preflight', 'must be discarded']) await client.request('steer', { text }, { session });
+    const fail = gate(); const entered = gate(); const release = gate();
+    const prompt = vi.spyOn(f.root.runtime.session, 'prompt').mockImplementation(async (text, options) => {
+      if (text === 'first started') { options?.preflightResult?.('started'); await fail.promise; throw new Error('started run failed'); }
+      entered.resolve(); await release.promise; options?.preflightResult?.('handled');
+    });
+    try {
+      f.release(); await entered.promise; fail.resolve();
+      await vi.waitFor(() => expect(f.registry.projection(session).presentations()).toEqual(expect.arrayContaining([
+        expect.objectContaining({ id: 'queue-delivery-error', text: 'Queued input could not be sent after compaction: started run failed' }),
+      ])));
+      expect(prompt).toHaveBeenCalledTimes(2); expect(f.store.session(session).run.state).toBe('running');
+      release.resolve(); await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+      expect(f.registry.projection(session).snapshot().queue).toEqual([]);
+    } finally { fail.resolve(); release.resolve(); prompt.mockRestore(); }
+  });
+
   it.each(['entry', 'position'] as const)('forks before the wire %s selector without source mutation, automatic attachment or duplicate copies', async kind => {
     const f = await fixture(); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
     await completedPrompt(f, client, 'keep first user'); await completedPrompt(f, client, 'exclude selected user');
@@ -806,7 +1039,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
   it('rejects every supported non-hello operation before negotiation without any admitted effect', async () => {
     const f = await fixture(); const before = f.store.snapshot(); const bytes = await readFile(f.store.session(f.root.sessionId).piPath);
     const cases = supportedRequests(f);
-    expect(new Set(cases.map(row => row.op)).size).toBe(36);
+    expect(new Set(cases.map(row => row.op)).size).toBe(37);
     for (const request of cases) {
       const peer = await f.raw();
       expect(await peer.exchange({ v: 1, id: newRequestId(), ...request })).toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
@@ -832,7 +1065,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
   it('negotiates actual capabilities and serves the completed client without a second runtime writer', async () => {
     const f = await fixture(); const a = await f.client(); const b = await f.client(); const id = f.root.sessionId;
     expect(a.identity).toEqual(f.owner.identity);
-    expect(a.capabilities?.operations).toEqual(expect.arrayContaining(['prompt', 'fork', 'config.set', 'steer']));
+    expect(a.capabilities?.operations).toEqual(expect.arrayContaining(['prompt', 'fork', 'config.set', 'steer', 'queue.clear']));
     for (const operation of ['queue.update', 'host.stop', 'interaction.answer']) expect(a.capabilities?.operations).not.toContain(operation);
     expect((await a.attach(id)).outcome).toBe('accepted'); expect((await b.attach(id)).outcome).toBe('accepted');
     expect(f.registry.attachmentCount(id)).toBe(2);
@@ -880,6 +1113,39 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(await client.request('session.history', { revision: 0, branch: snapshot.branch }, { session: id })).toMatchObject({ outcome: 'rejected', error: { code: 'resync_required' } });
     const page = await client.request('session.history', { revision: snapshot.revision, branch: snapshot.branch, limit: 1 }, { session: id });
     expect(page.outcome).toBe('accepted'); if (page.outcome === 'accepted') expect(page.result.entries).toHaveLength(1);
+  });
+
+  it.each([false, true])('clears native input and custom messages during streaming (lost observation: %s)', async lost => {
+    const entered = gate(); const release = gate();
+    const f = await fixture({ onStream: async () => { entered.resolve(); await release.promise; }, release: release.resolve });
+    const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
+    await client.request('prompt', { text: 'streaming' }, { session }); await entered.promise;
+    await client.request('steer', { text: 'restore me' }, { session });
+    await vi.waitFor(() => expect(client.getAttachment(session)?.state.snapshot?.queue).toHaveLength(1));
+    const runtime = f.root.runtime.session; const clear = vi.spyOn(runtime.agent, 'clearAllQueues');
+    for (let index = 0; index < (lost ? LIMITS.pageEntries : 1); index++) runtime.agent.followUp({ role: 'custom', customType: 'test', content: 'custom', display: lost, timestamp: index });
+    expect(f.registry.projection(session).canObserveQueue).toBe(!lost);
+    expect(await client.request('queue.clear', {}, { session })).toMatchObject({ outcome: 'accepted', result: { steering: ['restore me'], followUp: [] } });
+    expect(clear).toHaveBeenCalledOnce(); expect(runtime.agent.hasQueuedMessages()).toBe(false);
+    await vi.waitFor(() => expect(client.getAttachment(session)?.state.snapshot?.queue).toEqual([]));
+    release.resolve(); await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    expect(runtime.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'user')).toHaveLength(1);
+  });
+
+  it.each(['items', 'encoded bytes'] as const)('rejects queue.clear exceeding protocol %s without clearing native or held input', async limit => {
+    const f = await compactingFixture(); const { client, session } = f; const runtime = f.root.runtime.session;
+    await runtime.steer('native retained'); await client.request('follow_up', { text: 'held retained' }, { session });
+    const clear = vi.spyOn(runtime, 'clearQueue'); const before = f.registry.projection(session).snapshot().queue;
+    const messages = vi.spyOn(runtime, 'getSteeringMessages').mockReturnValue(limit === 'items'
+      ? Array.from({ length: LIMITS.pageEntries }, () => 'native retained') : ['"'.repeat(LIMITS.pageBytes / 4)]);
+    expect(await client.request('queue.clear', {}, { session })).toMatchObject({ outcome: 'rejected', error: {
+      code: 'unavailable', message: 'Queued input exceeds protocol limits; nothing was cleared.',
+    } });
+    expect(clear).not.toHaveBeenCalled(); messages.mockRestore();
+    expect(runtime.getSteeringMessages()).toEqual(['native retained']);
+    expect(f.registry.projection(session).snapshot().queue).toEqual(before);
+    await client.request('queue.clear', {}, { session });
+    f.release(); await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
   });
 
   it('keeps targeted queue edits unavailable and observes actual enqueue IDs', async () => {

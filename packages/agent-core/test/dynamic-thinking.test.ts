@@ -91,6 +91,30 @@ describe('dynamic thinking selection', () => {
     expect(effort.classify).not.toHaveBeenCalled();
   });
 
+  it('classifies another provider only when an extension declares native thinking updates', async () => {
+    const bridged = model('claude-code', 'claude-code' as Api, 'claude-opus-5-5');
+    const declined = classifier('low');
+    expect(await selectDynamicThinkingLevel(declined, bridged, 'Help', evidence, 'high')).toBeUndefined();
+    expect(await selectDynamicThinkingLevel(declined, bridged, 'Help', evidence, 'high', undefined, () => false))
+      .toBeUndefined();
+    expect(declined.classify).not.toHaveBeenCalled();
+
+    const native = vi.fn(() => true);
+    const effort = classifier('low');
+    expect(await selectDynamicThinkingLevel(effort, bridged, 'Help', evidence, 'high', undefined, native)).toBe('low');
+    expect(native).toHaveBeenCalledWith(bridged);
+    expect(effort.classify.mock.calls[0]?.[1].effort.criteria.high).toMatch(/Claude/u);
+
+    const openai = classifier('low');
+    expect(await selectDynamicThinkingLevel(
+      openai, model('openai', 'openai-responses', 'gpt-5.4'), 'Help', evidence, 'high', undefined, () => true,
+    )).toBeUndefined();
+    expect(await selectDynamicThinkingLevel(
+      openai, model('anthropic', 'anthropic-messages', 'claude-opus-4-8'), 'Help', evidence, 'high', undefined, () => true,
+    )).toBeUndefined();
+    expect(openai.classify).not.toHaveBeenCalled();
+  });
+
   it('keeps the current level when classification fails, is uncertain, or is aborted', async () => {
     const supported = model('anthropic', 'anthropic-messages', 'claude-opus-5-5', true);
     const failing = { classify: vi.fn().mockRejectedValue(new Error('classifier unavailable')) };

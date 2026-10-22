@@ -1,5 +1,5 @@
 import type { KeybindingsManager, Theme } from '@earendil-works/pi-coding-agent';
-import { Container, Loader, getKeybindings, isKeyRelease, ScrollView, Text, VStack, type Component, type TUI } from '@earendil-works/pi-tui';
+import { Container, Loader, getKeybindings, isKeyRelease, ScrollView, Text, TruncatedText, VStack, type Component, type TUI } from '@earendil-works/pi-tui';
 import type { AgentViewTranscript } from '../subagents/types.js';
 import { AgentTranscript, type AgentToolPresentation } from '../subagents/agent-transcript.js';
 import { TuiSessionController, connectionText } from './controller.js';
@@ -7,7 +7,7 @@ import { projectTuiTranscript, transcriptNoteText } from './transcript.js';
 import { TuiDialogs } from './dialogs.js';
 import { createCommandAutocomplete, submitTuiInput, tuiCommands, type DaemonAction } from './commands.js';
 import { statusText, uiText } from '../client/ui.js';
-import type { Execution, Presentation } from '@felan-ai/session-protocol';
+import type { Execution, Presentation, Prompt } from '@felan-ai/session-protocol';
 import { AgentRailEditor } from '../subagents/agent-navigator.js';
 import { clientSelectListTheme, defaultClientTheme } from './theme.js';
 import { isPowerlinePresentation, processStatus } from '../client/powerline-presenter.js';
@@ -24,6 +24,7 @@ export class DaemonTuiScreen {
   readonly scroll: ScrollView;
   readonly component: Component;
   readonly dialogs: TuiDialogs;
+  private readonly queuedMessages = new Container();
   private readonly activity = new Container();
   private readonly notices = new Container();
   private readonly header = new Text('', 1, 1);
@@ -41,6 +42,7 @@ export class DaemonTuiScreen {
   private readonly keys = getKeybindings();
   private disposed = false;
   private submitting: Promise<void> | undefined;
+  private restoring: Promise<void> | undefined;
   private queuedSubmit: string | undefined;
 
   constructor(private readonly controller: TuiSessionController, private readonly tui: TUI, private readonly options: {
@@ -80,6 +82,7 @@ export class DaemonTuiScreen {
     // Session updates can arrive faster than frames; the first entry applies them once per frame, before the rest render.
     const stack = new VStack([{ component: { render: () => { if (this.stale) this.applyUpdates(); return []; }, invalidate() {} } },
       { component: this.scroll, basis: 0, grow: 1, minSize: 0 },
+      { component: this.queuedMessages, shrink: 0, visible: () => !this.inlineActive },
       { component: this.activity, shrink: 0, visible: () => !this.inlineActive },
       { component: this.editor, shrink: 0, visible: () => !this.inlineActive },
       { component: this.inline, visible: () => this.inlineActive, shrink: 1, minSize: 1 },
@@ -88,6 +91,7 @@ export class DaemonTuiScreen {
     this.component = stack;
     this.editor.onSubmit = text => {
       this.editor.setText(text);
+      if (this.restoring) return;
       if (this.submitting) { this.queuedSubmit = text; this.editor.addToHistory(remoteHistoryInput(text)); this.editor.setText(''); }
       else this.trackSubmission(this.submit(text));
     };
@@ -97,8 +101,12 @@ export class DaemonTuiScreen {
         if (this.keys.matches(data, key)) { this.action(command); return { consume: true }; }
       }
       if (this.keys.matches(data, 'app.exit') && !this.editor.getText()) { options.exit(); return { consume: true }; }
+      if (this.keys.matches(data, 'app.message.dequeue') && !isKeyRelease(data) && !this.editor.isRailFocused() && !this.editor.isShowingAutocomplete()
+        && controller.client.capabilities?.operations.includes('queue.clear')) {
+        void this.restoreQueuedMessages(); return { consume: true };
+      }
       if (this.keys.matches(data, 'app.interrupt') && !isKeyRelease(data) && !this.editor.isRailFocused() && !this.editor.isShowingAutocomplete() && controller.snapshot && !['idle', 'interrupted'].includes(controller.snapshot.run.state)) {
-        void controller.cancel().catch(error => controller.setNotice(errorText(error))); return { consume: true };
+        void this.interrupt().catch(error => controller.setNotice(errorText(error))); return { consume: true };
       }
       if (this.keys.matches(data, 'app.clear')) {
         this.queuedSubmit = undefined;
@@ -128,7 +136,7 @@ export class DaemonTuiScreen {
       }
       if (this.keys.matches(data, 'app.message.followUp')) {
         const text = this.editor.getExpandedText();
-        if (text && !this.submitting) {
+        if (text && !this.submitting && !this.restoring) {
           this.editor.addToHistory(remoteHistoryInput(text)); this.editor.setText('');
           this.trackSubmission(controller.submit(text, 'follow_up').then(accepted => {
             if (!accepted && !this.editor.getText()) this.editor.setText(text);
@@ -149,7 +157,7 @@ export class DaemonTuiScreen {
       return undefined;
     });
     this.unsubscribe = controller.subscribe(() => {
-      this.editor.disableSubmit = controller.busy; this.stale = true; tui.requestRender();
+      this.editor.disableSubmit = controller.busy || !!this.restoring; this.stale = true; tui.requestRender();
     });
     this.refresh();
   }
@@ -175,15 +183,48 @@ export class DaemonTuiScreen {
   }
 
   private action(command: string): void {
-    if (!this.submitting) this.trackSubmission(this.submit(command, true));
+    if (!this.submitting && !this.restoring) this.trackSubmission(this.submit(command, true));
   }
 
   private trackSubmission(pending: Promise<void>): void {
     this.submitting = pending.finally(() => {
       this.submitting = undefined;
       const text = this.queuedSubmit; this.queuedSubmit = undefined;
-      if (!this.disposed && text !== undefined && !this.editor.getExpandedText()) this.trackSubmission(this.submit(text));
+      if (!this.disposed && text !== undefined) {
+        if (this.restoring) this.editor.setText([text, this.editor.getText()].filter(text => text.trim()).join('\n\n'));
+        else if (!this.editor.getExpandedText()) this.trackSubmission(this.submit(text));
+      }
     });
+  }
+
+  private restoreQueuedMessages(): Promise<void> {
+    this.restoring ??= this.restoreQueue().finally(() => {
+      this.restoring = undefined; this.editor.disableSubmit = this.controller.busy; this.tui.requestRender();
+    });
+    this.editor.disableSubmit = true;
+    return this.restoring;
+  }
+
+  private async restoreQueue(): Promise<void> {
+    try {
+      while (this.submitting) await this.submitting;
+      if (!this.controller.snapshot?.queue.length) { this.controller.setNotice('No queued messages to restore'); return; }
+      const session = this.controller.sessionId;
+      if (!session) throw new Error('No session is attached.');
+      const response = await this.controller.perform('queue.clear', {}, session);
+      if (response.outcome !== 'accepted') return;
+      const { steering, followUp } = response.result;
+      const count = steering.length + followUp.length;
+      if (count) this.editor.setText([...steering, ...followUp, this.editor.getText()].filter(text => text.trim()).join('\n\n'));
+      this.controller.setNotice(count ? `Restored ${count} queued message${count === 1 ? '' : 's'} to editor` : 'No queued messages to restore');
+    } catch (error) { this.controller.setNotice(errorText(error)); }
+  }
+
+  private async interrupt(): Promise<void> {
+    try {
+      if (this.restoring) await this.restoring;
+      else if ((this.controller.snapshot?.queue.length || this.submitting) && this.controller.client.capabilities?.operations.includes('queue.clear')) await this.restoreQueuedMessages();
+    } finally { await this.controller.cancel(); }
   }
 
   async submit(text: string, preserveDraft = false): Promise<void> {
@@ -235,7 +276,7 @@ export class DaemonTuiScreen {
     const snapshot = this.controller.snapshot; const state = this.controller.state;
     const connection = this.controller.client.status;
     this.header.setText(startupHeader(this.theme(), this.keys, this.transcript.toolsExpanded, this.options.quietStartup?.()));
-    this.notices.clear(); this.activity.clear();
+    this.notices.clear(); this.activity.clear(); this.queuedMessages.clear();
     const notice = (text: string, color: 'warning' | 'error' | 'muted' = 'muted') => {
       const component = new Text(this.theme().fg(color, uiText(text)), 1, 1);
       this.notices.addChild(component); return component;
@@ -246,7 +287,14 @@ export class DaemonTuiScreen {
     else if (!reconnecting && connection !== 'ready') notice(connectionText(this.controller.client) ?? 'Daemon connection is unavailable.', 'warning');
     else if (!snapshot && !reconnecting && !this.controller.starting) notice('No session attached. Use /new or /sessions.', 'warning');
     if (snapshot?.policy.effective === 'acp-strict') notice('Approvals required.');
-    if (snapshot?.queue.length) notice(`${snapshot.queue.length} queued`);
+    if (snapshot?.queue.length) {
+      for (const item of snapshot.queue) this.queuedMessages.addChild(new TruncatedText(this.theme().fg('dim',
+        uiText(`${item.kind === 'steer' ? 'Steering' : 'Follow-up'}: ${queueLabel(item.prompt)}`)), 1, 0));
+      const dequeue = this.keys.getKeys('app.message.dequeue').map(key => key.replace(/\b[a-z]/gu, letter => letter.toUpperCase())).join('/');
+      if (dequeue && this.controller.client.capabilities?.operations.includes('queue.clear')) {
+        this.queuedMessages.addChild(new TruncatedText(this.theme().fg('dim', `↳ ${dequeue} to edit all queued messages`), 1, 0));
+      }
+    }
     try {
       const presentation = fallbackPresentations(snapshot?.presentation ?? [], this.options.hasRenderer);
       const hasPowerline = snapshot?.presentation.some(item => item.kind === 'view' && isPowerlinePresentation(item));
@@ -271,7 +319,7 @@ export class DaemonTuiScreen {
       this.workingMessage = message;
       this.activity.addChild(this.working);
     } else { this.working?.stop(); this.working = undefined; this.workingMessage = undefined; }
-    this.editor.disableSubmit = this.controller.busy;
+    this.editor.disableSubmit = this.controller.busy || !!this.restoring;
     if (snapshot) {
       try {
         this.transcript.showProjection(projectTuiTranscript(snapshot, this.controller.history, this.options.settings?.() ?? {
@@ -289,10 +337,16 @@ export class DaemonTuiScreen {
     if (this.disposed) return;
     this.disposed = true; this.working?.stop(); this.unsubscribe(); this.removeInput(); this.dialogs.dispose(); this.transcript.dispose();
     if (this.submitting) await this.submitting;
+    if (this.restoring) await this.restoring;
   }
 }
 
 function errorText(error: unknown): string { return error instanceof Error ? error.message : String(error); }
+
+function queueLabel(prompt: Prompt): string {
+  const parts = [prompt.text, ...(prompt.attachments ?? []).map(part => part.type === 'text' ? part.text : part.type === 'image' ? '[image]' : part.name ?? part.uri)];
+  return parts.filter(Boolean).join(' ').replace(/\s+/gu, ' ').trim();
+}
 
 export function fallbackPresentations(presentation: readonly Presentation[], hasRenderer?: (element: Presentation) => boolean): readonly Presentation[] {
   return presentation.filter(element => !hasRenderer?.(element));

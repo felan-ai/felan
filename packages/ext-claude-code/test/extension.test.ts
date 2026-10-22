@@ -119,6 +119,12 @@ describe('Claude Code configuration', () => {
     expect(CLAUDE_CODE_CONFIG).toMatchObject({ id: 'claude-code', title: 'Claude Code' });
   });
 
+  it('declares native thinking updates for per-turn effort models', () => {
+    const { supportsNativeThinkingUpdates } = extension.execution();
+    expect(supportsNativeThinkingUpdates({ provider: 'claude-code', id: 'claude-opus-5-5', reasoning: true })).toBe(true);
+    expect(supportsNativeThinkingUpdates({ provider: 'claude-code', id: 'claude-opus-4-8', reasoning: true })).toBe(false);
+  });
+
   it('resolves all documented defaults and omits the optional executable', () => {
     const resolved = resolveExtensionConfigs([CLAUDE_CODE_CONFIG]).get('claude-code')!;
     const defaults = {

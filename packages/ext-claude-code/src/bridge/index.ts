@@ -131,7 +131,22 @@ function diagDump(label: string, data: Record<string, unknown>) {
 
 // --- Constants ---
 
-const MODELS = buildModels([...(builtinProviders().find((provider) => provider.id === "anthropic")?.getModels() ?? [])]);
+const ANTHROPIC_MODELS = builtinProviders().find((provider) => provider.id === "anthropic")?.getModels() ?? [];
+const MODELS = buildModels([...ANTHROPIC_MODELS]);
+// Felan: on models pi-ai marks for mid-conversation effort, Claude Code applies an effort
+// change inside the conversation (per-turn effort), so the prompt cache survives it.
+const PER_TURN_EFFORT_MODELS = new Set(ANTHROPIC_MODELS
+	.filter((model) => (model.compat as { supportsMidConvoEffort?: boolean } | undefined)?.supportsMidConvoEffort === true)
+	.map((model) => model.id));
+
+// Felan: models whose Claude Code process last reported per-turn effort inactive.
+const perTurnEffortInactive = new Set<string>();
+
+/** Felan: whether a thinking-level change keeps this model's Claude Code prompt cache. */
+export function supportsPerTurnEffort(model: Pick<Model<any>, "provider" | "id" | "reasoning">): boolean {
+	return model.provider === PROVIDER_ID && model.reasoning === true && PER_TURN_EFFORT_MODELS.has(model.id)
+		&& !perTurnEffortInactive.has(model.id);
+}
 // Felan: activations share one daemon module; the latest settings govern subsequent queries.
 let providerSettings: ClaudeCodeSettings = {};
 let longContextSettings: LongContextSettings = { plan: "pro", longContextExtraUsage: false };
@@ -879,6 +894,7 @@ export const __test = {
 		if (piSessionId === undefined) {
 			sharedSessions.clear();
 			liveSessionIds.clear();
+			perTurnEffortInactive.clear();
 		} else {
 			setSessionStateFor(piSessionId, null);
 			liveSessionIds.delete(piSessionId);
@@ -1135,6 +1151,12 @@ function effortForReasoning(model: Model<any>, reasoning: string | undefined): E
 	const mapped = model.thinkingLevelMap?.[reasoning];
 	if (mapped === undefined) return REASONING_TO_EFFORT[reasoning];
 	return VALID_EFFORTS.has(mapped as EffortLevel) ? mapped as EffortLevel : undefined;
+}
+
+// Felan: pi's "off" level arrives as no reasoning. Disable thinking where the model allows it,
+// as pi-ai's Anthropic adapter does; without this Claude Code's default adaptive thinking runs.
+function thinkingDisabled(model: Model<any>, reasoning: string | undefined): boolean {
+	return !reasoning && model.reasoning === true && model.thinkingLevelMap?.off !== null;
 }
 
 // --- Provider helpers: misc ---
@@ -1580,6 +1602,12 @@ async function consumeQuery(
 				if ((message as any).subtype === "init" && (message as any).session_id) {
 					capturedSessionId = (message as any).session_id;
 				}
+				// Felan: Claude Code's own report of whether an effort change keeps the prompt cache.
+				if ((message as any).subtype === "init" && typeof (message as any).per_turn_effort_active === "boolean") {
+					debug(`provider: per-turn effort active=${(message as any).per_turn_effort_active} model=${model.id}`);
+					if ((message as any).per_turn_effort_active) perTurnEffortInactive.delete(model.id);
+					else perTurnEffortInactive.add(model.id);
+				}
 				break;
 			case "user":
 				// SDK echo of the user prompt — no stream events to emit. Note it
@@ -1762,8 +1790,8 @@ function discardRewrittenQuery(c: QueryContext): void {
  *  resumed process pays; a prompt the running process cannot continue retires it. */
 interface LiveQuery {
 	ctx: QueryContext;
-	sdkQuery: object;
-	/** What the process was started with; a prompt that needs anything else retires it. */
+	sdkQuery: ReturnType<Query>;
+	/** What the process runs with; a prompt that needs anything else, except another effort level, retires it. */
 	config: LiveQueryConfig;
 	/** Between turns: the last one ended on a successful result. */
 	idle: boolean;
@@ -1776,18 +1804,22 @@ interface LiveQuery {
 	exited: Promise<void>;
 	/** Reruns the current turn on a fresh process, for a prompt the exiting process never answered. */
 	replay: (() => void) | null;
+	/** The current turn's prompt has not been written yet; the process may still send stray frames. */
+	promptPending: boolean;
 }
-type LiveQueryConfig = Record<"model" | "cliModel" | "effort" | "cwd" | "systemPrompt" | "tools" | "settings", string>;
+type LiveQueryConfig = Record<"model" | "cliModel" | "effort" | "thinking" | "cwd" | "systemPrompt" | "tools" | "settings", string>;
 const liveQueries = new Map<string, LiveQuery>();
 /** Idle processes still exiting; a fresh query for their session waits so it resumes a complete session file. */
 const retiringQueries = new Map<string, Promise<void>>();
 const RETIRE_GRACE_MS = 10_000;
+const EFFORT_CHANGE_TIMEOUT_MS = 10_000;
 
 function liveQueryConfig(model: Model<any>, tools: Tool[], systemPromptAppend: string | undefined, options: SimpleStreamOptions | undefined): LiveQueryConfig {
 	return {
 		model: model.id,
 		cliModel: claudeCodeModelId(model, longContextSettings),
 		effort: effortForReasoning(model, options?.reasoning) ?? "",
+		thinking: thinkingDisabled(model, options?.reasoning) ? "disabled" : "",
 		cwd: sessionCwdFor(options?.sessionId),
 		systemPrompt: systemPromptAppend ?? "",
 		tools: JSON.stringify(tools.map((tool) => [tool.name, tool.description, tool.parameters])),
@@ -1877,11 +1909,17 @@ function continueLiveQuery(live: LiveQuery, stream: AssistantMessageEventStream,
 		return "the system prompt is unresolved";
 	}
 	const config = liveQueryConfig(model, mcpTools, systemPromptAppend, options);
-	const changed = (Object.keys(config) as (keyof LiveQueryConfig)[]).find((key) => config[key] !== live.config[key]);
+	// Felan: a running process takes another effort level, but not a switch to or from no
+	// effort, which changes its spawn-time thinking flags.
+	const changed = (Object.keys(config) as (keyof LiveQueryConfig)[]).find((key) => config[key] !== live.config[key]
+		&& !(key === "effort" && config.effort && live.config.effort));
 	if (changed) return `${changed} changed`;
 	const promptBlocks = extractUserPromptBlocks(context.messages);
 	const promptText = extractUserPrompt(context.messages);
 	if (!promptBlocks && !promptText) return "the prompt is empty";
+	const effortLevel = config.effort !== live.config.effort ? config.effort as EffortLevel : undefined;
+	const promptStream = c.promptStream;
+	live.config = config;
 
 	claimCurrentPiStream(stream, "live-turn", c, options);
 	c.resetTurnState(model);
@@ -1894,11 +1932,35 @@ function continueLiveQuery(live: LiveQuery, stream: AssistantMessageEventStream,
 	setSessionStateFor(piSessionId, { ...state, cursor });
 	live.idle = false;
 	live.replay = () => void streamAfter(Promise.resolve(), model, context, options, stream);
+	live.promptPending = true;
 	activeQueryContexts.add(c);
 	debug(`provider: live turn on session ${state.sessionId.slice(0, 8)}, msgs=${context.messages.length}, cursor=${cursor}`);
 	live.bindTurnAbort(options?.signal);
-	void c.promptStream?.push(userMessage(promptBlocks ?? [{ type: "text", text: promptText! }]))
-		.catch((error) => debug("provider: live prompt push rejected:", error));
+	const pushPrompt = () => {
+		live.promptPending = false;
+		void promptStream.push(userMessage(promptBlocks ?? [{ type: "text", text: promptText! }]))
+			.catch((error) => debug("provider: live prompt push rejected:", error));
+	};
+	if (!effortLevel) {
+		pushPrompt();
+		return undefined;
+	}
+	// Felan: the level must be in effect before Claude Code reads the prompt. A process
+	// that refuses it ends with the prompt unsent, so live.replay reruns the turn on a fresh one.
+	debug(`provider: live effort change to ${effortLevel}`);
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	const timedOut = new Promise<never>((_resolve, reject) => {
+		timer = setTimeout(() => reject(new Error(`no answer within ${EFFORT_CHANGE_TIMEOUT_MS} ms`)), EFFORT_CHANGE_TIMEOUT_MS);
+		timer.unref?.();
+	});
+	// A query without applyFlagSettings rejects here and takes the same fresh-process path.
+	void Promise.race([Promise.resolve().then(() => live.sdkQuery.applyFlagSettings!({ effortLevel })), timedOut]).finally(() => clearTimeout(timer)).then(() => {
+		if (!options?.signal?.aborted) pushPrompt();
+	}, (error) => {
+		if (options?.signal?.aborted) return;
+		debug("provider: live effort change failed, rerunning the turn on a fresh process:", error);
+		live.end();
+	});
 	return undefined;
 }
 
@@ -2196,6 +2258,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	const claudeExecutable = providerSettings.pathToClaudeCodeExecutable;
 
 	const effort = effortForReasoning(model, options?.reasoning);
+	const noThinking = thinkingDisabled(model, options?.reasoning);
 
 	const extraArgs: Record<string, string | null> = { model: cliModel };
 	if (strictMcpConfigEnabled) extraArgs["strict-mcp-config"] = null;
@@ -2240,6 +2303,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		},
 		extraArgs,
 		...(effort ? { effort } : {}),
+		...(noThinking ? { thinking: { type: "disabled" as const } } : {}),
 		...(mcpServers ? { mcpServers } : {}),
 		...(resumeSessionId ? { resume: resumeSessionId } : {}),
 		...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
@@ -2248,7 +2312,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 	debug("provider: fresh query",
 		`model=${cliModel} msgs=${context.messages.length} tools=${mcpTools.length}`,
-		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? "default"}`,
+		`resume=${resumeSessionId?.slice(0, 8) ?? "none"} effort=${effort ?? (noThinking ? "thinking disabled" : "default")}`,
 		`ctxFiles=${promptCapture?.contextFiles.length ?? 0} strictMcp=${strictMcpConfigEnabled}`,
 		`prompt=${promptText.slice(0, 60)}${promptBlocks ? " [+images]" : ""}`);
 
@@ -2336,6 +2400,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 		kill: onAbort,
 		exited: new Promise<void>((resolve) => { markExited = resolve; }),
 		replay: null,
+		promptPending: false,
 	} : null;
 	// The process is gone: no later prompt may be written to it.
 	const forgetLive = () => {
@@ -2345,7 +2410,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	// fresh one; pi has seen nothing of the turn. Runs once this process is fully gone.
 	let replayAfterExit: (() => void) | null = null;
 	const replayUnansweredTurn = (): boolean => {
-		if (!live?.replay || queryCtx.turnSdkMessages > 0) return false;
+		if (!live?.replay || (queryCtx.turnSdkMessages > 0 && !live.promptPending)) return false;
 		debug("provider: Claude Code process exited before answering its prompt, rerunning the turn on a fresh process");
 		replayAfterExit = live.replay;
 		live.replay = null;

@@ -56,7 +56,7 @@ export interface RegistryMutationContext {
   readonly session: AgentSession;
   assertCurrent(): void;
 }
-const nonRunMutations = new Set(['set_model', 'set_thinking', 'session.rename', 'session.entry.label', 'session.branch.select', 'session.export', 'command.invoke', 'shell.execute', 'processes.write', 'processes.stop', 'steer', 'follow_up', 'executions.steer', 'executions.cancel', 'ui.action']);
+const nonRunMutations = new Set(['set_model', 'set_thinking', 'session.rename', 'session.entry.label', 'session.branch.select', 'session.export', 'command.invoke', 'shell.execute', 'processes.write', 'processes.stop', 'steer', 'follow_up', 'queue.clear', 'executions.steer', 'executions.cancel', 'ui.action']);
 interface Entry {
   binding: SessionBinding;
   projection: SessionProjection;

@@ -125,8 +125,9 @@ bridge's measured compatibility table. Unknown models default to 200K; use
   service. Subagents receive their own Claude Code conversations. The deprecated
   upstream AskClaude tool is not included; use Felan subagents.
 - Each Felan session keeps its Claude Code process between prompts and writes
-  the next prompt to it. A change of model, thinking level, tools, working
-  directory, projected instructions, or bridge settings, or a history rewrite,
+  the next prompt to it. A new thinking level is applied to the running process
+  first. A change of model, tools, working directory, projected instructions, or
+  bridge settings, switching thinking off or back on, or a history rewrite,
   starts a new process that resumes the conversation. The process stops when the
   session shuts down (including daemon idle eviction) or switches to another
   model; an idle process uses roughly 200–260 MB of memory.

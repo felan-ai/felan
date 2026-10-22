@@ -27,6 +27,7 @@ export interface SDKMessage {
 export interface SdkQuery extends AsyncIterable<SDKMessage> {
   interrupt(): Promise<void>;
   close(): void;
+  applyFlagSettings?(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
 }
 
 export interface McpRequest {
@@ -59,6 +60,7 @@ export interface SdkQueryOptions {
   systemPrompt?: string | { type: 'preset'; preset: 'claude_code'; append?: string };
   extraArgs?: Record<string, string | null>;
   effort?: EffortLevel;
+  thinking?: { type: 'disabled' };
   mcpServers?: Record<string, SdkMcpServer>;
   resume?: string;
   pathToClaudeCodeExecutable?: string;

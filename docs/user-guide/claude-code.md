@@ -56,10 +56,11 @@ local host's runtime-dependency service; status remains available without it.
    session JSONL files and resumes that conversation while the histories agree.
    Each Felan session, including a subagent, has its own conversation mirror.
 4. Each Felan session keeps its Claude Code process running between prompts,
-   so a later prompt skips process startup and session reload. Changing the
-   model, thinking level, tools, working directory, projected instructions, or
-   bridge settings, or rewriting history (compaction, tree navigation, or an
-   abort), starts a new process that resumes the conversation. The process
+   so a later prompt skips process startup and session reload. A new thinking
+   level is applied to the running process before the next prompt. Changing the
+   model, tools, working directory, projected instructions, or bridge settings,
+   switching thinking off or back on, or rewriting history (compaction, tree
+   navigation, or an abort), starts a new process that resumes the conversation. The process
    stops when the session closes, switches to a non-Claude Code model, or is
    evicted by the daemon after it has been idle with no attached client. An
    idle process uses roughly 200–260 MB of memory.
@@ -126,7 +127,7 @@ follow the bridge's compatibility table; unknown models default to 200K. Use
 | Compaction, branch summaries, and automatic titles | Tool-free requests run as isolated queries without modifying the main Claude Code conversation. |
 | Model Fusion | Prompt-only, tool-free single-user-message participant, comparison, and synthesis calls through Felan's Models service use isolated queries when there is no captured session prompt, not the active conversation. |
 | Subagents and Prewalk | Keep Felan's lifecycle and model selection; each child has its own Claude Code conversation. |
-| Images and reasoning | Image inputs are preserved; Felan thinking levels map to model-supported Claude effort levels. |
+| Images and reasoning | Image inputs are preserved; Felan thinking levels map to model-supported Claude effort levels, and `off` disables thinking on models that allow it. On Claude models with Claude Code per-turn effort (Fable 5.1, Opus 5, Opus 5.5, Sonnet 5.5, and Haiku 5.5), a level change keeps the prompt cache and [dynamic thinking](configuration.md#dynamic-thinking-level) applies, unless Claude Code reports per-turn effort as inactive for the model. On other models a level change rewrites the cached prefix, and turning thinking on from `off` starts a new process. |
 | Powerline | Shows Claude Plan usage from SDK rate-limit events when available; no separate credential fetch. It shows no usage error before the first headers arrive. |
 
 Compaction, tree navigation, aborts, and model switches can force a history

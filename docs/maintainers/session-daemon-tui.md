@@ -16,17 +16,21 @@ behind admitted daemon operations.
   first session is being created.
 - A normal Enter submits a prompt when idle and steers an active turn. Alt+Enter
   queues a follow-up. Shift+Enter keeps a newline in the editor.
-- Escape cancels the current run. Ctrl+D on an empty editor and `/exit` detach
-  the client; they do not stop a run or dispose the daemon.
+- Queued messages appear above the editor as dim `Steering:` and `Follow-up:`
+  lines. Alt+Up restores all queued text before the current draft for editing;
+  the shortcut hint appears only when queue clearing is supported and bound.
+- Escape restores queued messages before cancelling the current run when the
+  daemon supports queue clearing. Cancellation still runs if restoration fails.
+  Ctrl+D on an empty editor and `/exit` detach the client; they do not stop a run
+  or dispose the daemon.
 - `/close` closes the session without a confirmation; attaching later reopens it. `/cwd` creates a
   new session in the chosen directory after the current run settles.
-- `/model`, `/thinking`, `/compact`, `/rename`, `/reload`, `/queue`, `/fork` and
-  `/tree` use the server's catalog and operations. Targeted queue editing remains
-  unavailable; queue display and steer/follow-up enqueue are supported.
+- `/model`, `/thinking`, `/compact`, `/rename`, `/reload`, `/fork` and `/tree`
+  use the server's catalog and operations.
 - Fork selection covers stored user entries across branches and forks before
   the selected entry. It can restore full known text to the editor but never
   automatically submits it. Numeric positions remain zero-based.
-- Ctrl+L selects a model, Ctrl+P/Alt+P cycle models, Shift+Tab cycles thinking,
+- Ctrl+L selects a model, Ctrl+P/Ctrl+Shift+P cycle models, Shift+Tab cycles thinking,
   Ctrl+O expands tools and Ctrl+T toggles thinking. The key map uses public TUI
   primitives and loads daemon-owned preferences and keybinding overrides.
 

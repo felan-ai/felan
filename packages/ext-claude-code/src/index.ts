@@ -1,5 +1,10 @@
-import { associateExtensionConfig, RUNTIME_DEPENDENCIES_SERVICE, type FelanExtension } from '@felan-ai/agent-core';
-import { activateClaudeCodeBridge } from './bridge/index.js';
+import {
+  associateExtensionConfig,
+  RUNTIME_DEPENDENCIES_SERVICE,
+  type ConfiguredFelanExtension,
+  type FelanExtension,
+} from '@felan-ai/agent-core';
+import { activateClaudeCodeBridge, supportsPerTurnEffort } from './bridge/index.js';
 import { registerClaudeCodeCommand } from './command.js';
 import { CLAUDE_CODE_CONFIG, claudeCodeSettingsFromConfig } from './config.js';
 import { inspectClaudeCodeRuntime } from './managed/index.js';
@@ -32,7 +37,12 @@ const claudeCodeExtension: FelanExtension = async (pi) => {
   }
 };
 
-export default Object.assign(claudeCodeExtension, { serviceRequirements: { optional: [RUNTIME_DEPENDENCIES_SERVICE] } });
+export default Object.assign(claudeCodeExtension, {
+  serviceRequirements: { optional: [RUNTIME_DEPENDENCIES_SERVICE] },
+  execution: (() => ({
+    supportsNativeThinkingUpdates: supportsPerTurnEffort,
+  })) satisfies NonNullable<ConfiguredFelanExtension['execution']>,
+});
 associateExtensionConfig(claudeCodeExtension, CLAUDE_CODE_CONFIG);
 
 export { activateClaudeCodeBridge } from './bridge/index.js';

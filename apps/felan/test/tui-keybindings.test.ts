@@ -7,13 +7,24 @@ it('keeps model, thinking, follow-up and disclosure shortcuts in the client', ()
   expect(keys.matches('\x10', 'app.model.cycleForward')).toBe(true);
   expect(keys.matches('\x1b[Z', 'app.thinking.cycle')).toBe(true);
   expect(keys.matches('\x1b\r', 'app.message.followUp')).toBe(true);
+  expect(keys.matches('\x1b[1;3A', 'app.message.dequeue')).toBe(true);
   expect(keys.matches('\x0f', 'app.tools.expand')).toBe(true);
 });
 
+it('reserves the legacy Option+Up sequence for dequeuing instead of model cycling', () => {
+  const keys = createClientKeybindings();
+  expect(keys.getKeys('app.model.cycleBackward')).toEqual(['shift+ctrl+p']);
+  expect(keys.matches('\x1bp', 'app.message.dequeue')).toBe(true);
+  expect(keys.matches('\x1bp', 'app.model.cycleBackward')).toBe(false);
+  expect(keys.matches('\x1b[112;6u', 'app.model.cycleBackward')).toBe(true);
+});
+
 it('supports client-local keybinding overrides without loading Pi private modules', () => {
-  const keys = createClientKeybindings({ 'app.model.select': 'alt+m' });
+  const keys = createClientKeybindings({ 'app.model.select': 'alt+m', 'app.model.cycleBackward': 'alt+p' });
   expect(keys.matches('\x0c', 'app.model.select')).toBe(false);
   expect(keys.matches('\x1bm', 'app.model.select')).toBe(true);
+  expect(keys.matches('\x1bp', 'app.model.cycleBackward')).toBe(true);
+  expect(keys.matches('\x1b[112;6u', 'app.model.cycleBackward')).toBe(false);
 });
 
 it('provides the session panel shortcuts used by memory and selection views', () => {
