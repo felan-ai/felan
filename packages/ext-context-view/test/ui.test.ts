@@ -1,6 +1,6 @@
 import { createUnavailableExtensionUi, type ExtensionUi, type UiElementHandle, type UiPresentOptions } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import type { ContextReport, ContextViewPresentationHost } from '../src/report.js';
+import type { ContextReport } from '../src/report.js';
 import { CONTEXT_DOCUMENT_HINT, createContextViewUiHost } from '../src/ui.js';
 
 

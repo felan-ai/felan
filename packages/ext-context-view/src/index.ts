@@ -1,4 +1,4 @@
-import { CATEGORY_SUMMARIES, USED_CATEGORIES, formatTokens, formatPercent, type ContextReport, type MemoryBreakdown, type ExtensionDetail, type SkillDetail, type UsedEstimates, type UsedCategoryKey, type ContextViewPresentationHost } from "./report.js";
+import { USED_CATEGORIES, formatTokens, type ContextReport, type MemoryBreakdown, type ExtensionDetail, type SkillDetail, type UsedEstimates, type UsedCategoryKey, type ContextViewPresentationHost } from "./report.js";
 import {
 	formatSkillsForPrompt,
 	PROJECT_INSTRUCTIONS_CUSTOM_TYPE,
@@ -575,22 +575,6 @@ function countContextFileHeadings(section: string): number {
 	const headings = section.split("\n").filter((line) => line.startsWith("## ")).length;
 	const xmlFiles = [...section.matchAll(/<project_instructions\b/g)].length;
 	return Math.max(headings, xmlFiles);
-}
-
-function formatCompactReport(report: ContextReport): string {
-	const denominator = report.contextWindow ?? report.usedTokens;
-	const suffix = report.estimated ? " estimated" : "";
-	const total = report.contextWindow === null ? formatTokens(report.usedTokens) : `${formatTokens(report.usedTokens)} / ${formatTokens(report.contextWindow)}`;
-	const rows = CATEGORY_SUMMARIES.map((definition) => {
-		const tokens = report.breakdown[definition.key];
-		const percent = denominator > 0 ? (tokens / denominator) * 100 : null;
-		return `${definition.label}: ${formatTokens(tokens)} (${formatPercent(percent)})`;
-	});
-	const memory = [`Memory: summary ${formatTokens(report.memory.summary)}, index ${formatTokens(report.memory.index)}, schema ${formatTokens(report.memory.schema)}, recalls ${formatTokens(report.memory.recalls)}`];
-	const extensions = report.extensionDetails.length > 0 ? ["Extensions:", ...report.extensionDetails.map((detail) => `  ${detail.label}: ${detail.toolCount} tool${detail.toolCount === 1 ? "" : "s"}, ${formatTokens(detail.tokens)} context`)] : [];
-	const skills = report.skillDetails.length > 0 ? ["Skills:", ...report.skillDetails.map((detail) => `  ${detail.label}: ${detail.promptVisible ? formatTokens(detail.tokens) : "not in prompt"}`)] : [];
-
-	return [`Context Usage: ${total} (${formatPercent(report.usagePercent)})${suffix}`, ...rows, ...memory, ...extensions, ...skills].join("\n");
 }
 
 function formatModelLabel(ctx: ExtensionCommandContext): string | null {

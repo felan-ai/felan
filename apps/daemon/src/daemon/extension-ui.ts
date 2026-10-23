@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { stripVTControlCharacters } from 'node:util';
 import type { AgentSession } from '@felan-ai/agent-core';
-import { LIMITS, PresentationSchema, parseSchema, parseUiForm,
+import { LIMITS, PresentationSchema, parseSchema,
   type Interaction, type Presentation } from '@felan-ai/session-protocol';
 import { createUiVocabulary, type UiVocabulary } from './ui-vocabulary.js';
 import type { SessionUiPort } from './session-execution.js';

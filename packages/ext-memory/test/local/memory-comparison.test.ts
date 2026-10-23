@@ -7,7 +7,7 @@ import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { Api, Model, ModelsService } from '@felan-ai/agent-core';
+import type { Api, Model } from '@felan-ai/agent-core';
 import { createMemoryNavigationGuide, digestActiveBranch, type MemoryInputManifest } from '../../src/index.js';
 
 

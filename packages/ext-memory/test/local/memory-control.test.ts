@@ -5,7 +5,7 @@ let { LocalMemoryCoordinator } = createMemoryBackend();
 beforeMemoryTest(() => { ({ LocalMemoryCoordinator } = createMemoryBackend()); });
 import type { MemoryStatus } from '@felan-ai/ext-memory';
 import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { controlFixtureExtension } from './control-fixture.js';
 
 

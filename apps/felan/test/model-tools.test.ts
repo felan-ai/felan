@@ -8,7 +8,6 @@ import {
   ModelRuntime,
   MODELS_SERVICE,
   SessionManager,
-  createAssistantMessageEventStream,
   createExtensionServiceAccess,
   createFelanServiceRegistry,
   type AgentSession,

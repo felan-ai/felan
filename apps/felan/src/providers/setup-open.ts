@@ -7,10 +7,10 @@ export async function openHostUrl(runtime: AgentRuntime, value: string, signal: 
   await openTarget(runtime, url.toString(), signal);
 }
 
-export function prepareLocalInteractionOpen(options: {
+export function prepareLocalInteractionOpen(_options: {
   runtime: AgentRuntime;
   assertOwnsPath(path: string): unknown;
-}, request: Interaction['request'], signal: AbortSignal): () => Promise<void> {
+}, _request: Interaction['request'], signal: AbortSignal): () => Promise<void> {
   signal.throwIfAborted();
   throw new Error('This interaction cannot open an external application.');
 }

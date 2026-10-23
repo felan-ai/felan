@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { CURRENT_SESSION_VERSION, SESSION_EXECUTION_LIMITS, type ModelReference, type SessionExecutionInput, type SessionManager } from '@felan-ai/agent-core';
-import type { ControlSession, ControlSessionMetadata, ExecutionMetadata } from './control-state.js';
+import type { ControlSessionMetadata, ExecutionMetadata } from './control-state.js';
 import type { SessionRegistry } from './registry.js';
 import { redact } from '../logger.js';
 

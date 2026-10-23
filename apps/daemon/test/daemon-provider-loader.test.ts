@@ -1,6 +1,6 @@
 import { Type } from 'typebox';
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
-import { defineServiceContract, HOST_RUNTIME_SERVICE, type AgentRuntime, type ModelReference, type ModelRuntime } from '@felan-ai/agent-core';
+import { defineServiceContract, type AgentRuntime, type ModelReference, type ModelRuntime } from '@felan-ai/agent-core';
 import { parseSchema } from '@felan-ai/session-protocol';
 import { HostConfigSchema, type HostConfig } from '../src/daemon/host-config.js';
 import { createConfiguredProviders, ProviderStartupError } from '../src/daemon/provider-loader.js';
@@ -22,7 +22,7 @@ function config(services: HostConfig['services']): HostConfig {
 
 function moduleUrl(specifier: string): string { return `file:///trusted/modules/${specifier.replaceAll('/', '-')}.js`; }
 
-function providerFor(specifier: string) {
+function providerFor(_specifier: string) {
   return async (url: string) => {
     const value = [...providers].find(([name]) => moduleUrl(name) === url)?.[1];
     if (!value) throw new Error(`Unexpected provider import: ${url}`);

@@ -1,5 +1,4 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { join } from 'node:path';
 import type { Interaction } from '@felan-ai/session-protocol';
 import { createRegistryInteractionBroker } from '../../daemon/src/daemon/broker.js';
 import { prepareHostInteraction } from '../../daemon/src/setup/open.js';

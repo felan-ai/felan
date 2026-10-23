@@ -11,7 +11,6 @@ import {
   normalizeProviderSelection,
   webAccessConfigFromSettings,
   WEB_ACCESS_CONFIG,
-  type WebAccessConfig,
 } from './config.js';
 import { findContentMatches, mergeContentMatches, type MergedContentMatch } from './content-find.js';
 import { extractContent, fetchWithConcurrency, type LlmsTxtProbeMap } from './extract.js';

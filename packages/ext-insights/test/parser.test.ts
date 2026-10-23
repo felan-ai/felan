@@ -1,5 +1,5 @@
-import { describe, it, expect, afterEach } from "vitest";
-import { writeFile, unlink, mkdtemp, readFile } from "node:fs/promises";
+import { describe, it, expect } from "vitest";
+import { writeFile, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSessionTranscript, sliceParsedSession } from "../src/parser.js";

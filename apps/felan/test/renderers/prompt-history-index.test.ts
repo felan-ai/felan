@@ -1,4 +1,4 @@
-import type { ExtensionCommandContext, ExtensionContext, FelanExtensionAPI, SessionEntry } from '@felan-ai/agent-core';
+import type { ExtensionContext, FelanExtensionAPI, SessionEntry } from '@felan-ai/agent-core';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { describe, expect, it, vi } from 'vitest';
 import { createPromptHistoryExtension } from '../../../../packages/ext-prompt-history/src/index.js';
@@ -71,12 +71,4 @@ function entry(id: string, content: unknown, timestamp: string): SessionEntry {
 
 function fakePi(overrides: Partial<FelanExtensionAPI> = {}): FelanExtensionAPI {
   return { config: {}, registerShortcut: vi.fn(), registerCommand: vi.fn(), on: vi.fn(), ...overrides } as unknown as FelanExtensionAPI;
-}
-
-function fakeContext(overrides: Record<string, unknown> = {}): ExtensionCommandContext {
-  return {
-    mode: 'tui', hasUI: true, cwd: '/workspace', ui: { custom: vi.fn(), setEditorText: vi.fn() },
-    sessionManager: { getSessionDir: () => '/sessions', getSessionFile: () => '/current.jsonl', getSessionId: () => 'current', getCwd: () => '/workspace', getSessionName: () => undefined, getEntries: () => [] },
-    ...overrides,
-  } as unknown as ExtensionCommandContext;
 }

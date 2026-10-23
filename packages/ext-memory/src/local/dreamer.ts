@@ -26,7 +26,7 @@ import {
   type Classifier,
   type Model,
 } from '@felan-ai/agent-core';
-import { createMemoryInputManifest, createMemoryDreamerInstructions, collectMemoryCandidates, materializeMemoryInputDelta, partitionMemoryTranscript, renderMemoryInspectView, isSafeMemoryPath, isSafeInputPath, type MemoryArtifact, type MemoryInputManifest, type MemoryInputSession, type MemorySnapshot, type SessionCheckpoint, triageMemoryCandidates } from '../index.js';
+import { createMemoryInputManifest, createMemoryDreamerInstructions, collectMemoryCandidates, partitionMemoryTranscript, renderMemoryInspectView, isSafeMemoryPath, isSafeInputPath, type MemoryArtifact, type MemoryInputManifest, type MemoryInputSession, type MemorySnapshot, type SessionCheckpoint, triageMemoryCandidates } from '../index.js';
 import { materializeMemorySessionCheckpoint } from '../session-history.js';
 
 
@@ -650,9 +650,3 @@ function sha256(value: string): string {
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw new Error('Memory processing was cancelled');
 }
-
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-

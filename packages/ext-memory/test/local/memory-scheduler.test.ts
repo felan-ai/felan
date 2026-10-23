@@ -9,7 +9,6 @@ import { access, mkdtemp, mkdir, readFile, writeFile, rm } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ModelsService } from '@felan-ai/agent-core';
 import { digestActiveBranch } from '@felan-ai/ext-memory';
 
 import type { LocalMemoryCoordinatorOptions } from '../../src/local/coordinator.js';

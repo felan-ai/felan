@@ -2,7 +2,6 @@ import type {
   AgentRuntime,
   Api,
   ExtensionContext,
-  FelanExtension,
   FelanExtensionAPI,
   Model,
 } from '@felan-ai/agent-core';

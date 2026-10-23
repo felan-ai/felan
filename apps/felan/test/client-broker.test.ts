@@ -2,7 +2,7 @@ import { sessionUiPort } from './session-ui-fixture.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Type } from 'typebox';
 import type { ExtensionAPI, ExtensionContext } from '@felan-ai/agent-core';
-import { LIMITS, parseInteraction, type Interaction } from '@felan-ai/session-protocol';
+import { parseInteraction, type Interaction } from '@felan-ai/session-protocol';
 import { SessionClient, newRequestId } from '../src/client/client.js';
 import { createBrowserAuthorizationPresentation } from '../src/providers/ui/extension-ui.js';
 import { createSessionExtensionUi } from '../../daemon/src/daemon/extension-ui.js';

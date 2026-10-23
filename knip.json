@@ -1,0 +1,423 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": [
+    "**/dist/**",
+    "**/.artifacts/**",
+    "**/.report-build/**",
+    "perf/results/**",
+    "evals/**",
+    "**/src/generated/**",
+    "**/*.generated.{ts,tsx,js,mjs}",
+    "packages/ext-claude-code/test/upstream/fixtures/**"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/**/*.mjs!",
+        "perf/*.mjs!",
+        "perf/test/**/*.mjs"
+      ],
+      "project": [
+        "scripts/**/*.mjs!",
+        "perf/*.mjs!",
+        "perf/test/**/*.mjs"
+      ]
+    },
+    "apps/daemon": {
+      "entry": [
+        "src/index.ts!",
+        "src/version.ts!",
+        "src/daemon/host-config.ts!",
+        "src/host-token.ts!",
+        "src/daemon/session-runtime.ts!",
+        "src/daemon/bootstrap.ts!",
+        "src/daemon/provider.ts!",
+        "src/client.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "apps/felan": {
+      "ignoreDependencies": [
+        "@felan-ai/ext-codex",
+        "@felan-ai/ext-context",
+        "@felan-ai/ext-memory",
+        "@felan-ai/ext-model-tools",
+        "@felan-ai/ext-subagents",
+        "@felan-ai/ext-web-access"
+      ],
+      "entry": [
+        "src/index.ts!",
+        "src/daemon-host.ts!",
+        "src/providers/runtime.ts!",
+        "src/providers/models.ts!",
+        "src/providers/secrets.ts!",
+        "src/providers/sessions.ts!",
+        "src/providers/session-runtime.ts!",
+        "src/providers/runtime-dependencies.ts!",
+        "src/providers/savings.ts!",
+        "src/providers/browser-authorization.ts!",
+        "src/providers/mcp-callback.ts!",
+        "src/providers/felan-platform.ts!",
+        "src/providers/llama/extension.ts!",
+        "src/cli.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/agent-core": {
+      "entry": [
+        "src/index.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-ask-user": {
+      "entry": [
+        "src/data.ts!",
+        "src/extension.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-background-bash": {
+      "entry": [
+        "src/extension.ts!",
+        "src/data.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-browser": {
+      "entry": [
+        "src/extension.ts!",
+        "src/presentation.ts!",
+        "src/service.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-claude-code": {
+      "entry": [
+        "src/index.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-codebase-memory": {
+      "entry": [
+        "src/index.ts!",
+        "src/runtime.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-codex": {
+      "entry": [
+        "src/index.ts!",
+        "src/runtime.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-context": {
+      "entry": [
+        "src/index.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-context-view": {
+      "entry": [
+        "src/data.ts!",
+        "src/extension.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-felan-api": {
+      "entry": [
+        "src/extension.ts!",
+        "src/service.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-fusion": {
+      "entry": [
+        "src/data.ts!",
+        "src/index.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-insights": {
+      "entry": [
+        "src/data.ts!",
+        "src/extension.ts!",
+        "src/report-app/main.tsx!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-markitdown": {
+      "entry": [
+        "src/index.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-mcp": {
+      "entry": [
+        "src/extension.ts!",
+        "src/service.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-memory": {
+      "entry": [
+        "src/data.ts!",
+        "src/extension.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-model-tools": {
+      "entry": [
+        "src/extension.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-output-style": {
+      "entry": [
+        "src/extension.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-powerline": {
+      "entry": [
+        "src/extension.ts!",
+        "src/data.ts!",
+        "src/runtime.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-prewalk": {
+      "entry": [
+        "src/data.ts!",
+        "src/extension.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-prompt-history": {
+      "entry": [
+        "src/data.ts!",
+        "src/extension.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-rtk-optimizer": {
+      "entry": [
+        "src/index.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-session-compaction": {
+      "entry": [
+        "src/index.ts!",
+        "src/presentation.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-session-title": {
+      "entry": [
+        "src/index.ts!",
+        "src/view.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-subagents": {
+      "entry": [
+        "src/extension.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-tasks": {
+      "entry": [
+        "src/extension.ts!",
+        "src/data.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/ext-web-access": {
+      "entry": [
+        "src/index.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    },
+    "packages/session-protocol": {
+      "entry": [
+        "src/index.ts!",
+        "test/**/*.test.{ts,mts,mjs}",
+        "scripts/*.mjs!"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}",
+        "scripts/**/*.mjs!"
+      ]
+    }
+  }
+}

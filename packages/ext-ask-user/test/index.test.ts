@@ -158,7 +158,7 @@ describe('@felan-ai/ext-ask-user core', () => {
   });
 
   it('delegates normalized requests and returns answered details', async () => {
-    const ask = vi.fn<AskUserHost['ask']>(async (request, context) => {
+    const ask = vi.fn<AskUserHost['ask']>(async (_request, context) => {
       context.reportProgress([{ questionId: 'q1', response: { kind: 'selection', selections: ['Beta'] } }]);
       return {
         status: 'answered',

@@ -74,11 +74,11 @@ export class TranscriptAssistant extends Container {
 export class TranscriptCompaction extends Box {
   private expanded = false;
   constructor(private readonly message: CompactionMessage, private readonly markdown: MarkdownTheme,
-    private readonly theme: () => Theme, private padding: number, private readonly hint: () => string, private readonly method?: string) {
+    private readonly theme: () => Theme, padding: number, private readonly hint: () => string, private readonly method?: string) {
     super(padding, 1, text => theme().bg('customMessageBg', text)); this.update();
   }
   setExpanded(value: boolean): void { this.expanded = value; this.update(); }
-  setOutputPad(value: number): void { this.padding = value; this.setPaddingX(value); this.update(); }
+  setOutputPad(value: number): void { this.setPaddingX(value); this.update(); }
   override invalidate(): void { this.update(); super.invalidate(); }
   private update(): void {
     this.clear(); const content = new Container();

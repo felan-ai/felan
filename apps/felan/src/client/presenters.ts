@@ -3,7 +3,7 @@ import type { ExtensionContext } from '@felan-ai/agent-core';
 import { createTuiAskUserPresenter, type AskUserPresenterUi } from '../tui/renderers/ask-user.js';
 import {
   parseInteraction, validateInteractionAnswer,
-  type Interaction, type InteractionAnswer, type Presentation,
+  type Interaction, type InteractionAnswer,
   type UiPresentation,
 } from '@felan-ai/session-protocol';
 import { createGenericTuiDriver } from '../tui/generic-ui.js';

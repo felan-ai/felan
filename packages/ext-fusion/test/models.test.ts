@@ -73,7 +73,7 @@ describe('Fusion model runtime', () => {
   });
 
   it('rejects models outside the authenticated session scope', () => {
-    const { ctx, available } = context({ scoped: [availableFake() ] });
+    const { ctx } = context({ scoped: [availableFake() ] });
     expect(() => resolveFusionModels(ctx, ['openai/gpt-5', 'other/private'], 'openai/gpt-5'))
       .toThrow('unavailable, unauthenticated, or outside the session model scope');
   });

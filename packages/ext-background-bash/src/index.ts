@@ -255,7 +255,7 @@ export function createBackgroundBashExtension(): FelanExtension {
         'Use list_background_bash to discover processes started in this root session and workspace, including its subagents.',
       ],
       parameters: BashParams,
-      async execute(_toolCallId, params: BashParams, signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params: BashParams, signal, _onUpdate, _ctx) {
         if (signal?.aborted) throw new Error('Command cancelled');
         const timeoutSeconds = params.timeout ?? config.foregroundTimeoutSeconds;
         const interactive = params.tty === true;
@@ -349,7 +349,7 @@ export function createBackgroundBashExtension(): FelanExtension {
       description: 'List a bounded recent page of root-session workspace processes, including subagents. Follow nextCursor for older results; use status: running to search for older running jobs.',
       promptSnippet: 'List workspace background processes and their status',
       parameters: ListBackgroundBashParams,
-      async execute(_toolCallId, params: ListBackgroundBashParams, _signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params: ListBackgroundBashParams, _signal, _onUpdate, _ctx) {
         const page = await manager.query(params);
         const jobs = page.jobs;
         for (const job of jobs) {
@@ -365,7 +365,7 @@ export function createBackgroundBashExtension(): FelanExtension {
       description: 'Read the trailing output of a background process by id.',
       promptSnippet: 'Read output from a background process by id',
       parameters: ReadBackgroundBashParams,
-      async execute(_toolCallId, params: ReadBackgroundBashParams, _signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params: ReadBackgroundBashParams, _signal, _onUpdate, _ctx) {
         const output = await manager.tail(params.id, params.lines ?? 80);
         const job = await manager.get(params.id);
         if (isTerminalStatus(job.status.status)) suppressCompletion(job.meta.id);
@@ -383,7 +383,7 @@ export function createBackgroundBashExtension(): FelanExtension {
       description: 'Wait for a background process to finish, or return current status after a timeout. Use read_background_bash for output.',
       promptSnippet: 'Wait for a background process and return its status',
       parameters: WaitBackgroundBashParams,
-      async execute(_toolCallId, params: WaitBackgroundBashParams, signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params: WaitBackgroundBashParams, signal, _onUpdate, _ctx) {
         const wasWatched = suppressCompletion(params.id);
         let result: Awaited<ReturnType<BackgroundBashManager['wait']>>;
         try {
@@ -407,7 +407,7 @@ export function createBackgroundBashExtension(): FelanExtension {
       description: 'Stop a running background process by id and mark it as killed.',
       promptSnippet: 'Stop a running background process by id',
       parameters: StopBackgroundBashParams,
-      async execute(_toolCallId, params: StopBackgroundBashParams, _signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params: StopBackgroundBashParams, _signal, _onUpdate, _ctx) {
         const wasWatched = suppressCompletion(params.id);
         let job: BackgroundBashJob;
         try {
@@ -430,7 +430,7 @@ export function createBackgroundBashExtension(): FelanExtension {
       description: 'Write exact text or control bytes to a running background process with a PTY.',
       promptSnippet: 'Send stdin or control bytes to a background process with a PTY',
       parameters: WriteBackgroundBashParams,
-      async execute(_toolCallId, params: WriteBackgroundBashParams, _signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params: WriteBackgroundBashParams, _signal, _onUpdate, _ctx) {
         const result = await manager.writeInteractive(params.id, params.chars);
         const job = await manager.get(params.id);
         if (!result.running) suppressCompletion(job.meta.id);
@@ -473,7 +473,7 @@ export function createBackgroundBashExtension(): FelanExtension {
     return runtimeCheck;
   };
 
-  const enableExtension = async (ctx: ExtensionContext) => {
+  const enableExtension = async (_ctx: ExtensionContext) => {
     if (!await ensureRuntimeAvailable()) {
       disableExtension();
       return;

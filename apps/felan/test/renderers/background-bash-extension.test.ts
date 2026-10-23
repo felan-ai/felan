@@ -13,7 +13,6 @@ import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BackgroundBashManager,
-  createBackgroundBashExtension,
   type BackgroundBashJob,
   type BackgroundBashStatus,
 } from '../../../../packages/ext-background-bash/src/index.js';

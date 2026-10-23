@@ -6,12 +6,11 @@ import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type
 import type { SessionRegistry } from './registry.js';
 import type { LegacySession } from './legacy-sessions.js';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
-import { boundedText, digest, promptInput } from './projection.js';
+import { boundedText, promptInput } from './projection.js';
 import { projectTreeEntries } from './tree.js';
 import { prepareExport, prepareImport, publishExport, stageImport } from './session-files.js';
-import { sha256 } from './persistence.js';
 import { canonicalPath } from './profile-storage.js';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 
 export async function forkSession(
   registry: SessionRegistry,

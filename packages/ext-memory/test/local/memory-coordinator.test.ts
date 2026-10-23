@@ -5,21 +5,18 @@ import { createMemoryBackend } from './backend.js';
 import type { LocalMemoryStore } from './backend.js';
 let { LocalMemoryCoordinator, createDefaultLocalMemoryDreamRunner, acquireLocalMemoryLease, resolveLocalMemoryProject, LocalMemoryStore, faults } = createMemoryBackend();
 beforeMemoryTest(() => { ({ LocalMemoryCoordinator, createDefaultLocalMemoryDreamRunner, acquireLocalMemoryLease, resolveLocalMemoryProject, LocalMemoryStore, faults } = createMemoryBackend()); });
-import { createHash } from 'node:crypto';
 import { access, mkdir, mkdtemp, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
-  createEmptyMemoryArtifact,
-  createMemorySnapshot,
   createSessionCheckpoint,
   digestActiveBranch,
   MEMORY_CONTEXT_CUSTOM_TYPE,
   removeMemoryContextEntries,
   type MemoryArtifact,
 } from '@felan-ai/ext-memory';
-import { SessionManager, type Api, type Model, type ModelsService } from '@felan-ai/agent-core';
+import { SessionManager, type Api, type Model } from '@felan-ai/agent-core';
 
 
 

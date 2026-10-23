@@ -6,7 +6,6 @@ import type {
   ExtensionConfigOverride,
   FelanExecutionContribution,
   Model,
-  ModelRuntime,
   StreamFunction,
 } from '@felan-ai/agent-core';
 import { createExtensionServiceAccess, createFelanServiceRegistry, createSilentLogger, getExtensionConfigDefinition, loadFelanExtensions, resolveExtensionConfigs } from '@felan-ai/agent-core';
@@ -102,7 +101,6 @@ describe('Codex package execution contribution', () => {
 });
 
 function sessionImporters(): readonly ExtensionPackageImporter[] {
-  const modelRuntime = {} as ModelRuntime;
   return [
     importLocalExtension,
     importLocalExtension,

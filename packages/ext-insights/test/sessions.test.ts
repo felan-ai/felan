@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import {
-  SESSION_HISTORY_LIMITS, SessionsServiceError, type AgentRuntime, type ExtensionUi, type SessionsHistory, type UiDocument, type UiElementHandle, type UiPresentOptions,
+  SESSION_HISTORY_LIMITS, SessionsServiceError, type AgentRuntime, type ExtensionUi, type SessionsHistory, type UiDocument, type UiElementHandle,
 } from '@felan-ai/agent-core';
 import { createSessionsInsights } from '../src/sessions.js';
 import type { InsightsReport } from '../src/contracts.js';

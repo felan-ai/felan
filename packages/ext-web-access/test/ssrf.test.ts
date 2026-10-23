@@ -107,7 +107,7 @@ describe('SSRF protection', () => {
 
   it('strips credentials from cross-origin redirects when they are permitted', async () => {
     const dispatcher = new Agent();
-    const fetchImpl = vi.fn(async (_url, init) => fetchImpl.mock.calls.length === 1
+    const fetchImpl = vi.fn(async (_url, _init) => fetchImpl.mock.calls.length === 1
       ? new Response('', { status: 302, headers: { location: 'https://redirected.example/result' } })
       : new Response('ok'));
 
@@ -239,7 +239,7 @@ describe('SSRF protection', () => {
 
   it('builds the default dispatcher from the validated DNS answers', async () => {
     const addresses = [{ address: '93.184.216.34', family: 4 }];
-    undiciFetch.mockImplementationOnce(async (_url, init) => {
+    undiciFetch.mockImplementationOnce(async (_url, _init) => {
       const lookup = agentOptions.at(-1)?.connect?.lookup;
       expect(lookup).toBeTypeOf('function');
       await expect(runLookup(lookup!, 'public.example')).resolves.toEqual(addresses[0]);

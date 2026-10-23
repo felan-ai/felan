@@ -11,10 +11,8 @@ import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
   SessionManager,
-  type SessionInfo,
 } from '@felan-ai/agent-core';
-import type { ExtensionContext } from '@felan-ai/agent-core';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { safeMemoryText, validMemoryRunId } from './backend.js';
 import { localMemoryProjectDirectory } from './backend.js';
 import { MEMORY_RUN_ENTRY } from './backend.js';

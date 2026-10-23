@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { Type } from 'typebox';
 import { canonicalProspectivePath, pathInside } from './target.js';
 import { CONTROL_LIMITS, ControlResourceSchema, ControlSessionMetadataSchema, ControlSessionSchema, ControlStoreError, SessionProfileSchema, assertControlRow, parseControlState, type ControlContinuation, type ControlProjection, type ControlRequest, type ControlResource, type ControlSession, type ControlSessionMetadata, type ControlState, type SessionProfile } from './control-state.js';
-import { CONTROL_TABLES, ControlDatabase, sha256, type ControlChanges, type ControlRow, type ControlTable, type PersistenceBoundary, type RemoteDatabase, type StoredControl } from './persistence.js';
+import { CONTROL_TABLES, ControlDatabase, sha256, type ControlRow, type ControlTable, type PersistenceBoundary, type RemoteDatabase, type StoredControl } from './persistence.js';
 import type { DaemonOwnership } from './ownership.js';
 import { recoverControlState, type RecoveryPlan } from './control-recovery.js';
 import { IdSchema, LIMITS, OPERATION_CATALOG, parseClientEnvelope, canonicalRequestPayload, parseInteraction, parseSchema, parseServerEnvelope, requestRetainUntil, validateInteractionAnswer, type Interaction, type InteractionAnswer, type Response, type Operation, type OperationParams } from '@felan-ai/session-protocol';

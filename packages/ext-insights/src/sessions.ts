@@ -1,10 +1,10 @@
 import {
   SESSION_HISTORY_LIMITS, SessionsServiceError,
-  type AgentRuntime, type SessionsServiceErrorCode, type ExtensionUi, type SessionsHistory, type SessionCheckpointRef, type SessionHistoryInfo,
+  type SessionsServiceErrorCode, type ExtensionUi, type SessionsHistory, type SessionCheckpointRef, type SessionHistoryInfo,
   type UiAction, type UiActionContext, type UiActionRequest, type UiDocument, type UiElementHandle,
 } from '@felan-ai/agent-core';
 import { buildInsightsDashboard, insightsRangeOptions, type InsightsView } from './dashboard.js';
-import type { InsightsHost, InsightsReport, InsightsSessionReference } from './contracts.js';
+import type { InsightsHost, InsightsSessionReference } from './contracts.js';
 import {
   encodeInsightsDashboard, INSIGHTS_ACTIONS, INSIGHTS_DOCUMENT_HINT, INSIGHTS_QUERY_BYTES, INSIGHTS_QUERY_FIELD,
   INSIGHTS_RANGE_FIELD, insightsRangeLabel, type InsightsDashboard,

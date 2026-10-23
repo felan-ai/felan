@@ -3,7 +3,7 @@ import { openSync, readSync } from 'node:fs';
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, link, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
-import { prepareExport, prepareImport, prepareTranscriptDeletion, publishExport, readOwnedOutputRange, stageImport } from '../src/daemon/session-files.js';
+import { prepareExport, prepareTranscriptDeletion, publishExport, readOwnedOutputRange, stageImport } from '../src/daemon/session-files.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
 
 vi.mock('node:fs', async original => {

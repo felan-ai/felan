@@ -1,5 +1,4 @@
 import { Type, type Static } from 'typebox';
-import { LIMITS } from './limits.js';
 import { CounterSchema, CursorSchema, IdSchema, ModelSchema, enumOf, text } from './schema.js';
 
 export const ExecutionSchema = Type.Object({

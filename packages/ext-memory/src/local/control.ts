@@ -147,7 +147,7 @@ export function createMemoryControlExtension(
     });
 
 function updateStatus(
-  ctx: ExtensionContext,
+  _ctx: ExtensionContext,
   status: LocalMemoryStatus,
 ): void {
   const pending = status.pendingCheckpoints > 0 ? `${status.pendingCheckpoints} pending` : undefined;
@@ -177,7 +177,7 @@ function autoDisabledWarning(status: LocalMemoryStatus): string {
   return `Memory processing automatically disabled for this project: ${reason}.${run} Open /memory to inspect the run; use /memory run to recover.`;
 }
 
-function notify(ctx: ExtensionContext, message: string, level: 'info' | 'warning' | 'error' = 'info'): void {
+function notify(_ctx: ExtensionContext, message: string, level: 'info' | 'warning' | 'error' = 'info'): void {
   void pi.ui.notify({ text: message, level }).catch(() => {});
 }
 

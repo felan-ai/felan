@@ -5,7 +5,6 @@ import type { FelanApiRequest, FelanApiQueryValue } from '@felan-ai/agent-core';
 import type {
   FelanApiFetch,
   FelanApiMethod,
-  FelanApiTarget,
   FelanApiResultDetails,
 } from './contracts.js';
 

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { OPERATION_CATALOG, parseClientEnvelope, parseOperationResult } from '../src/index.js';
-import { execution, now, request } from './fixtures.js';
+import { execution, request } from './fixtures.js';
 
 it('keeps execution reads non-mutating and controls durably admitted for every client kind', () => {
   for (const op of ['executions.list', 'executions.read', 'executions.steer', 'executions.cancel'] as const) {

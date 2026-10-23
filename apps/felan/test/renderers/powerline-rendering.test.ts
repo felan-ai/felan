@@ -11,8 +11,8 @@ import { getUsageTotals } from '../../../../packages/ext-powerline/src/usage.js'
 import type { PowerlineData, SegmentValues, SessionUsageTotals } from '@felan-ai/ext-powerline/data';
 
 const theme = {
-  getFgAnsi: (color: string) => `\x1b[38;5;42m`,
-  getBgAnsi: (color: string) => `\x1b[48;5;42m`,
+  getFgAnsi: (_color: string) => `\x1b[38;5;42m`,
+  getBgAnsi: (_color: string) => `\x1b[48;5;42m`,
 };
 
 describe('powerline rendering', () => {

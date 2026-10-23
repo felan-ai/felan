@@ -8,7 +8,6 @@ import type {
   AskUserHost,
   AskUserHostOutcome,
   AskUserInput,
-  AskUserQuestion,
   AskUserQuestionAnswer,
   AskUserRequest,
   AskUserResponse,

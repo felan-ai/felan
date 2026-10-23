@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { LIMITS, JsonLineDecoder, assertJson, encodeFrame, parseClientEnvelope } from '../src/index.js';
-import { now, request } from './fixtures.js';
+import { JsonLineDecoder, assertJson, encodeFrame, parseClientEnvelope } from '../src/index.js';
+import { request } from './fixtures.js';
 
 describe('bounded UTF-8 JSON framing', () => {
   it('handles fragmented UTF-8, escaped newlines and multiple frames', () => {

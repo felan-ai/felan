@@ -3,7 +3,7 @@ import { isConversationEntry } from './session-files.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getSupportedThinkingLevels, type AgentSession, type AgentSessionEvent, type SessionEntry } from '@felan-ai/agent-core';
 import {
-  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, OPERATION_CATALOG, PresentationSchema, PromptSchema, parseOperationResult, parseSchema, trimSnapshotLists, validateBase64, validatePrompt,
+  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, PresentationSchema, PromptSchema, parseOperationResult, parseSchema, trimSnapshotLists, validateBase64, validatePrompt,
   type KnownSessionChange, type Message, type OperationResult, type Origin, type Presentation, type SessionEvent,
   type SessionSnapshot, type TextStreamEvent,
   MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,

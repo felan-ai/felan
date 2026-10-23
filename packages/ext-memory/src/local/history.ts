@@ -6,7 +6,6 @@ import { basename, dirname, join, resolve } from 'node:path';
 import {
   buildSessionContext,
   parseSessionEntries,
-  type SessionsHistory,
   type SessionEntry,
   type SessionInfo,
 } from '@felan-ai/agent-core';

@@ -7,7 +7,6 @@ import { createTasksUi } from '../src/portable-ui.js';
 import { readTaskDetailData } from '../src/detail-data.js';
 import { parseUiPresentation } from '../../session-protocol/src/ui.js';
 
-const legacyUi = {} as Parameters<ReturnType<typeof createTasksUi>['show']>[0];
 const id = (index: number) => `T-${index.toString(16).toUpperCase().padStart(6, '0')}`;
 function graph(count = 3): TaskState {
   let state = emptyTaskState();

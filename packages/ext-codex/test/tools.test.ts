@@ -4,9 +4,6 @@ import { join } from 'node:path';
 import {
   HostAgentRuntime,
   type AgentRuntime,
-  type AgentRuntimeProcess,
-  type AgentRuntimeProcessReadOptions,
-  type AgentRuntimeProcessSnapshot,
   type Api,
   type Model,
   type ToolDefinition,
@@ -168,124 +165,6 @@ function tool(tools: ToolDefinition<any, any, any>[], name: string): ToolDefinit
   return found;
 }
 
-function renderedCall(
-  definition: ToolDefinition<any, any, any>,
-  args: Record<string, unknown>,
-  isPartial: boolean,
-  isError = false,
-): string {
-  const renderCall = definition.renderCall;
-  if (!renderCall) throw new Error(`Tool has no call renderer: ${definition.name}`);
-  const theme = {
-    fg: (_role: string, text: string) => text,
-    bold: (text: string) => text,
-  } as Parameters<typeof renderCall>[1];
-  const context = { isPartial, isError } as Parameters<typeof renderCall>[2];
-  return renderCall(args, theme, context).render(200).map((line) => line.trimEnd()).join('\n');
-}
-
-class FakeProcess implements AgentRuntimeProcess {
-  readonly pid: number;
-  readonly waits: number[] = [];
-  readonly writes: string[] = [];
-  disposed = false;
-  disposeCalls = 0;
-  maxConcurrentWrites = 0;
-  #activeWrites = 0;
-  #running = true;
-
-  constructor(pid: number, private readonly writeDelayMs: number) {
-    this.pid = pid;
-  }
-
-  async read(
-    afterOffset: number,
-    options?: AgentRuntimeProcessReadOptions,
-  ): Promise<AgentRuntimeProcessSnapshot> {
-    this.waits.push(options?.waitMs ?? 0);
-    return { output: new Uint8Array(), nextOffset: afterOffset, running: this.#running };
-  }
-
-  async write(content: Uint8Array): Promise<void> {
-    this.#activeWrites += 1;
-    this.maxConcurrentWrites = Math.max(this.maxConcurrentWrites, this.#activeWrites);
-    try {
-      this.writes.push(new TextDecoder().decode(content));
-      if (this.writeDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, this.writeDelayMs));
-    } finally {
-      this.#activeWrites -= 1;
-    }
-  }
-
-  async interrupt(): Promise<void> {}
-
-  async terminate(): Promise<void> {
-    this.#running = false;
-  }
-
-  async dispose(): Promise<void> {
-    this.disposeCalls += 1;
-    this.disposed = true;
-    await this.terminate();
-  }
-}
-
-class FakeTerminal extends FakeProcess {}
-
-class FailingDisposeProcess extends FakeProcess {
-  override async dispose(): Promise<void> {
-    await super.dispose();
-    throw new Error('injected dispose failure');
-  }
-}
-
-function fakeRuntime(writeDelayMs = 0): {
-  runtime: AgentRuntime;
-  processes: FakeProcess[];
-  terminals: FakeTerminal[];
-} {
-  const processes: FakeProcess[] = [];
-  const terminals: FakeTerminal[] = [];
-  let nextPid = 10_000;
-  const unavailable = async (): Promise<never> => { throw new Error('unavailable'); };
-  const runtime: AgentRuntime = {
-    kind: 'host',
-    cwd: '/workspace',
-    processes: {
-      async startShell() {
-        const handle = new FakeProcess(nextPid++, writeDelayMs);
-        processes.push(handle);
-        return handle;
-      },
-    },
-    terminals: {
-      async startShell() {
-        const handle = new FakeTerminal(nextPid++, writeDelayMs);
-        terminals.push(handle);
-        return handle;
-      },
-    },
-    logger: { level: 'off', child() { return this; }, debug() {}, info() {}, warn() {}, error() {} },
-    storage: () => ({
-      root: '/storage',
-      readFile: unavailable,
-      writeFile: unavailable,
-      appendFile: unavailable,
-      listFiles: unavailable,
-      mkdir: unavailable,
-      remove: unavailable,
-    }),
-    exec: unavailable,
-    shell: unavailable,
-    readFile: unavailable,
-    writeFile: unavailable,
-    listFiles: unavailable,
-    mkdir: unavailable,
-    remove: unavailable,
-  };
-  return { runtime, processes, terminals };
-}
-
 async function createRuntime(): Promise<HostAgentRuntime> {
   const root = await mkdtemp(join(tmpdir(), 'felan-codex-tools-'));
   temporaryPaths.push(root);
@@ -296,33 +175,6 @@ async function createRuntime(): Promise<HostAgentRuntime> {
   await Promise.all([cwd, sessionStorageRoot, agentStorageRoot, agentDir]
     .map((path) => mkdir(path, { recursive: true })));
   return new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot, agentDir });
-}
-
-function runtimeWithoutTerminals(host: HostAgentRuntime): AgentRuntime {
-  return {
-    kind: host.kind,
-    cwd: host.cwd,
-    logger: host.logger,
-    processes: host.processes,
-    storage: (scope) => host.storage(scope),
-    exec: (command, args, options) => host.exec(command, args, options),
-    shell: (command, options) => host.shell(command, options),
-    readFile: (path, options) => host.readFile(path, options),
-    writeFile: (path, content, options) => host.writeFile(path, content, options),
-    listFiles: (path, options) => host.listFiles(path, options),
-    mkdir: (path, options) => host.mkdir(path, options),
-    remove: (path, options) => host.remove(path, options),
-    readAgentFile: (path) => host.readAgentFile(path),
-  };
-}
-
-function imageContext(): Parameters<ToolDefinition['execute']>[4] {
-  return { model: {
-    provider: 'openai-codex',
-    id: 'gpt-5.3-codex',
-    api: 'openai-codex-responses',
-    input: ['text', 'image'],
-  } as Model<Api> } as Parameters<ToolDefinition['execute']>[4];
 }
 
 function textContext(): Parameters<ToolDefinition['execute']>[4] {

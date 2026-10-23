@@ -1,6 +1,5 @@
 import { getSupportedThinkingLevels, type Api, type Model } from '@earendil-works/pi-ai';
 import {
-  collectClassifierSessionEvidence,
   sanitizeClassifierText,
   type Classifier,
   type ClassifierQuestion,

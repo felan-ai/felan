@@ -1,4 +1,3 @@
-import { removeIfPresent } from './context.js';
 import { createDefaultLocalMemoryDreamRunner, materializeMemoryInput } from './dreamer.js';
 import { LocalMemoryRun } from './run.js';
 import { readMemorySessionCheckpoint } from '../session-history.js';
@@ -12,7 +11,6 @@ import { createMemorySnapshot, createMemoryProjectionSnapshot, extractSourceIds,
 
 import {
   type ModelsService,
-  type AgentSession,
   type Api,
   type Classifier,
   type Model,

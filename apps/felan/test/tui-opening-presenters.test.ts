@@ -1,5 +1,4 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import type { Interaction, JsonValue } from '@felan-ai/session-protocol';
 import type { TuiSessionController } from '../src/tui/controller.js';
 import type { InteractionPresenterUi } from '../src/client/presenters.js';
 import { createTerminalPresenters } from '../src/tui/presenters.js';

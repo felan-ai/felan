@@ -4,7 +4,7 @@ import { parsePresentation, validateBase64, validatePrompt } from './data.js';
 import { SessionEventSchema, TextStreamEventSchema, parseSessionEvent } from './events.js';
 import { InteractionSchema, parseInteraction } from './interactions.js';
 import { LIMITS, PROTOCOL_VERSION, ProtocolValidationError } from './limits.js';
-import { CounterSchema, DiagnosticTextSchema, IdSchema, NameSchema, assertJson, enumOf, parseSchema } from './schema.js';
+import { DiagnosticTextSchema, IdSchema, NameSchema, assertJson, enumOf, parseSchema } from './schema.js';
 import { requestTimestamp, UUID_V7_PATTERN } from './request-id.js';
 import { PresentationEventSchema } from './presentation.js';
 import { validateSnapshotInvariants } from './snapshot-invariants.js';

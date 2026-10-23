@@ -10,12 +10,10 @@ import {
   opendir,
   readFile,
   readlink,
-  readdir,
   realpath,
   rename,
   rm,
   rmdir,
-  stat,
   utimes,
   writeFile,
 } from 'node:fs/promises';

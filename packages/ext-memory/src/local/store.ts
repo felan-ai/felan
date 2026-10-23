@@ -460,7 +460,7 @@ export class LocalMemoryStore {
 
 async function recoverTransaction(environment: MemoryContext, store: LocalMemoryStore,
   lease: LocalMemoryLease,
-  now: number,
+  _now: number,
 ): Promise<void> {
   await verifyLease(lease);
   await store.readControl();

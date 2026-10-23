@@ -413,7 +413,6 @@ describe('local MCP OAuth host', () => {
 
   it('does not reuse tokens after the configured OAuth client changes', async () => {
     const secrets = memorySecretStore();
-    const context = extensionContext('tui');
     const firstController = new AbortController();
     const first = await createLocalMcpOAuthHost('/agent', {
       docs: { clientId: 'client-a' },
@@ -446,7 +445,6 @@ describe('local MCP OAuth host', () => {
 
   it('retains the submitted redirect URI when registration omits it', async () => {
     const secrets = memorySecretStore();
-    const context = extensionContext('tui');
     const controller = new AbortController();
     const session = await createLocalMcpOAuthHost('/agent', {}, { secrets, canAuthorize: () => true }).createSession({
       sessionId: 'registration-redirect',
@@ -469,7 +467,6 @@ describe('local MCP OAuth host', () => {
 
   it('does not reuse tokens after the requested OAuth scope changes', async () => {
     const secrets = memorySecretStore();
-    const context = extensionContext('tui');
     const firstController = new AbortController();
     const first = await createLocalMcpOAuthHost('/agent', {
       docs: { clientId: 'client-a', scope: 'read' },
@@ -501,7 +498,6 @@ describe('local MCP OAuth host', () => {
 
   it('rejects a stale token write after another session replaces a dynamic client', async () => {
     const secrets = memorySecretStore();
-    const context = extensionContext('tui');
     const firstController = new AbortController();
     const secondController = new AbortController();
     const host = createLocalMcpOAuthHost('/agent', {}, { secrets, canAuthorize: () => true });

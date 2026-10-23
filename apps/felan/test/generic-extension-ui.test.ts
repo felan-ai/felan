@@ -10,7 +10,6 @@ import contextView from '../../../packages/ext-context-view/src/extension.js';
 import powerline from '../../../packages/ext-powerline/src/extension.js';
 import promptHistory from '../../../packages/ext-prompt-history/src/extension.js';
 import insights from '../../../packages/ext-insights/src/extension.js';
-import { INSIGHTS_DOCUMENT_HINT } from '../../../packages/ext-insights/src/ui.js';
 import fusion from '../../../packages/ext-fusion/src/index.js';
 import modelTools from '../../../packages/ext-model-tools/src/extension.js';
 import { createPrewalkUiHost } from '../../../packages/ext-prewalk/src/ui.js';

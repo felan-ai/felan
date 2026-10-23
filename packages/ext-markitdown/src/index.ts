@@ -10,7 +10,6 @@ import {
   MARKITDOWN_CONVERSION_TIMEOUT_MS,
   MAX_MARKITDOWN_INPUT_BYTES,
   MAX_MARKITDOWN_OUTPUT_BYTES,
-  MAX_MARKITDOWN_PROCESS_OUTPUT_BYTES,
   validatePdfBytes,
   type MarkitdownConversion,
 } from './conversion.js';

@@ -19,7 +19,6 @@ import type {
   CreateMcpExtensionOptions,
   McpOAuthAuthenticationOutcome,
   McpOAuthSession,
-  ResolvedMcpServer,
 } from './contracts.js';
 import {
   McpAuthenticationRequiredError,

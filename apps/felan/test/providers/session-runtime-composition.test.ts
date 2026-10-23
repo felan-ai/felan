@@ -1,21 +1,19 @@
 import { importLocalExtension, loadLocalExtensionConfigDefinitions } from '../../src/providers/extensions.js';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, truncate, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ModelRuntime, InMemoryCredentialStore, createAssistantMessageEventStream,
-  AGENT_CORE_VERSION, associateExtensionConfig, configField, defineExtensionConfig,
-  createFelanServiceRegistry, defineServiceContract,
-  type AssistantMessage, type Model, type Api, type ToolDefinition,
+  AGENT_CORE_VERSION,
+  type AssistantMessage, type Model, type Api,
 } from '@felan-ai/agent-core';
 import { createTestLocalSessionLifecycle as createTestSessionLifecycle } from './fixtures/session-runtime.js';
 import { builtinExtensionPackages } from '../../src/providers/extension-catalog.js';
-import type { DaemonSessionServices, SessionOpenRequest } from '../../../daemon/src/daemon/session-lifecycle-contracts.js';
+import type { DaemonSessionServices } from '../../../daemon/src/daemon/session-lifecycle-contracts.js';
 import type { SessionExtensionContext as ProfileExtensionContext } from '../../../daemon/src/daemon/session-execution.js';
 import { createLocalSettingsManager, getClassifierModelSetting } from '../../src/providers/settings.js';
 import { DaemonConfiguration } from '../../src/providers/configuration.js';
-import { initializeLocalDaemonProcess } from '../../src/providers/process-bootstrap.js';
 
 
 const roots: string[] = [];

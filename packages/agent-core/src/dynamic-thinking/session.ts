@@ -1,5 +1,5 @@
 import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai';
-import type { ExtensionContext, InlineExtension } from '@earendil-works/pi-coding-agent';
+import type { InlineExtension } from '@earendil-works/pi-coding-agent';
 import { createTurnClassificationRegistry, type TurnClassificationRegistry } from '../classifier/turn-classification.js';
 import type { AgentRuntime } from '../runtime.js';
 import type { SavingsReporter } from '../savings.js';

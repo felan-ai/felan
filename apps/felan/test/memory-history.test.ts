@@ -6,11 +6,10 @@ import { promisify } from 'node:util';
 import {
   initTheme,
   SessionManager,
-  type SessionInfo,
 } from '@earendil-works/pi-coding-agent';
 import { Key, TuiAltScreen, type Terminal, type TUI, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { HostAgentRuntime, type SessionsService } from '@felan-ai/agent-core';
-import { listLocalSessionHistory as listHistory, readMemoryHistorySnapshot as readSnapshot, localMemoryProjectDirectory, resolveLocalMemoryProject as resolveProject, MEMORY_RUN_ENTRY, type MemoryRunMetadata, type LocalSessionHistory, type MemoryHistorySession } from '@felan-ai/ext-memory';
+import { listLocalSessionHistory as listHistory, readMemoryHistorySnapshot as readSnapshot, localMemoryProjectDirectory, resolveLocalMemoryProject as resolveProject, MEMORY_RUN_ENTRY, type MemoryRunMetadata, type LocalSessionHistory } from '@felan-ai/ext-memory';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 const environment = { runtime: new HostAgentRuntime('/', { pathAccess: 'host', sessionStorageRoot: tmpdir(), agentStorageRoot: tmpdir() }), sessions: {} as SessionsService };
 const listLocalSessionHistory = (options: Parameters<typeof listHistory>[1]) => listHistory(environment, options);

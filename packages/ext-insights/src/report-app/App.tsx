@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { FELAN_LOGO } from './logo.js';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, AreaChart, Area, Legend, LineChart, Line
+  PieChart, Pie, Cell, AreaChart, Area, Legend
 } from 'recharts';
 import { computeAnalytics } from '../analytics.js';
 import { sliceParsedSession } from '../slicing.js';

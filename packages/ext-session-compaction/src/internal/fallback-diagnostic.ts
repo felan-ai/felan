@@ -43,7 +43,7 @@ export function createFallbackDiagnostic(input: FallbackDiagnosticInput): Sessio
   return diagnostic;
 }
 
-export function fallbackDiagnosticText(diagnostic: SessionCompactionFallbackDiagnosticV1): string {
+export function fallbackDiagnosticText(_diagnostic: SessionCompactionFallbackDiagnosticV1): string {
   return 'Felan compaction failed; native compaction will take over.';
 }
 

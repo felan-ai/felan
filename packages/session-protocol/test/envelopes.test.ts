@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BootstrapHelloSchema, CONTROL_VERSION, ControlRequestSchema, LIMITS, PROTOCOL_VERSION, ROW_SCHEMA_VERSION,
   canonicalRequestPayload, compareRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse, parseOperationResult, parseSchema,
-  parseServerEnvelope, parseStoredRequestRecord, requestRetainUntil, requestTimestamp } from '../src/index.js';
+  parseServerEnvelope, requestTimestamp } from '../src/index.js';
 import * as protocol from '../src/index.js';
 import { identity, now, request, requestId, results } from './fixtures.js';
 

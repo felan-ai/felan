@@ -1,7 +1,6 @@
 import { extractTranscriptTextParts } from '@felan-ai/agent-core';
 import {
   DEFAULT_EXTRACTION_BOUNDS,
-  emptyOmission,
   freezeOmission,
   omit,
   sanitizeText,
@@ -13,7 +12,6 @@ import type {
   EvidenceBundle,
   EvidenceItem,
   EvidenceKind,
-  EvidenceProvenance,
   EvidenceStatus,
   PreparedSource,
   PreparedSpan,

@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { Value } from 'typebox/value';
-import { ClientEnvelopeSchema, ConfigValuesSchema, LIMITS, OPERATION_CATALOG, OperationSchemas, ProtocolValidationError, ResultSchemas, SessionCommandSchema, SessionSummarySchema, canonicalRequestPayload,
+import { ClientEnvelopeSchema, ConfigValuesSchema, LIMITS, OPERATION_CATALOG, OperationSchemas, ProtocolValidationError, ResultSchemas, SessionCommandSchema, canonicalRequestPayload,
   parseClientEnvelope, parseOperationResult, parseSchema, parseServerEnvelope, parseStoredRequestRecord, requestRetainUntil,
   validateBase64, type ClientEnvelope, type OperationResult } from '../src/index.js';
 import { commandParams, now, request, results } from './fixtures.js';

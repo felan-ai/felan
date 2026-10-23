@@ -1,10 +1,10 @@
 import { Type } from 'typebox';
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
-  ERROR_CODES, InteractionAnswerSchema, LIMITS, PresentationSchema, ToolCatalogEntrySchema,
+  ERROR_CODES, InteractionAnswerSchema, LIMITS, ToolCatalogEntrySchema,
   parseClientEnvelope, parseSchema, parseServerEnvelope, utf8Bytes, type KnownErrorCode, type ProtocolError,
 } from '../src/index.js';
-import { message, now, request, snapshot } from './fixtures.js';
+import { message, request, snapshot } from './fixtures.js';
 
 describe('nested union boundaries', () => {
   const branch = (kind: string) => Type.Object({ kind: Type.Literal(kind), text: Type.String() });

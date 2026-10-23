@@ -19,8 +19,8 @@ import {
   type TuiMouseEventResult,
 } from '@earendil-works/pi-tui';
 import {
-  APPROVE_PLAN_OPTION, CANCEL_PREWALK_OPTION, FEEDBACK_PLAN_OPTION, PLAN_REVIEW_OPTIONS, reviewPlanWithDialogs,
-  type PlanReviewResult, type PrewalkHost,
+  FEEDBACK_PLAN_OPTION, PLAN_REVIEW_OPTIONS, reviewPlanWithDialogs,
+  type PlanReviewResult,
 } from '@felan-ai/ext-prewalk/data';
 export { APPROVE_PLAN_OPTION, CANCEL_PREWALK_OPTION, FEEDBACK_PLAN_OPTION, PLAN_REVIEW_OPTIONS } from '@felan-ai/ext-prewalk/data';
 export { PREWALK_PLAN_LIMIT, PlanReviewRequestSchema, PlanReviewResultSchema } from '@felan-ai/ext-prewalk/data';

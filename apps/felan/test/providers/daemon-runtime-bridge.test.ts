@@ -1,7 +1,7 @@
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, SessionManager, type AgentSession, createAssistantMessageEventStream, type Api, type Model } from '@felan-ai/agent-core';
+import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream, type Api, type Model } from '@felan-ai/agent-core';
 import { createTestSessionLifecycle } from '../../../daemon/test/fixtures/session-runtime.js';
 import { SessionRegistry } from '../../../daemon/src/daemon/registry.js';
 import { registeredExecutionHost as createRegistryExecutionHost } from './fixtures/execution-port.js';

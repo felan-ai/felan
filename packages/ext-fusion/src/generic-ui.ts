@@ -1,4 +1,3 @@
-import { FUSION_PICKER_HINT, FUSION_REVIEW_HINT } from './data.js';
 import { uuidv7, type ExtensionUi, type UiActionContext, type UiActionRequest, type UiElementHandle, type UiInteractiveElement } from '@felan-ai/agent-core';
 import { parseUiPresentation, validateUiAction } from '@felan-ai/session-protocol';
 import type { FusionReview, FusionStageResult } from './contracts.js';

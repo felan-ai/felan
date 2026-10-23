@@ -1,9 +1,8 @@
 import type { ExtensionContext, FelanExtensionAPI, ToolDefinition } from '@felan-ai/agent-core';
-import { createExtensionServiceAccess, createFelanServiceRegistry, getExtensionConfigDefinition, loadFelanExtensions, type ExtensionAPI, type RuntimeDependenciesService, RUNTIME_DEPENDENCIES_SERVICE, RUNTIME_LIFETIME_SERVICE } from '@felan-ai/agent-core';
+import { createExtensionServiceAccess, createFelanServiceRegistry, loadFelanExtensions, type ExtensionAPI, type RuntimeDependenciesService, RUNTIME_DEPENDENCIES_SERVICE, RUNTIME_LIFETIME_SERVICE } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import codebaseMemoryExtension, {
   CODEBASE_MEMORY_CAPABILITY_INSTRUCTIONS,
-  CODEBASE_MEMORY_CONFIG,
   createCodebaseMemoryExtension,
 } from '../../../../packages/ext-codebase-memory/src/index.js';
 import { createCodebaseMemoryToolPresentation } from '../../src/tui/renderers/codebase-memory.js';

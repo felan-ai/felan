@@ -8,7 +8,7 @@ import { lstat, mkdtemp, mkdir, open, readFile, readdir, rm, stat, writeFile } f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SessionManager, type ModelsService } from '@felan-ai/agent-core';
+import { SessionManager } from '@felan-ai/agent-core';
 import { digestActiveBranch } from '@felan-ai/ext-memory';
 import { memoryRunUsage } from './backend.js';
 import { createRetainedRunFixture } from './retained-run-fixture.js';

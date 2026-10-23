@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ExtensionUi, UiElementHandle } from '@felan-ai/agent-core';
+import type { UiElementHandle } from '@felan-ai/agent-core';
 const MEMORY_DOCUMENT_BYTES = 64 * 1024 * 1024;
 import type { FelanExtensionAPI, UiActionRequest, UiAction, UiDocument, UiView } from '@felan-ai/agent-core';
 import type { MemoryControlPresentationHost } from './control.js';

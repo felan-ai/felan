@@ -27,7 +27,7 @@ import { AgentTranscript, type AgentToolPresentation } from './agent-transcript.
 import { registerSubagentCompletionRenderer } from './completion-presentation.js';
 import type { LocalSubagentView } from './types.js';
 import type { AgentViewTranscript } from './types.js';
-import type { AgentRailRenderer, LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions, LocalSubagentPresentationHost } from './types.js';
+import type { LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions, LocalSubagentPresentationHost } from './types.js';
 export type { AgentRailRenderer, LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions } from './types.js';
 
 export interface AgentNavigatorRecord extends LocalSubagentView {

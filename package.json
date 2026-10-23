@@ -30,10 +30,13 @@
     "verify": "pnpm check:licenses && pnpm build && pnpm type-check && pnpm test && pnpm pack:all && pnpm test:packed-bin",
     "perf": "node perf/run.mjs",
     "perf:compare": "node perf/compare.mjs",
-    "perf:test": "node --test perf/test/*.test.mjs"
+    "perf:test": "node --test perf/test/*.test.mjs",
+    "dead-code": "knip --production --reporter compact",
+    "dead-code:all": "knip --reporter compact"
   },
   "devDependencies": {
     "@types/node": "24.12.4",
+    "knip": "6.42.1",
     "typescript": "5.9.3",
     "vitest": "4.1.9"
   },

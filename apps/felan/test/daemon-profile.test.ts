@@ -4,7 +4,6 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ModelRuntime, InMemoryCredentialStore, createAssistantMessageEventStream,
-  AGENT_CORE_VERSION, associateExtensionConfig, configField, defineExtensionConfig,
   createFelanServiceRegistry, defineServiceContract,
   type AssistantMessage, type Model, type Api, type ToolDefinition,
 } from '@felan-ai/agent-core';

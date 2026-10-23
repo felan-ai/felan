@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { stripVTControlCharacters as stripTerminalSequences } from 'node:util';
 import { expect, it } from 'vitest';
 import { safeMemoryText } from './backend.js';
 

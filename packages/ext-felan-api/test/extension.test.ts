@@ -196,7 +196,7 @@ describe('Felan API extension', () => {
 
   it('propagates caller aborts instead of turning them into a success result', async () => {
     const fetch = vi.fn(async (_input: string | URL, init?: RequestInit) => {
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
       });
       throw new Error('aborted');

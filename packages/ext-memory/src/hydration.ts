@@ -1,8 +1,6 @@
 import { createHash } from 'node:crypto';
 import {
-  DEFAULT_MEMORY_ARTIFACT_LIMITS,
   type MemoryArtifact,
-  type MemoryArtifactLimits,
   type MemoryFile,
   type MemoryHydrationOptions,
   type MemorySnapshot,
@@ -10,7 +8,6 @@ import {
 import { createDefaultMemoryIndex, createMemoryNavigationGuide } from './schema.js';
 import {
   assertValidMemoryArtifact,
-  isSafeMemoryPath,
   resolveMemoryLink,
   validateMemoryArtifact,
 } from './validation.js';
@@ -125,10 +122,6 @@ function rebaseMemoryLink(
   if (!resolved) return undefined;
   const suffix = rawTarget.match(/[?#].*$/u)?.[0] ?? '';
   return `${targetMemoryPath.replace(/\/$/u, '')}/${resolved}${suffix}`;
-}
-
-function isMissing(error: unknown): boolean {
-  return typeof error === 'object' && error !== null && Reflect.get(error, 'code') === 'ENOENT';
 }
 
 export function validateMemoryDirectoryInput(

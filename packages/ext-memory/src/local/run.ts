@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 
 import { basename, join } from 'node:path';
 
-import { SessionManager, type Api, type Model } from '@felan-ai/agent-core';
+import { SessionManager } from '@felan-ai/agent-core';
 import { sanitizeMemoryDiagnostic, type SessionCheckpoint } from '../index.js';
 
 

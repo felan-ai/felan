@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { expect, it, vi } from 'vitest';
-import { loadFelanExtensions, type AgentRuntime, type ExtensionAPI, type ExtensionContext, type FelanExtensionAPI, type Model, type Api } from '@felan-ai/agent-core';
+import { loadFelanExtensions, type AgentRuntime, type ExtensionAPI, type ExtensionContext, type Model, type Api } from '@felan-ai/agent-core';
 import rootExtension, { createCodexTools } from '../../../../packages/ext-codex/src/index.js';
 import runtimeExtension, { createCodexExecutionTools } from '../../../../packages/ext-codex/src/runtime.js';
 import { createCodexToolRenderers } from '../../src/tui/renderers/codex.js';

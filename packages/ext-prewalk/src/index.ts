@@ -4,7 +4,6 @@ import {
   configField,
   defineExtensionConfig,
   clampThinkingLevel,
-  isFelanThinkingLevel,
   formatModelReference,
   isModelTier,
   parseModelReference,
@@ -287,7 +286,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     updateStatus(ctx);
   }
 
-  function entryClassificationEligible(ctx: ExtensionContext): boolean {
+  function entryClassificationEligible(_ctx: ExtensionContext): boolean {
     if (classifier === undefined || state.phase !== 'idle') return false;
     refreshConfig();
     const activeTools = pi.getActiveTools();
@@ -1015,7 +1014,7 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
     updateStatus(ctx);
   });
 
-  pi.on('input', (event, ctx) => {
+  pi.on('input', (event, _ctx) => {
     if ((event.source === 'interactive' || event.source === 'rpc') && state.phase === 'implementing'
       && runDetails?.reviewRequested && !runDetails.completionAccepted) {
       runDetails.reviewReassessmentPending = true;

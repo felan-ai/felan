@@ -6,7 +6,6 @@ import { createDaemonExecutionServices } from '../../../daemon/src/daemon/execut
 import type { RegistryOpenRequest, SessionRegistry } from '../../../daemon/src/daemon/registry.js';
 import { createRegistrySessionsService } from '../../../daemon/src/daemon/session-services.js';
 import { createLocalExecutionRoots, createLocalExecutionServices } from '../../src/providers/execution-services.js';
-import type { ExecutionHost } from '@felan-ai/daemon/provider';
 import type { SessionRuntime } from '../../../daemon/src/daemon/session-runtime.js';
 import { createLocalSessionRuntime } from '../../src/providers/session-runtime.js';
 import { createLocalModelsService } from '../../src/providers/models.js';

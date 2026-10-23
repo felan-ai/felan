@@ -3,7 +3,7 @@ import { LIMITS, MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, codePointLength, encod
 import { ControlStoreError } from '../src/daemon/control-state.js';
 import { projectPiMessage, SessionProjection } from '../src/daemon/projection.js';
 import type { SessionEntry } from '@felan-ai/agent-core';
-import { assistant, deferred, fixture, fixtures, offlineModel, requestId, supported } from './fixtures/registry.js';
+import { assistant, fixture, fixtures, offlineModel, supported } from './fixtures/registry.js';
 import { readControlDatabase } from './fixtures/control-database.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
