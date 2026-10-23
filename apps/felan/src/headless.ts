@@ -57,6 +57,8 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     }
     if (Reflect.get(options, 'extensionConfigOverrides') !== undefined) throw new Error('Use typed daemon config rather than extensionConfigOverrides in headless mode');
     const cwd = resolve(options.cwd ?? process.cwd());
+    const sessionDir = options.sessionDir ? resolve(options.sessionDir) : undefined;
+    const attachOptions = sessionDir ? { sessionDir } : undefined;
     client = await createDaemonClient(options, 'headless', [...INTERACTION_KINDS]);
     await client.connect();
     if (signalCode) return signalCode;
@@ -79,10 +81,10 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     const creating = !session;
     if (!session) {
       session = accepted(await client.request('sessions.create', { cwd,
-        ...(options.sessionDir ? { sessionDir: resolve(options.sessionDir) } : {}), ...(config ? { config } : {}),
+        ...(sessionDir ? { sessionDir } : {}), ...(config ? { config } : {}),
         ...(options.thinkingLevel ? { thinking: options.thinkingLevel } : {}) })).sessionId;
     }
-    const initial = accepted(await client.attach(session)).snapshot;
+    const initial = accepted(await client.attach(session, attachOptions)).snapshot;
     if (!creating && config && Object.keys(config).length) {
       accepted(await client.request('config.set', { scope: 'session', values: config }, { session }));
       await waitForDaemonAttachment(client, session, options.signal);
@@ -115,7 +117,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
       unsubscribe = client.subscribe(() => {
         if (client!.status !== 'ready') output!.fail(new Error('Native headless JSON connection was interrupted; output cannot be replayed'));
       });
-      accepted(await Promise.race([client.attach(session), outputFailure]));
+      accepted(await Promise.race([client.attach(session, attachOptions), outputFailure]));
     }
     // Like a client without UI, headless runs resolve dialogs with their cancelled defaults instead of waiting.
     const dismissed = new Set<string>();

@@ -108,7 +108,7 @@ export function expectedCompactionOwner(config) {
 export function expectedCompactionMethod(config) {
   if (config?.settings?.builtinExtensions?.sessionCompaction !== true) return 'native';
   const method = config?.settings?.extensionConfig?.sessionCompaction?.method;
-  return method === 'summary' ? 'summary' : 'classifier';
+  return method === 'classifier' ? 'classifier' : 'summary';
 }
 
 export async function writeCompactionExpectation(configDir, expectedOwner, expectedMethod = 'native') {

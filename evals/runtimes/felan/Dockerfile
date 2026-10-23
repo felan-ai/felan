@@ -10,7 +10,7 @@ ARG PYTHON_RUNTIME_VERSION=3.13.5-2+deb13u5
 ARG MARKITDOWN_VERSION=0.1.7
 ARG MARKITDOWN_REQUIREMENTS_SHA256=78c8fcecc43017bb511850fe4071bd413099666c344664905d1fe56216ac97bd
 ARG CA_CERTIFICATES_VERSION=20250419
-ARG CURL_VERSION=8.14.1-2+deb13u5
+ARG CURL_VERSION=8.14.1-2+deb13u7
 ARG GIT_VERSION=1:2.47.3-0+deb13u1
 ARG RIPGREP_VERSION=14.1.1-1+b4
 
@@ -82,6 +82,16 @@ RUN curl --proto '=https' --tlsv1.2 --fail --silent --show-error --location \
     /bin/bash /tmp/install-cbm.sh --dir /usr/local/bin --skip-config \
   && test "$(codebase-memory-mcp --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)" = "${CBM_VERSION}" \
   && rm -rf /tmp/install-cbm.sh /tmp/cbm-installer-home /tmp/cbm-installer-cache /usr/local/bin/install.sh
+
+# The harness runs containers as the host UID/GID; the daemon resolves its account
+# through the passwd database (os.userInfo), so that UID needs an entry.
+ARG EVAL_UID=1000
+ARG EVAL_GID=1000
+RUN if ! getent passwd "${EVAL_UID}" >/dev/null; then \
+    group="$(getent group "${EVAL_GID}" | cut -d: -f1)"; \
+    if [ -z "${group}" ]; then groupadd --gid "${EVAL_GID}" felan-eval && group=felan-eval; fi; \
+    useradd --uid "${EVAL_UID}" --gid "${group}" --create-home --home-dir /home/felan-eval --shell /bin/sh felan-eval; \
+  fi
 
 ENV PATH="/opt/markitdown/bin:${PATH}" \
     SHELL=/bin/bash

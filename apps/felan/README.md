@@ -337,12 +337,13 @@ All built-ins are enabled by default, including the Powerline footer in TUI
 sessions. Binary-backed features can remain inactive until their dependency is
 installed or the feature is disabled through `/dependencies`.
 
-Session compaction is also enabled by default. Its default `classifier` method
-drops or shortens eligible bulky successful tool results when Pi's catalog has
-an authenticated classifier model available.
-Without a classifier it uses the verified summary method automatically; set
-`extensionConfig.sessionCompaction.method` to `summary` to disable classifier
-compaction explicitly. Summary mode uses the active model by default or the
+Session compaction is also enabled by default and uses the verified summary
+method. Set `extensionConfig.sessionCompaction.method` to `classifier` to drop
+or shorten eligible bulky successful tool results instead when Pi's catalog has
+an authenticated classifier model available; without one, or when the
+classifier fails, it uses the verified summary. When idle with a large context,
+the extension also compacts shortly before a known prompt-cache lifetime
+expires (`compactBeforeCacheExpiry`). Summary mode uses the active model by default or the
 configured `inherit`, `xhigh`, `high`, `medium`, or `low` policy. Tier selection
 prefers the active provider/family and falls back to inherit when unavailable.
 Both methods preserve structured continuity and expose `session_recall` for the

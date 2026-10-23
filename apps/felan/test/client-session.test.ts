@@ -251,9 +251,11 @@ describe('shared session client', () => {
     expect(await client.request('prompt', { text: 'never acked' }, { session: 'session', id })).toEqual(result);
     expect(fake.requests.filter(item => item.op === 'prompt')).toHaveLength(2);
   });
-  it('reconnects with logical attachment/policy, new server binding and the original pending request', async () => {
+  it('reconnects with logical attachment/policy/directory, new server binding and the original pending request', async () => {
     const { client, fake } = await fixture({ kind: 'acp' }); const original = fake.onSend;
-    await client.connect(); await client.attach('session', { requirePolicy: 'acp-strict' }); const before = client.getAttachment('session')!;
+    const options = { requirePolicy: 'acp-strict' as const, sessionDir: '/custom/sessions' };
+    await client.connect(); await client.attach('session', options); const before = client.getAttachment('session')!;
+    options.sessionDir = '/changed-after-attach';
     fake.onSend = (request, connection) => {
       if (request.op === 'prompt' && connection === 0) fake.lose(); else original(request, connection);
     };
@@ -261,8 +263,10 @@ describe('shared session client', () => {
     expect(result.outcome).toBe('accepted');
     const after = client.getAttachment('session')!;
     expect(after.id).toBe(before.id); expect(after.binding).not.toBe(before.binding);
-    expect(after.requirePolicy).toBe('acp-strict');
-    expect(fake.requests.filter(item => item.op === 'attach').every(item => item.op === 'attach' && item.params.requirePolicy === 'acp-strict')).toBe(true);
+    expect(after.requirePolicy).toBe('acp-strict'); expect(after.sessionDir).toBe('/custom/sessions');
+    const attaches = fake.requests.filter(item => item.op === 'attach');
+    expect(attaches).toHaveLength(2);
+    for (const request of attaches) expect(request.params).toMatchObject({ requirePolicy: 'acp-strict', sessionDir: '/custom/sessions' });
     const commands = fake.requests.filter(item => item.op === 'prompt'); expect(commands[0]).toEqual(commands[1]);
     expect(fake.requests.some(item => item.op === 'cancel' || item.op === 'sessions.create')).toBe(false);
   });
@@ -539,10 +543,10 @@ describe('shared session client', () => {
     const connected = client.connect(); const rejected = expect(connected).rejects.toThrow(/closed/);
     client.close(); await rejected; expect(launch).not.toHaveBeenCalled(); expect(client.status).toBe('closed');
   });
-  it('retries an indeterminate initial attach while retaining identity/policy and rejecting stale late cutovers', async () => {
+  it('retries an indeterminate initial attach while retaining identity/policy/directory and rejecting stale late cutovers', async () => {
     const { client, fake } = await fixture({ kind: 'acp' }); const original = fake.onSend;
     await client.connect(); fake.onSend = request => indeterminate(fake, request);
-    const attached = client.attach('session', { requirePolicy: 'acp-strict' }); const originalRequest = fake.requests.at(-1)!;
+    const attached = client.attach('session', { requirePolicy: 'acp-strict', sessionDir: '/custom/sessions' }); const originalRequest = fake.requests.at(-1)!;
     expect(await attached).toMatchObject({ outcome: 'indeterminate' });
     const originalId = client.getAttachment('session')!.id;
     fake.reply(originalRequest, { attachmentId: 'late', snapshot: snapshot() }); await flushMicrotasks();
@@ -551,6 +555,10 @@ describe('shared session client', () => {
     expect(await client.retryAttach('session')).toMatchObject({ outcome: 'accepted' });
     const current = client.getAttachment('session')!;
     expect(current.id).toBe(originalId); expect(current.requirePolicy).toBe('acp-strict'); expect(current.binding).toBe('binding-0');
+    expect(current.sessionDir).toBe('/custom/sessions');
+    const attaches = fake.requests.filter(request => request.op === 'attach');
+    expect(attaches).toHaveLength(2);
+    for (const request of attaches) expect(request.params).toMatchObject({ requirePolicy: 'acp-strict', sessionDir: '/custom/sessions' });
     fake.reply(originalRequest, { attachmentId: 'obsolete', snapshot: snapshot() }); await flushMicrotasks();
     expect(client.getAttachment('session')?.binding).toBe('binding-0');
     expect(fake.requests.some(request => request.op === 'cancel' || request.op === 'sessions.create')).toBe(false);

@@ -4,6 +4,7 @@ import { associateExtensionConfig, type FelanExtension } from '@felan-ai/agent-c
 import { SESSION_COMPACTION_CONFIG } from './config.js';
 
 export { createSessionCompactionExtension, SESSION_COMPACTION_BOUNDS } from './compaction.js';
+export type { CompactionExtensionOptions, SessionCompactionDetails } from './compaction.js';
 export { registerSessionRecall } from './recall.js';
 export {
   DEFAULT_SESSION_COMPACTION_CONFIG,

@@ -6,6 +6,15 @@ import * as protocol from '../src/index.js';
 import { identity, now, request, requestId, results } from './fixtures.js';
 
 describe('outcomes and handshake', () => {
+  it('accepts an optional absolute session directory for attach', () => {
+    expect(parseClientEnvelope(request('attach')).params).toEqual({ expected: identity });
+    for (const sessionDir of ['/tmp/sessions', 'C:\\sessions', '\\\\host\\sessions']) {
+      expect(parseClientEnvelope(request('attach', { expected: identity, sessionDir })).params).toEqual({ expected: identity, sessionDir });
+    }
+  });
+  it.each(['relative/sessions', '', '/tmp/\0sessions', '/' + 'é'.repeat(LIMITS.pathBytes / 2), 42, null])('rejects an invalid attach session directory: %j', sessionDir => {
+    expect(() => parseClientEnvelope(request('attach', { expected: identity, sessionDir }))).toThrow();
+  });
   it('uses unrevisioned notifications only for host prompts', () => {
     const interaction = { id: 'host-prompt', scope: { kind: 'host' }, state: 'waiting',
       request: { kind: 'confirm', title: 'Trust workspace?', message: '/workspace' }, createdAt: now };

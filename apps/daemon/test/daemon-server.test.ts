@@ -16,6 +16,7 @@ import { SessionServer, type BrokerDispatchPort, type SessionServerOptions } fro
 import { protocolTarget } from '../src/daemon/target.js';
 import { gate, serverFixture } from './fixtures/server.js';
 import { LegacySessionIndex, legacySessionDirectoryName } from '../src/daemon/legacy-sessions.js';
+import { acquireDaemonOwnership } from '../src/daemon/ownership.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -389,6 +390,97 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(await client.attach(id)).toMatchObject({ outcome: 'accepted' });
     expect(f.store.session(id).piPath).toBe(path);
     expect(await client.attach('not-a-session')).toMatchObject({ outcome: 'rejected', error: { code: 'not_found' } });
+  });
+
+  it('adopts a custom-directory transcript in place and owns its directory before appending', async () => {
+    const f = await fixture(); const client = await f.client(); const id = 'custom-directory';
+    const owner = await acquireDaemonOwnership({ kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [] });
+    cleanups.push(() => owner.release());
+    vi.spyOn(f.owner, 'ownRoot').mockImplementation(directory => owner.ownRoot(directory));
+    vi.spyOn(f.owner, 'assertOwnsPath').mockImplementation(path => owner.assertOwnsPath(path));
+    const sessionDir = join(f.directory, 'custom-sessions'); await mkdir(sessionDir);
+    const path = join(sessionDir, 'fixture.jsonl'); const timestamp = '2026-01-01T00:00:00.000Z';
+    const original = [{ type: 'session', version: 3, id, timestamp, cwd: f.cwd },
+      { type: 'model_change', id: 'aaaa0001', parentId: null, timestamp, provider: 'offline', modelId: 'fixture' },
+      { type: 'message', id: 'aaaa0002', parentId: 'aaaa0001', timestamp, message: { role: 'user', content: 'fixture context', timestamp: 1 } },
+    ].map(row => JSON.stringify(row) + '\n').join('');
+    await writeFile(path, original, { mode: 0o600 });
+    expect(() => owner.assertOwnsPath(path)).toThrow(/outside/);
+    expect(await client.attach(id)).toMatchObject({ outcome: 'rejected', error: { code: 'not_found' } });
+    expect(await client.attach(id, { sessionDir })).toMatchObject({ outcome: 'accepted' });
+    expect(owner.target.rootSet).toContain(sessionDir);
+    expect(owner.assertOwnsPath(path)).toBe(path);
+    expect(f.store.session(id)).toMatchObject({ root: id, cwd: f.cwd, piPath: path });
+    expect(f.registry.binding(id)?.resources.sessionDir).toBe(sessionDir);
+    expect(await client.request('prompt', { text: 'continued in place' }, { session: id })).toMatchObject({ outcome: 'accepted' });
+    await vi.waitFor(async () => {
+      expect(f.store.session(id).run.state).toBe('idle');
+      const updated = await readFile(path, 'utf8');
+      expect(updated.startsWith(original)).toBe(true);
+      expect(updated).toContain('continued in place');
+      expect(updated).toContain('assistant');
+    });
+    expect((await readdir(sessionDir)).filter(name => name.endsWith('.jsonl'))).toEqual(['fixture.jsonl']);
+  });
+
+  it.each(['agent', 'store', 'runtime', 'session-storage', 'symlink'] as const)('rejects adoption from the reserved %s directory before opening', async kind => {
+    const f = await fixture(); const client = await f.client(); const id = `reserved-${kind}`;
+    let sessionDir = { agent: f.owner.target.agentDir, store: f.store.directory, runtime: f.owner.target.runtimeDirectory,
+      'session-storage': f.root.resources.sessionStorageBase, symlink: f.owner.target.agentDir }[kind];
+    await mkdir(sessionDir, { recursive: true });
+    const path = join(sessionDir, `${id}.jsonl`);
+    const original = JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-01-01T00:00:00.000Z', cwd: f.cwd }) + '\n';
+    await writeFile(path, original, { mode: 0o600 });
+    if (kind === 'symlink') { const alias = join(f.directory, 'reserved-alias'); await symlink(sessionDir, alias); sessionDir = alias; }
+    const open = vi.spyOn(f.profile, 'openSession'); const own = vi.spyOn(f.owner, 'ownRoot');
+    expect(await client.attach(id, { sessionDir }))
+      .toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
+    expect(open).not.toHaveBeenCalled(); expect(own).not.toHaveBeenCalled();
+    expect(f.store.findSessionMetadata(id)).toBeUndefined();
+    expect(await readFile(path, 'utf8')).toBe(original);
+  });
+
+  it.each(['directory', 'transcript-symlink'] as const)('rejects a non-owned %s during custom-directory adoption', async kind => {
+    const f = await fixture(); const client = await f.client(); const id = 'outside-fixture';
+    const owner = await acquireDaemonOwnership({ kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [] });
+    cleanups.push(() => owner.release());
+    vi.spyOn(f.owner, 'ownRoot').mockImplementation(directory => owner.ownRoot(directory));
+    vi.spyOn(f.owner, 'assertOwnsPath').mockImplementation(path => owner.assertOwnsPath(path));
+    const outside = await realpath(await mkdtemp(join(tmpdir(), 'outside-session-')));
+    cleanups.push(() => rm(outside, { recursive: true, force: true }));
+    const path = join(outside, 'fixture.jsonl');
+    const original = JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-01-01T00:00:00.000Z', cwd: f.cwd }) + '\n';
+    await writeFile(path, original, { mode: 0o600 });
+    let sessionDir = outside;
+    if (kind === 'transcript-symlink') {
+      sessionDir = join(f.directory, 'linked-sessions'); await mkdir(sessionDir);
+      await symlink(path, join(sessionDir, 'linked.jsonl'));
+    }
+    expect(await client.attach(id, { sessionDir }))
+      .toMatchObject({ outcome: 'rejected', error: { code: 'forbidden' } });
+    expect(f.store.findSessionMetadata(id)).toBeUndefined();
+    expect(await readFile(path, 'utf8')).toBe(original);
+  });
+
+  it('returns not_found for an unknown ID in the explicit directory without falling back to other directories', async () => {
+    const f = await fixture(); const client = await f.client(); const sessionDir = join(f.directory, 'empty-sessions'); await mkdir(sessionDir);
+    const id = 'elsewhere';
+    await writeFile(join(f.directory, 'elsewhere.jsonl'), JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-01-01T00:00:00.000Z', cwd: f.cwd }) + '\n');
+    const open = vi.spyOn(f.profile, 'openSession'); const own = vi.spyOn(f.owner, 'ownRoot');
+    expect(await client.attach(id, { sessionDir }))
+      .toMatchObject({ outcome: 'rejected', error: { code: 'not_found', message: 'Session is not registered.' } });
+    expect(open).not.toHaveBeenCalled(); expect(own).not.toHaveBeenCalled();
+  });
+
+  it('ignores an attach directory for a registered session instead of relocating or validating it', async () => {
+    const f = await fixture(); const client = await f.client(); const id = f.root.sessionId;
+    const path = f.store.session(id).piPath;
+    const own = vi.spyOn(f.owner, 'ownRoot'); const discover = vi.spyOn(LegacySessionIndex.prototype, 'discover');
+    expect(await client.attach(id, { sessionDir: f.owner.target.agentDir }))
+      .toMatchObject({ outcome: 'accepted' });
+    expect(f.store.session(id).piPath).toBe(path);
+    expect(discover).not.toHaveBeenCalled(); expect(own).not.toHaveBeenCalled();
+    discover.mockRestore();
   });
 
   it('reopens an explicitly closed session when a client attaches again', async () => {

@@ -40,6 +40,7 @@ assert:
   - id: session-persisted
     type: workspaceDiff
     changedFiles:
+      - sessions/.felan-store.lock
       - sessions/2026-08-27T10-35-33-058Z_01a042ca-0d42-75eb-aeac-0397822915e2.jsonl
 verifier:
   command: node

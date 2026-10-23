@@ -67,7 +67,12 @@ browser and Powerline extensions:
     "codebaseMemory": { "maxCacheBytes": 0 },
     "codex": { "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
     "claude-code": { "plan": "pro", "longContextExtraUsage": false },
-    "sessionCompaction": { "method": "classifier", "model": "inherit" },
+    "sessionCompaction": {
+      "method": "summary",
+      "model": "inherit",
+      "compactBeforeCacheExpiry": true,
+      "minContextTokens": 200000
+    },
     "fusion": {
       "participants": [],
       "fusionModel": "inherit",
@@ -202,28 +207,58 @@ default for future sessions; Ctrl+S changes only the current session.
 `builtinExtensions.sessionCompaction` controls verified session compaction and
 active-lineage `session_recall`. It is enabled by default. Disable it to use
 Pi's native compactor and remove the recall tool. `extensionConfig.sessionCompaction.method`
-defaults to `classifier` and retains a selective transcript when an
-authenticated classifier model is available through Pi's runtime.
-Without that capability it uses the verified summary method automatically. Set
-the method to `summary` to disable classifier compaction even when a classifier
-is available. Classifier mode sends bounded compaction evidence to the selected
-classifier provider and does not make a summary-model request.
+defaults to `summary`, Felan's fresh verified summary. Set it to `classifier`
+for fast, opt-in transcript compaction when an authenticated classifier model
+is available through Pi's runtime. This is not a measured cost saving.
+Classifier mode sends bounded compaction evidence to the selected classifier
+provider and makes no summary-model request on success. Without a classifier
+or on classifier request failure, it falls back to the verified summary.
+Ordinary compaction falls back to native Pi if the summary is unavailable or
+fails. Cancellation stops this chain. The summary method does not classify
+evidence and disables cache retention for its bounded summary request.
 `FELAN_LOG_LEVEL` controls the host logger (default `debug`); session-compaction
 and subagent-routing classifier traces go to
 `storage('agent')/logs/felan.jsonl`. Subagent routing records the generated
 guidance and scored/selected agent IDs, but not the request or conversation
-state. Summary mode makes one additional active-model
-request when compaction runs. `extensionConfig.sessionCompaction.model` defaults
+state. `extensionConfig.sessionCompaction.model` defaults
 to `inherit`, which uses the active session model. It also accepts `xhigh`,
 `high`, `medium`, and `low`; each selects an exact tier from the allowed session
 catalog, preferring the active provider/family before crossing providers. If no
 model exists in the requested tier, compaction falls back to `inherit`. The
 setting is also available in `/settings` and through
 `--session-compaction-model low`, and applies to a
-newly constructed runtime. Generation or validation failures before Pi
-accepts a replacement fall through to native compaction; a failure after Pi
-accepts a replacement cannot automatically rerun native compaction. Every
-recoverable fallback warns that Pi native compaction will take over and writes
+newly constructed runtime.
+
+`extensionConfig.sessionCompaction.compactBeforeCacheExpiry` defaults to
+`true`. At turn end, and on session start, tree navigation, or model change, it
+starts a countdown to about 20 seconds before a known cache expiry. It runs only if the agent remains idle with nothing queued, Pi
+auto-compaction is not disabled (`pi.getSettings().compaction.enabled !== false`),
+and context usage is at least `minContextTokens` (default 200000; a nonnegative
+integer). It uses the configured classifier when available, otherwise the fresh
+verified summary; eligibility requires that classifier or a resolvable summary
+model. Classifier request failure may fall back to the verified summary, but
+expiry compaction never falls back to native Pi. Any failure to produce an
+accepted replacement cancels without a native-fallback diagnostic or warning.
+Pi cache warming extends the countdown. Unknown lifetimes, such as
+`openai-codex` in Pi's catalog, never trigger expiry compaction. Set
+`compactBeforeCacheExpiry: false` to disable this idle behavior independently
+of ordinary compaction. Its cost benefit has not been benchmarked; see
+[ADR 0045](../decisions/0045-compact-before-prompt-cache-expiry.md).
+
+Accepted classifier and summary compactions append bounded Pi-format
+`<read-files>`/`<modified-files>` lists, merged with the latest compaction's file
+details, including previous Felan results. Expiry-triggered results record
+`trigger: 'cache-expiry'`.
+Info-level `session compaction request` logs include model, trigger,
+outcome, and latency; usage, cost, and `cacheShare` are included when available.
+`cacheShare` is the cache-read fraction of total input, rounded to three decimals.
+Classifier traces remain debug-level.
+
+For ordinary compaction, classifier split-prefix preparation failures go
+directly to native Pi, as do failures of the final fresh summary before Pi
+accepts a replacement. A failure after Pi accepts a replacement cannot
+automatically rerun native compaction. Every
+fallback to native Pi warns that it will take over and writes
 one bounded metadata-only diagnostic custom entry. The diagnostic is not shown,
 sent to the model, or returned by `session_recall`; it records delegation rather
 than native success. User cancellation is not reported as fallback.

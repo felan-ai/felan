@@ -54,9 +54,8 @@ messages are counted under Messages.
 
 ## Session compaction and recall
 
-The default session-compaction method uses the runtime classifier when one is
-available. Without that capability, or when the method is explicitly set to
-`summary`, the extension asks the configured summary model once for a bounded
+The default session-compaction method is `summary`, Felan's fresh verified
+summary. The extension asks the configured summary model once for a bounded
 continuation checkpoint after deterministic extraction of the prepared eviction
 span. `inherit` is the default summary-model policy; tier values select an exact
 text-capable model from the allowed catalog, preferring the active
@@ -67,18 +66,19 @@ reduced to attributable outcomes: file reads keep paths instead of file bodies,
 writes and patches keep affected paths and status instead of payloads, commands
 keep bounded output, and failure text remains high priority. It preserves
 explicit constraints and decisions, open loops, recorded command/test outcomes,
-task snapshots, and RTK truncation pointers with source IDs. If mandatory
-content cannot fit the bounded prompt, it falls through to native Pi before
-making an extension request. Pi still owns cut points, retained tails, overflow
-retry, session trees, and persistence. This improves recoverability but does not
-prove semantic completeness.
+task snapshots, and RTK truncation pointers with source IDs. For ordinary
+compaction, if mandatory content cannot fit the bounded prompt, it falls through
+to native Pi before making an extension request. Pi still owns cut points,
+retained tails, overflow retry, session trees, and persistence. This improves
+recoverability but does not prove semantic completeness.
 
-If the extension cannot safely prepare a prompt, the configured model request
-fails or times out, or the response is rejected, it warns that Pi native
-compaction will take over. It also persists one bounded metadata-only fallback
-diagnostic in the session. That custom entry is not shown, sent to the model,
-or returned by `session_recall`; it records why control was delegated, not that
-native compaction succeeded. User cancellation is not a fallback.
+For ordinary compaction, if the extension cannot safely prepare a prompt, the
+configured model request fails or times out, or the response is rejected, it
+warns that Pi native compaction will take over. It also persists one bounded
+metadata-only fallback diagnostic in the session. That custom entry is not
+shown, sent to the model, or returned by `session_recall`; it records why control
+was delegated, not that native compaction succeeded. User cancellation is not a
+fallback.
 
 The local transcript keeps this visible without extra detail: completed rows
 say `Context compacted · Classifier`, `Context compacted · Summary`, or
@@ -93,20 +93,32 @@ an RTK recovery pointer does not promise access to the original output. Disable
 the feature with `builtinExtensions.sessionCompaction: false` to restore Pi's
 native summarization and remove the tool.
 
-`extensionConfig.sessionCompaction.method` defaults to `classifier`. When the
+Set `extensionConfig.sessionCompaction.method` to `classifier` for fast, opt-in
+transcript compaction; this is not a measured cost saving. When the
 runtime exposes a classifier, session compaction may drop or shorten every
 eligible bulky successful tool result and returns the retained transcript
 without a summary-model call. Agent Core batches the complete question set as
 needed for the provider. The Pi-backed runtime classifier judges each candidate
 against the surrounding evidence and the compaction trigger; the local host
 exposes it when the selected catalog model has usable authentication. It does
-not own Pi's cut point or persistence. Set the method to `summary` to disable classifier
-compaction; the same summary fallback is selected automatically when the runtime
-has no classifier. Pi's reserve/tail settings and model metadata govern
-compaction capacity; Felan's remaining bounds protect untrusted extraction,
-requests, diagnostics, and recall rather than imposing a result-size ceiling.
+not own Pi's cut point or persistence. Without that capability or on classifier
+request failure, the extension falls back to the verified summary, then native
+Pi if ordinary summary compaction fails. Pi's reserve/tail settings and model
+metadata govern compaction capacity; Felan's remaining bounds protect untrusted
+extraction, requests, diagnostics, and recall rather than imposing a result-size ceiling.
 See
 [ADR 0018](../decisions/0018-use-pi-classifier-runtime.md).
+
+Idle compaction before a known prompt-cache expiry is enabled by default for
+contexts of at least 200000 tokens, provided Pi auto-compaction is enabled and
+the agent remains idle with nothing queued. It uses the configured classifier
+when available, otherwise the fresh verified summary, and never falls back to
+native Pi. A failed attempt cancels without a native-fallback diagnostic or
+warning. Accepted classifier and summary results preserve bounded read/modified
+file lists merged with prior compaction details. This idle behavior's cost
+benefit has not been benchmarked. See the
+[configuration guide](configuration.md#runtime-resources-and-session-behavior)
+for scheduling, opt-out, and request-log details.
 
 Memory is intentionally selective. It prioritizes durable user-authored
 preferences, decisions, corrections, important facts, and rationale not recorded

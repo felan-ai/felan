@@ -1,7 +1,7 @@
 # ADR 0017: Provide summary and classifier session-compaction methods
 
 > Status: Accepted
-> Date: 2026-09-20
+> Date: 2026-09-20; amended 2026-10-23 for summary default and classifier fallback
 > Deciders: Felan maintainers
 > Related: [ADR 0005](0005-own-verified-session-compaction-in-an-extension.md),
 > [ADR 0016](0016-jev-classifier-in-agent-core.md)
@@ -18,9 +18,14 @@ confounded with summarization.
 
 ## Decision
 
+Amended 2026-10-23: `summary` is the default method; `classifier` is opt-in.
+Ordinary compaction falls back from classifier to verified summary, then native
+Pi. [Idle-expiry compaction](0045-compact-before-prompt-cache-expiry.md) may use
+the classifier or verified summary, but cancels on failure without native Pi.
+
 Expose one explicit `sessionCompaction.method` with `summary` and `classifier`
-values. `classifier` is the configured default. When the host injects the
-provider-neutral classifier, it retains, shortens, or drops every eligible
+values. When selected and the host injects the provider-neutral classifier,
+it retains, shortens, or drops every eligible
 historical tool call/result pair admitted by the central evidence bounds, then
 returns the resulting transcript without a summary-model request. Without that
 capability, the extension uses verified summary compaction. Selecting `summary`
@@ -30,8 +35,12 @@ necessary.
 
 Both methods remain inside the single session-compaction extension and use Pi's
 prepared cut, retained tail, lifecycle, and persistence. Missing classifier
-credentials select verified summary compaction; classifier failure or unsafe
-bounds return control to native Pi, while cancellation remains cancellation.
+credentials select verified summary compaction. Classifier request failures
+also use that method, making one additional request with the configured summary
+model; native Pi takes over only if ordinary summary compaction also fails.
+For ordinary compaction, unsafe bounds or classifier split-prefix preparation
+failures return control directly to native Pi, while cancellation remains
+cancellation.
 `model` continues to select only the summary method's model; it is not overloaded
 with a classifier sentinel.
 

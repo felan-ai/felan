@@ -1,6 +1,7 @@
 @felan-ai/ext-session-compaction
 
-This package is original Felan MIT-licensed code. Its design was informed by
+This package includes original Felan MIT-licensed code and the adapted portions
+identified below. Its design was informed by
 the MIT-licensed pi-smart-compact 9.6.2 review at
 https://github.com/alpertarhan/pi-smart-compact/tree/687f72c45d27f98ca36d7d1ca9b3941817b0e223
 and the active-lineage recall design in @sting8k/pi-vcc 0.7.2, reviewed at
@@ -17,3 +18,32 @@ No source code from either package is copied into this package.
 This package uses TypeBox 1.1.38 from
 https://github.com/sinclairzx81/typebox, licensed under the MIT License.
 Copyright (c) 2017-2026 Haydn Paterson.
+
+Portions of src/internal/cache-state.ts and src/expiry.ts are adapted from the npm package
+pi-cached-compaction 0.1.0:
+https://www.npmjs.com/package/pi-cached-compaction/v/0.1.0
+https://github.com/nicobailon/pi-cached-compaction
+Copyright (c) Nico Bailon.
+Licensed under the MIT License:
+
+MIT License
+
+Copyright (c) Nico Bailon
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

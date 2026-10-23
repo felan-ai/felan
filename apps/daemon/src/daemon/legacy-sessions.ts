@@ -35,7 +35,7 @@ export function legacySessionDirectoryName(cwd: string): string {
 /**
  * Finds unregistered Pi transcripts in the pre-daemon layouts of the owned stores: the per-cwd
  * directories under agentDir/sessions and the top level of each store root (custom session
- * directories). Discovery reads only header lines. A summary needs the whole file, like Pi's
+ * directories), or just an explicit session directory. Discovery reads only header lines. A summary needs the whole file, like Pi's
  * session list, so it is read on request. Both are cached until the file changes.
  */
 export class LegacySessionIndex {
@@ -49,12 +49,16 @@ export class LegacySessionIndex {
   constructor(private readonly owner: Owner) { this.cache = new LegacySummaryCache(owner); }
 
   /** Newest first. Malformed and registered files are skipped; a duplicated ID keeps only its newest file. */
-  async discover(registered: readonly Pick<ControlSession, 'id' | 'piPath'>[], options: { cwd?: string; signal?: AbortSignal } = {}): Promise<LegacySession[]> {
-    const { cwd, signal } = options;
-    const sessions = join(this.owner.target.agentDir, 'sessions');
-    // A transcript written under a symlinked project path lives in that path's directory, so a cwd filter cannot narrow the scan.
-    const nested = (await entries(sessions)).filter(entry => !entry.isFile() && /^--.+--$/u.test(entry.name)).map(entry => join(sessions, entry.name));
-    const directories = [sessions, ...nested, ...this.owner.target.rootSet.filter(root => root !== this.owner.target.agentDir && root !== sessions)];
+  async discover(registered: readonly Pick<ControlSession, 'id' | 'piPath'>[], options: { cwd?: string; sessionDir?: string; signal?: AbortSignal } = {}): Promise<LegacySession[]> {
+    const { cwd, sessionDir, signal } = options;
+    let directories: string[];
+    if (sessionDir !== undefined) directories = [sessionDir];
+    else {
+      const sessions = join(this.owner.target.agentDir, 'sessions');
+      // A transcript written under a symlinked project path lives in that path's directory, so a cwd filter cannot narrow the scan.
+      const nested = (await entries(sessions)).filter(entry => !entry.isFile() && /^--.+--$/u.test(entry.name)).map(entry => join(sessions, entry.name));
+      directories = [sessions, ...nested, ...this.owner.target.rootSet.filter(root => root !== this.owner.target.agentDir && root !== sessions)];
+    }
     const listings = await limited(directories, INDEX_CONCURRENCY, signal, async directory =>
       (await entries(directory)).filter(entry => entry.name.endsWith('.jsonl')).map(entry => join(directory, entry.name)));
     const skipped = new Set(registered.map(row => row.piPath));
@@ -70,8 +74,10 @@ export class LegacySessionIndex {
       if (!resolved) canonical.set(header.cwd, resolved = canonicalPath(header.cwd).catch(() => header.cwd));
       return { id: header.id, cwd: await resolved, path, mtimeMs: info.mtimeMs };
     })).filter((file): file is NonNullable<typeof file> => file !== undefined);
-    const present = new Set(paths);
-    for (const cache of [this.headers, this.summaries]) for (const path of cache.keys()) if (!present.has(path)) cache.delete(path);
+    if (sessionDir === undefined) {
+      const present = new Set(paths);
+      for (const cache of [this.headers, this.summaries]) for (const path of cache.keys()) if (!present.has(path)) cache.delete(path);
+    }
     files.sort((a, b) => a.mtimeMs === b.mtimeMs ? a.path.localeCompare(b.path) : b.mtimeMs - a.mtimeMs);
     const ids = new Set(registered.map(row => row.id)); const found: LegacySession[] = [];
     for (const file of files) {

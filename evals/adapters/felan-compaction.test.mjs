@@ -2,8 +2,9 @@ import { strict as assert } from 'node:assert';
 import { createHash } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadHarnessConfig, resolveBenchmarkSelection } from 'harness-evals';
 import {
   expectedCompactionOwner,
   expectedCompactionMethod,
@@ -86,12 +87,18 @@ try {
   }), 'extension');
   assert.equal(expectedCompactionMethod({
     settings: { builtinExtensions: { sessionCompaction: true } },
-  }), 'classifier');
+  }), 'summary');
+  assert.equal(expectedCompactionMethod({
+    settings: { builtinExtensions: { sessionCompaction: false } },
+  }), 'native');
   assert.equal(expectedCompactionMethod({
     settings: { builtinExtensions: { sessionCompaction: true }, extensionConfig: { sessionCompaction: { method: 'classifier' } } },
   }), 'classifier');
   assert.equal(expectedCompactionMethod({
     settings: { builtinExtensions: { sessionCompaction: true }, extensionConfig: { sessionCompaction: { method: 'summary' } } },
+  }), 'summary');
+  assert.equal(expectedCompactionMethod({
+    settings: { builtinExtensions: { sessionCompaction: true }, extensionConfig: { sessionCompaction: { method: 'invalid' } } },
   }), 'summary');
   await assert.rejects(async () => expectedCompactionOwner({ settings: { builtinExtensions: {} } }),
     /requires explicit builtinExtensions\.sessionCompaction/,
@@ -162,4 +169,19 @@ assert.equal(fixtureEntries[0].id, '01a042ca-0d42-75eb-aeac-0397822915e2');
 assert.equal(fixtureEntries.filter(({ type }) => type === 'compaction').length, 0);
 assert.doesNotMatch(fixtureText, /\/Users\/milkoslavov|thinkingSignature|textSignature|responseId|encrypted_content/);
 assert.equal(createHash('sha256').update(fixtureText).digest('hex'), fixtureManifest.files[0].sha256);
+
+const config = await loadHarnessConfig({ configPath: fileURLToPath(new URL('../felan-extension-evals.yaml', import.meta.url)) });
+for (const [name, agent] of Object.entries(config.agents)) {
+  if (agent.config?.memoryProcessingMode !== undefined || agent.config?.settings?.builtinExtensions?.sessionCompaction === false) continue;
+  assert.ok(['classifier', 'summary'].includes(agent.config?.settings?.extensionConfig?.sessionCompaction?.method),
+    `${name} must pin its compaction method to preserve benchmark behavior`);
+}
+for (const id of ['session-compaction', 'session-jev-compaction']) {
+  const selection = resolveBenchmarkSelection(config, id);
+  assert.deepEqual(selection.testCases.map(({ id }) => id), ['session-compaction-continuation']);
+  assert.deepEqual(selection.testCases[0].assert.find(({ type }) => type === 'workspaceDiff').changedFiles, [
+    'sessions/.felan-store.lock',
+    `sessions/${basename(fixture)}`,
+  ]);
+}
 console.log('felan-compaction adapter tests passed');

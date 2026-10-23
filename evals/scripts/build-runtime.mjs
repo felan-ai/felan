@@ -12,7 +12,10 @@ try {
   mkdirSync(join(context, 'evals', 'runtimes', 'felan'), { recursive: true });
   copyFileSync(dockerfile, join(context, 'Dockerfile'));
   copyFileSync(requirements, join(context, 'evals', 'runtimes', 'felan', 'markitdown-requirements.txt'));
-  const result = spawnSync('docker', ['build', '-f', 'Dockerfile', '-t', 'felan-evals-runtime:v1', '.'], { cwd: context, stdio: 'inherit' });
+  const account = typeof process.getuid === 'function' && typeof process.getgid === 'function'
+    ? ['--build-arg', `EVAL_UID=${process.getuid()}`, '--build-arg', `EVAL_GID=${process.getgid()}`]
+    : [];
+  const result = spawnSync('docker', ['build', '-f', 'Dockerfile', ...account, '-t', 'felan-evals-runtime:v1', '.'], { cwd: context, stdio: 'inherit' });
   if (result.error) throw result.error;
   if (result.status !== 0) process.exit(result.status ?? 1);
 } finally {

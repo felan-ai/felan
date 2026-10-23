@@ -331,16 +331,25 @@ export class SessionRegistry {
   }
 
   /** Registers a discovered pre-daemon transcript under its existing ID and file; later turns append to that file. */
-  adopt(id: string, profile: Pick<RegistryOpenRequest, 'policy'>): Promise<SessionBinding> {
+  adopt(id: string, profile: Pick<RegistryOpenRequest, 'policy'>, sessionDir?: string): Promise<SessionBinding> {
     this.assertNewWork();
     if (this.options.store.findSessionMetadata(id)) return this.restore(id);
     const pending = this.opening.get(id);
     if (pending) return pending;
     const operation = (async () => {
-      const legacy = (await this.legacySessions(undefined, true)).find(row => row.id === id);
+      const candidates = sessionDir === undefined ? await this.legacySessions(undefined, true)
+        : await this.legacy.discover(this.options.store.sessionMetadatas(), { sessionDir });
+      const legacy = candidates.find(row => row.id === id);
       if (!legacy) throw registryError('not_found', 'Session is not registered.');
       this.assertNewWork();
-      return this.open({ cwd: legacy.cwd, sessionDir: dirname(legacy.path), target: { kind: 'resume', sessionFile: legacy.path }, clientRoot: true, ...profile });
+      try {
+        return await this.open({ cwd: legacy.cwd, sessionDir: dirname(legacy.path), target: { kind: 'resume', sessionFile: legacy.path }, clientRoot: true, ...profile });
+      } catch (error) {
+        if (sessionDir !== undefined && error instanceof DaemonSecurityError && ['root_not_owned', 'root_conflict'].includes(error.code)) {
+          throw registryError('forbidden', error.message);
+        }
+        throw error;
+      }
     })();
     this.opening.set(id, operation);
     void operation.then(() => this.opening.delete(id), () => this.opening.delete(id));

@@ -120,6 +120,9 @@ packs the exact workspace artifacts, installs those artifacts into a narrow
 Docker context, and records the source commit, dirty state, package hashes, and
 image ID in ignored `source-image.json`.
 
+The base runtime pins curl to `8.14.1-2+deb13u7` and ensures a passwd entry
+exists for the build host's UID/GID so the daemon can resolve its account.
+
 The evaluator's manifest and lockfile pin the published `harness-evals@0.2.16`.
 For local development, this checkout currently resolves `evals/node_modules/harness-evals`
 through a symlink to the sibling `../harness-evals` source; check that package's
@@ -152,6 +155,9 @@ pnpm eval:view
 Source-image builds are local development actions and do not make model calls.
 Benchmark runs may use paid or subscription providers and require explicit
 authorization. Keep run artifacts, credentials, and caches out of Git.
+
+The removed `session-cached-compaction` benchmark is recorded in
+[Cached-summary compaction](../docs/benchmarks/cached-summary-compaction.md).
 
 ## Native Pi code-mode diagnostic
 

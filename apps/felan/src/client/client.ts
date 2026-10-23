@@ -30,6 +30,7 @@ export interface AttachmentState {
   readonly id: string;
   readonly session: string;
   readonly requirePolicy?: 'acp-strict';
+  readonly sessionDir?: string;
   readonly binding?: string;
   readonly state: SessionState;
   /** When the latest snapshot made this attachment live. */
@@ -450,10 +451,10 @@ export class SessionClient {
     if (this.interactionNotifications.size > LIMITS.pageEntries) throw new Error('Interaction notification limit exceeded');
   }
 
-  async attach(session: string, policy: { requirePolicy?: 'acp-strict' } = {}): Promise<ResponseFor<'attach'>> {
+  async attach(session: string, options: { requirePolicy?: 'acp-strict'; sessionDir?: string } = {}): Promise<ResponseFor<'attach'>> {
     if (this.connectionState !== 'ready') throw new Error('Connect before attaching');
     if (this.attachments.has(session)) throw new Error('Session already attached');
-    const attachment = { id: randomUUID(), session, ...policy, state: createSessionState(session) };
+    const attachment = { id: randomUUID(), session, ...options, state: createSessionState(session) };
     this.attachments.set(session, attachment);
     const response = await this.restore(session, 'attach');
     if (response.outcome === 'rejected' && this.attachments.get(session)?.id === attachment.id) this.attachments.delete(session);
@@ -478,7 +479,8 @@ export class SessionClient {
     if (attachment.state.status === 'disconnected') this.attachments.set(session, { ...attachment, state: { ...attachment.state, status: 'awaiting_snapshot' } });
     const started = Date.now();
     const response = await this.exchange('attach', { expected: this.pinned!,
-      ...(attachment.requirePolicy ? { requirePolicy: attachment.requirePolicy } : {}) }, session, undefined, true);
+      ...(attachment.requirePolicy ? { requirePolicy: attachment.requirePolicy } : {}),
+      ...(attachment.sessionDir !== undefined ? { sessionDir: attachment.sessionDir } : {}) }, session, undefined, true);
     this.diagnoseAttach(session, trigger, response, Date.now() - started);
     if (this.closed || epoch !== this.epoch || this.attachments.get(session)?.id !== attachment.id) return response;
     if (response.outcome === 'accepted') {

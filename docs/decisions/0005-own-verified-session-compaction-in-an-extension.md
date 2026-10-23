@@ -1,7 +1,7 @@
 # ADR 0005: Own verified session compaction in an extension
 
 > Status: Accepted
-> Date: 2026-09-11
+> Date: 2026-09-11; amended 2026-10-23 for summary default and idle-expiry behavior
 > Deciders: Felan maintainers
 > Related: [`Pi_Compaction_Research.md`](../research/Pi_Compaction_Research.md),
 > [`pi-smart-compact` 9.6.2](https://github.com/alpertarhan/pi-smart-compact/tree/687f72c45d27f98ca36d7d1ca9b3941817b0e223),
@@ -26,13 +26,19 @@ results of Felan tools.
 
 ## Decision
 
+Amended 2026-10-23: `summary` is the default method; `classifier` is opt-in.
+The native fallback described below applies to ordinary compaction.
+[Idle-expiry compaction](0045-compact-before-prompt-cache-expiry.md) may use the
+classifier or verified summary, but cancels on failure without native Pi or
+fallback diagnostics.
+
 Create `@felan-ai/ext-session-compaction` as a portable extension. The local
 host enables it by default with the other built-ins and may disable it through
 `builtinExtensions.sessionCompaction: false`. The summary model is configurable
 through `extensionConfig.sessionCompaction.model`, defaulting to `inherit`. The
 package offers two explicit methods: `summary` (a verified summarizer) and
-`classifier` (a deterministic selective transcript). Classifier is the
-configured default: it runs when the host exposes a classifier and uses the
+`classifier` (a deterministic selective transcript). When selected, classifier
+compaction runs when the host exposes a classifier and uses the
 verified summary method otherwise. Explicit `summary` configuration disables
 classification. When the package is absent, Pi uses its native summarizer.
 

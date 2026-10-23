@@ -105,20 +105,22 @@ export class TuiSessionController {
     if (this.closed) return;
     if (await connected?.() === false) return;
     if (this.closed) return;
+    let sessionDir: string | undefined;
     let id: string | undefined;
     if (options.resume) {
       if (!pick) throw new Error('Session selection requires an interactive picker.');
       id = await pick(await this.sessionListing(options.cwd));
       if (!id) return;
     } else if (options.sessionId) {
-      id = await this.resolveSession(options.sessionId);
+      sessionDir = options.sessionDir;
+      id = await this.resolveSession(options.sessionId, sessionDir);
       if (!id) this.setNotice(`Session '${options.sessionId}' was not found. Starting a new session.`);
     } else if (options.continueRecent) {
       id = (await this.sessions(options.cwd)).filter(row => row.state === 'open').sort((a, b) => b.lastActivity - a.lastActivity)[0]?.session;
     }
     if (this.closed) return;
     if (id) {
-      await this.attach(id);
+      await this.attach(id, 'resume', true, sessionDir);
       if (options.extensions?.length) this.setNotice('Resumed sessions keep their saved extensions; --extension applies to new sessions.');
       if (options.config && Object.keys(options.config).length) {
         const result = await this.perform('config.set', { scope: 'session', values: options.config }, id);
@@ -128,9 +130,9 @@ export class TuiSessionController {
     } else await this.create(options);
   }
 
-  private async resolveSession(query: string): Promise<string | undefined> {
+  private async resolveSession(query: string, sessionDir?: string): Promise<string | undefined> {
     // An exact ID attaches without a listing and also reaches an unlisted draft; the caller's later attach is then a no-op.
-    try { await this.attach(query, 'resume', false); return query; }
+    try { await this.attach(query, 'resume', false, sessionDir); return query; }
     catch (error) { if ((error as { code?: unknown }).code !== 'not_found') throw error; }
     for await (const page of this.sessionPages()) {
       const match = page.find(row => row.session.startsWith(query));
@@ -199,8 +201,8 @@ export class TuiSessionController {
   }
 
   /** `reportMissing: false` leaves the notice unchanged when the daemon does not know the session. */
-  attach(session: string, entry: SessionEntry = 'resume', reportMissing = true): Promise<void> {
-    const operation = this.selection.then(() => this.attachSelected(session, entry, reportMissing));
+  attach(session: string, entry: SessionEntry = 'resume', reportMissing = true, sessionDir?: string): Promise<void> {
+    const operation = this.selection.then(() => this.attachSelected(session, entry, reportMissing, sessionDir));
     this.selection = operation.then(() => {}, () => {});
     return operation;
   }
@@ -210,10 +212,10 @@ export class TuiSessionController {
     return accepted;
   }
 
-  private async attachSelected(session: string, entry: SessionEntry, reportMissing: boolean): Promise<void> {
+  private async attachSelected(session: string, entry: SessionEntry, reportMissing: boolean, sessionDir?: string): Promise<void> {
     if (this.closed || session === this.selected) return;
     const old = this.selected;
-    const response = await this.client.attach(session);
+    const response = await (sessionDir === undefined ? this.client.attach(session) : this.client.attach(session, { sessionDir }));
     if (response.outcome !== 'accepted') {
       const message = outcomeText(response);
       if (reportMissing || response.error.code !== 'not_found') this.reportRejection(response);

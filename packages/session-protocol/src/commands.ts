@@ -39,7 +39,7 @@ export const OperationSchemas = {
     requirePolicy: Type.Optional(Type.Literal('acp-strict')),
     extensions: Type.Optional(Type.Array(AbsolutePathSchema, { uniqueItems: true })),
     instructions: Type.Optional(text(LIMITS.instructionsBytes, 1)) }),
-  attach: Type.Object({ ...identity, requirePolicy: Type.Optional(Type.Literal('acp-strict')) }),
+  attach: Type.Object({ ...identity, requirePolicy: Type.Optional(Type.Literal('acp-strict')), sessionDir: Type.Optional(AbsolutePathSchema) }),
   detach: Type.Object({ attachmentId: IdSchema }),
   close: empty,
   prompt: PromptSchema,

@@ -21,7 +21,10 @@ the same agent directory. They appear in the `/resume` and `--resume` picker,
 one adopts it in place: the daemon registers the existing file under its
 existing session ID, and new turns are appended to that same file, so 0.28.3 can
 still read it. Felan finds these files in the per-folder directories
-under `~/.felan/sessions/` and directly in a custom `--session-dir`.
+under `~/.felan/sessions/` and directly in a custom `--session-dir`. Use
+`felan --session <id> --session-dir <dir>` to resume an unregistered transcript
+from the top level of that directory. Already registered sessions keep their
+existing file location even when `--session-dir` is supplied.
 
 Exit 0.28.3 before resuming one of its sessions. After adoption the daemon is
 the only writer; running 0.28.3 on the same session at the same time is

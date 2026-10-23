@@ -100,6 +100,41 @@ it('opens the resume picker on the current folder, then streams every folder', a
   expect(controller.sessionId).toBe(f.root.sessionId);
 });
 
+it.each([
+  ['root-session', '/custom/sessions'], ['root', '/custom/sessions'], ['root-session', undefined], ['root', undefined],
+] as const)('forwards the startup directory only for explicit session resolution (%s, %s)', async (query, sessionDir) => {
+  const row = { session: 'root-session', root: 'root-session', cwd: '/fixture', title: '', revision: 1, state: 'open', residency: 'warm',
+    lastActivity: 1, run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 } };
+  const attach = vi.fn(async (session: string) => ['root-session', 'another-session'].includes(session) ? { outcome: 'accepted' }
+    : { outcome: 'rejected', error: { code: 'not_found', message: 'Session is not registered.' } });
+  const request = vi.fn(async () => ({ outcome: 'accepted', result: { entries: [row] } }));
+  const client = { status: 'ready', capabilities: { operations: ['sessions.list'] }, connect: async () => {}, subscribe: () => () => {},
+    readAttachment: () => undefined, request, attach, close() {} };
+  const controller = new TuiSessionController(client as unknown as SessionClient);
+  cleanup.push(() => controller.dispose());
+  await controller.start({ cwd: '/fixture', sessionId: query, ...(sessionDir ? { sessionDir } : {}) });
+  expect(controller.sessionId).toBe('root-session');
+  const ids = query === 'root' ? ['root', 'root-session'] : ['root-session'];
+  expect(attach.mock.calls).toEqual(ids.map(id => sessionDir ? [id, { sessionDir }] : [id]));
+  expect(request).toHaveBeenCalledTimes(query === 'root' ? 1 : 0);
+  await controller.attach('another-session');
+  expect(attach).toHaveBeenLastCalledWith('another-session');
+});
+
+it.each(['new', 'continue', 'picker'] as const)('does not add attach options for %s startup', async mode => {
+  const row = { session: 'root-session', root: 'root-session', cwd: '/fixture', title: '', revision: 1, state: 'open', residency: 'warm',
+    lastActivity: 1, run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 } };
+  const attach = vi.fn(async () => ({ outcome: 'accepted' }));
+  const client = { status: 'ready', capabilities: { operations: ['sessions.list', 'sessions.create'] }, connect: async () => {},
+    subscribe: () => () => {}, readAttachment: () => undefined, attach, close() {},
+    request: async (op: string) => ({ outcome: 'accepted', result: op === 'sessions.create' ? { sessionId: row.session } : { entries: [row] } }) };
+  const controller = new TuiSessionController(client as unknown as SessionClient);
+  cleanup.push(() => controller.dispose());
+  await controller.start({ cwd: '/fixture', sessionDir: '/custom/sessions',
+    ...(mode === 'continue' ? { continueRecent: true } : mode === 'picker' ? { resume: true } : {}) }, async () => row.session);
+  expect(attach).toHaveBeenCalledExactlyOnceWith(row.session);
+});
+
 it('reloads the attached session and confirms it like Pi', async () => {
   const f = await fixture(); const controller = f.controller();
   await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });

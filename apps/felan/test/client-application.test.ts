@@ -1,5 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import type { SessionClient, SessionClientOptions } from '../src/client/client.js';
 import { clientDaemonTarget, resumeCommand, runDaemonFelan } from '../src/client-application.js';
 import { resolveInstalledDaemonEntrypoint } from '../src/daemon-entrypoint.js';
@@ -10,11 +11,11 @@ it('constructs the installed-daemon client and forwards only declarative startup
   const close = vi.fn(); const client = { subscribe: () => () => {}, close } as unknown as SessionClient;
   const createClient = vi.fn((_options: SessionClientOptions) => client);
   const runTerminal = vi.fn(async () => {});
-  await runDaemonFelan({ cwd: '/workspace', agentDir: '/agent', sessionId: 'chosen', initialMessage: 'hello', extensionPaths: ['/extension.ts'] },
+  await runDaemonFelan({ cwd: '/workspace', agentDir: '/agent', sessionId: 'chosen', sessionDir: './fixtures/../sessions', initialMessage: 'hello', extensionPaths: ['/extension.ts'] },
     { createClient, runTerminal });
   expect(createClient).toHaveBeenCalledWith(expect.objectContaining({ kind: 'tui', target: { kind: 'production', agentDir: '/agent', storeRoots: [] },
     launch: { entrypoint: resolveInstalledDaemonEntrypoint() } }));
-  expect(runTerminal).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cwd: '/workspace', sessionId: 'chosen', initialMessage: 'hello', extensions: ['/extension.ts'] }));
+  expect(runTerminal).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cwd: '/workspace', sessionId: 'chosen', sessionDir: resolve('./sessions'), initialMessage: 'hello', extensions: ['/extension.ts'] }));
   expect(close).toHaveBeenCalledOnce();
 });
 

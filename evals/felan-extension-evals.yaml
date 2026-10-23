@@ -910,6 +910,9 @@ agents:
           subagents: false
           tasks: false
           webAccess: false
+        extensionConfig:
+          sessionCompaction:
+            method: classifier
         felanTui:
           memoryProcessing: false
 
@@ -948,6 +951,9 @@ agents:
           subagents: false
           tasks: false
           webAccess: false
+        extensionConfig:
+          sessionCompaction:
+            method: classifier
         felanTui:
           memoryProcessing: false
 
@@ -1154,6 +1160,8 @@ agents:
           tasks: true
           webAccess: false
         extensionConfig:
+          sessionCompaction:
+            method: classifier
           codex:
             fast: true
         felanTui:
@@ -1196,6 +1204,8 @@ agents:
           tasks: true
           webAccess: false
         extensionConfig:
+          sessionCompaction:
+            method: classifier
           codex:
             fast: true
           codebaseMemory:
@@ -1240,6 +1250,8 @@ agents:
           tasks: true
           webAccess: false
         extensionConfig:
+          sessionCompaction:
+            method: classifier
           codex:
             fast: true
           codebaseMemory:
@@ -1284,6 +1296,8 @@ agents:
           tasks: true
           webAccess: false
         extensionConfig:
+          sessionCompaction:
+            method: classifier
           codex:
             fast: true
           codebaseMemory:
@@ -1544,7 +1558,7 @@ benchmarks:
       cases: ratioOfReducedSums
 
   session-compaction:
-    revision: 5
+    revision: 6
     label: Inherited-model session compaction
     description: Compare native Pi compaction with Felan's verified summary using the default inherited active model on a sanitized real coding trajectory.
     select:
@@ -1566,7 +1580,7 @@ benchmarks:
       cases: ratioOfReducedSums
 
   session-jev-compaction:
-    revision: 1
+    revision: 2
     label: Classifier versus summary compaction
     description: Compare Felan verified summarization with classifier-only selective transcript compaction on the same sanitized coding trajectory. Quality pass rate is gated before cost or token claims.
     select:

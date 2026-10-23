@@ -458,7 +458,7 @@ export class SessionServer {
     assertTargetIdentity(registry.options.owner.target, request.params.expected, registry.options.owner.identity);
     if (!registry.options.store.findSessionMetadata(request.session)) {
       await registry.adopt(request.session, {
-        ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } } : {}) });
+        ...(request.params.requirePolicy === 'acp-strict' ? { policy: { mode: 'acp-strict', generation: 0 } } : {}) }, request.params.sessionDir);
       if (connection.closed) return;
     }
     await registry.restore(request.session);

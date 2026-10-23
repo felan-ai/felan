@@ -23,6 +23,12 @@ so a consumer cannot read `extensionConfig.jev` by itself.
 
 ## Decision
 
+Update 2026-10-23: session compaction now defaults to `summary`, with `classifier`
+opt-in. Ordinary classifier failures fall back to verified summary, then native
+Pi. [Idle-expiry compaction](0045-compact-before-prompt-cache-expiry.md) may use
+the classifier or verified summary, but never native Pi. The service placement
+described here remains superseded by ADR 0016.
+
 Create `@felan-ai/ext-jev` as a portable Jev classifier service. The package
 owns the Typesafe and OpenRouter transports, question/answer validation, and
 host-owned credential configuration. It does not register compaction, routing,
@@ -36,11 +42,13 @@ factories. Session compaction defines that classifier as an optional
 disabled Jev built-in, or classifier failure leave the owner’s existing
 behavior unchanged.
 
-The first consumer is the default `classifier` method in
+The first consumer is the `classifier` method in
 `@felan-ai/ext-session-compaction`. Jev may classify eligible successful tool
 evidence as keep, drop, or shorten; the method returns the retained transcript
-without a summary-model request. Session compaction still extracts bounded
-evidence, protects split-turn prefix and failures, and falls back to native Pi.
+without a summary-model request on success. Session compaction still extracts
+bounded evidence and protects split-turn prefix and failures. Classifier request
+failures in ordinary compaction fall back to verified summary, then native Pi
+if summary compaction also fails.
 Jev does not write summary prose or replace Pi cut points. Model routing,
 Prewalk gating, memory filtering,
 auto-branching, and tool-safety classification stay out of scope until those
@@ -62,10 +70,9 @@ owners receive the same injection seam and a quality-gated eval.
 ## Consequences
 
 - Credentials remain host-owned; there is no `extensionConfig.jev` schema.
-  `extensionConfig.sessionCompaction.method` defaults to `classifier`; the
-  extension uses it only when the host injects the capability and otherwise
-  uses verified summary compaction. Explicit `summary` configuration disables
-  classification.
+  `extensionConfig.sessionCompaction.method` defaults to `summary`. The opt-in
+  classifier method uses the injected capability when available and otherwise
+  uses verified summary compaction. The summary method disables classification.
 - There is one compaction producer. Eval arms that measure Jev keep session
   compaction enabled and set method to `classifier`.
 - Future owners reuse the host-injected classifier rather than depending on

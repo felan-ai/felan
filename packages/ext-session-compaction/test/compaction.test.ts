@@ -1,8 +1,17 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLogger, type FelanExtensionAPI, type LogRecord } from '@felan-ai/agent-core';
 import { createSessionCompactionExtension } from '../src/compaction.js';
+import * as continuity from '../src/internal/continuity.js';
+import * as extraction from '../src/internal/evidence.js';
+import * as splitPrefix from '../src/internal/split-prefix.js';
+import * as pruning from '../src/prune.js';
 
 describe('verified session compaction', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it('uses one active-model request and preserves Pi cut metadata', async () => {
     const complete = vi.fn().mockResolvedValue(assistantResponse([
       '## Goal', 'Fix login', '## Constraints & Preferences', '- Run tests',
@@ -32,6 +41,45 @@ describe('verified session compaction', () => {
     });
     expect(complete).toHaveBeenCalledOnce();
     expect(complete.mock.calls[0]?.[1].messages[0]?.content[0]?.text).toContain('<historical-evidence>');
+  });
+
+  describe('summary request timeout', () => {
+    it.each([
+      ['default', {}, 300_000],
+      ['HTTP idle timeout', { httpIdleTimeoutMs: 45_000 }, 45_000],
+      ['provider override', { httpIdleTimeoutMs: 45_000, retry: { provider: { timeoutMs: 12_000 } } }, 12_000],
+      ['provider override with idle timeout disabled', { httpIdleTimeoutMs: 'disabled', retry: { provider: { timeoutMs: 12_000 } } }, 12_000],
+      ['zero idle timeout', { httpIdleTimeoutMs: 0 }, undefined],
+      ['disabled idle timeout', { httpIdleTimeoutMs: 'disabled' }, undefined],
+      ['zero provider timeout', { httpIdleTimeoutMs: 45_000, retry: { provider: { timeoutMs: 0 } } }, undefined],
+      ['negative idle timeout', { httpIdleTimeoutMs: -1 }, undefined],
+      ['non-finite idle timeout', { httpIdleTimeoutMs: Infinity }, undefined],
+      ['non-finite provider timeout', { httpIdleTimeoutMs: 45_000, retry: { provider: { timeoutMs: NaN } } }, undefined],
+    ])('inherits %s', async (_name, settings, expected) => {
+      const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+      const handlers = install(complete);
+      vi.spyOn(handlers.pi, 'getSettings').mockReturnValue(settings as ReturnType<FelanExtensionAPI['getSettings']>);
+      const entries = branch();
+
+      const result = await handlers.before(compactionEvent(entries));
+
+      expect(result.compaction.details.method).toBe('summary');
+      expect(complete).toHaveBeenCalledOnce();
+      const options = complete.mock.calls[0]?.[2];
+      if (expected === undefined) expect(options).not.toHaveProperty('timeoutMs');
+      else expect(options).toHaveProperty('timeoutMs', expected);
+    });
+
+    it('tolerates unavailable settings without imposing a timeout', async () => {
+      const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+      const handlers = install(complete);
+      vi.spyOn(handlers.pi, 'getSettings').mockImplementation(() => { throw new Error('settings unavailable'); });
+      const entries = branch();
+
+      await expect(handlers.before(compactionEvent(entries))).resolves.toHaveProperty('compaction');
+      expect(complete).toHaveBeenCalledOnce();
+      expect(complete.mock.calls[0]?.[2]).not.toHaveProperty('timeoutMs');
+    });
   });
 
   it('includes the actual split-turn prefix after saturated historical evidence', async () => {
@@ -314,16 +362,16 @@ describe('verified session compaction', () => {
     expect(handlers.diagnostics).toHaveLength(0);
   });
 
-  it('uses the classifier transcript by default without a summary-model request', async () => {
-    const complete = vi.fn();
+  it.each([undefined, null, 'unknown'])('uses a verified summary for method %j even with a classifier', async (method) => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
     const classify = vi.fn(async () => ({ answers: {} }));
-    const handlers = install(complete, {}, [], [], { classify });
+    const handlers = install(complete, { method }, [], [], { classify });
     await expect(handlers.before({
-      preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
+      preparation: classifierPreparation(), branchEntries: branch(), reason: 'manual', willRetry: false,
       signal: new AbortController().signal,
-    })).resolves.toMatchObject({ compaction: { details: { method: 'classifier' } } });
+    })).resolves.toMatchObject({ compaction: { details: { method: 'summary' } } });
     expect(classify).not.toHaveBeenCalled();
-    expect(complete).not.toHaveBeenCalled();
+    expect(complete).toHaveBeenCalledOnce();
   });
 
   it('accepts a non-empty summary that omits canonical headings instead of paying for native fallback', async () => {
@@ -529,29 +577,200 @@ describe('verified session compaction', () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it('falls back to native compaction when the classifier fails', async () => {
+  it('falls back to verified summary when the classifier fails', async () => {
     const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
     const classify = vi.fn().mockRejectedValue(new Error('classifier unavailable'));
-    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
-    const evidence = `CLASSIFIER_FAILURE_OUTPUT ${'x'.repeat(120)}`;
+    const handlers = install(complete, { method: 'classifier', model: 'low' }, [
+      { provider: 'anthropic', id: 'claude-haiku-4-5', input: ['text'], maxTokens: 1_000, reasoning: true },
+    ], [], { classify });
 
     const result = await handlers.before({
-      preparation: {
-        ...prepared(),
-        messagesToSummarize: [
-          { role: 'user', content: 'Fix login.' },
-          { role: 'assistant', content: [{ type: 'toolCall', id: 'call-1', name: 'unknown_tool', arguments: {} }] },
-          { role: 'toolResult', toolCallId: 'call-1', toolName: 'unknown_tool', isError: false, content: [{ type: 'text', text: evidence }] },
-        ],
-      },
+      preparation: classifierPreparation(),
       branchEntries: branch(), reason: 'manual', willRetry: false,
       signal: new AbortController().signal,
     });
 
     expect(classify).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete.mock.calls[0]?.[0]).toMatchObject({ provider: 'anthropic', id: 'claude-haiku-4-5' });
+    expect(complete.mock.calls[0]?.[1].messages[0]?.content[0]?.text).toContain('CLASSIFIER_FAILURE_OUTPUT');
+    expect(result).toMatchObject({ compaction: { details: {
+      method: 'summary',
+      requestedModel: 'low',
+      prune: { status: 'skipped', reason: 'classifier-failed' },
+    } } });
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toHaveLength(0);
+    expect(handlers.logs.filter(({ level }) => level === 'warn')).toEqual([expect.objectContaining({
+      msg: 'session compaction classifier failed; trying verified summary',
+      fields: expect.objectContaining({ component: 'session-compaction', sessionId: 'session-1' }),
+    })]);
+  });
+
+  it('sanitizes classifier errors in both debug and warning logs', async () => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+    const classify = vi.fn().mockRejectedValue(new Error(
+      `classifier failed: api_key\u0000=secret-value Bearer\u0000 bearer-secret ${'界'.repeat(2_000)}`,
+    ));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
+
+    await handlers.before({
+      preparation: classifierPreparation(),
+      branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    });
+
+    expect(handlers.logs.filter(({ level }) => level !== 'info')).toEqual([
+      expect.objectContaining({
+        level: 'debug',
+        msg: 'session compaction prune',
+        fields: expect.objectContaining({
+          trigger: 'manual', candidates: 1, bulky: 1,
+          report: { status: 'skipped', reason: 'classifier-failed' },
+          state: expect.any(Object), questions: expect.any(Object), error: expect.any(String),
+        }),
+      }),
+      expect.objectContaining({
+        level: 'warn',
+        msg: 'session compaction classifier failed; trying verified summary',
+        fields: expect.objectContaining({ errorMessage: expect.any(String) }),
+      }),
+    ]);
+    for (const error of [handlers.logs[0]?.fields.error, handlers.logs[1]?.fields.errorMessage]) {
+      expect(error).toContain('api_key=[redacted] Bearer [redacted]');
+      expect(error).not.toContain('secret-value');
+      expect(error).not.toContain('bearer-secret');
+      expect(error).not.toContain('\u0000');
+      expect(new TextEncoder().encode(error as string).byteLength).toBeLessThanOrEqual(1_024);
+    }
+  });
+
+  it.each([
+    ['evidence extraction', () => vi.spyOn(extraction, 'extractEvidence')],
+    ['split-prefix rendering', () => vi.spyOn(splitPrefix, 'renderSplitTurnPrefix')],
+    ['compaction details', () => vi.spyOn(continuity, 'createCompactionDetails')],
+  ] as const)('does not misclassify %s errors as classifier failures', async (_name, spy) => {
+    const error = new Error('preparation failed');
+    const failure = spy().mockImplementationOnce(() => { throw error; });
+    try {
+      const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+      const handlers = install(complete, { method: 'classifier' }, [], [], { classify: vi.fn() });
+
+      await expect(handlers.before({
+        preparation: {
+          ...prepared(),
+          turnPrefixMessages: [{ role: 'user', content: 'Keep the current request.' }],
+        },
+        branchEntries: branch(), reason: 'manual', willRetry: false,
+        signal: new AbortController().signal,
+      })).rejects.toBe(error);
+
+      expect(complete).not.toHaveBeenCalled();
+      expect(handlers.diagnostics).toHaveLength(0);
+      expect(handlers.logs.filter(({ level }) => level === 'warn')).toHaveLength(0);
+    } finally {
+      failure.mockRestore();
+    }
+  });
+
+  it('delegates an oversized classifier split-prefix directly to native compaction', async () => {
+    const complete = vi.fn();
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify: vi.fn() });
+
+    await expect(handlers.before({
+      preparation: {
+        ...prepared(),
+        turnPrefixMessages: [{ role: 'user', content: 'x'.repeat(65 * 1_024) }],
+      },
+      branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    })).resolves.toBeUndefined();
+
     expect(complete).not.toHaveBeenCalled();
-    expect(result).toBeUndefined();
-    expect(handlers.diagnostics[0]).toMatchObject({ reason: 'model-request-failed' });
+    expect(handlers.diagnostics).toEqual([expect.objectContaining({ reason: 'prompt-preparation-failed' })]);
+    expect(handlers.logs.filter(({ level }) => level === 'warn')).toHaveLength(0);
+  });
+
+  it('falls back to native compaction only after classifier and summary requests fail', async () => {
+    const complete = vi.fn().mockRejectedValue(new Error('summary unavailable'));
+    const classify = vi.fn().mockRejectedValue(new Error('classifier unavailable'));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
+
+    await expect(handlers.before({
+      preparation: classifierPreparation(),
+      branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: new AbortController().signal,
+    })).resolves.toBeUndefined();
+
+    expect(classify).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(handlers.diagnostics).toHaveLength(1);
+    expect(handlers.diagnostics[0]).toMatchObject({
+      reason: 'model-request-failed',
+      errorMessage: 'summary unavailable',
+      prune: { status: 'skipped', reason: 'classifier-failed' },
+    });
+    expect(handlers.notifications).toHaveLength(1);
+  });
+
+  it('cancels without a summary request when the classifier rejects after abort', async () => {
+    const controller = new AbortController();
+    const complete = vi.fn();
+    const classify = vi.fn(async () => {
+      controller.abort();
+      throw new Error('classifier aborted');
+    });
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
+
+    await expect(handlers.before({
+      preparation: classifierPreparation(),
+      branchEntries: branch(), reason: 'manual', willRetry: false,
+      signal: controller.signal,
+    })).resolves.toEqual({ cancel: true });
+
+    expect(classify).toHaveBeenCalledOnce();
+    expect(complete).not.toHaveBeenCalled();
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toHaveLength(0);
+    expect(handlers.logs).toHaveLength(0);
+  });
+
+  it('uses verified summary and logs a bounded sanitized error when pruning throws', async () => {
+    const prune = vi.spyOn(pruning, 'pruneEvidence').mockRejectedValueOnce(
+      new Error(`classifier failed: api_key\u0000=secret-value Bearer\u0000 bearer-secret ${'x'.repeat(2_000)}`),
+    );
+    try {
+      const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+      const handlers = install(complete, { method: 'classifier' }, [], [], { classify: vi.fn() });
+
+      const result = await handlers.before({
+        preparation: classifierPreparation(),
+        branchEntries: branch(), reason: 'manual', willRetry: false,
+        signal: new AbortController().signal,
+      });
+
+      expect(complete).toHaveBeenCalledOnce();
+      expect(result).toMatchObject({ compaction: { details: {
+        method: 'summary',
+        prune: { status: 'skipped', reason: 'classifier-failed' },
+      } } });
+      expect(handlers.diagnostics).toHaveLength(0);
+      expect(handlers.notifications).toHaveLength(0);
+      expect(handlers.logs.filter(({ level }) => level !== 'info')).toEqual([expect.objectContaining({
+        level: 'warn',
+        msg: 'session compaction classifier failed; trying verified summary',
+        fields: expect.objectContaining({
+          component: 'session-compaction', sessionId: 'session-1', errorMessage: expect.any(String),
+        }),
+      })]);
+      const errorMessage = handlers.logs[0]?.fields.errorMessage as string;
+      expect(errorMessage).toContain('classifier failed: api_key=[redacted] Bearer [redacted]');
+      expect(errorMessage).not.toContain('secret');
+      expect(errorMessage).not.toContain('\u0000');
+      expect(new TextEncoder().encode(errorMessage).byteLength).toBeLessThanOrEqual(1_024);
+    } finally {
+      prune.mockRestore();
+    }
   });
 
   it('logs classifier debug without putting it on the compaction entry', async () => {
@@ -576,20 +795,340 @@ describe('verified session compaction', () => {
     });
     expect(JSON.stringify(result)).not.toContain('leftovers');
   });
+
+  it('accepts a summary with bounded merged file lists, usage, and request telemetry', async () => {
+    vi.useFakeTimers();
+    const response = assistantResponse(`${canonicalSummary()}\n<read-files>invented.ts</read-files>\n<modified-files>invented.ts</modified-files>`);
+    response.usage = {
+      input: 10, cacheRead: 200, cacheWrite: 90, output: 5, totalTokens: 305,
+      cost: { input: 0.01, cacheRead: 0.02, cacheWrite: 0.03, output: 0.04, total: 0.1 },
+    };
+    const complete = vi.fn<(...args: any[]) => Promise<any>>(async () => {
+      vi.advanceTimersByTime(25);
+      return response;
+    });
+    const handlers = install(complete);
+    const entries = [{ type: 'compaction', id: 'previous', details: {
+      readFiles: ['prior.ts', 'changed.ts'], modifiedFiles: ['old.ts'],
+    } }, ...branch()];
+    const result = await handlers.before({
+      ...compactionEvent(entries),
+      preparation: { ...prepared(), fileOps: { read: new Set(['read.ts', 'changed.ts']), written: new Set(['changed.ts']) } },
+    });
+
+    expect(result).toMatchObject({ compaction: {
+      usage: response.usage,
+      details: { method: 'summary', readFiles: ['prior.ts', 'read.ts'], modifiedFiles: ['changed.ts', 'old.ts'] },
+    } });
+    expect(result.compaction.summary).toContain('<read-files>\nprior.ts\nread.ts\n</read-files>');
+    expect(result.compaction.summary).toContain('<modified-files>\nchanged.ts\nold.ts\n</modified-files>');
+    expect(result.compaction.summary).not.toContain('invented.ts');
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete.mock.calls[0]?.[2]).toMatchObject({ maxTokens: 4_096, sessionId: result.compaction.details.attemptId, cacheRetention: 'none' });
+    expect(handlers.logs).toEqual([expect.objectContaining({
+      level: 'info', msg: 'session compaction request', fields: {
+        component: 'session-compaction', sessionId: 'session-1', method: 'summary',
+        trigger: 'manual', model: 'test/model', latencyMs: 25,
+        outcome: 'accepted', usage: { input: 10, cacheRead: 200, cacheWrite: 90, output: 5, cost: 0.1 }, cacheShare: 0.667,
+      },
+    })]);
+  });
+
+  it.each(['summary', 'classifier'] as const)('appends only collected file lists to the %s path', async (method) => {
+    const complete = vi.fn().mockResolvedValue(assistantResponse(`${canonicalSummary()}\n<read-files>invented.ts</read-files>`));
+    const handlers = install(complete, { method }, [], [], { classify: vi.fn() });
+    const result = await handlers.before({
+      ...compactionEvent(),
+      preparation: { ...prepared(), previousSummary: '<modified-files>stale.ts</modified-files>', fileOps: {
+        read: new Set(['read.ts', 'modified.ts']), edited: new Set(['modified.ts']),
+      } },
+    });
+    expect(result.compaction.summary).toContain('<read-files>\nread.ts\n</read-files>');
+    expect(result.compaction.summary).toContain('<modified-files>\nmodified.ts\n</modified-files>');
+    expect(result.compaction.summary).not.toContain('invented.ts');
+    expect(result.compaction.summary).not.toContain('stale.ts');
+    expect(result.compaction.details).toMatchObject({ readFiles: ['read.ts'], modifiedFiles: ['modified.ts'] });
+    expect(complete).toHaveBeenCalledTimes(method === 'summary' ? 1 : 0);
+  });
+
+  it('logs fresh latency and omits the cache share for zero input', async () => {
+    vi.useFakeTimers();
+    const response = assistantResponse(canonicalSummary());
+    response.usage = { ...response.usage, input: 0 };
+    const complete = vi.fn(async () => { vi.advanceTimersByTime(37); return response; });
+    const handlers = install(complete);
+    const result = await handlers.before(compactionEvent());
+    expect(result.compaction.details).not.toHaveProperty('readFiles');
+    expect(result.compaction.details).not.toHaveProperty('modifiedFiles');
+    expect(handlers.logs).toEqual([expect.objectContaining({
+      level: 'info', msg: 'session compaction request', fields: expect.objectContaining({
+        latencyMs: 37, outcome: 'accepted', usage: { input: 0, cacheRead: 0, cacheWrite: 0, output: 1, cost: 0 },
+      }),
+    })]);
+    expect(handlers.logs[0]?.fields).not.toHaveProperty('cacheShare');
+  });
+
+  it.each([
+    ['length', 'Partial checkpoint', 'rejected', 'response-length'],
+    ['error', '', 'failed', 'response-error'],
+    ['stop', '', 'rejected', 'response-empty'],
+    ['stop', 'All tests passed.', 'rejected', 'unsupported-claim'],
+  ])('logs one fresh %s response with outcome %s', async (stopReason, text, outcome, reason) => {
+    const handlers = install(vi.fn().mockResolvedValue(assistantResponse(text, stopReason)));
+    await expect(handlers.before(compactionEvent())).resolves.toBeUndefined();
+    expect(handlers.logs).toEqual([expect.objectContaining({
+      level: 'info', msg: 'session compaction request', fields: expect.objectContaining({ outcome, reason }),
+    })]);
+  });
+
+  it('keeps request logs best effort when the logger fails', async () => {
+    const handlers = install(vi.fn().mockResolvedValue(assistantResponse(canonicalSummary())));
+    vi.spyOn(handlers.pi.runtime.logger, 'child').mockImplementation(() => { throw new Error('logger failed'); });
+    await expect(handlers.before(compactionEvent())).resolves.toHaveProperty('compaction');
+  });
+
+  it.each(['summary', 'classifier'] as const)('marks accepted expiry-triggered %s compaction', async (method) => {
+    vi.useFakeTimers();
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+    const handlers = install(complete, { method }, [], [], { classify: vi.fn() });
+    const entries = expiryBranch();
+    handlers.setBranch(entries);
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+    expect(handlers.ctx.compact).toHaveBeenCalledOnce();
+
+    const result = await handlers.before(compactionEvent(entries));
+
+    expect(result.compaction.details).toMatchObject({ method, trigger: 'cache-expiry' });
+    if (method === 'summary') {
+      expect(complete).toHaveBeenCalledOnce();
+      expect(complete.mock.calls[0]?.[1].messages[0]?.content[0]?.text).toContain('<historical-evidence>');
+      expect(complete.mock.calls[0]?.[2]).toMatchObject({ cacheRetention: 'none' });
+      expect(handlers.logs.at(-1)?.fields).toMatchObject({ trigger: 'cache-expiry', outcome: 'accepted' });
+    } else expect(complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['incomplete', () => Promise.resolve(assistantResponse('partial', 'length')), 'rejected', 'model-response-invalid'],
+    ['error', () => Promise.resolve(assistantResponse('', 'error')), 'failed', 'model-response-invalid'],
+    ['aborted', () => Promise.resolve(assistantResponse('', 'aborted')), 'failed', 'model-response-invalid'],
+    ['empty', () => Promise.resolve(assistantResponse('')), 'rejected', 'model-response-invalid'],
+    ['unsupported', () => Promise.resolve(assistantResponse('All tests passed.')), 'rejected', 'model-response-unsupported'],
+    ['tool call', () => Promise.resolve({ ...assistantResponse(''), content: [{ type: 'toolCall', id: 'call', name: 'read', arguments: {} }] }), 'rejected', 'model-response-invalid'],
+    ['request error', () => Promise.reject(new Error('provider unavailable')), 'failed', 'model-request-failed'],
+    ['timeout', () => Promise.reject(new Error('Request timed out')), 'failed', 'model-request-failed'],
+  ] as const)('cancels an expiry summary after %s without a native fallback diagnostic or warning', async (_name, response, outcome, reason) => {
+    vi.useFakeTimers();
+    const complete = vi.fn(response);
+    const handlers = install(complete, { method: 'summary' });
+    const entries = expiryBranch();
+    handlers.setBranch(entries);
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+    expect(handlers.ctx.compact).toHaveBeenCalledOnce();
+
+    await expect(handlers.before(compactionEvent(entries))).resolves.toEqual({ cancel: true });
+
+    expect(complete).toHaveBeenCalledOnce();
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toEqual([{ type: 'info', message: expect.stringContaining('compacting the idle session') }]);
+    expect(handlers.logs.slice(-2)).toEqual([
+      expect.objectContaining({ msg: 'session compaction request', fields: expect.objectContaining({ trigger: 'cache-expiry', outcome }) }),
+      expect.objectContaining({ level: 'info', msg: 'session compaction cache expiry cancelled', fields: expect.objectContaining({ trigger: 'cache-expiry', reason }) }),
+    ]);
+  });
+
+  it('consumes the expiry trigger when the expiry run is already aborted', async () => {
+    vi.useFakeTimers();
+    const complete = vi.fn().mockRejectedValue(new Error('provider unavailable'));
+    const handlers = install(complete, { method: 'summary' });
+    const entries = expiryBranch();
+    handlers.setBranch(entries);
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+    expect(handlers.ctx.compact).toHaveBeenCalledOnce();
+    const aborted = new AbortController();
+    aborted.abort();
+
+    await expect(handlers.before({ ...compactionEvent(entries), signal: aborted.signal })).resolves.toEqual({ cancel: true });
+    await expect(handlers.before(compactionEvent(entries))).resolves.toBeUndefined();
+
+    expect(handlers.diagnostics).toHaveLength(1);
+  });
+
+  it.each([true, false])('tries a verified summary after an expiry classifier failure (summary succeeds: %s)', async (succeeds) => {
+    vi.useFakeTimers();
+    const complete = succeeds
+      ? vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()))
+      : vi.fn().mockRejectedValue(new Error('summary unavailable'));
+    const classify = vi.fn().mockRejectedValue(new Error('classifier unavailable'));
+    const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
+    const entries = expiryBranch();
+    handlers.setBranch(entries);
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+    expect(handlers.ctx.compact).toHaveBeenCalledOnce();
+
+    const result = await handlers.before({ ...compactionEvent(entries), preparation: classifierPreparation() });
+
+    if (succeeds) expect(result.compaction.details).toMatchObject({ method: 'summary', trigger: 'cache-expiry' });
+    else expect(result).toEqual({ cancel: true });
+    expect(classify).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete.mock.calls[0]?.[2]).toMatchObject({ cacheRetention: 'none' });
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toHaveLength(1);
+    expect(handlers.notifications[0]).toMatchObject({ type: 'info' });
+  });
+
+  it.each(['summary', 'classifier'] as const)('cancels an expiry %s preparation failure instead of falling back to native', async (method) => {
+    vi.useFakeTimers();
+    const complete = vi.fn();
+    const handlers = install(complete, { method }, [], [], { classify: vi.fn() });
+    const entries = expiryBranch();
+    handlers.setBranch(entries);
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+
+    await expect(handlers.before({ ...compactionEvent(entries), preparation: {
+      ...prepared(), turnPrefixMessages: [{ role: 'user', content: 'x'.repeat(65 * 1_024) }],
+    } })).resolves.toEqual({ cancel: true });
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toHaveLength(1);
+    expect(handlers.logs.at(-1)).toMatchObject({
+      msg: 'session compaction cache expiry cancelled', fields: { trigger: 'cache-expiry' },
+    });
+  });
+
+  it('cancels an expiry summary if the prompt exceeds model capacity', async () => {
+    vi.useFakeTimers();
+    const complete = vi.fn();
+    const handlers = install(complete);
+    const entries = expiryBranch();
+    handlers.setBranch(entries);
+    handlers.ctx.model.contextWindow = 1;
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+
+    await expect(handlers.before(compactionEvent(entries))).resolves.toEqual({ cancel: true });
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toHaveLength(1);
+  });
+
+  it.each([
+    ['evidence extraction', () => vi.spyOn(extraction, 'extractEvidence')],
+    ['split-prefix rendering', () => vi.spyOn(splitPrefix, 'renderSplitTurnPrefix')],
+    ['compaction details', () => vi.spyOn(continuity, 'createCompactionDetails')],
+  ] as const)('cancels expiry compaction when %s throws', async (_name, spy) => {
+    vi.useFakeTimers();
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+    const handlers = install(complete);
+    const entries = expiryBranch();
+    handlers.setBranch(entries);
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+    spy().mockImplementationOnce(() => { throw new Error('preparation failed'); });
+
+    await expect(handlers.before(compactionEvent(entries))).resolves.toEqual({ cancel: true });
+
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toHaveLength(1);
+  });
+
+  it('cancels an expiry summary if its model becomes unavailable', async () => {
+    vi.useFakeTimers();
+    const complete = vi.fn();
+    const handlers = install(complete);
+    const entries = expiryBranch();
+    handlers.setBranch(entries);
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+    expect(handlers.ctx.compact).toHaveBeenCalledOnce();
+    handlers.ctx.model = undefined;
+
+    await expect(handlers.before(compactionEvent(entries))).resolves.toEqual({ cancel: true });
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toHaveLength(1);
+  });
+
+  it.each([
+    [{ compactBeforeCacheExpiry: false }, 'disabled'],
+    [{ compactBeforeCacheExpiry: 'false' }, 'compact'],
+    [{ minContextTokens: -1 }, 'context-too-small'],
+    [{ minContextTokens: 1.5 }, 'context-too-small'],
+    [{ minContextTokens: Infinity }, 'context-too-small'],
+    [{ minContextTokens: NaN }, 'context-too-small'],
+    [{ minContextTokens: '0' }, 'context-too-small'],
+    [{ minContextTokens: 0 }, 'compact'],
+    [{ minContextTokens: 199_999 }, 'compact'],
+    [{}, 'compact'],
+    [{ model: 'low' }, 'compact'],
+  ] as const)('validates expiry configuration %j (%s)', async (config, expectedReason) => {
+    vi.useFakeTimers();
+    const handlers = install(vi.fn(), { method: 'summary', ...config }, [
+      { provider: 'anthropic', id: 'claude-haiku-4-5', input: ['text'], maxTokens: 1_000 },
+    ]);
+    handlers.setBranch(expiryBranch());
+    if ('minContextTokens' in config && config.minContextTokens !== 0) {
+      handlers.ctx.getContextUsage.mockReturnValue({ tokens: 199_999 });
+    }
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+    expect(handlers.ctx.compact).toHaveBeenCalledTimes(expectedReason === 'compact' ? 1 : 0);
+    if (expectedReason === 'disabled') expect(handlers.logs).toHaveLength(0);
+    else expect(handlers.logs.at(-1)?.fields.reason).toBe(expectedReason);
+  });
+
+  it.each([
+    ['summary', false, false, 'model-unavailable'],
+    ['summary', true, false, 'model-unavailable'],
+    ['summary', false, true, 'compact'],
+    ['classifier', false, false, 'model-unavailable'],
+    ['classifier', false, true, 'compact'],
+    ['classifier', true, false, 'compact'],
+  ] as const)('checks expiry eligibility for %s (classifier: %s, model: %s)', async (method, hasClassifier, hasModel, expectedReason) => {
+    vi.useFakeTimers();
+    const handlers = install(vi.fn(), { method }, [], [], hasClassifier ? { classify: vi.fn() } : undefined);
+    handlers.setBranch(expiryBranch());
+    if (!hasModel) handlers.ctx.model = undefined;
+    await handlers.emit('agent_settled');
+    await vi.advanceTimersByTimeAsync(280_000);
+
+    expect(handlers.ctx.compact).toHaveBeenCalledTimes(expectedReason === 'compact' ? 1 : 0);
+    expect(handlers.logs.at(-1)?.fields.reason).toBe(expectedReason);
+  });
+
+  it('keeps classifier usage metadata in the existing debug log', async () => {
+    const metadata = { provider: 'test', model: 'classifier', usage: { inputTokens: 100, outputTokens: 10, cost: 0.01 } };
+    const classify = vi.fn(async () => ({ answers: {}, metadata }));
+    const handlers = install(vi.fn(), { method: 'classifier' }, [], [], { classify });
+    await handlers.before({ ...compactionEvent(), preparation: classifierPreparation() });
+    expect(handlers.logs).toEqual([expect.objectContaining({
+      level: 'debug', msg: 'session compaction prune',
+      fields: expect.objectContaining({ report: expect.objectContaining({ classifier: metadata }) }),
+    })]);
+  });
 });
 
 function install(
-  complete: ReturnType<typeof vi.fn>,
+  complete: (...args: any[]) => any,
   config: Record<string, unknown> = {},
   available: readonly Record<string, unknown>[] = [],
   scopedModels: readonly Record<string, unknown>[] = [],
   classifier?: { classify: (...args: any[]) => Promise<unknown> },
 ) {
-  const registered = new Map<string, (...args: any[]) => any>();
+  const registered = new Map<string, ((...args: any[]) => any)[]>();
   const diagnostics: unknown[] = [];
   const notifications: unknown[] = [];
   const logs: LogRecord[] = [];
-  const model = { provider: 'test', id: 'model', maxTokens: 4_096 };
+  let entries: any[] = branch();
+  const model = { provider: 'test', id: 'model', maxTokens: 4_096, input: ['text'], promptCache: { short: 300 } };
   const pi = {
     config,
     runtime: {
@@ -599,27 +1138,66 @@ function install(
       }),
       ...(classifier === undefined ? {} : { classifier }),
     },
-    on: (name: string, handler: (...args: any[]) => any) => registered.set(name, handler),
+    on: (name: string, handler: (...args: any[]) => any) => registered.set(name, [...(registered.get(name) ?? []), handler]),
     appendEntry: (_type: string, data: unknown) => { diagnostics.push(data); },
+    getSettings: () => ({}),
   } as unknown as FelanExtensionAPI;
   createSessionCompactionExtension()(pi);
   const ctx = {
     model,
     thinkingLevel: 'off',
     scopedModels,
-    modelRegistry: { complete: complete as any, getAvailable: () => available },
+    modelRegistry: {
+      complete,
+      getAvailable: () => available,
+    },
     sessionManager: {
       getSessionId: () => 'session-1',
-      getBranch: () => branch(),
+      getBranch: () => entries,
     },
+    isIdle: () => true,
+    hasPendingMessages: () => false,
+    getContextUsage: vi.fn(() => ({ tokens: 200_000 })),
+    compact: vi.fn(),
     ui: { notify: (message: string, type: string) => { notifications.push({ message, type }); } },
   } as any;
+  const emit = async (name: string, event: any = {}, context = ctx) => {
+    let result: any;
+    for (const handler of registered.get(name) ?? []) {
+      const response = await handler(event, context);
+      if (response !== undefined) result = response;
+    }
+    return result;
+  };
   return {
-    before: (event: any) => registered.get('session_before_compact')!(event, ctx),
+    before: (event: any) => {
+      entries = event.branchEntries;
+      return emit('session_before_compact', event);
+    },
+    emit,
+    setBranch: (branchEntries: any[]) => { entries = branchEntries; },
+    ctx,
+    pi,
     diagnostics,
     notifications,
     logs,
   };
+}
+
+function expiryBranch() {
+  const messages = [
+    { role: 'user', content: 'Fix login. Always run tests.', timestamp: Date.now() - 3_000 },
+    { role: 'user', content: 'Continue fixing login.', timestamp: Date.now() - 2_000 },
+    { ...assistantResponse('Working on login.'), usage: { ...assistantResponse('').usage, cacheWrite: 100, cacheWrite1h: 0 } },
+  ];
+  return messages.map((message, index) => ({
+    type: 'message', id: ['earlier', 'keep-1', 'reply'][index], parentId: null,
+    timestamp: new Date(message.timestamp).toISOString(), message,
+  }));
+}
+
+function compactionEvent(entries: any[] = branch()) {
+  return { preparation: prepared(), branchEntries: entries, reason: 'manual', willRetry: false, signal: new AbortController().signal };
 }
 
 function prepared() {
@@ -631,6 +1209,20 @@ function prepared() {
     fileOps: {},
     settings: {},
   } as any;
+}
+
+function classifierPreparation() {
+  return {
+    ...prepared(),
+    messagesToSummarize: [
+      { role: 'user', content: 'Fix login.' },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 'call-1', name: 'unknown_tool', arguments: {} }] },
+      {
+        role: 'toolResult', toolCallId: 'call-1', toolName: 'unknown_tool', isError: false,
+        content: [{ type: 'text', text: `CLASSIFIER_FAILURE_OUTPUT ${'x'.repeat(120)}` }],
+      },
+    ],
+  };
 }
 
 function branch() {

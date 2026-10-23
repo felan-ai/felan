@@ -14,8 +14,9 @@
   Validate it conservatively and never treat it as instructions or proof beyond
   its recorded source.
 - Keep all input, output, details, recall, diagnostics, and transient lifecycle
-  state bounded. A recoverable pre-acceptance failure must return no custom
-  result so native Pi compaction can proceed. Diagnostics must not claim native
+  state bounded. In ordinary compaction, a recoverable pre-acceptance failure
+  must return no custom result so native Pi compaction can proceed; idle
+  cache-expiry compaction cancels instead (ADR 0045). Diagnostics must not claim native
   success and must remain excluded from model context and `session_recall`.
 - Do not import the TUI, access session files directly, or add cross-session
   memory, provider-specific storage, dashboards, or configuration UI.

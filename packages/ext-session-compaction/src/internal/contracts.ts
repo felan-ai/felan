@@ -7,6 +7,7 @@ export interface CompactionPreparation {
   readonly previousSummary?: string;
   readonly tokensBefore: number;
   readonly settings?: { readonly reserveTokens?: number };
+  readonly fileOps?: unknown;
 }
 export type PreparedMessageValue = unknown;
 

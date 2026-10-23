@@ -35,7 +35,7 @@ export function createFallbackDiagnostic(input: FallbackDiagnosticInput): Sessio
     requestedModel: bounded(input.requestedModel),
     ...(boundedOptional(input.attemptId) ? { attemptId: boundedOptional(input.attemptId) } : {}),
     ...(boundedOptional(input.selectedModel) ? { selectedModel: boundedOptional(input.selectedModel) } : {}),
-    ...(sanitizedError(input.errorMessage) ? { errorMessage: sanitizedError(input.errorMessage) } : {}),
+    ...(sanitizeErrorMessage(input.errorMessage) ? { errorMessage: sanitizeErrorMessage(input.errorMessage) } : {}),
     ...(boundedUnknown(input.stopReason) ? { stopReason: boundedUnknown(input.stopReason) } : {}),
     ...(boundedUnknown(input.detail) ? { detail: boundedUnknown(input.detail) } : {}),
     ...(input.prune ? { prune: boundedPrune(input.prune) } : {}),
@@ -60,9 +60,9 @@ function boundedPrune(prune: EvidencePruneReport): NonNullable<SessionCompaction
   return { status: 'off' };
 }
 
-function sanitizedError(value: unknown): string {
+export function sanitizeErrorMessage(value: unknown): string {
   const text = typeof value === 'string' ? value : value instanceof Error ? value.message : value === undefined ? '' : String(value);
-  return redactSecrets(sanitizeText(text, MAX_DIAGNOSTIC_ERROR_BYTES).text);
+  return sanitizeAndRedact(text, MAX_DIAGNOSTIC_ERROR_BYTES);
 }
 
 function boundedUnknown(value: unknown): string {
@@ -74,7 +74,12 @@ function boundedOptional(value: unknown): string {
 }
 
 function bounded(value: string): string {
-  return sanitizeText(redactSecrets(value), MAX_DIAGNOSTIC_FIELD_BYTES).text;
+  return sanitizeAndRedact(value, MAX_DIAGNOSTIC_FIELD_BYTES);
+}
+
+function sanitizeAndRedact(value: string, maxBytes: number): string {
+  const text = sanitizeText(value, maxBytes * 2).text;
+  return sanitizeText(redactSecrets(text), maxBytes).text;
 }
 
 function redactSecrets(value: string): string {

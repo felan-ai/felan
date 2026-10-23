@@ -58,6 +58,8 @@ to do.
   compaction exposes mutually exclusive summary and classifier methods.
 - [ADR 0044](decisions/0044-bridge-claude-code-through-managed-agent-sdk.md) — why
   Claude Code uses a vendored bridge and explicitly installed Agent SDK.
+- [ADR 0045](decisions/0045-compact-before-prompt-cache-expiry.md) — why idle
+  sessions may compact before a known prompt-cache expiry without native fallback.
 - [Extension catalog](reference/extension-catalog.md) — every first-party
   package, its host boundary, commands, and runtime conditions.
 - [Runtime dependencies](reference/runtime-dependencies.md) — external

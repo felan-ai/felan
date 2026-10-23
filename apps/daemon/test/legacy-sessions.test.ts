@@ -71,6 +71,22 @@ it('discovers per-cwd and custom-directory transcripts by header cwd, newest fir
   expect((await s.index.discover([])).map(row => row.id)).toEqual(['elsewhere', 'custom', 'per-cwd']);
 });
 
+it('limits explicit-directory discovery to top-level headers with the usual ID and path exclusions', async () => {
+  const s = await stores(); const sessionDir = join(s.directory, 'unregistered');
+  await mkdir(join(sessionDir, 'nested'), { recursive: true });
+  await s.write(join(s.perCwd, 'elsewhere.jsonl'), 'elsewhere');
+  await s.write(join(sessionDir, 'nested', 'nested.jsonl'), 'nested');
+  const registered = await s.write(join(sessionDir, 'registered.jsonl'), 'registered-path');
+  await s.write(join(sessionDir, 'registered-id.jsonl'), 'registered-id');
+  await s.write(join(sessionDir, 'older.jsonl'), 'duplicate');
+  const newest = await s.write(join(sessionDir, 'newer.jsonl'), 'duplicate', s.other, 'not a valid transcript body\n');
+  await s.write(join(sessionDir, 'invalid-id.jsonl'), '../escape');
+  await writeFile(join(sessionDir, 'invalid.jsonl'), 'not a header\n');
+  const rows = await s.index.discover([{ id: 'another-id', piPath: registered }, { id: 'registered-id', piPath: '/registered.jsonl' }], { sessionDir });
+  expect(rows).toEqual([{ id: 'duplicate', path: newest, cwd: s.other, modifiedAt: Math.floor((await stat(newest)).mtimeMs) }]);
+  expect(reads.streams).toBe(0);
+});
+
 it('skips registered, duplicate and invalid files but lists linked transcripts and deleted cwds', async () => {
   const s = await stores();
   const registered = await s.write(join(s.perCwd, 'registered.jsonl'), 'registered');
