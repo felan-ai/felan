@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
-  LIMITS, OriginSchema, PUBLISHED_TOOL_OUTPUT_CHARACTERS, REMOTE_FEATURES, RemoteCommandRowSchema, parseClientEnvelope, parseHostRegistration, parseHostTokenClaims, parseHostTokenResponse, parseOperationResult, parsePublishedEvent,
+  LIMITS, OriginSchema, PUBLISHED_TOOL_OUTPUT_CHARACTERS, REMOTE_FEATURES, RemoteCommandRowSchema, parseClientEnvelope, parseHostPairingError, parseHostPairingPollRequest, parseHostPairingPollResponse, parseHostPairingStartRequest, parseHostPairingStartResponse,
+  parseHostRegistration, parseHostTokenClaims, parseHostTokenResponse, parseOperationResult, parsePublishedEvent,
   parsePublishedSession, parseRealtimeNotification, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema, parseServerEnvelope,
   type HostTokenClaims, type HostTokenResponse, type OperationParams, type RemoteCommand, type RemoteCommandRow,
 } from '../src/index.js';
@@ -187,5 +188,41 @@ describe('realtime and tokens', () => {
     const response = { token: 't', expiresAt: 10, refreshAt: 5, host: { id: host, teamId: host, userId: host }, supabase: { url: 'https://x.supabase.co', publishableKey: 'sb_publishable_x' } };
     expect(parseHostTokenResponse(response)).toEqual(response);
     expect(() => parseHostTokenResponse({ ...response, refreshAt: 11 })).toThrow(/refresh/);
+  });});
+
+describe('browser pairing', () => {
+  const deviceCode = 'd'.repeat(43);
+  const start = { deviceCode, userCode: 'BCDF-GHJK', verificationUri: 'https://app.felan.ai/pair',
+    verificationUriComplete: 'https://app.felan.ai/pair?code=BCDF-GHJK', interval: 5, expiresAt: 1_000 };
+
+  it('starts with the same registration fields as the token exchange', () => {
+    const request = { installId: host, name: 'MacBook', daemonVersion: '0.4.0', protocol: 1, rowSchemaVersion: 1 };
+    expect(parseHostPairingStartRequest(request)).toEqual(request);
+    expect(() => parseHostPairingStartRequest({ ...request, installId: 'not-a-uuid' })).toThrow();
+    expect(() => parseHostPairingStartRequest({ ...request, protocol: 2 })).toThrow();
+  });
+  it('accepts a start response with readable user codes and same-origin verification URIs', () => {
+    expect(parseHostPairingStartResponse(start)).toEqual(start);
+    for (const fields of [
+      { userCode: 'ABCD-EFGH' }, { userCode: 'bcdf-ghjk' }, { userCode: 'BCDFGHJK' }, { deviceCode: 'short' }, { deviceCode: 'd'.repeat(42) + '.' },
+      { interval: 0 }, { interval: 61 }, { verificationUri: 'ftp://app.felan.ai/pair' },
+      { verificationUri: 'https://user:secret@app.felan.ai/pair' }, { verificationUriComplete: 'https://evil.example/pair?code=BCDF-GHJK' },
+    ]) expect(() => parseHostPairingStartResponse({ ...start, ...fields })).toThrow();
+  });
+  it('polls by device code and returns a credential bound to a personal host', () => {
+    expect(parseHostPairingPollRequest({ deviceCode })).toEqual({ deviceCode });
+    expect(() => parseHostPairingPollRequest({ deviceCode: '' })).toThrow();
+    const response = { credential: 'fln_pat_secret', host: { id: host, teamId: host, userId: host } };
+    expect(parseHostPairingPollResponse(response)).toEqual(response);
+    expect(() => parseHostPairingPollResponse({ ...response, host: { id: host, teamId: host } })).toThrow();
+    expect(() => parseHostPairingPollResponse({ ...response, credential: '' })).toThrow();
+  });
+  it('accepts only the bounded pairing error codes', () => {
+    for (const code of ['authorization_pending', 'slow_down', 'access_denied', 'expired_token', 'unsupported_schema', 'rate_limited']) {
+      expect(parseHostPairingError({ code, message: 'm' }).code).toBe(code);
+    }
+    expect(parseHostPairingError({ code: 'unsupported_schema', message: 'm', supported: { protocol: [1], rowSchemaVersion: [1] } }).supported)
+      .toEqual({ protocol: [1], rowSchemaVersion: [1] });
+    expect(() => parseHostPairingError({ code: 'invalid_pat', message: 'm' })).toThrow();
   });
 });

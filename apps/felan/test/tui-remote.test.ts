@@ -1,17 +1,32 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Operation, OperationParams, RemoteStatus, Response } from '@felan-ai/session-protocol';
 import { submitTuiInput } from '../src/tui/commands.js';
 import { TuiSessionController } from '../src/tui/controller.js';
 import type { TuiDialogHost } from '../src/tui/dialogs.js';
 import { snapshot } from './client-fixtures.js';
 
-afterEach(() => { vi.restoreAllMocks(); });
+afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+const pairing = { userCode: 'BCDF-GHJK', verificationUri: 'https://app.felan.ai/pair', verificationUriComplete: 'https://app.felan.ai/pair?code=BCDF-GHJK', expiresAt: 600_000 };
+function pairingRequests(f: ReturnType<typeof fixture>, polls: RemoteStatus[]) {
+  f.request.mockImplementation(async (op: Operation, params: OperationParams<Operation>) => {
+    if (op === 'remote.status') return { outcome: 'accepted', result: polls.shift()! };
+    if (op === 'remote.configure' && (params as { action?: string }).action === 'login') return { outcome: 'accepted', result: pending };
+    return { outcome: 'accepted', result: { ...status, configured: false, state: 'off' } };
+  });
+}
+function holdPrompt(dialogs: TuiDialogHost) {
+  vi.mocked(dialogs.select).mockImplementation((_title, _choices, options) => new Promise(resolve => {
+    options?.signal?.addEventListener('abort', () => resolve(undefined));
+  }));
+}
 const operations: Operation[] = ['remote.status', 'remote.configure', 'session.remote', 'host.status'];
 const status: RemoteStatus = { configured: true, share: 'on-request', state: 'connected', apiUrl: 'https://app.felan.ai',
   host: { id: '12345678-1234-1234-1234-123456789abc' }, pending: 3, sessions: 2,
   projects: [{ id: 'project', name: 'Example', path: '/fixture' }] };
+const pending: RemoteStatus = { ...status, configured: false, state: 'connecting', pairing };
+const connected: RemoteStatus = { ...status };
 
-function fixture(options: { status?: Partial<RemoteStatus>; operations?: Operation[]; attached?: boolean; failure?: Response } = {}) {
+function fixture(options: { status?: Partial<RemoteStatus>; operations?: Operation[]; attached?: boolean; failure?: Response; openBrowser?: (url: string) => Promise<unknown> } = {}) {
   const remote = { ...status, ...options.status };
   const request = vi.fn(async (op: Operation, _params: OperationParams<Operation>) => {
     if (options.failure) return options.failure;
@@ -22,7 +37,8 @@ function fixture(options: { status?: Partial<RemoteStatus>; operations?: Operati
   vi.spyOn(controller, 'sessionId', 'get').mockReturnValue(options.attached === false ? undefined : 'session');
   vi.spyOn(controller, 'snapshot', 'get').mockReturnValue(options.attached === false ? undefined : snapshot());
   const dialogs: TuiDialogHost = { input: vi.fn(async () => undefined), select: vi.fn(async () => undefined), confirm: vi.fn(async () => false) };
-  const submit = (text: string) => submitTuiInput(controller, dialogs, text, { cwd: '/wrong-fallback', exit() {} });
+  const openBrowser = options.openBrowser ?? vi.fn(async () => undefined);
+  const submit = (text: string) => submitTuiInput(controller, dialogs, text, { cwd: '/wrong-fallback', exit() {}, openBrowser });
   return { controller, dialogs, request, submit };
 }
 
@@ -33,7 +49,7 @@ describe('/remote', () => {
     expect(f.request).toHaveBeenCalledExactlyOnceWith('remote.status', {}, {});
     expect(f.dialogs.select).toHaveBeenCalledWith('Remote stopped · unsupported_schema', expect.arrayContaining([
       { value: 'message', label: 'Update Felan to resume sharing.' },
-      { value: 'host', label: 'Host: 12345678 · PAT configured' },
+      { value: 'host', label: 'Host: 12345678 · paired' },
       { value: 'share', label: 'Share: on-request' },
       { value: 'summary', label: '3 pending events · 2 shared sessions' },
       { value: 'project', label: 'Project: Example · /fixture' },
@@ -98,22 +114,6 @@ describe('/remote', () => {
     expect(f.controller.notice).toContain('Usage: /remote'); expect(f.request).not.toHaveBeenCalled();
   });
 
-  it.each([undefined, 'http://localhost:3000'])('collects a PAT only via masked input (apiUrl: %s)', async apiUrl => {
-    const f = fixture({ attached: false }); const token = 'fln_pat_synthetic';
-    vi.mocked(f.dialogs.input).mockResolvedValueOnce(` ${token} `);
-    expect(await f.submit(`/remote login${apiUrl ? ` ${apiUrl}` : ''}`)).toBe(true);
-    expect(f.dialogs.input).toHaveBeenCalledExactlyOnceWith('Felan personal access token', '', { secret: true });
-    expect(f.request).toHaveBeenCalledExactlyOnceWith('remote.configure', { action: 'login', token, ...(apiUrl ? { apiUrl } : {}) }, {});
-    expect(JSON.stringify(f.controller.notes)).not.toContain(token); expect(f.controller.notice).not.toContain(token);
-    expect(f.controller.history).toEqual([]);
-  });
-
-  it.each([undefined, '', 'wrong-prefix', 'fln_pat_', 'fln_pat_with space', `fln_pat_${'x'.repeat(510)}`])('does not send cancelled or malformed PAT input (%s)', async token => {
-    const f = fixture(); vi.mocked(f.dialogs.input).mockResolvedValueOnce(token);
-    expect(await f.submit('/remote login')).toBe(false); expect(f.request).not.toHaveBeenCalled();
-    if (token !== undefined) expect(f.controller.notice).toContain('beginning with fln_pat_');
-  });
-
   it.each(['fln_pat_inline', 'https://user:password@example.com', 'file:///tmp/example', 'https://example.com?key=fln_pat_inline', 'https://example.com extra'])('rejects invalid or credential-bearing login URLs (%s)', async url => {
     const f = fixture(); expect(await f.submit(`/remote login ${url}`)).toBe(false);
     expect(f.controller.notice).toBe('Usage: /remote login [http(s)://apiUrl]');
@@ -124,16 +124,93 @@ describe('/remote', () => {
     const f = fixture({ failure: { v: 1, re: 'request', outcome: 'rejected', error: { code: 'forbidden', message: 'Web-created sessions must remain shared.', retryable: false } } });
     expect(await f.submit('/remote off')).toBe(false); expect(f.controller.notice).toContain('Web-created sessions must remain shared.');
   });
+});
 
-  it('reports stopped login results and remote needs in daemon status', async () => {
-    const f = fixture({ status: { state: 'stopped', reason: 'invalid_pat', message: 'Felan rejected the access token; run /remote login' } });
-    vi.mocked(f.dialogs.input).mockResolvedValueOnce('fln_pat_synthetic');
-    expect(await f.submit('/remote login')).toBe(true); expect(f.controller.notice).toContain('Felan rejected the access token; run /remote login');
+describe('/remote login with browser pairing', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+
+  it.each([undefined, 'http://localhost:3000'])('starts pairing without a token prompt (apiUrl: %s)', async apiUrl => {
+    const f = fixture({ attached: false }); pairingRequests(f, [connected]); holdPrompt(f.dialogs);
+    const done = f.submit(`/remote login${apiUrl ? ` ${apiUrl}` : ''}`);
+    await vi.runAllTimersAsync();
+    expect(await done).toBe(true);
+    expect(f.dialogs.input).not.toHaveBeenCalled();
+    expect(f.request.mock.calls[0]).toEqual(['remote.configure', { action: 'login', ...(apiUrl ? { apiUrl } : {}) }, {}]);
+    expect(f.controller.notice).toBe('Felan login saved · this machine is paired');
+  });
+
+  it('shows the code and URL, opens the verification page, and polls until connected', async () => {
+    const open = vi.fn(async () => undefined);
+    const f = fixture({ attached: false, openBrowser: open }); pairingRequests(f, [pending, connected]); holdPrompt(f.dialogs);
+    const done = f.submit('/remote login');
+    await vi.runAllTimersAsync();
+    expect(await done).toBe(true);
+    expect(f.dialogs.select).toHaveBeenCalledWith(expect.stringContaining('Code: BCDF-GHJK'), [{ value: 'cancel', label: 'Cancel pairing' }],
+      expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(open).toHaveBeenCalledExactlyOnceWith('https://app.felan.ai/pair?code=BCDF-GHJK');
+    expect(f.request.mock.calls.filter(([op]) => op === 'remote.status')).toHaveLength(2);
+  });
+
+  it('keeps the code on screen when the browser cannot be opened', async () => {
+    const f = fixture({ attached: false, openBrowser: vi.fn(() => { throw new Error('no browser'); }) });
+    pairingRequests(f, [connected]); holdPrompt(f.dialogs);
+    const done = f.submit('/remote login'); await vi.runAllTimersAsync();
+    expect(await done).toBe(true);
+    expect(f.dialogs.select).toHaveBeenCalledWith(expect.stringContaining('BCDF-GHJK'), expect.anything(), expect.anything());
+    expect(f.controller.notice).toBe('Felan login saved · this machine is paired');
+  });
+
+  it.each([
+    ['pairing_denied', 'Browser pairing was denied on Felan. Run /remote login to try again.'],
+    ['pairing_expired', 'The browser pairing code expired before it was approved. Run /remote login to get a new code.'],
+  ] as const)('reports %s as a login that did not complete', async (reason, message) => {
+    const f = fixture({ attached: false }); pairingRequests(f, [{ ...status, configured: false, state: 'stopped', reason, message }]); holdPrompt(f.dialogs);
+    const done = f.submit('/remote login'); await vi.runAllTimersAsync();
+    expect(await done).toBe(false);
+    expect(f.controller.notice).toBe(`Felan login not completed · ${message}`);
+  });
+
+  it.each([['the cancel option', 'cancel'], ['Escape', undefined]] as const)('cancels the wait with %s without logging out', async (_label, answer) => {
+    const f = fixture({ attached: false }); pairingRequests(f, [pending]);
+    vi.mocked(f.dialogs.select).mockResolvedValue(answer);
+    expect(await f.submit('/remote login')).toBe(false);
+    expect(f.request.mock.calls.map(([op]) => op)).toEqual(['remote.configure', 'remote.configure']);
+    expect(f.request).toHaveBeenLastCalledWith('remote.configure', { action: 'cancel_pairing' }, {});
+    expect(f.controller.notice).toBe('Felan login cancelled.');
+  });
+
+  it('reports a pairing that was approved before the cancel arrived', async () => {
+    const f = fixture({ attached: false }); pairingRequests(f, [pending]);
+    const respond = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (op: Operation, params: OperationParams<Operation>) => (params as { action?: string }).action === 'cancel_pairing'
+      ? { outcome: 'accepted', result: { ...status, state: 'connecting', message: 'Browser pairing was already approved; this machine is paired.' } }
+      : respond(op, params));
+    vi.mocked(f.dialogs.select).mockResolvedValue('cancel');
+    expect(await f.submit('/remote login')).toBe(false);
+    expect(f.controller.notice).toBe('Felan login · Browser pairing was already approved; this machine is paired.');
+  });
+
+  it('tells the user when a cancelled re-login reconnects with the existing pairing', async () => {
+    const f = fixture({ attached: false }); pairingRequests(f, [pending]);
+    const respond = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (op: Operation, params: OperationParams<Operation>) => (params as { action?: string }).action === 'cancel_pairing'
+      ? { outcome: 'accepted', result: { ...status, state: 'connecting' } } : respond(op, params));
+    vi.mocked(f.dialogs.select).mockResolvedValue('cancel');
+    expect(await f.submit('/remote login')).toBe(false);
+    expect(f.controller.notice).toBe('Felan login cancelled · reconnecting with the existing pairing');
+  });
+
+  it('reports a stopped pairing in the notice and as a remote need in daemon status', async () => {
+    const f = fixture(); pairingRequests(f, [{ ...status, configured: false, state: 'stopped', reason: 'pairing_denied', message: 'Browser pairing was denied on Felan. Run /remote login to try again.' }]);
+    holdPrompt(f.dialogs);
+    const done = f.submit('/remote login'); await vi.runAllTimersAsync();
+    expect(await done).toBe(false); expect(f.controller.notice).toContain('Browser pairing was denied on Felan');
+    vi.mocked(f.dialogs.select).mockResolvedValue(undefined);
     f.request.mockResolvedValueOnce({ outcome: 'accepted', result: { daemonVersion: 'fixture', state: 'ready', active: { sessions: 1, runs: 0, work: 0, attachments: 1 },
-      setupNeeds: [{ code: 'remote', message: 'Felan rejected the access token; run /remote login' }] } } as never);
+      setupNeeds: [{ code: 'remote', message: 'Browser pairing was denied on Felan. Run /remote login to try again.' }] } } as never);
     expect(await f.submit('/daemon status')).toBe(true);
     expect(f.dialogs.select).toHaveBeenCalledWith('Daemon fixture · ready', expect.arrayContaining([
-      { value: 'remote', label: 'Remote: Felan rejected the access token; run /remote login' },
+      { value: 'remote', label: 'Remote: Browser pairing was denied on Felan. Run /remote login to try again.' },
     ]));
   });
 });

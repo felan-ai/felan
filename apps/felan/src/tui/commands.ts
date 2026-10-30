@@ -7,6 +7,7 @@ import type { NavigationDialogs } from './session-navigator.js';
 import type { TreeViewState } from './tree-navigator.js';
 import { describeHostBlocked, formatHostBlocked } from '../client/daemon-blocked.js';
 import { remoteCompletions, submitRemoteInput } from './remote.js';
+import type { OpenBrowser } from './browser.js';
 
 type ToolsManager = { getToolPath(tool: 'fd' | 'rg'): string | null };
 
@@ -77,7 +78,7 @@ export function createCommandAutocomplete(controller: TuiSessionController, fall
 }
 
 export async function submitTuiInput(controller: TuiSessionController, dialogs: NavigationDialogs, text: string,
-  options: { cwd: string; exit(): void; theme?: () => Theme; requestRender?(): void; setDraft?(text: string): void; preferences?(): Promise<boolean>; login?(provider?: string): Promise<boolean>; logout?(): Promise<boolean>; dependencies?(): Promise<boolean>; ui?(): Promise<boolean>; daemon?(action: DaemonAction, force: boolean): Promise<void> }): Promise<boolean> {
+  options: { cwd: string; exit(): void; openBrowser: OpenBrowser; theme?: () => Theme; requestRender?(): void; setDraft?(text: string): void; preferences?(): Promise<boolean>; login?(provider?: string): Promise<boolean>; logout?(): Promise<boolean>; dependencies?(): Promise<boolean>; ui?(): Promise<boolean>; daemon?(action: DaemonAction, force: boolean): Promise<void> }): Promise<boolean> {
   const trimmed = text.trim();
   if (trimmed === '/exit' || trimmed === '/quit') { options.exit(); return true; }
   if (trimmed === '/history') { await controller.loadHistory(); return true; }
@@ -93,7 +94,7 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
   }
   const [, name = '', argument = ''] = /^\/(\S+)(?:\s+([\s\S]*))?$/u.exec(trimmed) ?? [];
   controller.setNotice('');
-  if (name === 'remote') return submitRemoteInput(controller, dialogs, argument);
+  if (name === 'remote') return submitRemoteInput(controller, dialogs, argument, options.openBrowser);
   if (name === 'ui') {
     if (argument) throw new Error('Usage: /ui');
     if (!options.ui) throw new Error('Session UI is unavailable.');

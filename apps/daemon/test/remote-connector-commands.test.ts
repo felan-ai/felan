@@ -8,6 +8,7 @@ import { PlatformError, parsePlatformError, type ClaimedCommand } from '../src/r
 import { HostTokenExchangeError, type HostTokenInfo } from '../src/remote/token.js';
 import type { RemoteClock, TimerHandle } from '../src/remote/backoff.js';
 import { serverFixture, requestId, now } from './fixtures/server.js';
+import { FakePairing } from './fixtures/remote-pairing.js';
 
 const host = '019a0000-0000-7000-8000-000000000001';
 const user = '019a0000-0000-7000-8000-000000000002';
@@ -193,7 +194,7 @@ it('reports an invalid environment URL without substituting the default or conne
 it('uses invalid_request for invalid API URLs and project paths or names', async () => {
   const f = await fixture();
   for (const apiUrl of ['not-a-url', 'http://remote.example.test']) {
-    await expect(f.connector.configure({ action: 'login', token: pat, apiUrl })).rejects.toMatchObject({ code: 'invalid_request' });
+    await expect(f.connector.configure({ action: 'login', apiUrl })).rejects.toMatchObject({ code: 'invalid_request' });
   }
   const file = join(f.cwd, 'file'); await writeFile(file, 'not a directory');
   for (const path of ['relative', `${f.cwd}/absent`, file]) {
@@ -203,14 +204,14 @@ it('uses invalid_request for invalid API URLs and project paths or names', async
   expect(f.secrets.write).not.toHaveBeenCalled();
 });
 
-it('persists the API URL only after writing the PAT successfully', async () => {
-  const f = await fixture(); const configure = vi.spyOn(f.connector.store, 'configure');
-  f.secrets.write.mockRejectedValueOnce(new Error('Storage failure'));
-  await expect(f.connector.configure({ action: 'login', token: pat, apiUrl: 'https://new.example.test' })).rejects.toMatchObject({ code: 'unavailable' });
+it('persists the API URL only after the browser pairing starts', async () => {
+  const pairing = new FakePairing(); const f = await fixture({ pairingSource: () => pairing }); const configure = vi.spyOn(f.connector.store, 'configure');
+  pairing.start.mockRejectedValueOnce(new PlatformError('retry', 'offline'));
+  await expect(f.connector.configure({ action: 'login', apiUrl: 'https://new.example.test' })).rejects.toMatchObject({ code: 'unavailable' });
   expect(configure).not.toHaveBeenCalled(); expect(f.connector.store.settings().apiUrl).toBeUndefined();
   expect(f.connector.status().apiUrl).toBe('https://api.example.test');
-  await f.connector.configure({ action: 'login', token: pat, apiUrl: 'https://new.example.test' });
-  expect(f.secrets.write.mock.invocationCallOrder[1]).toBeLessThan(configure.mock.invocationCallOrder[0]!);
+  await f.connector.configure({ action: 'login', apiUrl: 'https://new.example.test' });
+  expect(configure).toHaveBeenCalledWith({ apiUrl: 'https://new.example.test' });
   expect(f.connector.store.settings().apiUrl).toBe('https://new.example.test');
 });
 

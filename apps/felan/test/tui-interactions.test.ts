@@ -35,7 +35,7 @@ async function fixture() {
     clientVersion: 'fixture', kind: 'tui', interactionKinds: [...TERMINAL_INTERACTION_KINDS], capabilities: [...TERMINAL_UI_CAPABILITIES] }); }
   async function terminal() {
     const transport = client(); const controller = new TuiSessionController(transport); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
-    const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, sessionId: f.root.sessionId,
+    const signal = new AbortController(); const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, sessionId: f.root.sessionId,
       terminal, createTui: () => tui, signal: signal.signal });
     cleanup.push(async () => { signal.abort(); await running; });
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));

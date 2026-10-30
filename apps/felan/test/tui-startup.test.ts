@@ -21,7 +21,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', request: { kind: 'input', title: 'Model question must wait' } };
 
-async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; compositionMismatch?: boolean; buildMismatch?: 'version' | 'composition'; remote?: boolean; remoteNeed?: string } = {}) {
+async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; compositionMismatch?: boolean; buildMismatch?: 'version' | 'composition'; remote?: boolean; pairing?: boolean; remoteNeed?: string } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
   await mkdir(join(directory, 'tui'));
   await writeFile(join(directory, 'tui/settings.json'), JSON.stringify({ showImages: false, ...options.preferences }));
@@ -38,6 +38,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
   let daemonVersion = 'fixture'; let identity = identityFor(client.target, 'instance'); const controller = new TuiSessionController(client);
   const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal); const abort = new AbortController();
   let loggedIn = options.provider ?? false; let cancelled = false;
+  const openBrowser = vi.fn(async (_url: string) => undefined);
   const waiting: SetupJob = { id: 'login-job', kind: 'login', state: 'waiting', message: 'Waiting for credentials',
     prompt: { id: 'key', kind: 'input', message: 'Secret API key', secret: true } };
   fake.onSend = (request, connection) => {
@@ -63,7 +64,14 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
       case 'host.setup.read': fake.reply(request, cancelled ? { id: 'login-job', kind: 'login', state: 'cancelled', message: 'Cancelled' } : loggedIn ? { id: 'login-job', kind: 'login', state: 'completed', message: 'Done' } : waiting, connection); break;
       case 'host.setup.answer': loggedIn = true; fake.reply(request, {}, connection); break;
       case 'prompt': fake.reply(request, { runId: 'run' }, connection); break;
-      case 'remote.configure': fake.reply(request, { configured: true, share: 'on-request', state: 'connected', apiUrl: 'https://app.felan.ai', projects: [], pending: 0, sessions: 0 }, connection); break;
+      case 'remote.configure': {
+        const action = (request.params as { action?: string }).action;
+        const pairingStatus = { configured: false, share: 'on-request', state: 'connecting', apiUrl: 'https://app.felan.ai', projects: [], pending: 0, sessions: 0,
+          pairing: { userCode: 'BCDF-GHJK', verificationUri: 'https://app.felan.ai/pair', verificationUriComplete: 'https://app.felan.ai/pair?code=BCDF-GHJK', expiresAt: Date.now() + 600_000 } };
+        const connected = { configured: true, share: 'on-request', state: 'connected', apiUrl: 'https://app.felan.ai', projects: [], pending: 0, sessions: 0 };
+        fake.reply(request, options.pairing && action === 'login' ? pairingStatus : action === 'logout' ? { ...connected, configured: false, state: 'off' } : connected, connection);
+        break;
+      }
       default: fake.reply(request, {}, connection);
     }
   };
@@ -72,7 +80,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
   return { client, controller, terminal, tui, fake, abort,
     replaceDaemon(version: string) { daemonVersion = version; identity = identityFor(client.target, version); fake.lose(); },
     start(extra: Partial<Parameters<typeof runDaemonTerminal>[1]> = {}) {
-      running = runDaemonTerminal(controller, { cwd: directory, clientConfigDir: directory, terminal, createTui: () => tui, signal: abort.signal, ...extra });
+      running = runDaemonTerminal(controller, { cwd: directory, clientConfigDir: directory, terminal, createTui: () => tui, signal: abort.signal, openBrowser, ...extra });
       void running.catch(() => {}); return running;
     },
     text() { tui.renderNow(true); return stripTerminalSequences(tui.getScreenLines().join('\n')); },
@@ -233,22 +241,20 @@ it('keeps remote warnings alongside provider setup when startup is deferred', as
   expect(f.fake.requests.some(request => request.op === 'sessions.create')).toBe(false);
 });
 
-it('masks remote login input and keeps the PAT out of prompt history, transcript, notices and retained client state', async () => {
+it('starts browser pairing without a token prompt and keeps the device code out of history and retained client state', async () => {
   const history = vi.spyOn(AgentRailEditor.prototype, 'addToHistory');
-  const f = await fixture({ provider: true, remote: true }); f.start();
+  const f = await fixture({ provider: true, remote: true, pairing: true }); f.start();
   await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
   f.terminal.input('/remote login'); f.terminal.input('\r');
-  await vi.waitFor(() => expect(f.text()).toContain('Felan personal access token'));
-  const token = 'fln_pat_synthetic_dialog_secret'; f.terminal.input(token);
-  expect(f.text()).toContain('Input is hidden.'); expect(f.text()).not.toContain(token);
-  f.terminal.input('\r');
-  await vi.waitFor(() => expect(f.controller.notice).toContain('Felan login saved'));
-  expect(f.fake.requests.filter(request => request.op === 'remote.configure')).toMatchObject([{ params: { action: 'login', token } }]);
-  expect(JSON.stringify(f.fake.requests.filter(request => request.op !== 'remote.configure'))).not.toContain(token);
-  expect(JSON.stringify(history.mock.calls)).not.toContain(token);
-  expect(JSON.stringify(f.controller.notes)).not.toContain(token); expect(JSON.stringify(f.controller.history)).not.toContain(token);
-  expect(JSON.stringify([...(Reflect.get(f.client, 'records') as Map<string, unknown>).values()])).not.toContain(token);
-  expect(f.text()).not.toContain(token);
+  await vi.waitFor(() => expect(f.text()).toContain('BCDF-GHJK'));
+  expect(f.text()).not.toContain('personal access token');
+  expect(f.fake.requests.filter(request => request.op === 'remote.configure')).toMatchObject([{ params: { action: 'login' } }]);
+  f.terminal.input('\x1b');
+  await vi.waitFor(() => expect(f.controller.notice).toMatch(/^Felan login cancelled/u));
+  expect(f.fake.requests.filter(request => request.op === 'remote.configure').at(-1)).toMatchObject({ params: { action: 'cancel_pairing' } });
+  expect(JSON.stringify(history.mock.calls)).not.toContain('BCDF-GHJK');
+  expect(JSON.stringify([...(Reflect.get(f.client, 'records') as Map<string, unknown>).values()])).not.toContain('device-code');
+  expect(f.text()).not.toContain('BCDF-GHJK');
 });
 
 it('does not retain a mistakenly pasted inline PAT in prompt history', async () => {
@@ -262,22 +268,14 @@ it('does not retain a mistakenly pasted inline PAT in prompt history', async () 
   expect(JSON.stringify(f.controller.notes)).not.toContain(token); expect(f.text()).not.toContain(token);
 });
 
-it.each(['complete', 'cancel'] as const)('queues arriving model questions until remote PAT input %ss', async finish => {
-  const f = await fixture({ provider: true, remote: true }); f.start();
+it('shows arriving model questions while remote pairing waits for approval', async () => {
+  const f = await fixture({ provider: true, remote: true, pairing: true }); f.start();
   await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
   f.terminal.input('/remote login'); f.terminal.input('\r');
-  await vi.waitFor(() => expect(f.text()).toContain('Felan personal access token'));
+  await vi.waitFor(() => expect(f.text()).toContain('BCDF-GHJK'));
   f.fake.frame({ v: 1, interaction: question });
-  await vi.waitFor(() => expect(f.client.getInteractions()).toHaveLength(1));
-  const token = 'fln_pat_synthetic_private'; f.terminal.input(token);
-  expect(f.text()).not.toContain('Model question must wait'); expect(f.text()).not.toContain(token);
-  expect(f.fake.requests.some(request => request.op === 'interaction.answer')).toBe(false);
-  f.terminal.input(finish === 'complete' ? '\r' : '\x1b');
   await vi.waitFor(() => expect(f.text()).toContain('Model question must wait'));
-  f.terminal.input('\x1b');
-  await vi.waitFor(() => expect(f.fake.requests.some(request => request.op === 'interaction.answer')).toBe(true));
-  expect(f.fake.requests.filter(request => request.op === 'remote.configure')).toHaveLength(finish === 'complete' ? 1 : 0);
-  expect(JSON.stringify(f.fake.requests.filter(request => request.op === 'interaction.answer'))).not.toContain(token);
+  expect(f.text()).toContain('Cancel pairing');
 });
 
 class TestTerminal implements Terminal {

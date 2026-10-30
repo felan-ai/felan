@@ -4,8 +4,8 @@ The daemon's remote connector publishes selected local sessions to Felan and
 accepts platform-authorized commands. Personal hosts require the token's owner;
 team hosts accept any requester or no requester. Local session execution and
 persistence remain in the daemon; losing the connection does not stop local
-work. The connector exchanges a personal access token (PAT) or team API key for a scoped host
-token and communicates with the platform through RPCs and private Realtime
+work. The connector exchanges a browser-paired machine credential or a team API key for a
+scoped host token and communicates with the platform through RPCs and private Realtime
 channels.
 
 - Publishes a session index and a bounded, chronological copy of shared history.
@@ -14,24 +14,30 @@ channels.
   through normal daemon admission.
 - Keeps a durable outbox and command journal for disconnects and restarts.
 
-## Configure a PAT
+## Pair this machine
 
-1. Create a personal access token in Felan web settings. Its prefix is
-   `fln_pat_`. Keep the plaintext token private; the connector does not issue PATs.
-2. In the TUI, run `/remote login`. Enter the token in the masked input dialog,
-   not as a command argument.
+1. In the TUI, run `/remote login`. The TUI shows a code such as `BCDF-GHJK` and a
+   Felan link, and tries to open the link in a browser.
+2. Sign in to Felan, check the machine name and code, choose the team and approve.
+   The daemon polls Felan and receives this machine's credential once approval
+   is recorded. Cancelling the wait keeps any existing pairing.
 3. Run `/remote status` to inspect the connection, sharing mode, pending events,
    shared-session count and opened projects.
 4. Share a session with `/remote on`, or choose a host default as described below.
 
-The daemon stores the PAT through its credential-storage provider, using
-namespace `remote` and key `pat`. Felan's local provider uses the OS keychain
-(service `felan.remote`, account `pat`). The PAT is never stored in `host.json`
-or settings files. Host tokens are cached in memory and renewed at `refreshAt`.
+A machine is identified by team, user and installation ID. Approving the same
+installation again, for example after the machine was revoked on the web, restores
+the same host and rotates its credential, so shared sessions keep publishing.
 
-`/remote logout` removes the saved PAT and stops the connector. It does not delete
-local sessions, the outbox or previously published history. Login and logout are
-daemon-wide for this agent directory, not per TUI attachment.
+The daemon stores the machine credential through its credential-storage provider,
+using namespace `remote` and key `pat`. Felan's local provider uses the OS keychain
+(service `felan.remote`, account `pat`). Credentials keep the `fln_pat_` prefix for
+redaction. They are never stored in `host.json` or settings files. Host tokens are
+cached in memory and renewed at `refreshAt`.
+
+`/remote logout` removes the saved credential and stops the connector. It does not
+delete local sessions, the outbox or previously published history. Login and logout
+are daemon-wide for this agent directory, not per TUI attachment.
 
 ### Headless team hosts
 
@@ -100,9 +106,8 @@ environment, then the default. Set environment overrides when starting the
 daemon, not merely when attaching a client to an already running daemon.
 
 HTTPS is required except for loopback HTTP (`localhost`, `127.0.0.1`, `[::1]`).
-URLs with embedded credentials, query strings or fragments are refused. Never
-put the PAT in the URL. Omitting the URL on a later login retains a previously
-saved override.
+URLs with embedded credentials, query strings or fragments are refused. Omitting
+the URL on a later login retains a previously saved override.
 
 ## Sharing
 
@@ -114,7 +119,7 @@ saved override.
 | `/remote on` | Enable sharing for the attached session's root and its children |
 | `/remote off` | Disable sharing for that root and its children; keep already published history |
 
-Nothing is shared without a configured PAT. Per-root-session choices survive
+Nothing is shared until this machine is paired. Per-root-session choices survive
 restart and take precedence over the host default. Changing sharing from a child
 affects its root and sibling sessions too.
 
@@ -293,25 +298,27 @@ expire later commands in that same batch. Journaled rows retain replay behavior.
 
 | State | Meaning and action |
 | --- | --- |
-| `off` | No PAT configured; use `/remote login` to connect |
-| `connecting` | Token exchange, registration or connection setup is in progress |
+| `off` | This machine is not paired; use `/remote login` to pair it |
+| `connecting` | Browser pairing, token exchange, registration or connection setup is in progress; while pairing, status includes the code and link |
 | `connected` | Connector is registered and processing publication/commands; inspect the status message for per-session failures |
 | `offline` | Connection or service is unavailable; retry uses backoff and local work continues. Check the API URL and network |
 | `stopped` | Automatic publication has stopped for an authorization or schema failure; resolve the reason below |
 
 | Stopped reason | Action |
 | --- | --- |
-| `invalid_pat` | The PAT is unknown or revoked. Check the intended account and token, then run `/remote login` |
+| `invalid_pat` | The machine credential is unknown, revoked or belongs to another installation. Run `/remote login` and approve this machine in the browser |
 | `not_a_member` | Restore the required team membership or pair with an authorized account; the platform may have deleted the old published history |
-| `host_revoked` | The host was revoked on the web. Resolve the revocation or re-pair using `/remote login`; a new PAT creates a different host |
+| `host_revoked` | The machine was revoked on the web. Run `/remote login` and approve it again; the same host is restored |
+| `pairing_denied` | The pairing request was denied in the browser. Run `/remote login` to try again |
+| `pairing_expired` | The pairing code expired before approval. Run `/remote login` for a new code |
 | `unsupported_schema` | Update Felan/the daemon to a supported protocol and row schema; status includes supported versions when provided |
 
 The outbox is retained while the connector is stopped. Retention does not grant
 a new host permission to upload old entries. Previously published sessions are
-bound to their publishing host. A new PAT creates a new host; the connector marks
-old-host sessions terminal `forbidden` and drops their outboxes. Entries retained
-after `invalid_pat` can resume only with the same PAT and a still-authorized
-pairing.
+bound to their publishing host. Re-approving the same installation restores the
+same host, so its retained entries resume. If a different host ever publishes them
+(for example after a platform database reset), the connector marks old-host sessions
+terminal `forbidden` and drops their outboxes.
 
 When the web deletes a session or retention produces a tombstone, publication
 becomes terminal `deleted` and that session's outbox is dropped. The local session
@@ -355,7 +362,7 @@ normally `$FELAN_AGENT_DIR`, default `~/.felan`.
 
 | Table / record kind | Contents |
 | --- | --- |
-| `remote_records` / settings | Stable installation ID, sharing default, opened projects and optional `apiUrl`; no PAT |
+| `remote_records` / settings | Stable installation ID, sharing default, opened projects and optional `apiUrl`; no credential |
 | `remote_records` / sessions | Sharing choices, backfill state, pending index updates, durable upload intent, publishing host ID, confirmed `indexedHostId` and terminal state |
 | `remote_outbox` | Pending published changes, keyed by `(session, seq)`, with encoded byte sizes |
 | `remote_records` / outbox cursor | Acknowledgement/high-water cursor and permanent drop flag |
@@ -451,16 +458,17 @@ platform migrations and `supabase/signing_keys.json`. It never starts, stops,
 resets or migrates Supabase. A local web API is needed for token-endpoint tests;
 RPC/Realtime tests can run without it.
 
-After a local Supabase database reset, re-pair with a new PAT from the platform
-checkout:
+After a local Supabase database reset, recreate the approving account from the
+platform checkout:
 
 ```sh
 pnpm --filter @felan-ai/e2e local:pair-host -- --email <email> --password <password>
 ```
 
-Then run `/remote login http://localhost:3000` and enter the new PAT. A new PAT
-creates a new host; sessions published under the old pairing cannot be continued
-(CR 12). Share new sessions for testing. Live text starts only after a session's
+Then run `/remote login http://localhost:3000` and approve the code at
+`http://localhost:3000/pair` as that user. The reset removed the old host row, so
+approval creates a new host; sessions published under the old pairing cannot be
+continued (CR 12). Share new sessions for testing. Live text starts only after a session's
 first successful publish, including a zero-event publish.
 
 ```sh
@@ -478,7 +486,8 @@ through read-only `supabase status`, or accepts `SUPABASE_PUBLISHABLE_KEY` or
 `SUPABASE_ANON_KEY` passed the same way. Supabase and API URLs must be loopback.
 
 `test/support/remote-supabase.ts` creates and cleans up disposable fixture users,
-teams, personal keys and hosts. It hashes the complete PAT with SHA-256 into a
+teams, machine credentials and hosts, binding each credential to one host as browser
+pairing does. It hashes the complete credential with SHA-256 into a
 lowercase hexadecimal `key_hash`, sets `scope: 'personal'` and
 `encrypted_key: null`, and retains plaintext only in test memory. Using the local
 ES256 signing key, it signs short-lived service-role tokens for fixture setup and

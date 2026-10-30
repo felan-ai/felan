@@ -79,7 +79,7 @@ async function fixture() {
   };
   const create = () => {
     connector = new RemoteConnector({ database: f.store.database, registry: f.registry, server, owner: f.owner,
-      secretStorage: { read: async () => account.pat, write: async () => {}, remove: async () => {} },
+      secretStorage: { read: async () => host.credential, write: async () => {}, remove: async () => {} },
       apiUrl: fixtures.environment.apiUrl, name: 'Real connector integration', daemonVersion: '0.1.0',
       heartbeatMs: 100, requestTimeoutMs: 8_000, shutdownTimeoutMs: 100,
       tokenSource: () => {

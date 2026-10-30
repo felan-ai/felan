@@ -46,7 +46,7 @@ async function fixture(overrides: Partial<Endpoints> = {}) {
   cleanup.push(async () => { for (const client of clients) client.close(); await rm(directory, { recursive: true, force: true }); });
   return { directory, requests, clients, settings, errors, endpoints, createClient,
     run(terminal: AcpLoginTerminal, extra: Partial<RunLocalFelanAcpLoginOptions> = {}) {
-      return runLocalFelanAcpLogin({ daemonRuntime: directory, terminal, createClient, signalSource: new EventEmitter(), writeError: value => errors.push(value), ...extra });
+      return runLocalFelanAcpLogin({ daemonRuntime: directory, terminal, createClient, signalSource: new EventEmitter(), writeError: value => errors.push(value), openBrowser: vi.fn(async () => undefined), ...extra });
     },
   };
 }

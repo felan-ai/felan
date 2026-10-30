@@ -7,6 +7,7 @@ import { LIMITS, PROTOCOL_VERSION, ProtocolValidationError, ROW_SCHEMA_VERSION }
 import { CounterSchema, DiagnosticTextSchema, IdSchema, ModelSchema, NameSchema, ThinkingSchema, enumOf, parseSchema, text } from './schema.js';
 import { AutomationSourceSchema, ChannelProviderSchema, PromptSchema, validatePrompt } from './data.js';
 import { UUID_V7_PATTERN } from './request-id.js';
+import { HOST_PAIRING_USER_CODE_PATTERN } from './remote.js';
 
 export const PUBLISHED_CHANGE_TYPES = [
   'message.completed', 'tool.updated', 'run.updated', 'queue.updated', 'interaction.requested', 'interaction.resolved',
@@ -109,6 +110,31 @@ export type HostTokenResponse = Static<typeof HostTokenResponseSchema>;
 export type HostTokenError = Static<typeof HostTokenErrorSchema>;
 export type HostTokenClaims = Static<typeof HostTokenClaimsSchema>;
 
+const DeviceCodeSchema = Type.String({ pattern: '^[A-Za-z0-9_-]{32,128}$' });
+const UserCodeSchema = Type.String({ pattern: HOST_PAIRING_USER_CODE_PATTERN });
+export const HostPairingStartRequestSchema = HostTokenRequestSchema;
+export const HostPairingStartResponseSchema = Type.Object({
+  deviceCode: DeviceCodeSchema, userCode: UserCodeSchema,
+  verificationUri: text(2048, 1), verificationUriComplete: text(2048, 1),
+  interval: Type.Integer({ minimum: 1, maximum: 60 }), expiresAt: CounterSchema,
+});
+export const HostPairingPollRequestSchema = Type.Object({ deviceCode: DeviceCodeSchema });
+export const HostPairingPollResponseSchema = Type.Object({
+  credential: Type.String({ minLength: 1, maxLength: 512 }),
+  host: Type.Object({ id: UuidSchema, teamId: UuidSchema, userId: UuidSchema }),
+});
+export const HOST_PAIRING_ERROR_CODES = ['authorization_pending', 'slow_down', 'access_denied', 'expired_token', 'unsupported_schema', 'rate_limited'] as const;
+export const HostPairingErrorSchema = Type.Object({
+  code: enumOf(HOST_PAIRING_ERROR_CODES), message: DiagnosticTextSchema,
+  supported: Type.Optional(Type.Object({ protocol: Type.Array(CounterSchema), rowSchemaVersion: Type.Array(CounterSchema) })),
+});
+
+export type HostPairingStartRequest = Static<typeof HostPairingStartRequestSchema>;
+export type HostPairingStartResponse = Static<typeof HostPairingStartResponseSchema>;
+export type HostPairingPollRequest = Static<typeof HostPairingPollRequestSchema>;
+export type HostPairingPollResponse = Static<typeof HostPairingPollResponseSchema>;
+export type HostPairingError = Static<typeof HostPairingErrorSchema>;
+
 const published = new Set<string>(PUBLISHED_CHANGE_TYPES);
 
 export function isPublishedChangeType(type: string): type is (typeof PUBLISHED_CHANGE_TYPES)[number] {
@@ -161,6 +187,40 @@ export function parseHostTokenResponse(value: unknown): HostTokenResponse {
   const response = parseSchema(HostTokenResponseSchema, value);
   if (response.refreshAt > response.expiresAt) throw new ProtocolValidationError('invalid_request', 'Token refresh is after expiry');
   return response;
+}
+
+function validateVerificationUri(value: string): void {
+  let url: URL;
+  try { url = new URL(value); } catch { throw new ProtocolValidationError('invalid_request', 'Invalid verification URI'); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) {
+    throw new ProtocolValidationError('invalid_request', 'Invalid verification URI');
+  }
+}
+
+export function parseHostPairingStartRequest(value: unknown): HostPairingStartRequest {
+  return parseSchema(HostPairingStartRequestSchema, value);
+}
+
+export function parseHostPairingStartResponse(value: unknown): HostPairingStartResponse {
+  const response = parseSchema(HostPairingStartResponseSchema, value);
+  validateVerificationUri(response.verificationUri);
+  validateVerificationUri(response.verificationUriComplete);
+  if (new URL(response.verificationUri).origin !== new URL(response.verificationUriComplete).origin) {
+    throw new ProtocolValidationError('invalid_request', 'Verification URIs must share an origin');
+  }
+  return response;
+}
+
+export function parseHostPairingPollRequest(value: unknown): HostPairingPollRequest {
+  return parseSchema(HostPairingPollRequestSchema, value);
+}
+
+export function parseHostPairingPollResponse(value: unknown): HostPairingPollResponse {
+  return parseSchema(HostPairingPollResponseSchema, value);
+}
+
+export function parseHostPairingError(value: unknown): HostPairingError {
+  return parseSchema(HostPairingErrorSchema, value);
 }
 
 export function parseHostTokenClaims(value: unknown): HostTokenClaims {

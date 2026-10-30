@@ -81,7 +81,8 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     if (login) {
       const launchAcpLogin = dependencies.launchAcpLogin ?? (async (options?: { agentDir?: string; daemonRuntime?: string }) => {
         const { runLocalFelanAcpLogin } = await import('./acp/login.js');
-        return runLocalFelanAcpLogin(options);
+        const { openInBrowser } = await import('./tui/browser.js');
+        return runLocalFelanAcpLogin({ ...options, openBrowser: openInBrowser });
       });
       return launchAcpLogin(options);
     }

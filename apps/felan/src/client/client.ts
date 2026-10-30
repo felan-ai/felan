@@ -334,8 +334,7 @@ export class SessionClient {
     const previous = this.records.get(id);
     const envelope = parseClientEnvelope({ v: 1, id, op, params, ...(session === undefined ? {} : { session }) });
     const canonical = canonicalRequestPayload(envelope);
-    const payload = op === 'host.setup.answer' || envelope.op === 'remote.configure' && envelope.params.action === 'login'
-      ? createHash('sha256').update(canonical).digest('hex') : canonical;
+    const payload = op === 'host.setup.answer' ? createHash('sha256').update(canonical).digest('hex') : canonical;
     if (previous) {
       if (previous.payload !== payload) return Promise.resolve(failure(id, 'rejected', 'request_conflict', 'Request ID already names a different command') as ResponseFor<O>);
       return previous.promise as Promise<ResponseFor<O>>;
@@ -375,12 +374,6 @@ export class SessionClient {
       this.transport.send(record.envelope);
     } catch {
       this.finish(record, failure(record.envelope.id, record.attempts ? 'indeterminate' : 'rejected', 'unavailable', 'Request could not be delivered'));
-    } finally {
-      if (record.envelope.op === 'remote.configure' && record.envelope.params.action === 'login') {
-        // A PAT is sent once, never retained for replay after a disconnect.
-        record.envelope = { ...record.envelope, params: { ...record.envelope.params, token: '' } };
-        record.bytes = encodeFrame(record.envelope).byteLength + (record.response ? encodeFrame(record.response).byteLength : 0);
-      }
     }
   }
 
@@ -391,8 +384,6 @@ export class SessionClient {
       record.envelope = { ...record.envelope, params: { ...record.envelope.params, text: '' } };
       record.bytes = encodeFrame(record.envelope).byteLength;
     } else if (record.envelope.op === 'remote.configure' && record.envelope.params.action === 'login') {
-      record.envelope = { ...record.envelope, params: { ...record.envelope.params, token: '' } };
-      record.bytes = encodeFrame(record.envelope).byteLength;
       response = JSON.parse(JSON.stringify(response, (_key, value: unknown) => typeof value === 'string'
         ? value.replace(/fln_pat_[A-Za-z0-9_-]+/gu, '[redacted]') : value)) as Response;
     }

@@ -15,6 +15,7 @@ import { startupHeader } from './startup-header.js';
 import { ToolInspector, inspectTools } from './tool-inspector.js';
 import { CommandHelp, commandHelp } from './command-help.js';
 import { remoteHistoryInput } from './remote.js';
+import type { OpenBrowser } from './browser.js';
 
 const WORKING_FRAMES = ['⠐◉ ', '⠈◉ ', ' ◉⠁', ' ◉⠂', ' ◉⠄', '⠠◉ '];
 
@@ -48,6 +49,7 @@ export class DaemonTuiScreen {
   constructor(private readonly controller: TuiSessionController, private readonly tui: TUI, private readonly options: {
     cwd: string;
     exit(): void;
+    openBrowser: OpenBrowser;
     daemon?(action: DaemonAction, force: boolean): Promise<void>;
     preferences?(): Promise<boolean>;
     login?(provider?: string): Promise<boolean>;

@@ -207,7 +207,7 @@ it('explains a blocked attachment in the recovery notice', async () => {
 it('renders the real protocol session, resizes and restores the terminal on client exit without closing the session', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal();
   const tui = new TuiAltScreen(terminal); const signal = new AbortController();
-  const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, initialMessage: 'terminal input',
+  const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, initialMessage: 'terminal input',
     terminal, createTui: () => tui, signal: signal.signal });
   try {
     await vi.waitFor(() => expect(controller.history.some(row => row.role === 'assistant')).toBe(true));
@@ -222,7 +222,7 @@ it('renders the real protocol session, resizes and restores the terminal on clie
 it('reports the attached session to its Herdr pane from the terminal client: session first, working during the run, then idle', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
   const requests: HerdrRequest[] = []; const signal = new AbortController();
-  const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId,
+  const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId,
     terminal, createTui: () => tui, signal: signal.signal, herdr: new HerdrPane('w1:p1', async request => { requests.push(request); }) });
   try {
     await vi.waitFor(() => expect(requests.map(request => request.params.state ?? 'session')).toEqual(['session', 'idle']));
@@ -240,7 +240,7 @@ it('allows terminal exit during an unresolved connection and releases the connec
   const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
     expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui', connector: () => new Promise(() => {}) });
   const controller = new TuiSessionController(client); const signal = new AbortController();
-  const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, terminal, signal: signal.signal });
+  const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, terminal, signal: signal.signal });
   try {
     expect(terminal.active).toBe(true); terminal.input('\x04'); await running;
     expect(client.status).toBe('closed'); expect(terminal.active).toBe(false);
@@ -249,7 +249,7 @@ it('allows terminal exit during an unresolved connection and releases the connec
 
 it('keeps an editor draft when the model shortcut opens and cancels its selector', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
-  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
+  const signal = new AbortController(); const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
   try {
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     const before = f.root.runtime.session.messages.length;
@@ -268,7 +268,7 @@ it('loads local preferences without replacing input typed during startup', async
   const entered = gate(); const release = gate(); const load = ClientPreferencesStore.prototype.load;
   vi.spyOn(ClientPreferencesStore.prototype, 'load').mockImplementationOnce(async function () { entered.resolve(); await release.promise; await load.call(this); });
   const signal = new AbortController();
-  const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, initialDraft: 'initial draft', terminal, createTui: () => tui, signal: signal.signal });
+  const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, initialDraft: 'initial draft', terminal, createTui: () => tui, signal: signal.signal });
   try {
     expect(terminal.active).toBe(true); await entered.promise;
     terminal.input(' plus typed text'); release.resolve();
@@ -288,7 +288,7 @@ it('keeps a blocked-daemon startup open for recovery without attaching or submit
       active: { sessions: 1, runs: 0, work: 0, attachments: 0 }, setupNeeds: [] } } as never;
     return request(op, params, options);
   });
-  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir,
+  const signal = new AbortController(); const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, clientConfigDir: f.owner.target.agentDir,
     sessionId: f.root.sessionId, initialMessage: 'retained prompt', terminal, createTui: () => tui, signal: signal.signal });
   try {
     await vi.waitFor(() => expect(controller.notice).toContain('Use /daemon restart force to retry cleanup.'));
@@ -307,7 +307,7 @@ it('exits while a local preference read remains unresolved', async () => {
   const f = await fixture(); const controller = f.controller(); const terminal = new TestTerminal();
   const entered = gate(); const release = gate(); const load = ClientPreferencesStore.prototype.load;
   vi.spyOn(ClientPreferencesStore.prototype, 'load').mockImplementationOnce(async function () { entered.resolve(); await release.promise; await load.call(this); });
-  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, terminal, signal: signal.signal });
+  const signal = new AbortController(); const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, terminal, signal: signal.signal });
   try {
     await entered.promise; terminal.input('\x04'); await running;
     expect(terminal.active).toBe(false); expect(controller.client.status).toBe('closed');
@@ -318,7 +318,7 @@ it('exits while a local preference read remains unresolved', async () => {
 it('uses client shortcuts in the active terminal and retains the saved setting after a rejected change', async () => {
   const f = await fixture(); await f.preferences.update({ keybindings: { 'app.exit': 'alt+x', 'app.model.select': 'alt+m' } });
   const controller = f.controller(); const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
-  const signal = new AbortController(); const running = runDaemonTerminal(controller, { cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
+  const signal = new AbortController(); const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: f.cwd, clientConfigDir: f.owner.target.agentDir, sessionId: f.root.sessionId, terminal, createTui: () => tui, signal: signal.signal });
   try {
     await vi.waitFor(() => expect(controller.state?.status).toBe('live'));
     terminal.input('retained draft'); terminal.input('\x1bm');

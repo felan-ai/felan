@@ -1,7 +1,8 @@
 import { hostname } from 'node:os';
 import {
   INTERACTION_KINDS, REMOTE_FEATURES, ROW_SCHEMA_VERSION, isPublishedChangeType, parseRemoteConfigureParams, parseRemoteStatus,
-  type HostCapabilities, type HostRegistration, type KnownSessionChange, type OperationParams, type RemoteStatus,
+  type HostCapabilities, type HostPairingPollResponse, type HostPairingStartResponse, type HostRegistration, type KnownSessionChange,
+  type OperationParams, type RemoteStatus,
 } from '@felan-ai/session-protocol';
 import type { ProviderSecretStorage } from '../daemon/provider.js';
 import type { RemoteDatabase } from '../daemon/persistence.js';
@@ -23,6 +24,7 @@ import { sessionShared, setSessionSharing, webCreatedSession, type SharingInput 
 import { RemoteTextSanitizer } from './text.js';
 import { RemoteIntegrityError, RemoteStorageError, RemoteStore, type RemoteSessionRecord } from './state.js';
 import { HostTokenSource, HostTokenExchangeError, PLAIN_HTTP_API_HOSTS, type HostTokenInfo, type HostTokenProvider, type HostTokenSourceOptions } from './token.js';
+import { HostPairing, HostPairingFailure, type HostPairingOptions } from './pairing.js';
 
 export const REMOTE_CAPABILITIES: HostCapabilities = {
   operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'],
@@ -30,6 +32,8 @@ export const REMOTE_CAPABILITIES: HostCapabilities = {
   features: [...REMOTE_FEATURES],
 };
 export type ConnectorTokenSource = HostTokenProvider & Pick<HostTokenSource, 'stop' | 'invalidate'>;
+export type ConnectorPairing = Pick<HostPairing, 'start' | 'wait' | 'cancel'>;
+type PairingInfo = NonNullable<RemoteStatus['pairing']>;
 export type ConnectorPlatform = Pick<PlatformClient, 'register' | 'heartbeat' | 'publish' | 'claim' | 'complete' | 'close'> & {
   realtime: Pick<PlatformClient['realtime'], 'subscribeCommands' | 'sendText'>;
 };
@@ -49,14 +53,17 @@ export interface RemoteConnectorOptions {
   requestTimeoutMs?: number;
   shutdownTimeoutMs?: number;
   tokenSource?(options: HostTokenSourceOptions): ConnectorTokenSource;
+  pairingSource?(options: HostPairingOptions): ConnectorPairing;
   connect?(source: ConnectorTokenSource): Promise<ConnectorPlatform>;
 }
 
 const stoppedMessages = {
-  invalid_pat: 'Run /remote login with a new personal access token to resume sharing.',
+  invalid_pat: 'This machine is no longer paired with Felan. Run /remote login and approve it in the browser.',
   not_a_member: 'Publishing stopped: the host owner is no longer a team member.',
-  host_revoked: 'Publishing stopped: this host was revoked. Run /remote login to pair it again.',
+  host_revoked: 'This machine was revoked on Felan. Run /remote login and approve it in the browser to reconnect.',
   unsupported_schema: 'Update Felan (the daemon) to resume sharing with a supported schema.',
+  pairing_denied: 'Browser pairing was denied on Felan. Run /remote login to try again.',
+  pairing_expired: 'The browser pairing code expired before it was approved. Run /remote login to get a new code.',
 } as const;
 type StopReason = keyof typeof stoppedMessages;
 
@@ -72,6 +79,9 @@ export class RemoteConnector {
   private message: string | undefined;
   private supported: RemoteStatus['supported'];
   private configured = false;
+  private pairing: ConnectorPairing | undefined;
+  private pairingStatus: PairingInfo | undefined;
+  private pairingGrant: HostPairingPollResponse | undefined;
   private host: string | undefined;
   private hostIdentity: RemoteHostIdentity | undefined;
   private token: ConnectorTokenSource | undefined;
@@ -157,7 +167,7 @@ export class RemoteConnector {
 
   async stop(): Promise<void> {
     if (this.stopped) return;
-    this.stopped = true; this.generation++;
+    this.stopped = true; this.generation++; this.cancelPairing();
     this.unobserve(); this.clearTimers(); this.token?.stop(); this.token = undefined;
     const close = this.disconnect();
     await this.bounded(Promise.allSettled([close, ...this.work]), this.options.shutdownTimeoutMs ?? 2_000).catch(() => {});
@@ -202,6 +212,7 @@ export class RemoteConnector {
       ...omissions.slice(0, 3)].filter(Boolean).join(' ');
     this.lastStatus = parseRemoteStatus({ configured: this.configured, share: settings.share, state: this.state,
       ...(this.reason ? { reason: this.reason } : {}), ...(message ? { message: redact(message) } : {}),
+      ...(this.pairingStatus ? { pairing: this.pairingStatus } : {}),
       ...(this.host ? { host: { id: this.host } } : {}), apiUrl: this.apiOrigin(),
       projects: settings.projects.map(project => ({ id: project.id, name: redact(project.name), path: redact(project.path) })),
       pending: this.outbox.pendingCount(), sessions,
@@ -219,26 +230,23 @@ export class RemoteConnector {
       let params: OperationParams<'remote.configure'>;
       try { params = parseRemoteConfigureParams(value); }
       catch {
-        const message = value?.action === 'login' ? 'Invalid remote login token or API URL.'
+        const message = value?.action === 'login' ? 'Invalid remote login API URL.'
           : value?.action === 'open_project' ? 'Remote project path must be absolute and its name must be 1–256 bytes.' : 'Invalid remote configuration.';
         throw commandError('invalid_request', message);
       }
       if (this.options.remote && ['share', 'open_project', 'close_project'].includes(params.action)) {
         throw commandError('forbidden', 'Remote sharing and projects are managed by host.json.');
       }
-      if (params.action === 'login' && params.apiUrl !== undefined) this.validateApiUrl(params.apiUrl);
+      if (params.action === 'login') {
+        if (params.apiUrl !== undefined) this.validateApiUrl(params.apiUrl);
+        return this.beginLogin(params.apiUrl);
+      }
+      if (params.action === 'cancel_pairing') return this.abandonPairing();
       try {
-        if (params.action === 'login') {
-          await this.bounded(this.options.secretStorage.write('remote', 'pat', params.token));
-          if (this.stopped) throw commandError('unavailable');
-          if (params.apiUrl !== undefined) this.store.configure({ apiUrl: params.apiUrl });
-          this.generation++; this.token?.stop(); this.token = undefined;
-          await this.bounded(this.disconnect(), this.options.shutdownTimeoutMs ?? 2_000).catch(() => {});
-          this.clearTimers(); this.login(params.token);
-        } else if (params.action === 'logout') {
+        if (params.action === 'logout') {
           await this.bounded(this.options.secretStorage.remove('remote', 'pat'));
           if (this.stopped) throw commandError('unavailable');
-          this.generation++; this.configured = false; this.token?.stop(); this.token = undefined;
+          this.generation++; this.cancelPairing(); this.configured = false; this.token?.stop(); this.token = undefined;
           this.clearTimers(); await this.bounded(this.disconnect(), this.options.shutdownTimeoutMs ?? 2_000).catch(() => {});
           this.state = 'off'; this.reason = undefined; this.message = undefined; this.supported = undefined;
         } else {
@@ -265,6 +273,93 @@ export class RemoteConnector {
       }
     });
     this.configureWork = work; this.track(work); return work;
+  }
+
+  private async beginLogin(apiUrl: string | undefined): Promise<RemoteStatus> {
+    let pairing: ConnectorPairing | undefined;
+    let start: HostPairingStartResponse;
+    try {
+      pairing = (this.options.pairingSource ?? (options => new HostPairing(options)))({
+        apiUrl: apiUrl ?? this.apiUrl(), installId: this.store.settings().installId,
+        daemonVersion: this.options.daemonVersion ?? DAEMON_VERSION, name: this.options.name ?? hostname(), clock: this.clock,
+      });
+      start = await this.bounded(pairing.start());
+    } catch (error) {
+      pairing?.cancel();
+      if (error instanceof HostPairingFailure && error.kind === 'unsupported_schema') {
+        throw commandError('unavailable', 'Felan does not support this daemon version. Update Felan (the daemon) and run /remote login again.');
+      }
+      throw commandError('unavailable', 'Could not start browser pairing with Felan. Check the connection and run /remote login again.');
+    }
+    if (this.stopped) { pairing.cancel(); throw commandError('unavailable'); }
+    if (apiUrl !== undefined) this.store.configure({ apiUrl });
+    this.generation++; this.cancelPairing(); this.token?.stop(); this.token = undefined;
+    this.clearTimers();
+    await this.bounded(this.disconnect(), this.options.shutdownTimeoutMs ?? 2_000).catch(() => {});
+    this.beginPairing(pairing, start);
+    return this.status();
+  }
+
+  private beginPairing(pairing: ConnectorPairing, start: HostPairingStartResponse): void {
+    this.pairing = pairing;
+    this.pairingStatus = { userCode: start.userCode, verificationUri: start.verificationUri, verificationUriComplete: start.verificationUriComplete, expiresAt: start.expiresAt };
+    this.configured = false; this.state = 'connecting'; this.reason = undefined; this.message = undefined; this.supported = undefined; this.attempt = 0;
+    this.track(pairing.wait(start).then(
+      grant => {
+        if (this.pairing === pairing) this.pairingGrant = grant;
+        this.enqueue(() => this.completePairing(pairing, grant));
+      },
+      error => this.enqueue(() => this.failPairing(pairing, error)),
+    ));
+  }
+  private async completePairing(pairing: ConnectorPairing, grant: HostPairingPollResponse): Promise<void> {
+    if (this.pairing !== pairing || this.stopped) return;
+    this.pairing = undefined; this.pairingStatus = undefined; this.pairingGrant = undefined;
+    try { await this.bounded(this.options.secretStorage.write('remote', 'pat', grant.credential)); }
+    catch {
+      if (!this.stopped) this.haltPairing('unavailable', 'Remote credentials could not be saved. Run /remote login to retry.');
+      return;
+    }
+    if (this.stopped) return;
+    this.login(grant.credential);
+  }
+  private failPairing(pairing: ConnectorPairing, error: unknown): void {
+    if (this.pairing !== pairing || this.stopped) return;
+    this.pairing = undefined; this.pairingStatus = undefined;
+    if (error instanceof HostPairingFailure && error.kind === 'denied') this.haltPairing('pairing_denied', stoppedMessages.pairing_denied);
+    else if (error instanceof HostPairingFailure && error.kind === 'expired') this.haltPairing('pairing_expired', stoppedMessages.pairing_expired);
+    else if (error instanceof HostPairingFailure && error.kind === 'unsupported_schema') {
+      this.supported = error.supported;
+      this.haltPairing('unsupported_schema', stoppedMessages.unsupported_schema);
+    } else this.haltPairing('unavailable', 'Browser pairing failed. Run /remote login to try again.');
+  }
+  private haltPairing(reason: RemoteStatus['reason'], message: string): void {
+    this.configured = false; this.state = 'stopped'; this.reason = reason; this.message = message;
+  }
+  // Cancelling a re-login keeps the machine's existing pairing instead of logging it out.
+  private async abandonPairing(): Promise<RemoteStatus> {
+    if (!this.pairing) return this.status();
+    // Issuing a grant rotates the machine credential on the platform, so a grant that already arrived must be kept.
+    const grant = this.pairingGrant;
+    if (grant) {
+      await this.completePairing(this.pairing, grant);
+      if (this.configured) this.message = 'Browser pairing was already approved; this machine is paired.';
+      return this.status();
+    }
+    this.generation++; this.cancelPairing();
+    let pat: string | undefined;
+    try { pat = await this.bounded(this.options.secretStorage.read('remote', 'pat')); } catch { pat = undefined; }
+    if (this.stopped) throw commandError('unavailable');
+    if (pat) this.login(pat);
+    else { this.configured = false; this.state = 'off'; this.reason = undefined; this.message = undefined; this.supported = undefined; }
+    return this.status();
+  }
+  private cancelPairing(): void {
+    this.pairing?.cancel(); this.pairing = undefined; this.pairingStatus = undefined; this.pairingGrant = undefined;
+  }
+  private enqueue(work: () => Promise<void> | void): void {
+    const next = this.configureWork.catch(() => {}).then(work);
+    this.configureWork = next; this.track(next);
   }
 
   setShared(session: string, shared: boolean): void {

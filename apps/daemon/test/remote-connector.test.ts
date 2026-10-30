@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JsonLineDecoder, encodeFrame, parsePublishedEvent, parsePublishedSession, type HostRegistration, type PublishedEvent, type PublishedSession, type RemoteCommandOutcome, type TextStreamEvent } from '@felan-ai/session-protocol';
 import { RemoteConnector, type ConnectorPlatform, type ConnectorTokenSource, type RemoteConnectorOptions } from '../src/remote/connector.js';
 import { HostTokenExchangeError, type HostTokenInfo } from '../src/remote/token.js';
+import { HostPairingFailure } from '../src/remote/pairing.js';
 import { PlatformError, parsePlatformError, type ClaimedCommand } from '../src/remote/platform.js';
 import type { RemoteClock, TimerHandle } from '../src/remote/backoff.js';
 import { connectLocalIpc } from '../src/daemon/ipc.js';
@@ -10,6 +11,7 @@ import { SessionServer } from '../src/daemon/server.js';
 import { TestHostConfiguration } from './fixtures/host-services.js';
 import { serverFixture, requestId, now } from './fixtures/server.js';
 import { offlineModel } from './fixtures/registry.js';
+import { FakePairing } from './fixtures/remote-pairing.js';
 import { RemoteStorageError } from '../src/remote/state.js';
 import { RemoteOutbox, RemoteOutboxCapacityError } from '../src/remote/outbox.js';
 import { OrderedAdmission } from '../src/daemon/admission.js';
@@ -72,17 +74,17 @@ class Platform implements ConnectorPlatform {
   close = vi.fn(async () => {});
 }
 
-async function fixture(options: { configured?: boolean; credential?: string; token?: Token; platform?: Platform; connector?: Partial<RemoteConnectorOptions>; wired?: boolean } = {}) {
+async function fixture(options: { configured?: boolean; credential?: string; token?: Token; pairing?: FakePairing; platform?: Platform; connector?: Partial<RemoteConnectorOptions>; wired?: boolean } = {}) {
   const f = await serverFixture(); const clock = new Clock();
   const configuration = new TestHostConfiguration({ definitions: [], assertCurrent: () => f.registry.assertAdmission() });
   let connector!: RemoteConnector;
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'test', setupNeeds: () => connector?.setupNeeds() ?? [] });
   let secret: string | undefined = options.configured === false ? undefined : options.credential ?? pat;
   const secrets = { read: vi.fn(async () => secret), write: vi.fn(async (_n: string, _k: string, value: string) => { secret = value; }), remove: vi.fn(async () => { secret = undefined; }) };
-  const token = options.token ?? new Token(); const platform = options.platform ?? new Platform();
+  const token = options.token ?? new Token(); const platform = options.platform ?? new Platform(); const pairing = options.pairing ?? new FakePairing();
   const connectorOptions: RemoteConnectorOptions = { database: f.store.database, registry: f.registry, server, secretStorage: secrets, owner: f.owner,
     clock, heartbeatMs: 100, requestTimeoutMs: 1000, shutdownTimeoutMs: 10,
-    tokenSource: () => token, connect: async source => { await source.token(); return platform; }, ...options.connector };
+    tokenSource: () => token, pairingSource: () => pairing, connect: async source => { await source.token(); return platform; }, ...options.connector };
   connector = new RemoteConnector(connectorOptions); if (options.wired !== false) server.setRemote(connector);
   cleanups.push(async () => { await connector.stop(); server.close(); await f.dispose(); });
   connector.start(); await clock.tick();
@@ -91,7 +93,9 @@ async function fixture(options: { configured?: boolean; credential?: string; tok
     f.root.runtime.session.setSessionName(title);
     return f.registry.projection(id).publish({ type: 'metadata.updated', title, state: 'open', residency: 'warm' }, { title });
   };
-  return { ...f, id, clock, server, token, platform, secrets, change, get connector() { return connector; },
+  return { ...f, id, clock, server, token, platform, pairing, secrets, change,
+    async approve(credential?: string) { pairing.approve(credential); await clock.tick(); },
+    get connector() { return connector; },
     async restart(overrides: Partial<RemoteConnectorOptions> = {}) { await connector.stop(); Object.assign(connectorOptions, overrides); connector = new RemoteConnector(connectorOptions); server.setRemote(connector); connector.start(); await clock.tick(); await clock.tick(); },
   };
 }
@@ -204,12 +208,13 @@ describe('RemoteConnector publication', () => {
     expect(f.connector.status().sessions).toBe(0);
   });
 
-  it('does not connect or record without a PAT, but remembers /remote on for login', async () => {
+  it('does not connect or record while unpaired, but remembers /remote on for login', async () => {
     const f = await fixture({ configured: false }); f.connector.setShared(f.id, true); f.change(); await f.clock.tick();
     expect(f.token.token).not.toHaveBeenCalled(); expect(f.connector.outbox.pendingCount()).toBe(0);
     expect(f.connector.store.session(f.id)).toMatchObject({ shared: true, backfilled: false });
-    expect(await f.connector.configure({ action: 'login', token: pat })).toMatchObject({ configured: true, state: 'connecting' });
-    await f.clock.tick(); await f.clock.tick(); expect(f.platform.publications.length).toBeGreaterThan(0);
+    expect(await f.connector.configure({ action: 'login' })).toMatchObject({ configured: false, state: 'connecting' });
+    await f.approve(); expect(f.connector.status()).toMatchObject({ configured: true, state: 'connected' });
+    expect(f.platform.publications.length).toBeGreaterThan(0);
   });
 
   it('backfills all history pages oldest first, then publishes contiguous live changes and trims acknowledged entries', async () => {
@@ -356,7 +361,7 @@ describe('RemoteConnector publication', () => {
 
   it('keeps indexing session-scoped and clears it when re-pairing to another host', async () => {
     const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick(0);
-    f.token.host = hostB; await f.connector.configure({ action: 'login', token: 'fln_pat_repaired' }); await f.clock.tick(0);
+    f.token.host = hostB; await f.connector.configure({ action: 'login' }); await f.approve('fln_pat_repaired'); await f.clock.tick(0);
     const emit = (f.registry as unknown as { publish(value: TextStreamEvent): void }).publish.bind(f.registry);
     const event: TextStreamEvent = { v: 1, session: f.id, stream: { id: 'old-host', message: 'm', kind: 'text', offset: 0 }, text: 'hello ' };
     emit(event); expect(f.platform.realtime.sendText).not.toHaveBeenCalled();
@@ -381,7 +386,7 @@ describe('RemoteConnector publication', () => {
     });
     const acknowledge = vi.spyOn(f.connector.outbox, 'acknowledge');
     f.connector.setShared(f.id, true); await f.clock.tick(0);
-    f.token.host = hostB; await f.connector.configure({ action: 'login', token: 'fln_pat_repaired' }); await f.clock.tick(0);
+    f.token.host = hostB; await f.connector.configure({ action: 'login' }); await f.approve('fln_pat_repaired'); await f.clock.tick(0);
     expect(f.connector.status().host?.id).toBe(hostB);
     const record = f.connector.store.session(f.id);
     expect(record).toMatchObject({ hostId: hostA, terminal: 'forbidden' });
@@ -490,7 +495,7 @@ describe('RemoteConnector publication', () => {
 
   it('fences the old published copy when a new PAT pairs a different host', async () => {
     const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick();
-    f.token.host = hostB; await f.connector.configure({ action: 'login', token: 'fln_pat_repaired' }); await f.clock.tick();
+    f.token.host = hostB; await f.connector.configure({ action: 'login' }); await f.approve('fln_pat_repaired');
     expect(f.connector.status().host?.id).toBe(hostB); expect(f.connector.store.session(f.id)).toMatchObject({ terminal: 'forbidden', hostId: hostA });
     expect(f.connector.outbox.pendingCount()).toBe(0); f.change(); await f.clock.tick();
     expect(f.platform.publish).toHaveBeenCalledTimes(1);
@@ -590,7 +595,7 @@ describe('RemoteConnector connection and commands', () => {
     expect(f.registry.projection(f.id).presentations()).toContainEqual(expect.objectContaining({ id: 'remote-stopped', kind: 'notification', level: 'warning' }));
     if (reason === 'unsupported_schema') expect(f.connector.status().supported).toEqual({ protocol: [1], rowSchemaVersion: [2] });
     expect(JSON.stringify(f.connector.status())).not.toContain(pat); await f.clock.tick(10000); expect(f.connector.status().state).toBe('stopped');
-    token.failure = undefined; await f.connector.configure({ action: 'login', token: pat }); await f.clock.tick(); await f.clock.tick();
+    token.failure = undefined; await f.connector.configure({ action: 'login' }); await f.approve();
     expect(f.connector.status()).toMatchObject({ state: 'connected', pending: 0 });
   });
 
@@ -636,11 +641,13 @@ describe('RemoteConnector connection and commands', () => {
     expect(f.platform.close).toHaveBeenCalled();
   });
 
-  it('never stores PATs or tokens in state files, errors or status', async () => {
+  it('never stores credentials, device codes or host tokens in state files, errors or status', async () => {
     const f = await fixture({ configured: false }); f.secrets.write.mockRejectedValueOnce(new Error(pat));
-    await expect(f.connector.configure({ action: 'login', token: pat })).rejects.toThrow('Remote configuration could not be saved');
-    await f.connector.configure({ action: 'login', token: pat, apiUrl: 'https://app.example.test/base' }); await f.clock.tick();
+    await f.connector.configure({ action: 'login', apiUrl: 'https://app.example.test/base' }); await f.clock.tick();
     expect(f.connector.status().apiUrl).toBe('https://app.example.test');
+    expect(JSON.stringify(f.connector.status())).not.toContain('device-code-secret');
+    await f.approve(pat);
+    expect(f.connector.status()).toMatchObject({ state: 'stopped', reason: 'unavailable', configured: false });
     const settings = f.store.database.record('settings', 'settings')!;
     expect(settings).not.toContain(pat); expect(JSON.stringify(f.connector.status())).not.toContain(pat); expect(settings).not.toContain('host-token-not-for-status');
   });
@@ -672,7 +679,7 @@ it('advertises remote operations only when wired, handles host ops without admis
   f.server.setRemote(f.connector); const client = await wire(f);
   expect(client.hello.result.operations).toEqual(expect.arrayContaining(['remote.status', 'remote.configure', 'session.remote']));
   expect(await client.request('remote.status')).toMatchObject({ outcome: 'accepted', result: { configured: false, state: 'off' } });
-  const response = await client.request('remote.configure', { action: 'login', token: pat });
+  const response = await client.request('remote.configure', { action: 'login' });
   expect(response.outcome).toBe('accepted'); expect(JSON.stringify(response)).not.toContain(pat);
   expect(f.store.snapshot().requests).toHaveLength(0);
   await client.request('attach', { expected: f.owner.identity }, f.id);
@@ -978,7 +985,7 @@ it('retains supported row schema versions from an RPC and clears stopped present
   expect(f.token.invalidate).not.toHaveBeenCalled();
   expect(f.registry.projection(f.id).presentations().some(item => item.id === 'remote-stopped')).toBe(true);
   f.token.failure = undefined;
-  await f.connector.configure({ action: 'login', token: pat }); await f.clock.tick();
+  await f.connector.configure({ action: 'login' }); await f.approve();
   expect(f.registry.projection(f.id).presentations().some(item => item.id === 'remote-stopped')).toBe(false);
   f.registry.projection(f.id).setPresentation({ id: 'remote-stopped', kind: 'notification', level: 'warning', text: 'Stale warning' });
   await f.clock.tick(100);
@@ -1194,4 +1201,119 @@ it('flushes the buffered outbox tail before stopping', async () => {
   } }]);
   await f.connector.stop();
   expect(new RemoteOutbox(f.store.database).pending(f.id)).toEqual(entries);
+});
+
+describe('RemoteConnector browser pairing', () => {
+  it('shows the pairing code, approves into the stored credential and connects through the token source', async () => {
+    const token = new Token(); const tokenSource = vi.fn(() => token);
+    const f = await fixture({ configured: false, token, connector: { tokenSource } });
+    expect(await f.connector.configure({ action: 'login', apiUrl: 'https://app.example.test' })).toMatchObject({
+      configured: false, state: 'connecting', pairing: { userCode: 'BCDF-GHJK', verificationUri: 'https://app.felan.ai/pair', verificationUriComplete: 'https://app.felan.ai/pair?code=BCDF-GHJK' },
+    });
+    expect(JSON.stringify(f.connector.status())).not.toContain('device-code-secret');
+    expect(f.secrets.write).not.toHaveBeenCalled(); expect(tokenSource).not.toHaveBeenCalled();
+    await f.approve('fln_pat_approved');
+    expect(f.secrets.write).toHaveBeenCalledWith('remote', 'pat', 'fln_pat_approved');
+    expect(tokenSource).toHaveBeenCalledWith(expect.objectContaining({ pat: 'fln_pat_approved' }));
+    expect(f.connector.status()).toMatchObject({ configured: true, state: 'connected' });
+    expect(f.connector.status().pairing).toBeUndefined();
+  });
+
+  it.each([
+    ['denied', 'pairing_denied', 'deny'],
+    ['expired', 'pairing_expired', 'expire'],
+  ] as const)('stops when pairing is %s and keeps the previously stored credential', async (_outcome, reason, outcome) => {
+    const f = await fixture();
+    await f.connector.configure({ action: 'login' });
+    f.pairing[outcome](); await f.clock.tick();
+    expect(f.connector.status()).toMatchObject({ configured: false, state: 'stopped', reason });
+    expect(f.connector.status().pairing).toBeUndefined();
+    expect(f.connector.setupNeeds()).toEqual([{ code: 'remote', message: expect.stringContaining('/remote login') }]);
+    expect(f.secrets.write).not.toHaveBeenCalled(); expect(f.secrets.remove).not.toHaveBeenCalled();
+  });
+
+  it('cancels an in-flight pairing on logout and ignores a late approval', async () => {
+    const f = await fixture({ configured: false });
+    await f.connector.configure({ action: 'login' });
+    expect(await f.connector.configure({ action: 'logout' })).toMatchObject({ configured: false, state: 'off' });
+    expect(f.pairing.cancel).toHaveBeenCalled(); expect(f.connector.status().pairing).toBeUndefined();
+    await f.approve(); expect(f.secrets.write).not.toHaveBeenCalled(); expect(f.connector.status()).toMatchObject({ configured: false, state: 'off' });
+  });
+
+  it('cancelling a re-login keeps the existing pairing and ignores a late approval', async () => {
+    const token = new Token(); const tokenSource = vi.fn(() => token);
+    const f = await fixture({ token, connector: { tokenSource } });
+    expect(f.connector.status()).toMatchObject({ configured: true, state: 'connected' });
+    await f.connector.configure({ action: 'login' });
+    expect(await f.connector.configure({ action: 'cancel_pairing' })).toMatchObject({ configured: true });
+    expect(f.pairing.cancel).toHaveBeenCalled(); expect(f.connector.status().pairing).toBeUndefined();
+    await f.clock.tick();
+    expect(f.connector.status()).toMatchObject({ configured: true, state: 'connected' });
+    expect(tokenSource).toHaveBeenLastCalledWith(expect.objectContaining({ pat }));
+    await f.approve('fln_pat_late');
+    expect(f.secrets.write).not.toHaveBeenCalled(); expect(f.secrets.remove).not.toHaveBeenCalled();
+  });
+
+  it('keeps a grant that arrived before cancel because the platform already rotated the credential', async () => {
+    const token = new Token(); const tokenSource = vi.fn(() => token);
+    const f = await fixture({ token, connector: { tokenSource } });
+    await f.connector.configure({ action: 'login' });
+    f.pairing.approve('fln_pat_rotated');
+    const status = await f.connector.configure({ action: 'cancel_pairing' });
+    expect(status).toMatchObject({ configured: true, message: expect.stringContaining('already approved') });
+    expect(f.secrets.write).toHaveBeenCalledExactlyOnceWith('remote', 'pat', 'fln_pat_rotated');
+    expect(tokenSource).toHaveBeenLastCalledWith(expect.objectContaining({ pat: 'fln_pat_rotated' }));
+    expect(f.pairing.cancel).not.toHaveBeenCalled();
+    await f.clock.tick();
+    expect(f.connector.status()).toMatchObject({ configured: true, state: 'connected' });
+    expect(f.connector.status().message).toBeUndefined();
+  });
+
+  it('cancelling a first pairing turns remote off, and cancelling without a pairing changes nothing', async () => {
+    const f = await fixture({ configured: false });
+    expect(await f.connector.configure({ action: 'cancel_pairing' })).toMatchObject({ configured: false, state: 'off' });
+    expect(f.pairing.cancel).not.toHaveBeenCalled();
+    await f.connector.configure({ action: 'login' });
+    expect(await f.connector.configure({ action: 'cancel_pairing' })).toMatchObject({ configured: false, state: 'off' });
+    expect(f.connector.status().pairing).toBeUndefined(); expect(f.secrets.remove).not.toHaveBeenCalled();
+  });
+
+  it('cancels an in-flight pairing when the connector stops', async () => {
+    const f = await fixture({ configured: false });
+    await f.connector.configure({ action: 'login' }); await f.connector.stop();
+    expect(f.pairing.cancel).toHaveBeenCalled();
+  });
+
+  it('cancels the previous pairing when a new login starts and ignores its approval', async () => {
+    const pairings: FakePairing[] = [];
+    const f = await fixture({ configured: false, connector: { pairingSource: () => { const pairing = new FakePairing(); pairings.push(pairing); return pairing; } } });
+    await f.connector.configure({ action: 'login' }); await f.connector.configure({ action: 'login' });
+    expect(pairings[0]!.cancel).toHaveBeenCalled(); expect(pairings[1]!.cancel).not.toHaveBeenCalled();
+    pairings[0]!.approve('fln_pat_stale'); await f.clock.tick();
+    expect(f.secrets.write).not.toHaveBeenCalled();
+    pairings[1]!.approve('fln_pat_current'); await f.clock.tick();
+    expect(f.secrets.write).toHaveBeenCalledWith('remote', 'pat', 'fln_pat_current');
+    expect(f.connector.status()).toMatchObject({ configured: true, state: 'connected' });
+  });
+
+  it('rejects login with a clear message when pairing cannot start on this daemon version', async () => {
+    const pairing = new FakePairing(); pairing.start.mockRejectedValueOnce(new HostPairingFailure('unsupported_schema', 'unsupported'));
+    const f = await fixture({ configured: false, pairing });
+    await expect(f.connector.configure({ action: 'login' })).rejects.toMatchObject({ code: 'unavailable', message: expect.stringContaining('Update Felan') });
+    expect(f.connector.status()).toMatchObject({ configured: false, state: 'off' }); expect(f.connector.status().pairing).toBeUndefined();
+  });
+
+  it('re-pairs after host_revoked through a new approval', async () => {
+    const token = new Token(); const f = await fixture({ token });
+    token.failure = new HostTokenExchangeError('host_revoked', pat);
+    f.platform.publish.mockRejectedValueOnce(new PlatformError('revoked', pat));
+    f.connector.setShared(f.id, true); await f.clock.tick(); f.change(); await f.clock.tick();
+    expect(f.connector.status()).toMatchObject({ state: 'stopped', reason: 'host_revoked' });
+    expect(f.connector.setupNeeds()).toEqual([{ code: 'remote', message: expect.stringContaining('/remote login') }]);
+    token.failure = undefined;
+    expect(await f.connector.configure({ action: 'login' })).toMatchObject({ state: 'connecting', pairing: { userCode: 'BCDF-GHJK' } });
+    await f.approve('fln_pat_replacement');
+    expect(f.secrets.write).toHaveBeenLastCalledWith('remote', 'pat', 'fln_pat_replacement');
+    expect(f.connector.status()).toMatchObject({ configured: true, state: 'connected', pending: 0 });
+  });
 });

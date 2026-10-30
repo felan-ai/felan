@@ -2,9 +2,13 @@ import type { AutocompleteItem } from '@earendil-works/pi-tui';
 import type { OperationParams, RemoteStatus } from '@felan-ai/session-protocol';
 import type { TuiSessionController } from './controller.js';
 import type { TuiDialogHost } from './dialogs.js';
+import type { OpenBrowser } from './browser.js';
 
 const usage = 'Usage: /remote [status|on|off|login [apiUrl]|logout|share all|on-request|open [name]|close]';
 const completions = ['status', 'on', 'off', 'login', 'logout', 'share all', 'share on-request', 'open', 'close'];
+const PAIRING_POLL_MS = 2_000;
+
+type PairingInfo = NonNullable<RemoteStatus['pairing']>;
 
 export function remoteCompletions(prefix: string): AutocompleteItem[] {
   return completions.filter(value => value.startsWith(prefix)).map(value => ({ value, label: value }));
@@ -14,7 +18,7 @@ export function remoteHistoryInput(text: string): string {
   return /^\/remote\s+login(?:\s|$)/u.test(text.trim()) ? '/remote login' : text;
 }
 
-export async function submitRemoteInput(controller: TuiSessionController, dialogs: TuiDialogHost, argument: string): Promise<boolean> {
+export async function submitRemoteInput(controller: TuiSessionController, dialogs: TuiDialogHost, argument: string, openBrowser: OpenBrowser): Promise<boolean> {
   if (!(['remote.status', 'remote.configure', 'session.remote'] as const).every(op => controller.client.capabilities?.operations.includes(op))) {
     controller.setNotice('Remote sessions are not available from this daemon'); return false;
   }
@@ -38,19 +42,10 @@ export async function submitRemoteInput(controller: TuiSessionController, dialog
   }
   if (action === 'login') {
     if (rest && !validApiUrl(rest)) { controller.setNotice('Usage: /remote login [http(s)://apiUrl]'); return false; }
-    let token = await dialogs.input('Felan personal access token', '', { secret: true });
-    try {
-      if (token === undefined) return false;
-      token = token.trim();
-      if (!/^fln_pat_[A-Za-z0-9_-]+$/u.test(token) || token.length > 512) {
-        controller.setNotice('Enter a personal access token beginning with fln_pat_.'); return false;
-      }
-      const pending = controller.perform('remote.configure', { action: 'login', token, ...(rest ? { apiUrl: rest } : {}) });
-      token = undefined;
-      const response = await pending;
-      if (response.outcome !== 'accepted') return false;
-      controller.setNotice(statusNotice('Felan login saved', response.result)); return true;
-    } finally { token = undefined; }
+    const response = await controller.perform('remote.configure', { action: 'login', ...(rest ? { apiUrl: rest } : {}) });
+    if (response.outcome !== 'accepted') return false;
+    if (!response.result.pairing) { controller.setNotice(statusNotice('Felan login saved', response.result)); return true; }
+    return awaitPairing(controller, dialogs, response.result.pairing, openBrowser);
   }
   let params: OperationParams<'remote.configure'>;
   let notice: string;
@@ -80,6 +75,40 @@ export async function submitRemoteInput(controller: TuiSessionController, dialog
   controller.setNotice(statusNotice(notice, response.result)); return true;
 }
 
+// The browser open is best-effort: the code and URL stay on screen whether or not a browser launches.
+async function awaitPairing(controller: TuiSessionController, dialogs: TuiDialogHost, pairing: PairingInfo, openBrowser: OpenBrowser): Promise<boolean> {
+  const dismiss = new AbortController();
+  let finished = false;
+  let cancelled = false;
+  const prompt = dialogs.select(`Approve this machine on Felan\n\nCode: ${pairing.userCode}\nOpen: ${pairing.verificationUriComplete}`,
+    [{ value: 'cancel', label: 'Cancel pairing' }], { signal: dismiss.signal })
+    .then(() => { if (!finished) cancelled = true; });
+  void Promise.resolve().then(() => openBrowser(pairing.verificationUriComplete)).catch(() => {});
+  let status: RemoteStatus | undefined;
+  try {
+    while (!cancelled) {
+      await Promise.race([new Promise<void>(resolve => setTimeout(resolve, PAIRING_POLL_MS)), prompt]);
+      if (cancelled) break;
+      const response = await controller.perform('remote.status', {});
+      if (response.outcome !== 'accepted') { controller.setNotice('Felan login status is unavailable. Run /remote status to check it.'); return false; }
+      if (!response.result.pairing && response.result.state !== 'connecting') status = response.result;
+      if (status) break;
+    }
+  } finally { finished = true; dismiss.abort(); await prompt; }
+  if (!status) {
+    const response = await controller.perform('remote.configure', { action: 'cancel_pairing' });
+    if (response.outcome === 'accepted') {
+      const result = response.result;
+      controller.setNotice(result.message ? statusNotice('Felan login', result)
+        : result.configured ? 'Felan login cancelled · reconnecting with the existing pairing' : 'Felan login cancelled.');
+    }
+    return false;
+  }
+  if (status.state === 'stopped') { controller.setNotice(statusNotice('Felan login not completed', status)); return false; }
+  controller.setNotice(status.state === 'connected' ? 'Felan login saved · this machine is paired' : statusNotice('Felan login saved', status));
+  return true;
+}
+
 function requireSession(controller: TuiSessionController): string {
   if (!controller.sessionId) throw new Error('No session is attached. Use /new or /sessions.');
   return controller.sessionId;
@@ -102,7 +131,7 @@ function statusNotice(notice: string, status: RemoteStatus): string {
 async function showStatus(dialogs: TuiDialogHost, status: RemoteStatus): Promise<void> {
   await dialogs.select(`Remote ${status.state}${status.reason ? ` · ${status.reason}` : ''}`, [
     ...(status.message ? [{ value: 'message', label: status.message }] : []),
-    { value: 'host', label: `Host: ${status.host?.id.slice(0, 8) ?? 'not registered'} · ${status.configured ? 'PAT configured' : 'not logged in'}` },
+    { value: 'host', label: `Host: ${status.host?.id.slice(0, 8) ?? 'not registered'} · ${status.configured ? 'paired' : 'not paired'}` },
     { value: 'share', label: `Share: ${status.share}` },
     { value: 'summary', label: `${status.pending} pending events · ${status.sessions} shared sessions` },
     ...status.projects.map(project => ({ value: project.id, label: `Project: ${project.name} · ${project.path}` })),

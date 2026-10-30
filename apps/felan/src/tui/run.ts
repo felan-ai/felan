@@ -18,9 +18,11 @@ import { themedClientTerminal } from './theme.js';
 import { reportHerdrPane, type HerdrPane } from './herdr.js';
 import { formatHostBlocked } from '../client/daemon-blocked.js';
 import { remoteHistoryInput } from './remote.js';
+import type { OpenBrowser } from './browser.js';
 import { watchDaemonBuildMismatch } from '../client/build-mismatch.js';
 
 export async function runDaemonTerminal(controller: TuiSessionController, options: TuiSessionOptions & {
+  openBrowser: OpenBrowser;
   initialMessage?: string;
   theme?: string;
   presentation?: Partial<{ [K in keyof TuiPresentationPreferences]: Partial<TuiPresentationPreferences[K]> }>;
@@ -74,7 +76,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   }, themes);
   let builtins: ReturnType<typeof createTerminalPresenters> | undefined;
   const settings = () => preferences.settings;
-  const screen: DaemonTuiScreen = new DaemonTuiScreen(controller, tui, { cwd: options.cwd, exit, settings, theme: () => theme, quietStartup: () => preferences.values.quietStartup ?? false, preferences: (): Promise<boolean> => preferences.open(screen.dialogs),
+  const screen: DaemonTuiScreen = new DaemonTuiScreen(controller, tui, { cwd: options.cwd, openBrowser: options.openBrowser, exit, settings, theme: () => theme, quietStartup: () => preferences.values.quietStartup ?? false, preferences: (): Promise<boolean> => preferences.open(screen.dialogs),
     agents: async id => { if (!builtins) throw new Error('Session UI is not ready.'); await builtins.openExecutions(id); },
     login: (provider?: string): Promise<boolean> => setupAction('login', provider), logout: (): Promise<boolean> => setupAction('logout'), dependencies: (): Promise<boolean> => setupAction('dependencies'), toolPresentation: terminalToolPresentation,
     hasRenderer: element => isPowerlinePresentation(element) || ('hint' in element && !!builtins?.presenters.hints.get(element.hint)),
@@ -120,7 +122,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       themes.setTerminalColors(colors); theme = themes.theme; screen.refreshPresentation();
     };
     void tui.queryTerminalColors({ timeoutMs: 1000, onLateReply: applyTerminalColors }).then(applyTerminalColors).catch(() => {});
-    setup = new TerminalSetup(controller, createSetupUi(tui, screen.dialogs, () => theme, keybindings, () => !interactions?.busy));
+    setup = new TerminalSetup(controller, createSetupUi(tui, screen.dialogs, () => theme, keybindings, () => !interactions?.busy), options.openBrowser);
     let setupSession: string | undefined;
     unsubscribeSetup = controller.subscribe(() => {
       if (!controller.sessionId || controller.state?.status !== 'live' || setupSession === controller.sessionId) return;

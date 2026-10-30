@@ -146,7 +146,7 @@ it('stops the real daemon on the first force command with an attached context vi
   };
   const tui = new TuiAltScreen(terminal);
   const lifetime = new AbortController();
-  const running = runDaemonTerminal(controller, { cwd: root, sessionId: session, terminal, createTui: () => tui,
+  const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: root, sessionId: session, terminal, createTui: () => tui,
     clientConfigDir: join(root, 'client'), signal: lifetime.signal });
   cleanups.push(async () => { lifetime.abort(); await running; await controller.dispose(); });
   await vi.waitFor(() => expect(controller.sessionId).toBe(session));

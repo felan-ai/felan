@@ -6,6 +6,7 @@ import { resolveClientHostComposition, resolveInstalledDaemonEntrypoint } from '
 import { FELAN_VERSION } from '../version.js';
 import { TuiSessionController } from '../tui/controller.js';
 import { TerminalSetup } from '../tui/setup.js';
+import type { OpenBrowser } from '../tui/browser.js';
 import type { TerminalSetupUi } from '../tui/setup-ui.js';
 import { sanitizeAcpErrorMessage } from './session-updates.js';
 
@@ -39,13 +40,14 @@ export interface RunLocalFelanAcpLoginOptions {
   readonly signalSource?: AcpLoginSignalSource;
   readonly signal?: AbortSignal;
   readonly terminateProcess?: (exitCode: number) => void;
+  readonly openBrowser: OpenBrowser;
 }
 
 class AcpLoginCancelledError extends Error {
   constructor() { super('Authentication cancelled'); this.name = 'AcpLoginCancelledError'; }
 }
 
-export async function runLocalFelanAcpLogin(options: RunLocalFelanAcpLoginOptions = {}): Promise<number> {
+export async function runLocalFelanAcpLogin(options: RunLocalFelanAcpLoginOptions): Promise<number> {
   const terminal = options.terminal ?? new NodeAcpLoginTerminal();
   const writeError = options.writeError ?? ((message: string) => { process.stderr.write(`${message}\n`); });
   const signalSource = options.signalSource ?? process;
@@ -77,7 +79,7 @@ export async function runLocalFelanAcpLogin(options: RunLocalFelanAcpLoginOption
     controller = new TuiSessionController(client);
     await waitForCancellation(client.connect(), abort.signal);
     abort.signal.throwIfAborted();
-    setup = new TerminalSetup(controller, nodeSetupUi(terminal, abort.signal, secrets, state));
+    setup = new TerminalSetup(controller, nodeSetupUi(terminal, abort.signal, secrets, state), options.openBrowser);
     const completed = await setup.login();
     if (abort.signal.aborted || state.cancelled && !completed) throw new AcpLoginCancelledError();
     if (!completed) {

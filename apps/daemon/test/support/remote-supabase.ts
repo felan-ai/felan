@@ -156,8 +156,8 @@ export function uuidV7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8)}-7${randomBytes(2).toString('hex').slice(1)}-8${randomBytes(2).toString('hex').slice(1)}-${randomBytes(6).toString('hex')}`;
 }
 
-export interface TestHost { id: string; installId: string; teamId: string; userId: string; apiKeyId: string }
-export interface TestOwner { teamId: string; userId: string; apiKeyId: string; pat: string; hosts: [TestHost, TestHost] }
+export interface TestHost { id: string; installId: string; teamId: string; userId: string; apiKeyId: string; credential: string }
+export interface TestOwner { teamId: string; userId: string; hosts: [TestHost, TestHost] }
 export interface TestConnection { platform: PlatformClient; raw: SupabaseClient }
 
 export class SupabaseFixtures {
@@ -199,25 +199,21 @@ export class SupabaseFixtures {
     this.#teams.push(teamId);
     assertDatabase(await this.environment.admin.from('teams').insert({ id: teamId, name: 'Connector contract test', slug: `connector-${teamId}`, owner_id: userId }), 'seed teams');
     assertDatabase(await this.environment.admin.from('team_members').insert({ team_id: teamId, user_id: userId, role: 'owner' }), 'seed team_members');
-    const { apiKeyId, pat } = await this.personalKey(teamId, userId);
-    const first = await this.host({ teamId, userId, apiKeyId });
-    const second = await this.host({ teamId, userId, apiKeyId });
-    return { teamId, userId, apiKeyId, pat, hosts: [first, second] };
+    const first = await this.host({ teamId, userId });
+    const second = await this.host({ teamId, userId });
+    return { teamId, userId, hosts: [first, second] };
   }
 
-  async personalKey(teamId: string, userId: string): Promise<{ apiKeyId: string; pat: string }> {
+  // Browser pairing issues one credential per machine; seed that binding directly instead of approving in a browser.
+  async host(owner: Pick<TestOwner, 'teamId' | 'userId'>): Promise<TestHost> {
     // Matches felan-platform's documented SHA-256 API-key storage; plaintext is never persisted.
-    const pat = `fln_pat_${randomBytes(16).toString('hex')}`;
+    const credential = `fln_pat_${randomBytes(16).toString('hex')}`;
     const apiKeyId = randomUUID();
     assertDatabase(await this.environment.admin.from('api_keys').insert({
-      id: apiKeyId, team_id: teamId, user_id: userId, scope: 'personal', encrypted_key: null,
-      key_hash: createHash('sha256').update(pat).digest('hex'), key_prefix: `${pat.slice(0, 12)}...`,
-    }), 'seed personal api_keys');
-    return { apiKeyId, pat };
-  }
-
-  async host(owner: Pick<TestOwner, 'teamId' | 'userId' | 'apiKeyId'>): Promise<TestHost> {
-    const host = { id: randomUUID(), installId: randomUUID(), teamId: owner.teamId, userId: owner.userId, apiKeyId: owner.apiKeyId };
+      id: apiKeyId, team_id: owner.teamId, user_id: owner.userId, scope: 'personal', encrypted_key: null,
+      key_hash: createHash('sha256').update(credential).digest('hex'), key_prefix: `${credential.slice(0, 12)}...`,
+    }), 'seed machine credential');
+    const host = { id: randomUUID(), installId: randomUUID(), teamId: owner.teamId, userId: owner.userId, apiKeyId, credential };
     assertDatabase(await this.environment.admin.from('hosts').insert({
       id: host.id, install_id: host.installId, team_id: host.teamId, user_id: host.userId, api_key_id: host.apiKeyId,
       name: registration.name, daemon_version: registration.daemonVersion, row_schema_version: registration.rowSchemaVersion,
@@ -293,7 +289,7 @@ export class SupabaseFixtures {
       if (error) failures.push(`auth user cleanup (${error.status}: ${error.code ?? 'unknown'}: ${error.message})`);
     }
     if (this.#teams.length) {
-      for (const table of ['teams', 'team_members', 'team_invitations', 'api_keys', 'hosts', 'host_sessions', 'session_events', 'session_commands', 'session_tombstones']) {
+      for (const table of ['teams', 'team_members', 'team_invitations', 'api_keys', 'hosts', 'host_pairings', 'host_sessions', 'session_events', 'session_commands', 'session_tombstones']) {
         const { count, error } = await this.environment.admin.from(table).select('*', { count: 'exact', head: true })
           .in(table === 'teams' ? 'id' : 'team_id', this.#teams);
         if (error || count !== 0) failures.push(`${table} cleanup verification`);

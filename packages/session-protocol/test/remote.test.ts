@@ -24,9 +24,9 @@ describe('remote operation schemas', () => {
   });
 
   it.each<RemoteConfigureParams>([
-    { action: 'login', token: 'fln_pat_Az09_-' },
-    { action: 'login', token: 'fln_pat_' + 'x'.repeat(504), apiUrl: 'https://app.felan.ai' },
-    { action: 'logout' }, { action: 'share', share: 'all' }, { action: 'share', share: 'on-request' },
+    { action: 'login' },
+    { action: 'login', apiUrl: 'https://app.felan.ai' },
+    { action: 'logout' }, { action: 'cancel_pairing' }, { action: 'share', share: 'all' }, { action: 'share', share: 'on-request' },
     { action: 'open_project', path: '/fixture', name: 'Fixture' },
     { action: 'open_project', path: 'C:\\fixture' },
     { action: 'close_project', id: 'project' },
@@ -36,15 +36,13 @@ describe('remote operation schemas', () => {
     expect(parseClientEnvelope(request('remote.configure', params)).params).toEqual(params);
   });
 
-  it.each(['', 'fln_pat_', 'bzy_team_wrong', 'fln_pat_a.b', 'fln_pat_x x', 'fln_pat_é', 'fln_pat_x\n', 'fln_pat_' + 'x'.repeat(505)])(
-    'rejects invalid PAT %j', token => {
-      expect(() => parseRemoteConfigureParams({ action: 'login', token })).toThrowError(ProtocolValidationError);
-      expect(() => parseClientEnvelope(request('remote.configure', { action: 'login', token }))).toThrowError(ProtocolValidationError);
-    },
-  );
+  it('pairs through the browser, so login never carries a token', () => {
+    expect(parseRemoteConfigureParams({ action: 'login', token: 'fln_pat_SYNTHETIC_SECRET' })).toEqual({ action: 'login' });
+    expect(parseClientEnvelope(request('remote.configure', { action: 'login', token: 'fln_pat_SYNTHETIC_SECRET' })).params).toEqual({ action: 'login' });
+  });
 
   it.each([
-    {}, { action: 'unknown' }, { action: 'login' }, { action: 'share', share: 'local' }, { action: 'open_project' },
+    {}, { action: 'unknown' }, { action: 'share', share: 'local' }, { action: 'open_project' },
     { action: 'open_project', path: 'relative' }, { action: 'open_project', path: '/fixture\0escape' },
     { action: 'open_project', path: '/fixture', name: '' }, { action: 'open_project', path: '/fixture', name: '😀'.repeat(65) },
     { action: 'close_project', id: '' },
@@ -53,26 +51,26 @@ describe('remote operation schemas', () => {
   });
 
   it.each(['https://app.felan.ai', 'http://localhost:3000', 'http://[::1]:3000', 'https://example.com/base?option=1'])('accepts an HTTP API URL %s', apiUrl => {
-    expect(parseRemoteConfigureParams({ action: 'login', token: 'fln_pat_test', apiUrl })).toMatchObject({ apiUrl });
+    expect(parseRemoteConfigureParams({ action: 'login', apiUrl })).toMatchObject({ apiUrl });
   });
 
   it.each(['', 'example.com', '/relative', 'ftp://example.com', 'https://', 'https://example.com:99999',
     'https://user:secret@example.com', 'https://secret@example.com', 'https://example.com/a b', 'https://example.com/\n',
     'https://example.com/\\secret', 'https://example.com/' + 'x'.repeat(2048), 'https://example.com/' + '😀'.repeat(508)])(
     'rejects an invalid or credential-bearing API URL %j', apiUrl => {
-      expect(() => parseClientEnvelope(request('remote.configure', { action: 'login', token: 'fln_pat_test', apiUrl }))).toThrowError(ProtocolValidationError);
+      expect(() => parseClientEnvelope(request('remote.configure', { action: 'login', apiUrl }))).toThrowError(ProtocolValidationError);
     },
   );
 
   it('enforces the API URL UTF-8 byte boundary', () => {
     const apiUrl = 'https://example.com/' + 'x'.repeat(2048 - 'https://example.com/'.length);
-    expect(parseRemoteConfigureParams({ action: 'login', token: 'fln_pat_test', apiUrl })).toMatchObject({ apiUrl });
-    expect(() => parseRemoteConfigureParams({ action: 'login', token: 'fln_pat_test', apiUrl: apiUrl + 'x' })).toThrow();
+    expect(parseRemoteConfigureParams({ action: 'login', apiUrl })).toMatchObject({ apiUrl });
+    expect(() => parseRemoteConfigureParams({ action: 'login', apiUrl: apiUrl + 'x' })).toThrow();
   });
 
-  it('never accepts connection-local secrets as durable request records or leaks them in validation errors', () => {
+  it('never accepts connection-local configuration as durable request records or leaks secrets in validation errors', () => {
     const token = 'fln_pat_SYNTHETIC_SECRET';
-    const input = request('remote.configure', { action: 'login', token });
+    const input = request('remote.configure', { action: 'login' });
     const record = { schemaVersion: 1, id: input.id, owner: 'owner', admittedAt: now,
       retainUntil: requestRetainUntil(input.id, now), payload: canonicalRequestPayload(input), state: { phase: 'intent' } };
     expect(() => parseStoredRequestRecord(record)).toThrowError(/Invalid durable command identity/);
@@ -83,7 +81,7 @@ describe('remote operation schemas', () => {
     })();
     expect(JSON.stringify(error)).not.toContain(token);
     expect(String(error)).not.toContain(token);
-    expect(compareRequestPayload(input, request('remote.configure', { action: 'login', token: 'fln_pat_different' }))).toBe('conflict');
+    expect(compareRequestPayload(input, request('remote.configure', { action: 'login', apiUrl: 'https://app.felan.ai' }))).toBe('conflict');
     expect(parseRemoteConfigureParams({ action: 'logout', token })).toEqual({ action: 'logout' });
   });
 
@@ -99,7 +97,7 @@ describe('remote operation schemas', () => {
     expectTypeOf<RemoteConfigureParams>().toEqualTypeOf<OperationParams<'remote.configure'>>();
     expectTypeOf<RemoteStatus>().toEqualTypeOf<OperationResult<'remote.status'>>();
     expectTypeOf<RemoteStatus>().toEqualTypeOf<OperationResult<'remote.configure'>>();
-    expectTypeOf<Extract<RemoteConfigureParams, { action: 'login' }>['token']>().toEqualTypeOf<string>();
+    expectTypeOf<Extract<RemoteConfigureParams, { action: 'login' }>>().toEqualTypeOf<{ action: 'login'; apiUrl?: string }>();
   });
 });
 
@@ -144,8 +142,14 @@ describe('remote status', () => {
     expect(parseRemoteStatus({ ...remoteStatus, state }).state).toBe(state);
   });
 
-  it.each(['invalid_pat', 'not_a_member', 'host_revoked', 'unsupported_schema', 'rate_limited', 'unavailable'] as const)('accepts bounded reason %s', reason => {
+  it.each(['invalid_pat', 'not_a_member', 'host_revoked', 'unsupported_schema', 'rate_limited', 'unavailable', 'pairing_denied', 'pairing_expired'] as const)('accepts bounded reason %s', reason => {
     expect(parseRemoteStatus({ ...remoteStatus, reason }).reason).toBe(reason);
+  });
+
+  it('reports a pending browser pairing', () => {
+    const pairing = { userCode: 'BCDF-GHJK', verificationUri: 'https://app.felan.ai/pair',
+      verificationUriComplete: 'https://app.felan.ai/pair?code=BCDF-GHJK', expiresAt: 1_000 };
+    expect(parseRemoteStatus({ ...remoteStatus, configured: true, state: 'connecting', pairing }).pairing).toEqual(pairing);
   });
 
   it.each([
@@ -155,6 +159,9 @@ describe('remote status', () => {
     { supported: { protocol: [1], rowSchemaVersion: [0.1] } },
     { apiUrl: 'https://user:secret@example.com' }, { apiUrl: 'https://example.com/' },
     { apiUrl: 'https://example.com/path' }, { apiUrl: 'https://example.com?secret=value' }, { apiUrl: 'https://example.com#secret' },
+    { pairing: { userCode: 'ABCD-EFGH', verificationUri: 'https://app.felan.ai/pair', verificationUriComplete: 'https://app.felan.ai/pair', expiresAt: 1 } },
+    { pairing: { userCode: 'BCDF-GHJK', verificationUri: 'https://user:secret@app.felan.ai/pair', verificationUriComplete: 'https://app.felan.ai/pair', expiresAt: 1 } },
+    { pairing: { userCode: 'BCDF-GHJK', verificationUri: 'https://app.felan.ai/pair', expiresAt: 1 } },
   ])('rejects invalid status fields %j', fields => {
     expect(() => parseRemoteStatus({ ...remoteStatus, ...fields })).toThrowError(ProtocolValidationError);
     expect(() => parseOperationResult('remote.status', { ...remoteStatus, ...fields })).toThrowError(ProtocolValidationError);

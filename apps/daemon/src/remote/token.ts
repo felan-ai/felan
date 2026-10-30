@@ -44,7 +44,7 @@ export interface HostTokenSourceOptions extends RetryOptions {
 // alias for the host when the daemon runs in a local development container.
 export const PLAIN_HTTP_API_HOSTS: readonly string[] = ['localhost', '127.0.0.1', '[::1]', 'host.docker.internal'];
 
-function endpoint(value: string): string {
+export function endpoint(value: string): string {
   try {
     const url = new URL(value);
     if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error();
@@ -55,7 +55,7 @@ function endpoint(value: string): string {
   }
 }
 
-function hostName(value: string): string {
+export function hostName(value: string): string {
   let result = '';
   let bytes = 0;
   for (const point of value) {
@@ -67,7 +67,7 @@ function hostName(value: string): string {
   return result;
 }
 
-function retryAfter(value: string | null, now: number, cap: number): number | undefined {
+export function retryAfter(value: string | null, now: number, cap: number): number | undefined {
   if (!value) return undefined;
   const seconds = /^\d+(?:\.\d+)?$/u.test(value.trim()) ? Number(value) : NaN;
   const delay = Number.isFinite(seconds) ? seconds * 1_000 : Date.parse(value) - now;

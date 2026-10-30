@@ -13,6 +13,7 @@ import { RemoteCommandExecutor, type RemoteCommandDependencies } from '../src/re
 import { publishableChange, publishedEvent, publishedSession } from '../src/remote/content.js';
 import { RemoteOutbox } from '../src/remote/outbox.js';
 import { PlatformError, parsePlatformError, type PlatformClient } from '../src/remote/platform.js';
+import { HostPairing } from '../src/remote/pairing.js';
 import { HostTokenSource } from '../src/remote/token.js';
 import {
   SupabaseFixtures, assertDatabase, probeSupabase, probeTokenEndpoint, registration, uuidV7, waitFor,
@@ -320,34 +321,64 @@ describe.skipIf(Boolean(endpointReason))(`local host-token endpoint${endpointRea
   }, 30_000);
   afterAll(async () => { for (const value of sources) value.stop(); await fixtures?.cleanup(); }, 30_000);
 
-  it('exchanges a seeded personal PAT through real HostTokenSource and parses its response and claims', async () => {
-    const value = source(owner.pat);
+  it('exchanges a paired machine credential through real HostTokenSource and parses its response and claims', async () => {
+    const [host] = owner.hosts;
+    const value = source(host.credential, host.installId);
     const token = await value.token();
     const response = parseHostTokenResponse({ ...value.current(), token });
     const payload = parseHostTokenClaims(JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8')));
-    expect(response.host).toMatchObject({ teamId: owner.teamId, userId: owner.userId });
+    expect(response.host).toEqual({ id: host.id, teamId: owner.teamId, userId: owner.userId });
     expect(payload.sub).toBe(response.host.id);
     expect(payload.felan).toEqual({ kind: 'host', host_id: response.host.id, team_id: owner.teamId, user_id: owner.userId });
     expect(response.expiresAt).toBe(payload.exp * 1_000);
     expect(response.refreshAt).toBeLessThan(response.expiresAt);
   });
 
-  it('preserves the host ID for the same (PAT, installId)', async () => {
-    const installId = randomUUID(); const a = source(owner.pat, installId); const b = source(owner.pat, installId);
-    await a.token(); await b.token();
-    expect(a.current()!.host.id).toBe(b.current()!.host.id);
+  it('rejects a machine credential presented by another installation', async () => {
+    const [host] = owner.hosts;
+    await expect(source(host.credential).token()).rejects.toMatchObject({ name: 'HostTokenExchangeError', kind: 'invalid_pat' });
   });
 
-  it('returns HTTP 401 and invalid_pat for a revoked personal key', async () => {
-    const key = await fixtures.personalKey(owner.teamId, owner.userId);
-    const installId = randomUUID(); await source(key.pat, installId).token();
-    assertDatabase(await fixtures.environment.admin.from('api_keys').update({ revoked_at: new Date().toISOString() }).eq('id', key.apiKeyId), 'revoke personal key');
+  it('returns HTTP 401 and invalid_pat for a revoked machine credential', async () => {
+    const host = await fixtures.host(owner);
+    await source(host.credential, host.installId).token();
+    assertDatabase(await fixtures.environment.admin.from('api_keys').update({ revoked_at: new Date().toISOString() }).eq('id', host.apiKeyId), 'revoke machine credential');
     const response = await fetch(`${fixtures.environment.apiUrl}/api/v1/hosts/token`, {
-      method: 'POST', headers: { Authorization: `Bearer ${key.pat}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ installId, name: registration.name, daemonVersion: registration.daemonVersion, protocol: 1, rowSchemaVersion: ROW_SCHEMA_VERSION }),
+      method: 'POST', headers: { Authorization: `Bearer ${host.credential}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ installId: host.installId, name: registration.name, daemonVersion: registration.daemonVersion, protocol: 1, rowSchemaVersion: ROW_SCHEMA_VERSION }),
       signal: AbortSignal.timeout(8_000), redirect: 'error',
     });
     expect(response.status).toBe(401);
-    await expect(source(key.pat, installId).token()).rejects.toMatchObject({ name: 'HostTokenExchangeError', kind: 'invalid_pat' });
+    await expect(source(host.credential, host.installId).token()).rejects.toMatchObject({ name: 'HostTokenExchangeError', kind: 'invalid_pat' });
   });
+
+  it('pairs through the browser flow and restores the same machine after revocation', async () => {
+    const installId = randomUUID();
+    const pair = async () => {
+      const pairing = new HostPairing({ apiUrl: fixtures.environment.apiUrl, installId, name: registration.name, daemonVersion: registration.daemonVersion, requestTimeoutMs: 8_000 });
+      const started = await pairing.start();
+      expect(new URL(started.verificationUriComplete).searchParams.get('code')).toBe(started.userCode);
+      // Stands in for the signed-in user approving the code at /pair.
+      assertDatabase(await fixtures.environment.admin.from('host_pairings').update({
+        status: 'approved', team_id: owner.teamId, user_id: owner.userId, decided_at: new Date().toISOString(),
+      }).eq('user_code', started.userCode).eq('status', 'pending'), 'approve pairing');
+      return pairing.wait(started);
+    };
+    const first = await pair();
+    expect(first.host).toMatchObject({ teamId: owner.teamId, userId: owner.userId });
+    const exchanged = source(first.credential, installId);
+    await exchanged.token();
+    expect(exchanged.current()!.host.id).toBe(first.host.id);
+
+    assertDatabase(await fixtures.environment.admin.from('hosts').update({ revoked_at: new Date().toISOString() }).eq('id', first.host.id), 'revoke machine');
+    await expect(source(first.credential, installId).token()).rejects.toMatchObject({ name: 'HostTokenExchangeError', kind: 'host_revoked' });
+
+    const second = await pair();
+    expect(second.host.id).toBe(first.host.id);
+    expect(second.credential).not.toBe(first.credential);
+    const restored = source(second.credential, installId);
+    await restored.token();
+    expect(restored.current()!.host.id).toBe(first.host.id);
+    await expect(source(first.credential, installId).token()).rejects.toMatchObject({ name: 'HostTokenExchangeError', kind: 'invalid_pat' });
+  }, 30_000);
 });

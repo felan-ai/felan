@@ -231,7 +231,7 @@ an amendment to the accepted extension wording.
 must not unexpectedly need a local trust dialog to complete an admitted remote
 create, nor treat every directory as remotely approved.
 
-**Proposed change:** Confirm that the authenticated PAT owner may answer
+**Proposed change:** Confirm that the authenticated paired owner may answer
 session-scoped owner-authority interactions, never host-scoped or
 `local-console` interactions. Define an explicitly opened project as a standing,
 non-interactive grant to create headless sessions in that directory until it is
@@ -270,16 +270,16 @@ protects the original command from duplicate execution.
 
 ## 12. Re-pairing and retained outboxes
 
-**What:** A new PAT creates a new host and “never inherits upload authority or
+**What:** A new pairing of a different machine creates a new host and “never inherits upload authority or
 history,” but the fate of old local outboxes is not explicit.
 
-**Why:** Keeping an outbox after `invalid_pat` is not a promise that a new PAT can
+**Why:** Keeping an outbox after `invalid_pat` is not a promise that a new pairing can
 upload it. The old host still owns its published sessions.
 
 **Proposed change:** State that previously published sessions cannot be continued
 by the new host: they are read-only/terminal from that host's perspective, and
 their local outboxes are dropped. Retained entries for an old pairing can resume
-only if the same PAT is restored and the platform still authorizes that pairing.
+only if the same machine re-pairs and the platform still authorizes that pairing.
 
 **Platform decision:** Accept — “Previously published sessions cannot be continued by the new host”; old-pairing outboxes are dropped.
 
@@ -287,7 +287,7 @@ only if the same PAT is restored and the platform still authorizes that pairing.
 On reconnect with a different host, it marks those sessions terminal `forbidden`,
 drops their outboxes and reports them in `/remote status`. This does not delete
 the old platform history or the local sessions. Outboxes are kept while stopped
-on `invalid_pat`; once a different PAT pairs a different host, the old host's
+on `invalid_pat`; re-pairing the same machine restores the same host and resumes them; once a different machine pairs as a new host, the old host's
 outboxes are dropped. A new pairing cannot inherit them.
 
 ## 13. Unrecoverable `sequence_gap`
@@ -353,28 +353,28 @@ while retaining ID-to-path resolution locally in a new shared-schema release.
 only the basename as the session directory label. Paths appearing inside user
 messages or tool output are not generally removed by credential redaction.
 
-## 16. Local PAT and service-role test fixtures
+## 16. Local machine-credential and service-role test fixtures
 
 **What:** The contract requires tests against local Supabase without documenting
-how to obtain a local PAT or privileged fixture access.
+how to obtain a local machine credential or privileged fixture access.
 
 **Why:** A hash convention or signing-key mismatch can look like a connector
 failure. Contributors must not use production credentials or start another stack.
 
 **Proposed change:** Document the local fixture path, prerequisite migrated stack
-and shared signing key, and the PAT storage convention: SHA-256 of the complete
+and shared signing key, and the credential storage convention: SHA-256 of the complete
 `fln_pat_...` token encoded as lowercase hex in `api_keys.key_hash`, with
 `scope = 'personal'`, `user_id`, `team_id`, and `encrypted_key = null`. Explain
-how a developer obtains a PAT through web settings or disposable test fixtures.
+how a developer obtains a machine credential: by pairing through `/remote login` and approving in the browser, or through disposable test fixtures.
 
-**Platform decision:** Accept — “a local test environment section”: `local:pair-host`, settings, signing key and `key_hash` convention.
+**Platform decision:** Accept — “a local test environment section”: browser pairing through `/remote login`, signing key and `key_hash` convention.
 
 **Current implementation:**
 `apps/daemon/test/support/remote-supabase.ts` creates disposable owners, teams,
-PAT hashes and hosts. It reads the local platform's
+machine-credential hashes and hosts. It reads the local platform's
 `supabase/signing_keys.json` and signs a short-lived service-role token for
 fixture setup/cleanup; it does not require a production service key or persist
-the plaintext PAT. RPC tests use scoped host tokens. The integration suite never
+the plaintext credential. RPC tests use scoped host tokens. The integration suite never
 starts Supabase. Commands and prerequisites are in
 [the connector guide](remote-connector.md#local-development-and-testing).
 
@@ -387,7 +387,7 @@ and `remote/token.ts`. No change is requested.
 **Why:** Recorded so the comparison is not repeated and so a later divergence is
 visible.
 
-**Proposed change:** None. Path, Bearer PAT, request body (`installId`, name byte
+**Proposed change:** None. Path, Bearer machine credential, request body (`installId`, name byte
 limit, `daemonVersion`, `protocol`, `rowSchemaVersion`), response body (`token`,
 `expiresAt`, `refreshAt`, `host`, `supabase`), status codes (400, 401, 403, 426, 429,
 5xx), the flat error body `{ code, message, supported? }`, and the ES256 claims
@@ -398,8 +398,8 @@ seconds) all match the contract.
 
 **Current implementation:** `remote/token.ts` requires no contract change. The
 endpoint tests in `remote-supabase.integration.test.ts` cover exchange with a
-personal PAT, stable host ID for the same PAT and install ID, and 401 `invalid_pat`
-for a revoked key; they skip when the local API is unavailable. Unknown token
+personal machine credential, stable host ID for the same credential and install ID, and 401 `invalid_pat`
+for a revoked credential; they skip when the local API is unavailable. Unknown token
 error codes remain retryable (see platform CR-9 below).
 
 ## 18. Publication quarantine lifetime
@@ -637,7 +637,7 @@ platform-owned; the daemon-facing status is:
 | CR-6: completion validation/conflict | The executor sends only `accepted`, `rejected` or `indeterminate`, never outcome `expired`; stale expiry is a rejected outcome with error code `expired`. `PlatformClient.complete` checks `re`; the connector treats `conflict` as final and forgets the completed journal entry. |
 | CR-8: notification transport fields | `parseRealtimeNotification` uses `parseSchema`, which strips unspecified transport fields, including an extra `id` in an `events` payload. No parser change needed. |
 | CR-9: token 400/500 errors | `HostTokenSource` treats HTTP 400 `invalid_request` as retryable `unavailable` and HTTP 500 `internal_error` as retryable `retry`. Adding these names to `HOST_TOKEN_ERROR_CODES` is deferred to `0.1.0-next.1`, not required for retries. |
-| CR-15: suspension versus membership removal | The platform membership check returns `not_a_member` for plan suspension or team soft deletion without deleting history. The connector stops on token `not_a_member`; an RPC membership rejection triggers token re-exchange, then the same stop. Once access is restored, `/remote login` or a daemon restart retries with the retained PAT/outbox; it does not automatically resume while stopped. |
+| CR-15: suspension versus membership removal | The platform membership check returns `not_a_member` for plan suspension or team soft deletion without deleting history. The connector stops on token `not_a_member`; an RPC membership rejection triggers token re-exchange, then the same stop. Once access is restored, `/remote login` or a daemon restart retries with the retained credential/outbox; it does not automatically resume while stopped. |
 | CR-16: shared storage namespace | Typed publication `forbidden` (including a cloud-session ID collision) makes only that session terminal, drops its outbox and reports it in `/remote status`. Other sessions continue. Archive naming and cleanup remain platform-owned. |
 
 The remaining platform decisions require no additional daemon wire changes:

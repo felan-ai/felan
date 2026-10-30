@@ -6,6 +6,7 @@ import { SessionClient, type SessionClientOptions } from './client/client.js';
 import { resolveClientHostComposition, resolveInstalledDaemonEntrypoint } from './daemon-entrypoint.js';
 import { TuiSessionController, type TuiSessionOptions } from './tui/controller.js';
 import type { runDaemonTerminal } from './tui/run.js';
+import { openInBrowser } from './tui/browser.js';
 import { FELAN_VERSION } from './version.js';
 import type { TuiPresentationPreferences } from './tui/preferences-schema.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
@@ -90,7 +91,7 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
     let resumable: string | undefined;
     try {
       const runTerminal = dependencies.runTerminal ?? (await import('./tui/run.js')).runDaemonTerminal;
-      await runTerminal(controller, { cwd, clientConfigDir: clientConfigurationRoot(options),
+      await runTerminal(controller, { cwd, openBrowser: openInBrowser, clientConfigDir: clientConfigurationRoot(options),
         ...(selected ? { sessionId: selected } : {}), ...(options.sessionDir ? { sessionDir: resolve(options.sessionDir) } : {}),
         ...(first && options.continueRecent ? { continueRecent: true } : {}), ...(first && options.resume ? { resume: true } : {}),
         ...(first && options.extensionPaths?.length ? { extensions: options.extensionPaths.map(path => resolve(path)) } : {}),
