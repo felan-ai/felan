@@ -220,7 +220,7 @@ export class SessionProjection {
       if (isConversationEntry(entry) && this.options.store.sessionMetadata(this.id).draft) this.materialize();
       if (this.origin) this.origins.set(entry.id, this.origin);
       const message = this.message(entry);
-      const commit = this.options.store.project(this.id, [{ type: 'message', id: message.id, entryId: entry.id, state: 'observed' }]);
+      const commit = this.options.store.project(this.id, [{ type: 'message', id: message.id, entryId: entry.id, state: 'observed' }], true);
       this.entryIds.add(entry.id);
       for (const [id, stream] of this.streams) if (stream.value.message === message.id) this.removeStream(id);
       for (const [id, stream] of this.completionOnly) if (stream.message === message.id) this.completionOnly.delete(id);

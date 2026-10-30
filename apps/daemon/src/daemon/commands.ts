@@ -84,7 +84,7 @@ export class SessionCommands {
         const cwd = request.params.cwd === undefined ? undefined : await canonicalPath(request.params.cwd).catch(() => request.params.cwd!);
         const entries = [...registry.listed().map(row => {
           const entry = { session: row.id, root: row.root, ...(row.parent ? { parent: row.parent } : {}), cwd: row.cwd,
-          revision: row.revision, state: row.state, residency: row.residency, title: row.title, ...(row.model ? { model: row.model } : {}), lastActivity: row.updatedAt, run: row.run, policy: row.policy };
+          revision: row.revision, state: row.state, residency: row.residency, title: row.title, ...(row.model ? { model: row.model } : {}), lastActivity: row.activityAt ?? row.updatedAt, run: row.run, policy: row.policy };
           previews.set(row.id, () => registry.preview(row)); return entry;
         }), ...(request.params.root ? [] : await registry.legacySessions(cwd)).map(row => {
           legacy.set(row.id, row);

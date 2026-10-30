@@ -152,6 +152,8 @@ export class RemoteConnector {
     if (this.started || this.stopped) return;
     this.started = true;
     this.unobserve = this.options.registry.observe(event => this.observe(event), id => this.safelyBackfill(id));
+    // Startup recovery settled runs, residency and interactions before any observer existed.
+    for (const id of this.options.registry.recovery?.changedSessions ?? []) this.markStateUnrecorded(id);
     const generation = this.generation;
     this.track((async () => {
       try {
@@ -488,6 +490,7 @@ export class RemoteConnector {
       token.onChange((_value, info) => {
         if (this.current(generation) && this.token === token) this.rememberHostIdentity(info);
       });
+      this.recordStates();
       for (const row of this.options.registry.list()) this.safelyBackfill(row.id);
       this.connect();
     } catch { this.state = 'offline'; this.reason = 'unavailable'; this.message = 'Remote connection settings are unavailable. Run /remote login to retry.'; }
@@ -557,6 +560,8 @@ export class RemoteConnector {
 
   private observe(event: ProjectionOutput): void {
     try {
+      const stateChange = 'change' in event && (event.change.type === 'run.updated' || event.change.type === 'metadata.updated');
+      if (stateChange && !this.stopped && (!this.configured || this.recordingBlocked.has(event.session))) this.markStateUnrecorded(event.session);
       if (this.stopped || !this.configured || !('change' in event) && (!this.platform || this.state !== 'connected')) return;
       if ('change' in event && !isPublishedChangeType(event.change.type)) return;
       if (this.recordingBlocked.has(event.session)) return;
@@ -586,6 +591,39 @@ export class RemoteConnector {
         if (safe && this.indexed.has(event.session)) this.platform.realtime.sendText(safe);
       }
     } catch (error) { this.recordingFailure(event.session, error); }
+  }
+  private markStateUnrecorded(session: string): void {
+    try {
+      const record = this.store.session(session);
+      if (record?.backfilled && record.stateRecorded && !record.terminal) this.store.setSession(session, { ...record, stateRecorded: false });
+    } catch (error) { this.recordingFailure(session, error); }
+  }
+  /**
+   * Re-records each shared session's current run and metadata that the outbox may lack; it never replays messages.
+   * Changes made while a session was unshared stay unrecorded by design.
+   */
+  private recordStates(): void {
+    for (const row of this.options.registry.list()) {
+      try {
+        const record = this.store.session(row.id);
+        if (!record?.backfilled || record.stateRecorded || record.terminal || this.recordingBlocked.has(row.id) || !sessionShared(this.sharing(row.id, row.root))) continue;
+        this.recordState(row.id);
+      } catch (error) { this.recordingFailure(row.id, error); }
+    }
+  }
+  private recordState(session: string): void {
+    const row = this.options.registry.options.store.findSessionMetadata(session);
+    if (!row || row.deletedAt !== undefined) return;
+    const rev = Math.max(1, row.revision); const occurredAt = this.clock.now();
+    const changes: KnownSessionChange[] = [
+      { type: 'run.updated', run: row.run }, { type: 'metadata.updated', title: row.title, state: row.state, residency: row.residency },
+    ];
+    this.outbox.append(session, changes.flatMap(change => {
+      const value = this.publicationChange(session, change);
+      return value ? [{ rev, occurredAt, change: value }] : [];
+    }));
+    this.store.setSession(session, { ...this.record(session), stateRecorded: true });
+    this.wakePublish();
   }
   private safelyBackfill(session: string): void {
     try {
@@ -639,7 +677,9 @@ export class RemoteConnector {
     const record = sharing.record ?? this.record(session, sharing.share);
     if (this.outbox.nextSeq(session) > 1) {
       this.store.setSession(session, { ...record, backfilled: true });
-      this.finishBackfill(session, 0); return;
+      this.finishBackfill(session, 0);
+      if (!record.stateRecorded) this.recordState(session);
+      return;
     }
     this.backfilling.add(session);
     try {
@@ -660,7 +700,7 @@ export class RemoteConnector {
       for (const child of snapshot.children) append({ type: 'child.updated', child });
       for (const tool of snapshot.tools) append({ type: 'tool.updated', tool });
       this.outbox.initialize(session, entries);
-      this.store.setSession(session, { ...this.record(session), backfilled: true });
+      this.store.setSession(session, { ...this.record(session), backfilled: true, stateRecorded: true });
       this.finishBackfill(session, snapshot.revision);
     } finally { this.backfilling.delete(session); }
   }
@@ -760,7 +800,7 @@ export class RemoteConnector {
       const pending = shared ? this.outbox.pending(id) : [];
       if (shared && !pending.length && !record.sharedPending && this.indexed.has(id)) { this.publicationGaps.delete(id); return false; }
       const currentRow = this.options.registry.list().find(row => row.id === id) ?? row;
-      const session = publishedSession({ ...currentRow, session: id, shared });
+      const session = publishedSession({ ...currentRow, session: id, shared, lastActivity: currentRow.activityAt ?? currentRow.updatedAt });
       const batch = publicationBatches(session, pending.map(entry => publishedEvent(id, entry)))[0]!;
       const host = this.host; const generation = this.generation;
       try {

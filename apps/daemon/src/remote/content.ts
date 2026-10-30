@@ -10,7 +10,7 @@ import { redact } from '../logger.js';
 
 export type PublishedChange = Extract<KnownSessionChange, { type: typeof PUBLISHED_CHANGE_TYPES[number] }>;
 export interface PublicationEntry { seq: number; rev: number; occurredAt: number; change: PublishedChange }
-export type PublishedSessionInput = Pick<SessionSnapshot, 'session' | 'parent' | 'cwd' | 'title' | 'state' | 'run'> & { shared: boolean };
+export type PublishedSessionInput = Pick<SessionSnapshot, 'session' | 'parent' | 'cwd' | 'title' | 'state' | 'run'> & { shared: boolean; lastActivity?: number };
 
 type Schema = TSchema & {
   anyOf?: Schema[]; properties?: Record<string, Schema>; items?: Schema; minLength?: number; maxLength?: number;
@@ -122,5 +122,6 @@ export function publishedSession(input: PublishedSessionInput): PublishedSession
     schemaVersion: ROW_SCHEMA_VERSION, session: input.session, ...(input.parent ? { parent: input.parent } : {}),
     directory: boundedPrefix(redact(basename(input.cwd)), 256), shared: input.shared,
     title: boundedPrefix(redact(input.title), 1024), state: input.state, runState: input.run.state,
+    ...(input.lastActivity !== undefined ? { lastActivity: input.lastActivity } : {}),
   });
 }

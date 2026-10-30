@@ -340,7 +340,7 @@ describe('RemoteConnector publication', () => {
 
   it('indexes an idle shared session with zero events and restores that proof after restart without republishing', async () => {
     const f = await fixture();
-    f.connector.store.setSession(f.id, { shared: true, explicit: true, origin: 'local', backfilled: true, unsharedPending: false });
+    f.connector.store.setSession(f.id, { shared: true, explicit: true, origin: 'local', backfilled: true, unsharedPending: false, stateRecorded: true });
     await f.clock.tick(100);
     expect(f.platform.publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ session: f.id, shared: true }), []);
     expect(f.connector.outbox.acked(f.id)).toBe(0);
@@ -510,7 +510,49 @@ describe('RemoteConnector publication', () => {
     expect(f.connector.status().message).toContain('Recording failed'); expect(JSON.stringify(f.connector.status())).not.toContain(pat);
     append.mockRestore(); await f.restart(); f.change('after restart'); await f.clock.tick();
     const titles = f.platform.publications.flatMap(row => row.events).filter(event => event.change.type === 'metadata.updated').map(event => event.change.title);
-    expect(titles).not.toContain('after recording failure'); expect(titles).toContain('after restart');
+    // The blocked change is never replayed; the restart re-records the session's current state once.
+    expect(titles).toEqual(['', 'after recording failure', 'after restart']);
+  });
+
+  it('re-records a run that startup recovery settled before the connector observed it', async () => {
+    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick();
+    expect(f.connector.store.session(f.id)?.stateRecorded).toBe(true);
+    // Recovery commits straight to the store, so no projection event reaches an observer.
+    f.store.updateSession(f.id, { run: { state: 'interrupted', id: 'recovered-run' } });
+    Object.assign(f.registry, { recovery: { changedSessions: new Set([f.id]), resumableContinuations: [], reconcileDetached: [], missingResources: [] } });
+    f.platform.publications.length = 0; await f.restart();
+    expect(f.platform.publications.flatMap(row => row.events).map(event => event.change)).toEqual([
+      expect.objectContaining({ type: 'run.updated', run: expect.objectContaining({ state: 'interrupted', id: 'recovered-run' }) }),
+      expect.objectContaining({ type: 'metadata.updated', state: 'open' }),
+    ]);
+    expect(f.platform.publications.at(-1)?.session.runState).toBe('interrupted');
+    expect(f.connector.store.session(f.id)?.stateRecorded).toBe(true);
+  });
+
+  it('re-records run and metadata changed while logged out at the next login', async () => {
+    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick();
+    await f.connector.configure({ action: 'logout' }); f.change('while logged out');
+    expect(f.connector.store.session(f.id)?.stateRecorded).toBe(false);
+    f.platform.publications.length = 0;
+    await f.connector.configure({ action: 'login' }); await f.approve(); await f.clock.tick();
+    const titles = f.platform.publications.flatMap(row => row.events).filter(event => event.change.type === 'metadata.updated').map(event => event.change.title);
+    expect(titles).toEqual(['while logged out']);
+  });
+
+  it('re-records sessions backfilled before state tracking once', async () => {
+    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick();
+    const { stateRecorded: _stateRecorded, ...record } = f.connector.store.session(f.id)!; f.connector.store.setSession(f.id, record);
+    f.platform.publications.length = 0; await f.restart();
+    expect(f.platform.publications.flatMap(row => row.events).map(event => event.change.type)).toEqual(['run.updated', 'metadata.updated']);
+    f.platform.publications.length = 0; await f.restart();
+    expect(f.platform.publications.flatMap(row => row.events)).toEqual([]);
+  });
+
+  it('publishes the session activity time', async () => {
+    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick();
+    f.change('renamed'); await f.clock.tick();
+    const { activityAt } = f.store.sessionMetadata(f.id);
+    expect(activityAt).toEqual(expect.any(Number)); expect(f.platform.publications.at(-1)?.session.lastActivity).toBe(activityAt);
   });
 });
 
@@ -740,6 +782,15 @@ it('recovers a committed initial backfill after the separate session marker was 
   const record = f.connector.store.session(f.id)!; f.connector.store.setSession(f.id, { ...record, backfilled: false });
   await f.restart(); expect(f.platform.publications.flatMap(row => row.events)).toHaveLength(pending.length);
   expect(f.connector.store.session(f.id)?.backfilled).toBe(true);
+});
+
+it('re-records current state after a lost backfill marker when the record cannot prove it', async () => {
+  const f = await fixture(); f.connector.setShared(f.id, true); await new Promise<void>(resolve => setImmediate(resolve));
+  const pending = f.connector.outbox.pending(f.id);
+  const { stateRecorded: _stateRecorded, ...record } = f.connector.store.session(f.id)!; f.connector.store.setSession(f.id, { ...record, backfilled: false });
+  await f.restart();
+  expect(f.platform.publications.flatMap(row => row.events).map(event => event.change.type)).toEqual([...pending.map(entry => entry.change.type), 'run.updated', 'metadata.updated']);
+  expect(f.connector.store.session(f.id)).toMatchObject({ backfilled: true, stateRecorded: true });
 });
 
 it('defers snapshot reads until the projection observer has returned and drops snapshot-covered live changes', async () => {

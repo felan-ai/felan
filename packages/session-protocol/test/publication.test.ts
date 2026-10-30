@@ -33,6 +33,9 @@ describe('published sessions and hosts', () => {
   it('parses a session index row', () => {
     const row = { schemaVersion: 1, session, directory: 'felan', shared: true, title: 'Fix login', state: 'open', runState: 'idle' };
     expect(parsePublishedSession(row)).toEqual(row);
+    expect(parsePublishedSession({ ...row, lastActivity: 1_700_000_000_000 })).toEqual({ ...row, lastActivity: 1_700_000_000_000 });
+    expect(() => parsePublishedSession({ ...row, lastActivity: -1 })).toThrow();
+    expect(() => parsePublishedSession({ ...row, lastActivity: 1.5 })).toThrow();
   });
   it('rejects duplicate host projects', () => {
     const project = { id: 'p1', name: 'felan', path: '/work/felan' };

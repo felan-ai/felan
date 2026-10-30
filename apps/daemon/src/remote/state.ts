@@ -17,6 +17,8 @@ export const RemoteSettingsSchema = Type.Object({
 export const RemoteSessionRecordSchema = Type.Object({
   shared: Type.Boolean(), explicit: Type.Optional(Type.Boolean()), origin: Type.Union([Type.Literal('local'), Type.Literal('web')]),
   backfilled: Type.Boolean(), unsharedPending: Type.Boolean(), sharedPending: Type.Optional(Type.Boolean()),
+  /** Whether the outbox holds the current run and metadata; records from before this field are re-recorded once. */
+  stateRecorded: Type.Optional(Type.Boolean()),
   uploadAttempted: Type.Optional(Type.Boolean()),
   skippedChanges: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER })),
   terminal: Type.Optional(Type.Union([Type.Literal('deleted'), Type.Literal('forbidden')])), hostId: Type.Optional(uuid), indexedHostId: Type.Optional(uuid),

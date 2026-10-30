@@ -35,6 +35,7 @@ export const PublishedSessionSchema = Type.Object({
   schemaVersion: Type.Literal(ROW_SCHEMA_VERSION), session: UuidSchema, parent: Type.Optional(UuidSchema),
   directory: text(256), shared: Type.Boolean(), title: text(1024),
   state: enumOf(['open', 'closed'] as const), runState: enumOf(['idle', 'running', 'waiting', 'cancelling', 'interrupted'] as const),
+  lastActivity: Type.Optional(CounterSchema),
 });
 export const HostProjectSchema = Type.Object({ id: IdSchema, name: text(256, 1), path: text(LIMITS.pathBytes, 1) });
 export const HostCapabilitiesSchema = Type.Object({

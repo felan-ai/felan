@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { Type } from 'typebox';
@@ -101,13 +101,16 @@ export class DaemonControlStore {
     return this.state.resources.filter(item => root === undefined || item.root === root).map(item => ({ ...item }));
   }
   assertCurrent(): void { this.file.assertCurrent(); }
-  createSession(input: Omit<ControlSession, 'revision' | 'updatedAt' | 'projections'>): ControlCommit<ControlSession> {
-    const session = parseSchema(ControlSessionSchema, { ...input, revision: 0, updatedAt: this.time(this.state.clock), projections: [] });
+  createSession(input: Omit<ControlSession, 'revision' | 'updatedAt' | 'activityAt' | 'projections'>): ControlCommit<ControlSession> {
+    const now = this.time(this.state.clock);
+    const session = parseSchema(ControlSessionSchema, { ...input, revision: 0, updatedAt: now, projections: [] });
     if (session.deletedAt !== undefined) throw new ControlStoreError('invalid_request', 'Only explicit deletion can create a tombstone.');
     session.piPath = this.owner.assertOwnsPath(session.piPath);
+    // An adopted transcript keeps the time of its last write.
+    session.activityAt = Math.min(transcriptWrittenAt(session.piPath) ?? now, now);
     if (this.state.sessions.some(item => item.id === session.id || item.piPath === session.piPath)) throw new ControlStoreError('request_conflict', 'Session identity or transcript path is already registered.');
     return this.commit((state, touched) => {
-      state.sessions.push(session);
+      state.sessions.push(session); this.markActivity(state, session.id, session.activityAt!);
       touched.add(session.id); return session;
     });
   }
@@ -118,8 +121,9 @@ export class DaemonControlStore {
     const { projections, ...metadata } = old;
     const next: ControlSession = { ...parseSchema(ControlSessionMetadataSchema, { ...metadata, ...structuredClone(patch) }), projections };
     if (JSON.stringify(old.policy) !== JSON.stringify(next.policy) && next.policy.generation <= old.policy.generation) throw new ControlStoreError('invalid_request', 'A policy change must advance its generation.');
-    return this.commit((state, touched) => {
+    return this.commit((state, touched, now) => {
       const at = state.sessions.findIndex(item => item.id === id); state.sessions[at] = next;
+      if (next.run.state === 'running' && next.run.id !== old.run.id) this.markActivity(state, id, now);
       touched.add(id); return next;
     });
   }
@@ -193,10 +197,12 @@ export class DaemonControlStore {
     return revision;
   }
 
-  project(id: string, values: readonly ControlProjection[]): ControlCommit<ControlSession> {
+  /** `activity` marks newly observed transcript messages; reconciling existing ones is not activity. */
+  project(id: string, values: readonly ControlProjection[], activity = false): ControlCommit<ControlSession> {
     return this.commit((state, touched, now) => {
       const session = editSession(state, this.findSession(state, id));
       if (session.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
+      if (activity) this.markActivity(state, id, now);
       for (const value of values) {
         const key = value.type === 'message' ? `message:${value.id}` : 'queue';
         const record = parseSchema(Type.Index(ControlSessionSchema, ['projections']), [{ key, updatedAt: now, value }])[0]!;
@@ -358,12 +364,12 @@ export class DaemonControlStore {
       state.resources = state.resources.filter(item => item.id !== resource.id); state.resources.push(next); touched.add(resource.session); return next;
     });
   }
-  recover(): ControlCommit<Omit<RecoveryPlan, 'changedSessions'>> {
+  recover(): ControlCommit<RecoveryPlan> {
     if (!this.recoveryRequired) throw new ControlStoreError('invalid_request', 'Recovery is only valid immediately after reopening persisted state.');
     this.recoveryRequired = false;
     try { return this.commit((state, touched, now) => {
-      const { changedSessions, ...plan } = recoverControlState(state, now);
-      for (const id of changedSessions) touched.add(id);
+      const plan = recoverControlState(state, now);
+      for (const id of plan.changedSessions) touched.add(id);
       this.prune(state, now, touched); return plan;
     }, true); } catch (error) { this.recoveryRequired = true; throw error; }
   }
@@ -490,7 +496,25 @@ export class DaemonControlStore {
     repaired.interactions = repaired.interactions.filter(interaction => this.validInteraction(repaired, interaction));
     repaired.continuations = repaired.continuations.filter(item => this.validContinuation(repaired, item));
     repaired.resources = repaired.resources.filter(resource => this.validResource(repaired, resource));
+    // Rows from before activity tracking start from their transcript's last write, which `updatedAt` overstates.
+    for (const session of repaired.sessions) if (session.activityAt === undefined) {
+      session.activityAt = Math.min(transcriptWrittenAt(session.piPath) ?? session.updatedAt, this.now());
+    }
+    for (const session of repaired.sessions) this.markActivity(repaired, session.id, session.activityAt!);
     return repaired;
+  }
+  /** Starting a run or recording a transcript message moves listing order for the session and its ancestors. */
+  private markActivity(state: ControlState, id: string, at: number): void {
+    // Lineage is validated only when the commit persists, so a malformed parent chain must not loop here.
+    const visited = new Set<string>();
+    for (let current: string | undefined = id; current !== undefined && !visited.has(current);) {
+      visited.add(current);
+      const session = state.sessions.find(item => item.id === current);
+      if (!session) return;
+      // Ancestors keep their revision: their own state did not change.
+      if ((session.activityAt ?? 0) < at) editSession(state, session).activityAt = at;
+      current = session.parent;
+    }
   }
   /** Records directories outside the current roots for re-ownership; a path whose canonical identity changed is unusable. */
   private usablePersistedPath(path: string): boolean {
@@ -672,6 +696,9 @@ function freeze<T>(value: T): T {
     for (const child of Object.values(value)) freeze(child);
   }
   return value;
+}
+function transcriptWrittenAt(path: string): number | undefined {
+  try { return Math.floor(statSync(path).mtimeMs); } catch { return undefined; }
 }
 function metadataCopy(session: ControlSession): ControlSessionMetadata {
   const { projections: _projections, ...metadata } = session;

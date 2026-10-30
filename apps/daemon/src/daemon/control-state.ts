@@ -51,7 +51,8 @@ export type ExecutionMetadata = Static<typeof ExecutionMetadataSchema>;
 
 export const ControlSessionSchema = Type.Object({
   id: IdSchema, root: IdSchema, parent: Type.Optional(IdSchema), cwd: AbsolutePathSchema, piPath: AbsolutePathSchema,
-  revision: CounterSchema, updatedAt: CounterSchema, state: enumOf(['open', 'closed'] as const), residency: enumOf(['warm', 'evicted'] as const),
+  revision: CounterSchema, updatedAt: CounterSchema, activityAt: Type.Optional(CounterSchema),
+  state: enumOf(['open', 'closed'] as const), residency: enumOf(['warm', 'evicted'] as const),
   run: RunSchema, policy: PolicySchema, title: unboundedText(), branch: Type.Optional(IdSchema), observedTip: Type.Optional(IdSchema),
   model: Type.Optional(ModelSchema), thinking: Type.Optional(ThinkingSchema),
   profile: Type.Optional(SessionProfileSchema), execution: Type.Optional(ExecutionMetadataSchema),
