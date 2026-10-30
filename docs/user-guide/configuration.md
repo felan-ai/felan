@@ -471,17 +471,19 @@ latency and may incur a separate provider charge. The shared Agent Core evidence
 builder caps text and excludes image data, raw thinking, and tool-result bodies;
 recognized secret patterns are redacted on a best-effort basis only.
 
-Savings accounting uses the same per-token price at every effort level. It
-excludes models that qualify only through an extension, such as Claude Code
-models billed against a Claude plan. Only
-an automatic `high` → `low` or `high` → `medium` change on a supported model
-with observed reasoning-token usage on its first assistant response yields a
+Savings accounting uses the same per-token price at every effort level,
+including for models enabled through an extension's native thinking updates.
+Only an automatic selection below the user's `high`, `xhigh`, or `max` baseline
+on a supported model with observed reasoning-token usage on its first assistant response yields a
 possible estimated saving only after the run settles without tool failures.
 It compares the actual billable output with a 5% heuristic estimate of
-additional `high` reasoning tokens, anchored to one public benchmark; when available, it
-includes the classifier's cost. No measurement is emitted for unchanged effort,
-other effort transitions, failed or aborted responses, or an estimate that
-does not exceed the known classifier cost. If the classifier cost is unavailable,
+additional reasoning tokens at the baseline, anchored to one public benchmark,
+using `high-effort-reasoning-5pct-heuristic-v2`; when available, it includes the
+classifier's cost. The baseline is the level before the first automatic change,
+not the previous automatic selection. No measurement is emitted without an
+automatic change, for effort at or above the baseline, below-`high` baselines,
+failed or aborted responses, or an estimate that does not exceed the known
+classifier cost. If the classifier cost is unavailable,
 the estimate excludes that overhead. Details and quality limitations: [dynamic
 thinking estimate](../benchmarks/dynamic-thinking-effort.md). This extrapolation
 is not validated for every model or effort pair and does not prove savings or

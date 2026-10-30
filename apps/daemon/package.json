@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/daemon",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Felan session daemon with configured service providers",
   "license": "MIT",
   "type": "module",

@@ -24,6 +24,7 @@ import { classifySubagentModelTier } from './model-tier.js';
 import { compactRecords, executionRecord, renderError, renderRecord, renderRecords } from './presentation.js';
 import type { SubagentDefinition } from './catalog.js';
 import { formatSubagentDescriptor, registerClassifierRouting } from './routing.js';
+import { registerExploreRoutingSavings } from './explore-savings.js';
 
 const thinkingSchema = StringEnum(FELAN_THINKING_LEVELS);
 const MAX_TURNS = SESSION_EXECUTION_LIMITS.maxTurns;
@@ -34,12 +35,13 @@ const DEFAULT_LIST_RECORDS = 20;
 export function createSubagentsExtension(sessions: SessionsService, definitions: readonly SubagentDefinition[]): FelanExtension {
   const descriptors = definitions.map(item => item.descriptor);
   return (pi) => {
+    const savings = registerExploreRoutingSavings(pi, sessions);
     registerClassifierRouting(pi, sessions, descriptors);
     pi.registerCapability({
       id: 'subagents',
       instructions: formatSubagentCapability(descriptors),
     });
-    registerAgent(pi, sessions, definitions);
+    registerAgent(pi, sessions, definitions, savings);
     registerList(pi, sessions);
     registerResult(pi, sessions);
     registerSteer(pi, sessions);
@@ -70,7 +72,12 @@ function formatSubagentCapability(descriptors: readonly SubagentDescriptor[]): s
   ].join(' ');
 }
 
-function registerAgent(pi: FelanExtensionAPI, sessions: SessionsService, definitions: readonly SubagentDefinition[]): void {
+function registerAgent(
+  pi: FelanExtensionAPI,
+  sessions: SessionsService,
+  definitions: readonly SubagentDefinition[],
+  savings: ReturnType<typeof registerExploreRoutingSavings>,
+): void {
   const typeSchema = descriptorSchema(definitions.map(item => item.descriptor));
   const parameters = Type.Object({
     prompt: Type.String({ minLength: 1, description: 'Task for the child agent' }),
@@ -123,15 +130,22 @@ function registerAgent(pi: FelanExtensionAPI, sessions: SessionsService, definit
       const thinking = descriptor.thinking
         ?? params.thinking
         ?? parentThinking;
-      return executeSessions(async () => executionRecord(await sessions.create({
-        prompt: params.prompt, description: params.description, label: type,
-        appendSystemPrompt: definition.prompt, allowChildren: descriptor.allowNesting, notifyOnCompletion: true,
-        ...(definition.toolProfile === 'inspection' ? { excludedTools: inspectionExclusions } : {}),
-        ...(model.value.reference ? { model: parseModelReference(model.value.reference)! } : {}),
-        ...(thinking === undefined ? {} : { thinking }),
-        ...((params.max_turns ?? descriptor.defaultMaxTurns) === undefined ? {} : { maxTurns: params.max_turns ?? descriptor.defaultMaxTurns }),
-        ...((params.timeout_seconds ?? descriptor.defaultTimeoutSeconds) === undefined ? {} : { timeoutMs: (params.timeout_seconds ?? descriptor.defaultTimeoutSeconds)! * 1000 }),
-      }, signal ? { signal } : undefined)), renderRecord);
+      return executeSessions(async () => {
+        const parentModel = ctx.model && { provider: ctx.model.provider, id: ctx.model.id };
+        const create = () => sessions.create({
+          prompt: params.prompt, description: params.description, label: type,
+          appendSystemPrompt: definition.prompt, allowChildren: descriptor.allowNesting, notifyOnCompletion: true,
+          ...(definition.toolProfile === 'inspection' ? { excludedTools: inspectionExclusions } : {}),
+          ...(model.value.reference ? { model: parseModelReference(model.value.reference)! } : {}),
+          ...(thinking === undefined ? {} : { thinking }),
+          ...((params.max_turns ?? descriptor.defaultMaxTurns) === undefined ? {} : { maxTurns: params.max_turns ?? descriptor.defaultMaxTurns }),
+          ...((params.timeout_seconds ?? descriptor.defaultTimeoutSeconds) === undefined ? {} : { timeoutMs: (params.timeout_seconds ?? descriptor.defaultTimeoutSeconds)! * 1000 }),
+        }, signal ? { signal } : undefined);
+        const execution = type === 'explore' && parentModel && savings
+          ? await savings.trackSpawn(parentModel, create)
+          : await create();
+        return executionRecord(execution);
+      }, renderRecord);
     },
   });
 }

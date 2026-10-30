@@ -240,10 +240,133 @@ describe('dynamic thinking session lifecycle', () => {
         tokens: { input: 50, output: 1_000, cacheRead: 0, cacheWrite: 0 },
         costUsd: expect.any(Number),
       },
-      basis: { kind: 'estimated-baseline', method: 'high-effort-reasoning-5pct-heuristic-v1' },
+      basis: { kind: 'estimated-baseline', method: 'high-effort-reasoning-5pct-heuristic-v2' },
     });
     expect(report.mock.calls[0]?.[0].baseline.costUsd).toBeCloseTo(0.081);
     expect(report.mock.calls[0]?.[0].actual.costUsd).toBeCloseTo(0.0802);
+  });
+
+  it.each([
+    ['high', 'low'], ['high', 'medium'], ['xhigh', 'low'], ['xhigh', 'medium'],
+    ['xhigh', 'high'], ['max', 'medium'],
+  ])('reports an automatic %s-to-%s selection', async (baseline, selected) => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, assistant, settle, getLevel } = harness([selected], true, { report }, baseline);
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Fix the bug' });
+    expect(getLevel()).toBe(selected);
+    await emit('turn_end', { message: assistant() });
+    await settle();
+    expect(report).toHaveBeenCalledOnce();
+    expect(report.mock.calls[0]?.[0].baseline.tokens.output).toBe(1_020);
+  });
+
+  it.each([['medium', 'low'], ['low', 'medium']])('does not report a %s baseline selected to %s', async (baseline, selected) => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, assistant, settle, getLevel } = harness([selected], true, { report }, baseline);
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Fix the bug' });
+    expect(getLevel()).toBe(selected);
+    await emit('turn_end', { message: assistant() });
+    await settle();
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('reports models whose eligibility comes only from native thinking updates', async () => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, model, assistant, settle, getLevel } = harness(['medium'], true, { report }, 'high');
+    Object.assign(model, { provider: 'claude-code', api: 'claude-code', id: 'claude-opus-5-5' });
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Fix the bug' });
+    expect(getLevel()).toBe('medium');
+    await emit('turn_end', { message: assistant() });
+    await settle();
+    expect(report).toHaveBeenCalledOnce();
+    expect(report.mock.calls[0]?.[0].baseline.model).toEqual({ provider: 'claude-code', id: 'claude-opus-5-5' });
+  });
+
+  it('does not promote the baseline after an automatic increase from medium to high', async () => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, assistant, settle, getLevel } = harness(['high', 'low'], true, { report }, 'medium');
+    for (const selected of ['high', 'low']) {
+      await emit('before_agent_start', { messageType: 'user', prompt: `Select ${selected}` });
+      expect(getLevel()).toBe(selected);
+      await emit('turn_end', { message: assistant() });
+      await settle();
+    }
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('keeps the xhigh baseline after automatic low and medium selections', async () => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, assistant, settle, getLevel } = harness(['low', 'medium'], true, { report }, 'xhigh');
+    for (const selected of ['low', 'medium']) {
+      await emit('before_agent_start', { messageType: 'user', prompt: `Select ${selected}` });
+      expect(getLevel()).toBe(selected);
+      await emit('turn_end', { message: assistant() });
+      await settle();
+    }
+    expect(report).toHaveBeenCalledTimes(2);
+    expect(report.mock.calls.map(([measurement]) => measurement.baseline.tokens.output)).toEqual([1_020, 1_020]);
+  });
+
+  it.each(['manual change', 'explicit reselection'])('stops claims after a %s', async (override) => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, assistant, settle, setLevel, scope, classify } = harness(['low', 'medium'], true, { report }, 'xhigh');
+    await emit('before_agent_start', { messageType: 'user', prompt: 'First request' });
+    await emit('turn_end', { message: assistant() });
+    if (override === 'manual change') setLevel('high');
+    else scope.notifyManualThinkingSelection();
+    await settle();
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Next request' });
+    await emit('turn_end', { message: assistant() });
+    await settle();
+    expect(classify).toHaveBeenCalledOnce();
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('clears the baseline after an automated thinking change', async () => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, assistant, settle, setLevel, scope, getLevel, classify } = harness(['medium', 'low'], true, { report }, 'xhigh');
+    await emit('before_agent_start', { messageType: 'user', prompt: 'First request' });
+    await emit('turn_end', { message: assistant() });
+    scope.run(false, () => setLevel('medium'));
+    await settle();
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Next request' });
+    expect(getLevel()).toBe('low');
+    await emit('turn_end', { message: assistant() });
+    await settle();
+    expect(classify).toHaveBeenCalledTimes(2);
+    expect(report).not.toHaveBeenCalled();
+  });
+
+  it('keeps the user baseline across model selection', async () => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, model, assistant, settle, getLevel } = harness(['medium', 'low'], true, { report }, 'xhigh');
+    await emit('before_agent_start', { messageType: 'user', prompt: 'First request' });
+    Object.assign(model, { id: 'gpt-6-sol' });
+    await emit('model_select', {});
+    await settle();
+    expect(report).not.toHaveBeenCalled();
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Next request' });
+    expect(getLevel()).toBe('low');
+    await emit('turn_end', { message: assistant() });
+    await settle();
+    expect(report).toHaveBeenCalledOnce();
+    expect(report.mock.calls[0]?.[0].baseline.model).toEqual({ provider: model.provider, id: 'gpt-6-sol' });
+  });
+
+  it('does not adopt an automatic level as the baseline after model selection', async () => {
+    const report = vi.fn().mockResolvedValue(undefined);
+    const { emit, model, assistant, settle, getLevel } = harness(['xhigh', 'medium'], true, { report }, 'medium');
+    await emit('before_agent_start', { messageType: 'user', prompt: 'First request' });
+    expect(getLevel()).toBe('xhigh');
+    await emit('turn_end', { message: assistant() });
+    await settle();
+    Object.assign(model, { id: 'gpt-6-sol' });
+    await emit('model_select', {});
+    await emit('before_agent_start', { messageType: 'user', prompt: 'Next request' });
+    expect(getLevel()).toBe('medium');
+    await emit('turn_end', { message: assistant() });
+    await settle();
+    expect(report).not.toHaveBeenCalled();
   });
 
   it('does not report unchanged, upshifted, failed, or invalid responses', async () => {

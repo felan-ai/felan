@@ -53,8 +53,8 @@ interface.
 
 The RTK optimizer reports RTK command-output and Felan post-tool measurements;
 Prewalk reports implementation-model routing; MarkItDown and concise output
-style report benchmark-calibrated output boundaries; and the local subagent host
-reports successful `explore` routing-price comparisons. The former RTK metric
+style report benchmark-calibrated output boundaries; and `ext-subagents` reports
+successful `explore` routing-price comparisons via the portable Sessions service. The former RTK metric
 subcommands have been removed; `/savings` is the only interactive savings report.
 
 How the command-output optimizer obtains its baseline
@@ -233,17 +233,25 @@ report.
 
 ### Explore subagent routing producer
 
-The local host reports one `model-routing` measurement for each newly completed,
-successful, non-empty, cross-model `explore` usage interval. Actual retains the
+The `ext-subagents` extension uses the portable Sessions service to observe only
+its session's direct children and reports one `model-routing`
+measurement for each newly completed, successful, non-empty, cross-model
+`explore` usage interval. Actual retains the
 child model, every observed token/cache class, and provider-reported cost when
 positive. Baseline prices exactly the same usage at the parent model. The method
 is `parent-model-reprice-observed-child-usage-v1`.
 
 This is a routing-price comparison, not a token-saving or full parent-execution
 counterfactual. Failed, cancelled, timed-out, turn-limited, same-model, empty,
-and non-`explore` children are excluded. A persisted cumulative watermark makes
-continued runs report only new usage and prevents replay after reload. There is
-no completed subagent benchmark artifact supporting a stronger claim.
+and non-`explore` children are excluded. The extension captures the parent model
+from the Agent tool's context at spawn time; children without a recorded parent
+model are not backfilled. Parent models and cumulative usage watermarks are persisted
+under per-execution keys in session runtime storage, which nested sessions share.
+Every terminal interval advances its watermark,
+including failures, so continued runs report only new usage without replay after
+eviction or restart. Existing direct-child executions are reconciled on session
+start. There is no completed subagent benchmark artifact supporting a
+stronger claim.
 
 Categories and dimension keys come from a Felan-owned registry so that reports
 remain comparable. Operation, tool, and technique values are bounded lowercase

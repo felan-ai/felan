@@ -1,7 +1,7 @@
 import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
 import { createExtensionServiceAccess, createFelanServiceRegistry } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import rtkOptimizerExtension from '../src/index.js';
+import rtkOptimizerExtension, { estimateUtf8Tokens } from '../src/index.js';
 import { MemoryRuntime, result } from './test-runtime.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
@@ -139,28 +139,100 @@ describe('RTK optimizer extension', () => {
     ]);
   });
 
+  it.each([
+    { toolName: 'bash', input: { command: 'echo output' } },
+    { toolName: 'exec_command', input: { cmd: 'echo output' } },
+    { toolName: 'write_stdin', input: { session_id: 4242 } },
+    { toolName: 'read', input: { path: 'src/file.ts' } },
+    { toolName: 'grep', input: { pattern: 'output' } },
+  ])('does not report savings for unchanged $toolName results', async ({ toolName, input }) => {
+    const reported: unknown[] = [];
+    const harness = await createHarness(rtkRuntime(), true, { readCompaction: true }, {
+      report: async (measurement: unknown) => { reported.push(measurement); },
+    });
+
+    const results = await harness.emit('tool_result', {
+      toolName,
+      input,
+      content: [{ type: 'text', text: 'unchanged output' }],
+      isError: false,
+    });
+
+    expect(results).toEqual([undefined]);
+    expect(reported).toEqual([]);
+  });
+
+  it('does not report changed payloads with equal token estimates', async () => {
+    const reported: unknown[] = [];
+    const harness = await createHarness(rtkRuntime(), true, {}, {
+      report: async (measurement: unknown) => { reported.push(measurement); },
+    });
+    const original = '\u001b[mx';
+
+    const [compacted] = await harness.emit('tool_result', {
+      toolName: 'bash',
+      input: { command: 'echo output' },
+      content: [{ type: 'text', text: original }],
+      isError: false,
+    });
+
+    expect(compacted).toMatchObject({ content: [{ type: 'text', text: 'x' }] });
+    expect(estimateUtf8Tokens([original])).toBe(1);
+    expect(estimateUtf8Tokens(['x'])).toBe(1);
+    expect(reported).toEqual([]);
+  });
+
   it('reports final post-tool payloads through the Felan savings reporter', async () => {
     const reported: unknown[] = [];
     const harness = await createHarness(rtkRuntime(), true, { truncateMaxChars: 120 }, {
       report: async (measurement: unknown) => { reported.push(measurement); },
     });
     const original = `HEAD\n${'middle\n'.repeat(80)}TAIL`;
-    await harness.emit('tool_result', {
+    const [compacted] = await harness.emit('tool_result', {
       toolName: 'bash',
       input: { command: 'echo output' },
       content: [{ type: 'text', text: original }],
       isError: false,
     });
     await Promise.resolve();
+    const output = compacted as { content: Array<{ text: string }> };
     expect(reported).toHaveLength(1);
-    expect(reported[0]).toMatchObject({
+    expect(reported[0]).toEqual({
       category: 'output-optimization',
       operation: 'post-tool-compaction',
-      basis: { method: 'utf8-bytes/4-ceil-v1' },
-      dimensions: { tool: 'bash' },
+      baseline: { tokens: { input: estimateUtf8Tokens([original]), output: 0 } },
+      actual: { tokens: { input: estimateUtf8Tokens(output.content.map(({ text }) => text)), output: 0 } },
+      basis: { kind: 'estimated-baseline', method: 'utf8-bytes/4-ceil-v1' },
+      dimensions: { tool: 'bash', techniques: ['truncate'] },
     });
     const measurement = reported[0] as any;
     expect(measurement.baseline.tokens.input).toBeGreaterThan(measurement.actual.tokens.input);
+  });
+
+  it('reports added cost when a compacted payload includes a recovery note', async () => {
+    const reported: any[] = [];
+    const harness = await createHarness(rtkRuntime(), true, {}, {
+      report: async (measurement: unknown) => { reported.push(measurement); },
+    });
+    const original = '2 passed';
+
+    const [compacted] = await harness.emit('tool_result', {
+      toolName: 'bash',
+      input: { command: 'pnpm test' },
+      content: [{ type: 'text', text: original }],
+      isError: false,
+    });
+
+    const output = compacted as { content: Array<{ text: string }> };
+    expect(output.content[0]?.text).toContain('[RTK recovery: full original output at ');
+    expect(reported).toHaveLength(1);
+    expect(reported[0]).toMatchObject({
+      operation: 'post-tool-compaction',
+      baseline: { tokens: { input: estimateUtf8Tokens([original]), output: 0 } },
+      actual: { tokens: { input: estimateUtf8Tokens(output.content.map(({ text }) => text)), output: 0 } },
+      dimensions: { tool: 'bash', techniques: ['test'] },
+    });
+    expect(reported[0].actual.tokens.input).toBeGreaterThan(reported[0].baseline.tokens.input);
   });
 
   it('reports session RTK command-output savings separately at shutdown', async () => {
@@ -198,13 +270,12 @@ describe('RTK optimizer extension', () => {
     });
     await Promise.resolve();
 
-    expect(reported.map((measurement) => measurement.operation)).toEqual(['post-tool-compaction']);
+    expect(reported).toEqual([]);
     await harness.emit('session_shutdown', { reason: 'quit' });
     expect(reported.map((measurement) => measurement.operation)).toEqual([
-      'post-tool-compaction',
       'rtk-command-output',
     ]);
-    expect(reported[1]).toMatchObject({
+    expect(reported[0]).toMatchObject({
       category: 'output-optimization',
       basis: { kind: 'observed-comparison', method: 'rtk-tracking-byte4-v1' },
       calls: 1,

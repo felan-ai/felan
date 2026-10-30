@@ -110,7 +110,8 @@ commands. Subcommands are:
 RTK and post-tool savings are reported to Felan's persistent savings service when the
 host provides it. They report two distinct sequential stages: RTK command-output
 optimization from an isolated session/model tracker, and Felan post-tool
-compaction for every supported result. Both use bounded token estimates and are
+compaction for supported results whose final payload changes the estimated token
+count, including increases. Both use bounded token estimates and are
 reported as separate Felan-owned savings measurements; they are not added twice.
 The session tracker is queried once per model shard during session shutdown and
 then deleted. A crashed session can recover its unfinished tracker on resume;

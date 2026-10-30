@@ -292,9 +292,6 @@ const rtkOptimizerExtension: FelanExtension = async (pi) => {
         },
       );
       if (!outcome.changed || !outcome.content) {
-        if (config.outputCompaction.trackSavings && isCompactionToolName(event.toolName)) {
-          reportSavings(pi.savings, event.toolName, event.content, event.content, resultModel);
-        }
         toolCallModels.delete(event.toolCallId);
         return undefined;
       }
@@ -355,13 +352,14 @@ function reportSavings(
   techniques: readonly string[] = [],
 ): void {
   if (!reporter) return;
-  const baseline = textBlocks(original);
-  const actual = textBlocks(compacted);
+  const baseline = estimateUtf8Tokens(textBlocks(original));
+  const actual = estimateUtf8Tokens(textBlocks(compacted));
+  if (baseline === actual) return;
   void reporter.report({
     category: 'output-optimization',
     operation: 'post-tool-compaction',
-    baseline: { ...(model === undefined ? {} : { model }), tokens: { input: estimateUtf8Tokens(baseline), output: 0 } },
-    actual: { ...(model === undefined ? {} : { model }), tokens: { input: estimateUtf8Tokens(actual), output: 0 } },
+    baseline: { ...(model === undefined ? {} : { model }), tokens: { input: baseline, output: 0 } },
+    actual: { ...(model === undefined ? {} : { model }), tokens: { input: actual, output: 0 } },
     basis: { kind: 'estimated-baseline', method: 'utf8-bytes/4-ceil-v1' },
     dimensions: { tool, ...(techniques.length === 0 ? {} : { techniques }) },
   }).catch(() => {});

@@ -22,15 +22,21 @@ export function createDynamicThinkingSession(
   let manualOverride = false;
   let expectedLevel: FelanThinkingLevel | undefined;
   let lastAutomaticLevel: FelanThinkingLevel | undefined;
+  let baselineLevel: FelanThinkingLevel | undefined;
   let pendingSavings: {
     readonly sessionId: string;
     readonly model: Model<Api>;
-    readonly previous: FelanThinkingLevel;
+    readonly baseline: FelanThinkingLevel;
     readonly selected: FelanThinkingLevel;
     readonly classifierCostUsd?: number;
     firstAssistant?: AssistantMessage;
     failed?: boolean;
   } | undefined;
+  const resetAutomaticSelection = () => {
+    lastAutomaticLevel = undefined;
+    baselineLevel = undefined;
+    pendingSavings = undefined;
+  };
   const canClassify = (model: Model<Api>) => (model.api !== 'openai-codex-responses' && model.api !== 'openai-responses')
     || supportsNativeThinkingUpdates(model);
   const local = options.turnClassification ? undefined : createTurnClassificationRegistry(classifier, runtime.logger);
@@ -43,7 +49,7 @@ export function createDynamicThinkingSession(
     factory: (pi) => {
       options.selectionScope?.onManualThinkingSelection(() => {
         manualOverride = true;
-        pendingSavings = undefined;
+        resetAutomaticSelection();
       });
       pi.on('session_shutdown', () => { pendingSavings = undefined; lifetime.abort(); });
       pi.on('model_select', () => { pendingSavings = undefined; });
@@ -55,12 +61,11 @@ export function createDynamicThinkingSession(
             return;
           }
           expectedLevel = undefined;
-          lastAutomaticLevel = undefined;
-          pendingSavings = undefined;
+          resetAutomaticSelection();
           return;
         }
         if (!options.selectionScope && event.level === expectedLevel) expectedLevel = undefined;
-        else { manualOverride = true; pendingSavings = undefined; }
+        else { manualOverride = true; resetAutomaticSelection(); }
       });
       registry.register({
         id: 'thinking',
@@ -71,6 +76,7 @@ export function createDynamicThinkingSession(
           const original = pi.getThinkingLevel();
           if (lastAutomaticLevel !== undefined && original !== lastAutomaticLevel) {
             manualOverride = true;
+            resetAutomaticSelection();
             return undefined;
           }
           if (!isFelanThinkingLevel(original)) return undefined;
@@ -101,12 +107,13 @@ export function createDynamicThinkingSession(
         const decision = dynamicThinkingDecision(model, original, result);
         if (!decision) return;
         const sessionId = ctx.sessionManager.getSessionId();
+        if (lastAutomaticLevel === undefined) baselineLevel = original;
         expectedLevel = decision.level;
         if (options.selectionScope) options.selectionScope.run(false, () => pi.setThinkingLevel(decision.level));
         else pi.setThinkingLevel(decision.level);
         lastAutomaticLevel = decision.level;
-        if (reporter && original === 'high' && (decision.level === 'low' || decision.level === 'medium')) {
-          pendingSavings = { sessionId, model, previous: original, selected: decision.level,
+        if (reporter && baselineLevel !== undefined) {
+          pendingSavings = { sessionId, model, baseline: baselineLevel, selected: decision.level,
             ...(decision.classifierCostUsd === undefined ? {} : { classifierCostUsd: decision.classifierCostUsd }) };
         }
       });
@@ -135,8 +142,8 @@ export function createDynamicThinkingSession(
           || ctx.model?.api !== pending.model.api || ctx.model?.provider !== pending.model.provider
           || ctx.model?.id !== pending.model.id || pi.getThinkingLevel() !== pending.selected) return;
         await reportDynamicThinkingSavings(
-          reporter, pending.model, pending.previous, pending.selected, pending.firstAssistant,
-          pending.classifierCostUsd,
+          reporter, pending.model, pending.baseline, pending.selected, pending.firstAssistant,
+          pending.classifierCostUsd, supportsNativeThinkingUpdates,
         );
       });
     },

@@ -124,14 +124,17 @@ Explicit thinking changes take precedence for the remainder of the session.
 Absent the option or the classifier, composition does not enable this feature.
 
 With an optional savings reporter, Agent Core reports a heuristic
-API-equivalent estimate for any supported model's automatic `high` → `low` or
-`high` → `medium` change when the run settles without tool failures and its
-first assistant response includes reasoning-token usage. It estimates 5%
-extra reasoning output at `high`, keeps observed input, cache and visible-output
-usage unchanged, and subtracts reported classifier
-cost. Missing classifier pricing leaves that overhead unknown; estimates are
-not a complete bill. No change, a return to `high`, other models/levels, missing usage, or a
-failed response produces no measurement. The unvalidated cross-model
+API-equivalent estimate for any supported model's automatic selection below a
+user baseline of `high`, `xhigh`, or `max` when the run settles without tool
+failures and its first assistant response includes reasoning-token usage.
+The baseline is the level before the first automatic change, not the previous
+automatic selection. Method `high-effort-reasoning-5pct-heuristic-v2` estimates
+5% extra reasoning output at that baseline, keeps observed input, cache and
+visible-output usage unchanged, and subtracts reported classifier cost.
+Missing classifier pricing leaves that overhead unknown; estimates are not a
+complete bill. No measurement is emitted without an automatic change, or for
+selections at or above the baseline, unsupported models, below-`high` baselines,
+missing usage, or failed responses. The unvalidated cross-model
 assumption and quality caveats are in [the public benchmark notes](../../docs/benchmarks/dynamic-thinking-effort.md).
 
 Host runtimes expose optional persistent process operations for extensions that
