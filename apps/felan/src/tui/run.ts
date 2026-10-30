@@ -18,6 +18,7 @@ import { themedClientTerminal } from './theme.js';
 import { reportHerdrPane, type HerdrPane } from './herdr.js';
 import { formatHostBlocked } from '../client/daemon-blocked.js';
 import { remoteHistoryInput } from './remote.js';
+import { watchDaemonBuildMismatch } from '../client/build-mismatch.js';
 
 export async function runDaemonTerminal(controller: TuiSessionController, options: TuiSessionOptions & {
   initialMessage?: string;
@@ -98,6 +99,8 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   let unsubscribeSetup: (() => void) | undefined;
   let unsubscribeColors: (() => void) | undefined;
   let unsubscribeHerdr: (() => void) | undefined;
+  const unsubscribeBuildMismatch = watchDaemonBuildMismatch(controller.client,
+    'Run /restart to apply the new build.', message => controller.announce(message, 'warning'));
   const interrupt = () => exit();
   options.signal?.addEventListener('abort', interrupt, { once: true });
   process.once('SIGTERM', interrupt); process.once('SIGHUP', interrupt); process.once('SIGINT', interrupt);
@@ -183,13 +186,14 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       if (controller.client.status !== 'incompatible' || !options.onDaemonAction) throw error;
       const work = controller.client.incompatibleActiveWork;
       const interrupted = work === undefined ? 'Active work may be interrupted.' : `${work} active task${work === 1 ? '' : 's'} will be interrupted.`;
-      if (await screen.dialogs.confirm('Restart daemon', `The running daemon belongs to another Felan version or configuration. Restart it now? ${interrupted}`)) {
+      if (await screen.dialogs.confirm('Restart daemon', `The running daemon has an incompatible protocol or provider configuration. Restart it now? ${interrupted}`)) {
         if (await options.onDaemonAction('restart', true, screen.editor.getExpandedText(), true)) exit();
       } else exit();
     });
     await Promise.race([starting.then(() => finished), finished]);
   } finally {
     updateCheck.abort();
+    unsubscribeBuildMismatch();
     stopped = true; preferences.dispose();
     options.signal?.removeEventListener('abort', interrupt); process.removeListener('SIGTERM', interrupt); process.removeListener('SIGHUP', interrupt); process.removeListener('SIGINT', interrupt);
     unsubscribeColors?.(); unsubscribeSetup?.(); unsubscribeFooter?.(); unsubscribeTitle?.(); unsubscribeHerdr?.(); footer?.dispose();

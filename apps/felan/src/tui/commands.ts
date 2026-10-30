@@ -10,7 +10,7 @@ import { remoteCompletions, submitRemoteInput } from './remote.js';
 
 type ToolsManager = { getToolPath(tool: 'fd' | 'rg'): string | null };
 
-/** `relaunch` restarts the daemon in place and then re-executes this client on the same session. */
+/** `relaunch` re-executes this client after daemon shutdown so the fresh installation starts its replacement. */
 export type DaemonAction = 'stop' | 'restart' | 'relaunch';
 const BUILTINS: SlashCommand[] = [
   { name: 'settings', description: 'Open settings menu' },

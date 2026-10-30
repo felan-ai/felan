@@ -1,8 +1,9 @@
 import { RequestError, type AgentContext, type ClientCapabilities, type CloseSessionRequest, type LoadSessionRequest, type NewSessionRequest, type PromptRequest, type PromptResponse } from '@agentclientprotocol/sdk';
 import { isAbsolute, resolve } from 'node:path';
 import { readMessageDisplay, type SessionSnapshot } from '@felan-ai/session-protocol';
+import { watchDaemonBuildMismatch } from '../client/build-mismatch.js';
 import type { SessionClient } from '../client/client.js';
-import { accepted, createDaemonClient, DaemonRequestError, readCurrentDaemonHistory, readDaemonHistory, waitForDaemonRun, type DaemonClientOptions } from './daemon-session.js';
+import { accepted, createDaemonClient, daemonRestartRecovery, DaemonRequestError, readCurrentDaemonHistory, readDaemonHistory, waitForDaemonRun, type DaemonClientOptions } from './daemon-session.js';
 import { ACP_UI_CAPABILITIES, AcpProtocolInteractions } from './protocol-interactions.js';
 import { AcpProtocolUpdates } from './protocol-updates.js';
 import { AcpToolCallIdRegistry, prepareAcpPrompt, sanitizeAcpErrorMessage } from './session-updates.js';
@@ -31,6 +32,7 @@ export class AcpSessionRegistry {
   #client: SessionClient | undefined;
   #connecting: Promise<unknown> | undefined;
   #unsubscribe: (() => void) | undefined;
+  #stopBuildMismatchWatch: (() => void) | undefined;
   #disposed = false;
   #disposePromise: Promise<void> | undefined;
 
@@ -70,6 +72,8 @@ export class AcpSessionRegistry {
       this.#client = await createDaemonClient(this.options, 'acp', this.#supportsForms
         ? ['tool_approval', 'select', 'confirm', 'input', 'editor', 'form', 'dependency'] : ['tool_approval'],
         this.#supportsForms ? [...ACP_UI_CAPABILITIES] : ACP_UI_CAPABILITIES.filter(capability => capability !== 'ui.action'));
+      this.#stopBuildMismatchWatch = watchDaemonBuildMismatch(this.#client,
+        daemonRestartRecovery(this.options.daemonRuntime), message => this.#writeDiagnostic(message));
       this.#unsubscribe = this.#client.subscribe(() => this.#observe());
       this.#connecting = this.#client.connect();
     } else if (this.#client.status !== 'ready') this.#connecting = this.#client.connect();
@@ -162,6 +166,7 @@ export class AcpSessionRegistry {
   dispose(): Promise<void> {
     if (this.#disposePromise) return this.#disposePromise;
     this.#disposed = true;
+    this.#stopBuildMismatchWatch?.();
     this.#unsubscribe?.();
     for (const active of this.#sessions.values()) { active.lifetime.abort(); active.interactions.close(); }
     this.#sessions.clear();

@@ -14,7 +14,7 @@ import { stripTerminalSequences } from '@earendil-works/pi-tui';
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture(hold = false, version = DAEMON_VERSION) {
+async function fixture(hold = false, version = DAEMON_VERSION, compositionMismatch = false) {
   const entered = gate(); const release = gate();
   const f = await serverFixture({ now: Date.now, namespace: directory => {
     const target = clientDaemonTarget({ daemonRuntime: directory });
@@ -33,7 +33,8 @@ async function fixture(hold = false, version = DAEMON_VERSION) {
   });
   const runtime = new HostAgentRuntime(f.cwd, { sessionStorageRoot: join(f.directory, 'test-session'), agentStorageRoot: join(f.directory, 'test-agent') });
   const daemonTarget = clientDaemonTarget({ daemonRuntime: f.directory });
-  const composition = await resolveClientHostComposition(daemonTarget);
+  const resolved = await resolveClientHostComposition(daemonTarget);
+  const composition = { ...resolved, ...(compositionMismatch ? { providerDigest: '0'.repeat(64) } : {}) };
   server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version, composition,
     configuration: new DaemonConfiguration({ agentDir: f.owner.target.agentDir, definitions: [], assertCurrent: () => f.registry.assertAdmission() }) });
   await server.start();
@@ -75,16 +76,34 @@ it('keeps an active daemon run alive after the terminal client is killed', async
   f.release.resolve();
 }, 20_000);
 
-it('requires consent before restarting an incompatible daemon with active runs and exits without submitting input when declined', async () => {
-  const f = await fixture(true, 'incompatible-fixture');
+it('attaches across provider configuration differences without a restart dialog', async () => {
+  const f = await fixture(true, DAEMON_VERSION, true);
   const observer = await f.client();
   void observer.request('prompt', { text: 'active run' }, { session: f.root.sessionId });
   await f.entered.promise;
-  const child = await f.launch('must remain unsubmitted');
-  await readUntil(child, text => stripTerminalSequences(text).includes('1 active task will be interrupted'));
-  await child.write(new TextEncoder().encode('\r'));
+  const child = await f.launch('continue with this configuration');
+  const output = await readUntil(child, text => stripTerminalSequences(text).includes('continue with this configuration'));
+  expect(stripTerminalSequences(output)).not.toContain('1 active task will be interrupted');
+  expect(f.store.session(f.root.sessionId).state).toBe('open');
+  await child.write(new TextEncoder().encode('\x04'));
   await readUntil(child, (_text, running) => !running);
-  expect(JSON.stringify(f.root.runtime.session.messages)).not.toContain('must remain unsubmitted');
+}, 20_000);
+
+it('attaches to a busy different-build daemon with a warning instead of a restart dialog', async () => {
+  const f = await fixture(true, 'previous-fixture');
+  const observer = await f.client();
+  void observer.request('prompt', { text: 'active run' }, { session: f.root.sessionId });
+  await f.entered.promise;
+  const child = await f.launch('continue with this build');
+  const output = await readUntil(child, text => {
+    const visible = stripTerminalSequences(text);
+    return visible.includes('Daemon previous-fixture is running') && visible.includes('continue with this build');
+  });
+  expect(stripTerminalSequences(output)).toContain('Run /restart to apply the new build.');
+  expect(stripTerminalSequences(output)).not.toContain('Restart it now?');
+  expect(f.store.session(f.root.sessionId).run.state).toBe('running');
+  await child.write(new TextEncoder().encode('\x04'));
+  await readUntil(child, (_text, running) => !running);
   expect(f.store.session(f.root.sessionId).state).toBe('open');
 }, 20_000);
 

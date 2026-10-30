@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 import { ConfigValuesSchema, INTERACTION_KINDS, LIMITS, parseSchema, readMessageDisplay, type OperationParams, type PresentationEvent, type SessionSnapshot } from '@felan-ai/session-protocol';
-import { accepted, createDaemonClient, readCurrentDaemonHistory, waitForDaemonAttachment, waitForDaemonRun, type DaemonClientOptions } from './acp/daemon-session.js';
+import { accepted, createDaemonClient, daemonRestartRecovery, readCurrentDaemonHistory, waitForDaemonAttachment, waitForDaemonRun, type DaemonClientOptions } from './acp/daemon-session.js';
+import { watchDaemonBuildMismatch } from './client/build-mismatch.js';
 import { sanitizeAcpErrorMessage } from './acp/session-updates.js';
 
 export interface RunLocalFelanHeadlessOptions extends DaemonClientOptions {
@@ -34,6 +35,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
   let cancel: Promise<void> | undefined;
   let unsubscribe = () => {};
   let unsubscribePresentation = () => {};
+  let stopBuildMismatchWatch = () => {};
   let output: HeadlessJsonWriter | undefined;
   let failOutput: ((error: Error) => void) | undefined;
   const outputFailure = new Promise<never>((_resolve, reject) => { failOutput = reject; });
@@ -61,6 +63,8 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     const attachOptions = sessionDir ? { sessionDir } : undefined;
     client = await createDaemonClient(options, 'headless', [...INTERACTION_KINDS]);
     await client.connect();
+    if (options.mode === 'text') stopBuildMismatchWatch = watchDaemonBuildMismatch(client,
+      daemonRestartRecovery(options.daemonRuntime), writeError);
     if (signalCode) return signalCode;
     session = options.sessionId;
     if (!session && options.continueRecent) {
@@ -99,6 +103,8 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
       client.close();
       client = await createDaemonClient(options, 'headless', [...INTERACTION_KINDS], ['native.events']);
       await client.connect();
+      stopBuildMismatchWatch = watchDaemonBuildMismatch(client,
+        daemonRestartRecovery(options.daemonRuntime), writeError);
       if (!client.capabilities?.capabilities?.includes('native.events')) {
         throw new Error('The daemon does not support native headless JSON output');
       }
@@ -164,7 +170,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
     return 0;
   } catch (error) { writeError(sanitizeAcpErrorMessage(error)); return 1; }
   finally {
-    unsubscribe(); unsubscribePresentation(); output?.close();
+    unsubscribe(); unsubscribePresentation(); stopBuildMismatchWatch(); output?.close();
     for (const [name, handler] of handlers) signalSource.off(name, handler);
     options.signal?.removeEventListener('abort', abort);
     if (client && session && client.getAttachment(session)) await client.detach(session).catch(() => {});

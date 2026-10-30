@@ -21,7 +21,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', request: { kind: 'input', title: 'Model question must wait' } };
 
-async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; remote?: boolean; remoteNeed?: string } = {}) {
+async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; compositionMismatch?: boolean; buildMismatch?: 'version' | 'composition'; remote?: boolean; remoteNeed?: string } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
   await mkdir(join(directory, 'tui'));
   await writeFile(join(directory, 'tui/settings.json'), JSON.stringify({ showImages: false, ...options.preferences }));
@@ -29,19 +29,22 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
     'host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link',
     ...(options.remote ? ['remote.status', 'remote.configure', 'session.remote'] as const : []),
     ...(options.statusAvailable === false ? [] : ['host.status' as const])];
+  const composition = { managerPackage: '@fixture/manager', managerVersion: 'fixture', providerDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64) };
   const client = new SessionClient({ target: { kind: 'isolated', directory, namespaceId: 'startup-test' }, kind: 'tui', clientVersion: 'fixture',
     interactionKinds: [...TERMINAL_INTERACTION_KINDS], connector: fake.connector, retries: 0,
-    ...(options.incompatibleWork === undefined ? {} : { expectedDaemonVersion: 'installed' }) });
-  const identity = identityFor(client.target, 'instance'); const controller = new TuiSessionController(client);
+    expectedDaemonVersion: options.buildMismatch === 'version' ? 'installed' : 'fixture', expectedComposition: { ...composition,
+      ...(options.compositionMismatch ? { providerDigest: 'd'.repeat(64) } : {}),
+      ...(options.buildMismatch === 'composition' ? { managerVersion: 'installed' } : {}) } });
+  let daemonVersion = 'fixture'; let identity = identityFor(client.target, 'instance'); const controller = new TuiSessionController(client);
   const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal); const abort = new AbortController();
   let loggedIn = options.provider ?? false; let cancelled = false;
   const waiting: SetupJob = { id: 'login-job', kind: 'login', state: 'waiting', message: 'Waiting for credentials',
     prompt: { id: 'key', kind: 'input', message: 'Secret API key', secret: true } };
   fake.onSend = (request, connection) => {
     switch (request.op) {
-      case 'hello': fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
+      case 'hello': fake.reply(request, { attachmentId: 'client', principal: 'principal', daemonVersion, protocol: 1, composition,
         identity, operations, interactionKinds: [...TERMINAL_INTERACTION_KINDS] }, connection); break;
-      case 'host.status': fake.reply(request, { identity, daemonVersion: 'fixture', protocol: 1, state: 'ready',
+      case 'host.status': fake.reply(request, { identity, daemonVersion, protocol: 1, state: 'ready',
         active: { sessions: 0, runs: 0, work: options.incompatibleWork ?? 0, attachments: 0 }, setupNeeds: [
           ...loggedIn ? [] : [{ code: 'provider', message: 'No model available' }],
           ...options.remoteNeed ? [{ code: 'remote', message: options.remoteNeed }] : [],
@@ -67,6 +70,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
   let running: Promise<void> | undefined;
   cleanups.push(async () => { abort.abort(); if (running) await running.catch(() => {}); await controller.dispose(); await rm(directory, { recursive: true, force: true }); });
   return { client, controller, terminal, tui, fake, abort,
+    replaceDaemon(version: string) { daemonVersion = version; identity = identityFor(client.target, version); fake.lose(); },
     start(extra: Partial<Parameters<typeof runDaemonTerminal>[1]> = {}) {
       running = runDaemonTerminal(controller, { cwd: directory, clientConfigDir: directory, terminal, createTui: () => tui, signal: abort.signal, ...extra });
       void running.catch(() => {}); return running;
@@ -294,11 +298,35 @@ class TestTerminal implements Terminal {
   setProgramStatus(_status: ProgramStatus): void {}
 }
 
-it('asks before restarting an incompatible daemon whose only active work is a background process', async () => {
-  const f = await fixture({ provider: true, incompatibleWork: 1 }); const onDaemonAction = vi.fn(async () => true);
-  const running = f.start({ onDaemonAction });
-  await vi.waitFor(() => expect(f.text().replace(/\s+/gu, ' ')).toContain('1 active task will be interrupted'));
-  f.terminal.input('\x1b'); await running;
+it.each(['version', 'composition'] as const)('warns about a busy daemon %s mismatch without asking for restart consent or blocking startup', async buildMismatch => {
+  const f = await fixture({ provider: true, incompatibleWork: 1, buildMismatch }); const onDaemonAction = vi.fn(async () => true);
+  f.start({ onDaemonAction, initialMessage: 'keep working' });
+  await vi.waitFor(() => expect(f.fake.requests.some(request => request.op === 'prompt')).toBe(true));
+  const warnings = f.controller.notes.filter(note => note.level === 'warning');
+  expect(warnings).toHaveLength(1);
+  expect(warnings[0]?.text).toContain(buildMismatch === 'version' ? 'this installation expects installed' : 'different package/provider build');
+  expect(warnings[0]?.text).toContain('Run /restart');
+  expect(f.text()).toContain('Warning:'); expect(f.text()).not.toContain('Restart it now?');
+  expect(f.client.status).toBe('ready'); expect(onDaemonAction).not.toHaveBeenCalled(); expect(f.fake.controls).toEqual([]);
+});
+
+it('warns on reconnect to a new build once without bouncing the idle daemon or repeating on session events', async () => {
+  const f = await fixture({ provider: true }); f.start();
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(f.controller.notes.filter(note => note.level === 'warning')).toEqual([]);
+  f.replaceDaemon('upgraded'); await f.controller.reconnect();
+  await f.controller.reconnect();
+  f.controller.setNotice('another event');
+  expect(f.controller.notes.filter(note => note.level === 'warning')).toEqual([
+    expect.objectContaining({ text: 'Daemon upgraded is running; this installation expects fixture. Run /restart to apply the new build.' }),
+  ]);
+  expect(f.client.status).toBe('ready'); expect(f.controller.sessionId).toBe('session'); expect(f.fake.controls).toEqual([]);
+});
+
+it('attaches across provider configuration differences without asking to restart active work', async () => {
+  const f = await fixture({ provider: true, incompatibleWork: 1, compositionMismatch: true }); const onDaemonAction = vi.fn(async () => true);
+  f.start({ onDaemonAction });
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
   expect(onDaemonAction).not.toHaveBeenCalled();
   expect(f.fake.controls).toEqual([]);
 });

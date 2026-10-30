@@ -9,6 +9,7 @@ import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { waitForDaemonStop } from './client/daemon-stop.js';
 import { formatHostBlocked, hostBlockedRejection, type DaemonRecovery } from './client/daemon-blocked.js';
 import { DAEMON_COMMANDS, suggestCommand } from './cli-command-suggestions.js';
+import { formatDaemonBuildMismatch } from './client/build-mismatch.js';
 
 const usage = 'Usage: felan daemon [status|start|foreground|stop|restart|logs] [--daemon-runtime <dir>] [--host-config <path>] [--force]';
 const absent = (error: unknown) => ['ENOENT', 'stale_endpoint', 'unavailable'].includes((error as { code?: string }).code ?? '');
@@ -36,6 +37,9 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     }
     if (force && !['stop', 'restart'].includes(action)) throw new Error('--force applies only to stop/restart.');
   } catch (error) { io.writeError((error as Error).message); return 1; }
+  const quote = (value: string) => /^[\w\-./~:@]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+  const restartCommand = ['felan', 'daemon', 'restart', ...(daemonRuntime ? ['--daemon-runtime', quote(daemonRuntime)] : []),
+    ...(hostConfigPath ? ['--host-config', quote(hostConfigPath)] : [])].join(' ');
   const target = clientDaemonTarget(daemonRuntime ? { daemonRuntime } : {});
   if (action === 'foreground') return (dependencies.foreground ?? foreground)(target, hostConfigPath);
   const makeClient = dependencies.createClient ?? (options => new SessionClient(options));
@@ -76,7 +80,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     }
     if (active.status === 'incompatible') {
       const status = await active.control('host.status');
-      io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}. It differs from this installation; run felan daemon restart.`);
+      io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}. Its protocol or provider configuration is incompatible with this installation; run ${restartCommand}.`);
       if (status.state === 'blocked') io.writeOutput(formatHostBlocked(status.blocked, { client: 'cli', ...(daemonRuntime ? { daemonRuntime } : {}) }));
       return action === 'status' ? 0 : 1;
     }
@@ -94,6 +98,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     if (response.outcome !== 'accepted') throw new Error('Daemon status is unavailable.');
     const status = response.result;
     io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}\nSessions: ${status.active.sessions}; runs: ${status.active.runs}; active tasks: ${status.active.work}; attachments: ${status.active.attachments}`);
+    if (active.buildMismatch) io.writeOutput(formatDaemonBuildMismatch(active.buildMismatch, `Run ${restartCommand} to apply the new build.`));
     if (status.state === 'blocked') io.writeOutput(formatHostBlocked(status.blocked, { client: 'cli', ...(daemonRuntime ? { daemonRuntime } : {}) }));
     for (const need of status.setupNeeds) io.writeOutput(need.message);
     return 0;

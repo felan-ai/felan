@@ -2,17 +2,18 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { SessionClient } from '../../felan/src/client/client.js';
 import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
 import { HostLifecycle } from '../src/daemon/lifecycle.js';
-import { SessionServer } from '../src/daemon/server.js';
+import { SessionServer, type SessionServerOptions } from '../src/daemon/server.js';
 import { gate, serverFixture } from './fixtures/server.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
 
-async function fixture(held = false) {
+async function fixture(held = false, composition?: SessionServerOptions['composition']) {
   const f = await serverFixture({ now: Date.now }); const settled = gate(); const complete = vi.fn(async () => {});
   const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity,
     beginDrain: () => f.registry.beginDrain(), endDrain: () => f.registry.endDrain(), settle: async () => { if (held) await settled.promise; }, complete });
   const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture',
+    ...(composition ? { composition } : {}),
     configuration: new DaemonConfiguration({ definitions: [], assertCurrent: () => f.owner.assertCurrent() }),
     management: { lifecycle, logs: () => ({ entries: [{ timestamp: 1, level: 'info', message: 'Daemon ready.' }] }) } });
   const clients: SessionClient[] = [];
@@ -54,17 +55,38 @@ it('rejects new session work during drain while keeping status available', async
   await expect(client.attach(f.root.sessionId)).rejects.toThrow();
 });
 
-it('keeps a mismatched daemon running for a client that cannot relaunch it', async () => {
+it('attaches to a compatible mismatched build without restarting when the client cannot relaunch it', async () => {
   const f = await fixture(true);
   const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
     clientVersion: 'fixture', expectedDaemonVersion: 'different-version', kind: 'tui' });
   cleanup.push(async () => client.close());
-  await expect(client.connect()).rejects.toThrow('version differs');
-  expect(client.status).toBe('incompatible'); expect(client.identity).toEqual(f.owner.identity); expect(client.incompatibleActiveWork).toBe(0);
+  await client.connect();
+  expect(client.status).toBe('ready'); expect(client.identity).toEqual(f.owner.identity); expect(client.incompatibleActiveWork).toBeUndefined();
+  expect(client.buildMismatch).toEqual({ daemonVersion: 'fixture', expectedDaemonVersion: 'different-version', activeWork: 0 });
+  expect((await client.attach(f.root.sessionId)).outcome).toBe('accepted');
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'ready' } });
+  expect(await client.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'ready', identity: f.owner.identity });
+  expect(f.lifecycle.state).toBe('ready'); expect(f.complete).not.toHaveBeenCalled();
+});
+
+it('attaches across provider differences while preserving explicit lifecycle controls', async () => {
+  const composition = { managerPackage: '@test/manager', managerVersion: 'fixture', providerDigest: 'a'.repeat(64),
+    configDigest: 'b'.repeat(64) };
+  const f = await fixture(true, composition);
+  const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
+    clientVersion: 'fixture', expectedDaemonVersion: 'fixture', expectedComposition: { ...composition, providerDigest: 'd'.repeat(64) }, kind: 'tui' });
+  cleanup.push(async () => client.close());
+  await client.connect();
+  expect(client.status).toBe('ready'); expect(client.identity).toEqual(f.owner.identity);
+  expect(client.buildMismatch).toBeDefined();
+  expect((await client.attach(f.root.sessionId)).outcome).toBe('accepted');
   expect(f.lifecycle.state).toBe('ready');
-  expect(await client.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'ready' });
+  expect(await client.control('host.status')).toMatchObject({ outcome: 'accepted', state: 'ready', identity: f.owner.identity });
   await expect(client.control('host.restart')).rejects.toThrow(); expect(f.lifecycle.state).toBe('ready');
-  expect(await client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
+  expect(f.complete).not.toHaveBeenCalled();
+  expect(await client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted', state: 'draining', identity: f.owner.identity });
+  expect(f.complete).not.toHaveBeenCalled(); f.settled.resolve();
+  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledWith('restart'));
 });
 
 it('reports an unrecoverable block and rejects force and new work with process recovery guidance', async () => {

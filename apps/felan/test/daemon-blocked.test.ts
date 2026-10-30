@@ -36,7 +36,7 @@ const detail = 'Daemon shutdown failed at dispose_session (session session-): Pr
 const kill = (pid: number) => process.platform === 'win32' ? `taskkill /F /PID ${pid}` : `kill -9 ${pid}`;
 const manual = `Cleanup cannot be retried safely; force-terminate the daemon process (pid 4321) with \`${kill(4321)}\`, then start Felan again.`;
 
-async function fixture(initial: { state?: ControlResponse['state']; blocked?: HostBlocked; incompatible?: boolean; directoryName?: string } = { blocked }) {
+async function fixture(initial: { state?: ControlResponse['state']; blocked?: HostBlocked; incompatible?: boolean; buildMismatch?: 'version' | 'composition'; directoryName?: string } = { blocked }) {
   const root = await mkdtemp(join(tmpdir(), 'daemon-blocked-')); roots.push(root);
   const directory = initial.directoryName ? join(root, initial.directoryName) : root;
   const f = {
@@ -47,9 +47,12 @@ async function fixture(initial: { state?: ControlResponse['state']; blocked?: Ho
   };
   const createClient = vi.fn((options: SessionClientOptions) => {
     const fake = new FakeTransport(); f.fakes.push(fake);
-    const client = new SessionClient({ ...options, connector: fake.connector, requestTimeoutMs: 200 }); clients.push(client);
+    const composition = { managerPackage: '@fixture/manager', managerVersion: 'fixture', providerDigest: 'a'.repeat(64), configDigest: 'b'.repeat(64) };
+    const client = new SessionClient({ ...options, connector: fake.connector, requestTimeoutMs: 200,
+      ...(initial.incompatible || initial.buildMismatch === 'composition' ? { expectedComposition: { ...composition,
+        providerDigest: 'd'.repeat(64) } } : {}) }); clients.push(client);
     const identity = identityFor(client.target, `instance-${f.fakes.length}`);
-    const daemonVersion = initial.incompatible ? 'previous' : options.expectedDaemonVersion ?? 'fixture';
+    const daemonVersion = initial.incompatible || initial.buildMismatch === 'version' ? 'previous' : options.expectedDaemonVersion ?? 'fixture';
     fake.onSend = (envelope, connection) => {
       if ('control' in envelope) {
         const request = envelope as unknown as ControlRequest;
@@ -58,7 +61,7 @@ async function fixture(initial: { state?: ControlResponse['state']; blocked?: Ho
           state: f.state, ...(f.blocked ? { blocked: f.blocked } : {}), outcome: 'accepted', ...response }, connection);
       } else if (envelope.op === 'hello') {
         fake.reply(envelope, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion, protocol: 1,
-          identity, operations: ['host.status', 'host.logs'], interactionKinds: [] }, connection);
+          identity, composition, operations: ['host.status', 'host.logs'], interactionKinds: [] }, connection);
       } else if (envelope.op === 'host.status') {
         fake.reply(envelope, { identity, daemonVersion, protocol: 1, state: f.state,
           ...(f.blocked ? { blocked: f.blocked } : {}), active: { sessions: 1, runs: 0, work: 1, attachments: 1 }, setupNeeds: [] }, connection);
@@ -98,12 +101,32 @@ describe('blocked daemon CLI', () => {
     expect(f.io.writeOutput.mock.calls.flat().join('\n')).not.toContain('--force');
   });
 
-  it('still explains a blocked daemon from an incompatible installation', async () => {
+  it('still explains a blocked daemon with different build and provider configuration', async () => {
     const f = await fixture({ blocked, incompatible: true });
     expect(await f.run(['status'])).toBe(0);
-    expect(f.io.writeOutput).toHaveBeenCalledWith(expect.stringContaining('Daemon previous: blocked.'));
+    expect(f.io.writeOutput).toHaveBeenCalledWith(expect.stringContaining('Daemon previous: blocked\n'));
     expect(f.io.writeOutput).toHaveBeenLastCalledWith(`${detail} Use felan daemon restart --force --daemon-runtime ${f.directory} to retry cleanup.`);
-    expect(f.controls().map(request => request.op)).toEqual(['host.status']);
+    expect(f.controls()).toEqual([]);
+  });
+
+  it.each(['version', 'composition'] as const)('prints a %s build warning while retaining normal daemon status and blocked recovery', async buildMismatch => {
+    const f = await fixture({ blocked, buildMismatch });
+    expect(await f.run(['status'])).toBe(0);
+    expect(f.io.writeOutput.mock.calls[0]?.[0]).toContain(': blocked\nSessions: 1');
+    const warning = f.io.writeOutput.mock.calls[1]?.[0];
+    expect(warning).toContain(buildMismatch === 'version' ? 'Daemon previous is running; this installation expects' : 'different package/provider build');
+    expect(warning).toContain(`Run felan daemon restart --daemon-runtime ${f.directory} to apply the new build.`);
+    expect(f.io.writeOutput).toHaveBeenLastCalledWith(`${detail} Use felan daemon restart --force --daemon-runtime ${f.directory} to retry cleanup.`);
+    expect(f.controls()).toEqual([]); expect(f.io.writeError).not.toHaveBeenCalled();
+  });
+
+  it('shell-quotes both target selection flags in build-mismatch recovery', async () => {
+    const f = await fixture({ state: 'ready', buildMismatch: 'version', directoryName: "project's runtime" });
+    const config = join(f.root, "host's config.json");
+    expect(await f.run(['status', '--host-config', config])).toBe(0);
+    expect(f.io.writeOutput.mock.calls[1]?.[0]).toContain(
+      `Run felan daemon restart --daemon-runtime '${f.root}/project'\\''s runtime' --host-config '${f.root}/host'\\''s config.json' to apply the new build.`);
+    expect(f.controls()).toEqual([]);
   });
 
   it.each(['stop', 'restart'] as const)('%s without force refuses a recoverable block before sending drain', async action => {

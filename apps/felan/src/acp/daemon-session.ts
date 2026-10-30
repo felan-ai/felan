@@ -1,4 +1,5 @@
 import { DAEMON_VERSION } from '@felan-ai/daemon';
+import { resolve } from 'node:path';
 import { LIMITS, type Message, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { SessionClient, type SessionClientOptions } from '../client/client.js';
 import { clientDaemonTarget } from '../client-application.js';
@@ -14,6 +15,12 @@ export interface DaemonClientOptions {
 
 /** Backoff of 250 ms doubling to 10 s spans about 36 s over eight attempts, covering the 30 s headless reconnect window. */
 const HEADLESS_RECONNECT_ATTEMPTS = 8;
+
+export function daemonRestartRecovery(daemonRuntime?: string): string {
+  const runtime = daemonRuntime && resolve(daemonRuntime);
+  const target = runtime ? ` --daemon-runtime ${/^[\w\-./~:@]+$/u.test(runtime) ? runtime : `'${runtime.replaceAll("'", "'\\''")}'`}` : '';
+  return `Run felan daemon restart${target} to apply the new build.`;
+}
 
 export async function createDaemonClient(options: DaemonClientOptions, kind: 'acp' | 'headless', interactionKinds: SessionClientOptions['interactionKinds'] = [], capabilities: SessionClientOptions['capabilities'] = []): Promise<SessionClient> {
   const target = clientDaemonTarget(options);

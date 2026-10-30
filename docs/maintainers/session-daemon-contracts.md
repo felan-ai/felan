@@ -64,11 +64,28 @@ bounded extension-defined payloads; built-in operations use discriminated types.
 - Authenticate the endpoint before accepting any operation. The request cannot
   supply its own authoritative principal or responder. Session target must be
   authorized against the connection's daemon-assigned bindings.
-- Mismatched versions get only a fixed bootstrap response with daemon version,
-  supported protocol, root identity and state. The mismatch management grammar
-  permits status and **explicit** restart/stop requests only, never session
-  commands or automatic force. S1.03/14 own authentication
-  and lifecycle; all messages remain bounded by this package's bootstrap schema.
+- Cross-build attachment requires a compatible wire protocol and authenticated
+  target identity (see [ADR 0046](../decisions/0046-attach-clients-to-compatible-daemon-builds.md)).
+  Manager package/version, provider selection and configuration differences never
+  block attachment; absent composition metadata is allowed. Daemon version,
+  manager package/version and provider digest differences produce a warning with
+  the installed/running versions and `/restart`. The configuration digest is
+  informational. Sessions keep using the daemon's build and configuration.
+- Transparent refresh of a provably idle daemon is limited to an initial,
+  launch-capable connection without an explicit expected daemon identity, and
+  only when the daemon version differs. Composition differences alone never
+  trigger replacement. Unknown active work is not proof of idleness. Established
+  clients' automatic and manual reconnects never replace the daemon, even when
+  idle, so they cannot undo another client's restart.
+- Protocol and authenticated target identity mismatches remain blocking. Never
+  automatically replace an incompatible-protocol daemon. Its fixed bootstrap
+  response includes daemon version, supported protocol, root identity and state.
+  The mismatch management grammar permits status and **explicit** restart/stop
+  only, never session commands or automatic force. S1.03/14 own authentication
+  and lifecycle; messages remain bounded by the bootstrap schema.
+- `providerDigest` retains its host `restartRequired` meaning without restricting
+  attachment. Older same-protocol daemons can accept clients regardless of
+  provider selection or missing composition metadata.
 
 Every client carries an explicit `DaemonTarget` into discovery, launch and
 management; see [namespace contract](#production-and-isolated-runtime-targets).
@@ -122,7 +139,7 @@ record. Do not smuggle built-ins through an unrestricted generic `command.invoke
 
 | Operation | Parameters / result and conditions |
 | --- | --- |
-| `hello`, `host.status` | Handshake above; status includes lifecycle, binary/root/protocol, active counts (`sessions`, `runs`, `work`, `attachments`; `work` counts everything a restart would interrupt) and setup needs, no secrets. |
+| `hello`, `host.status` | Handshake above; composition reports manager, provider and configuration metadata for diagnostics, not attachment authorization. Status includes lifecycle, binary/root/protocol, active counts (`sessions`, `runs`, `work`, `attachments`; `work` counts everything a restart would interrupt) and setup needs, no secrets. |
 | `sessions.list` | Optional cwd/root filter + cursor. Newest last activity first, then session ID; the cursor holds the last row's position, and malformed or foreign cursors return `resync_required`. Summaries include registered sessions and unregistered pre-daemon transcripts, with warm/evicted/closed, run state, title (session name), optional preview (first user message), model, last activity, policy state. Titles and previews are read only for the returned rows. Unused drafts are excluded (see ADR 0040). Read-only. |
 | `sessions.create` | Absolute cwd, optional configured sessionDir, model/thinking/config overrides and validated explicit extension paths from local clients only. -> session ID. No creation source or per-session external-extension flag. Host settings apply to every new root; children inherit root paths. Only the creating TUI prompts for project trust; other creators load only already-trusted project folders. The root is a draft until its first user, assistant or shell message; a draft with no conversation is discarded when idle (ADR 0040). Resolve trust/setup before side effects; acquire actual-root locks first. See ADR 0043. |
 | `attach` | Session ID; optional `requirePolicy:'acp-strict'` for ACP. -> attachment binding + snapshot. Unregistered IDs return `not_found`. Attaching to a registered busy session is allowed. |
@@ -140,7 +157,7 @@ record. Do not smuggle built-ins through an unrestricted generic `command.invoke
 | `shell.execute` | Command + `includeInContext:boolean` preserves `!`/`!!`; daemon runtime only, admission/policy and process tracking apply. No client shell used for agent work. |
 | `config.get`, `config.set`, `session.reload` | Core execution values plus generic `extensionConfig.<id>.<field>`, validated against declared fields by the host configuration provider. `config.get` includes a required `writable` boolean for the requested scope; both client and extension persistent writes use that provider. Session overrides remain writable independently of persistent scopes. No presentation preferences or extension-specific protocol keys. Explicit reload only. Process-level proxy/environment changes require daemon restart. No arbitrary config path/value bypass. New sessions read current files; live sessions do not auto-reload. |
 | `processes.list`, `processes.read`, `processes.write`, `processes.stop` | Root-scoped resource ID, cursor+byte limit, base64 input, signal `SIGTERM|SIGKILL` respectively; checked root lineage and control ownership. Never accept PID as authority. Read result includes offset/running/exit/missing state. |
-| `host.stop`, `host.restart`, `host.logs` | Explicit drain or force policy; bounded sanitized log cursor. No terminal disconnect invokes them. Only status/stop/restart are available through authenticated mismatch bootstrap; logs require v1. |
+| `host.stop`, `host.restart`, `host.logs` | Explicit drain or force policy; bounded sanitized log cursor. No terminal disconnect invokes them. Only status/stop/restart are available through authenticated protocol-mismatch bootstrap; logs require v1. |
 
 Trust/dependency/OAuth/login actions are typed broker requests or schema-bound
 host commands in S1.09/12/14, never arbitrary shell/config access. Operation capabilities are negotiated without client-kind gates. Existing TUI share,

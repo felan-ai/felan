@@ -5,7 +5,7 @@ import { describeBlocked } from '../client/diagnostics.js';
 import { formatHostBlocked } from '../client/daemon-blocked.js';
 import type { SessionListing } from './session-navigator.js';
 
-type Connection = Pick<SessionClient, 'status' | 'reconnection' | 'incompatibleActiveWork' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'readAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
+type Connection = Pick<SessionClient, 'status' | 'reconnection' | 'incompatibleActiveWork' | 'buildMismatch' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'readAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
 type SessionSummary = OperationResult<'sessions.list'>['entries'][number];
 const PICKER_FIRST_PAGE = 20;
 const RETAINED_PROMPT_ECHOES = 32;
@@ -451,6 +451,7 @@ export class TuiSessionController {
 /** Persistent connection status for the screen; undefined while connected. */
 export function connectionText(client: Pick<Connection, 'status' | 'reconnection'>, now = Date.now()): string | undefined {
   if (client.status === 'ready') return undefined;
+  if (client.status === 'incompatible') return 'Daemon incompatible. Use /restart to restart with this installation.';
   const retry = client.reconnection;
   if (retry) return `Daemon disconnected · reconnecting in ${Math.max(1, Math.ceil((retry.retryAt - now) / 1000))}s · /reconnect to retry now`;
   if (client.status === 'connecting') return 'Connecting to daemon…';
@@ -458,6 +459,7 @@ export function connectionText(client: Pick<Connection, 'status' | 'reconnection
 }
 
 function unavailableText(client: Pick<Connection, 'status' | 'reconnection'>): string {
+  if (client.status === 'incompatible') return 'Daemon incompatible. Use /restart to restart with this installation.';
   return client.reconnection || client.status === 'connecting' ? 'Daemon disconnected; reconnecting automatically. Use /reconnect to retry now.'
     : `Daemon ${client.status}. Use /reconnect to retry.`;
 }

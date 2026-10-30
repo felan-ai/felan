@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
+import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runLocalFelanAcp } from '../src/acp/server.js';
 import { FELAN_VERSION } from '../src/version.js';
@@ -142,6 +143,37 @@ describe('ACP server', () => {
     expect(signalSource.listenerCount('SIGINT')).toBe(0);
     expect(signalSource.listenerCount('SIGTERM')).toBe(0);
     stream.resolve();
+  });
+
+  it('reports an attached daemon build mismatch to diagnostics without blocking ACP work or contaminating stdout', async () => {
+    const f = await acpDaemonFixture();
+    cleanups.push(() => f.dispose());
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const diagnostics = new PassThrough();
+    const outputChunks: Buffer[] = [];
+    const diagnosticChunks: Buffer[] = [];
+    output.on('data', (chunk: Buffer) => outputChunks.push(Buffer.from(chunk)));
+    diagnostics.on('data', (chunk: Buffer) => diagnosticChunks.push(Buffer.from(chunk)));
+    const createClient: typeof f.createClient = options => f.createClient({ ...options, expectedDaemonVersion: 'next-build' });
+    const running = runLocalFelanAcp({ input, output, diagnostics, daemonRuntime: '/tmp/acp runtime', createClient });
+    const responses = () => Buffer.concat(outputChunks).toString('utf8').trimEnd().split('\n').filter(Boolean).map(line => JSON.parse(line) as { id?: number; result?: unknown });
+
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1, clientCapabilities: {} } })}\n`);
+    await vi.waitFor(() => expect(responses().find(response => response.id === 1)).toMatchObject({ result: { protocolVersion: 1 } }));
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'session/load', params: { sessionId: f.root.sessionId, cwd: f.cwd, mcpServers: [] } })}\n`);
+    await vi.waitFor(() => expect(responses().find(response => response.id === 2)).toMatchObject({ result: {} }));
+    input.write(`${JSON.stringify({ jsonrpc: '2.0', id: 3, method: 'session/prompt', params: { sessionId: f.root.sessionId, prompt: [{ type: 'text', text: 'hello' }] } })}\n`);
+    await vi.waitFor(() => expect(responses().find(response => response.id === 3)).toMatchObject({ result: { stopReason: 'end_turn' } }));
+
+    input.end();
+    await expect(running).resolves.toBe(0);
+    const stdout = Buffer.concat(outputChunks).toString('utf8');
+    expect(() => stdout.trimEnd().split('\n').filter(Boolean).map(line => JSON.parse(line))).not.toThrow();
+    expect(stdout).not.toContain('Daemon ');
+    expect(Buffer.concat(diagnosticChunks).toString('utf8')).toBe(
+      `Daemon ${DAEMON_VERSION} is running; this installation expects next-build. Run felan daemon restart --daemon-runtime '/tmp/acp runtime' to apply the new build.\n`,
+    );
   });
 
   it('redacts secrets from ACP startup failures', async () => {

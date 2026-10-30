@@ -97,6 +97,14 @@ describe('shared session client', () => {
       identity: { ...identity, [field]: field === 'agentDir' ? '/wrong' : 'wrong' }, operations: [], interactionKinds: [] });
     await expect(client.connect()).rejects.toThrow(); expect(client.status).toBe('blocked');
   });
+  it('fails closed on a mismatched wire protocol', async () => {
+    const { client, fake, identity } = await fixture({ reconnectAttempts: 0 });
+    fake.onSend = request => fake.reply(request, { attachmentId: 'a', principal: 'p', daemonVersion: 'older', protocol: 2,
+      identity, operations: ['attach'], interactionKinds: [] });
+    await expect(client.connect()).rejects.toThrow();
+    expect(client.status).toBe('blocked');
+    expect(fake.requests.some(request => request.op === 'attach')).toBe(false);
+  });
   it('follows a restarted daemon instance unless an expected identity is pinned', async () => {
     const { client, fake, identity } = await fixture({ reconnectAttempts: 0 });
     const restarted = { ...identity, instanceId: 'restarted' };
@@ -218,13 +226,14 @@ describe('shared session client', () => {
       identity: { ...identity, rootSet: [...identity.rootSet, '/added'] }, operations: [], interactionKinds: [] });
     await client.connect(); expect(client.status).toBe('ready');
   });
-  it('blocks session attachment when the trusted host-composition fingerprint differs', async () => {
+  it('allows connection when the host-composition fingerprint differs', async () => {
     const expectedComposition = { managerPackage: '@felan-ai/felan', managerVersion: '0.29.0', providerDigest: 'a'.repeat(64) };
     const { client, fake, identity } = await fixture({ expectedComposition });
     fake.onSend = request => fake.reply(request, { attachmentId: 'hello', principal: 'principal', daemonVersion: 'fixture', protocol: 1,
-      identity, operations: ['attach'], interactionKinds: [], composition: { ...expectedComposition, configDigest: 'b'.repeat(64), providerDigest: 'b'.repeat(64) } });
-    await expect(client.connect()).rejects.toThrow('configuration differs');
-    expect(client.status).toBe('incompatible');
+      identity, operations: ['attach'], interactionKinds: [], composition: { ...expectedComposition, providerDigest: 'd'.repeat(64), configDigest: 'b'.repeat(64) } });
+    await client.connect();
+    expect(client.status).toBe('ready');
+    expect(client.buildMismatch).toBeDefined();
     expect(fake.requests.some(request => request.op === 'attach')).toBe(false);
   });
   it('waits for an interactive reply beyond the liveness deadline without resending, exposing pending then accepted', async () => {
@@ -311,8 +320,9 @@ describe('shared session client', () => {
     });
     it('reports active background work instead of restarting', async () => {
       const { client, fake } = await mismatched(1);
-      await expect(client.connect()).rejects.toThrow('Daemon version differs');
-      expect(client.status).toBe('incompatible'); expect(client.incompatibleActiveWork).toBe(1);
+      await client.connect();
+      expect(client.status).toBe('ready'); expect(client.incompatibleActiveWork).toBeUndefined();
+      expect(client.buildMismatch).toMatchObject({ daemonVersion: 'previous', expectedDaemonVersion: 'installed', activeWork: 1 });
       expect(fake.controls).toEqual([]);
     });
     it('fails instead of waiting when the daemon abandons its drain', async () => {

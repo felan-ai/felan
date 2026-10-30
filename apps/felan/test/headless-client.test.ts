@@ -40,3 +40,40 @@ it.each([
   }
   expect(fake.requests.some(request => request.op === 'sessions.create')).toBe(false);
 });
+
+it('warns about a composition-only daemon build mismatch without contaminating JSON stdout', async () => {
+  const fake = new FakeTransport();
+  const daemonComposition = {
+    managerPackage: '@felan-ai/felan', managerVersion: 'daemon-build', providerDigest: 'a'.repeat(64),
+    configDigest: 'b'.repeat(64),
+  };
+  const expectedComposition = { ...daemonComposition, managerVersion: 'installed-build' };
+  const createClient = (options: SessionClientOptions) => {
+    const client = new SessionClient({ ...options, expectedComposition, connector: fake.connector });
+    const identity = identityFor(client.target, 'headless-composition-fixture');
+    fake.onSend = (request, connection) => {
+      if (request.op === 'hello') fake.reply(request, { attachmentId: `hello-${connection}`, principal: 'principal', daemonVersion: options.expectedDaemonVersion,
+        protocol: 1, identity, operations: ['attach', 'detach', 'prompt', 'session.history', 'host.status'], interactionKinds: [],
+        capabilities: options.capabilities, composition: daemonComposition }, connection);
+      else if (request.op === 'attach') fake.reply(request, { attachmentId: `binding-${connection}`, snapshot: snapshot() }, connection);
+      else if (request.op === 'prompt') fake.reply(request, { runId: 'run' }, connection);
+      else if (request.op === 'session.history') fake.reply(request, snapshot().history, connection);
+      else if (request.op === 'host.status') fake.reply(request, { identity, daemonVersion: options.expectedDaemonVersion, protocol: 1, state: 'ready',
+        composition: daemonComposition, active: { sessions: 1, runs: 0, work: 1, attachments: 1 }, setupNeeds: [] }, connection);
+      else fake.reply(request, {}, connection);
+    };
+    return client;
+  };
+  const output: string[] = [];
+  const errors: string[] = [];
+  const result = await runLocalFelanHeadless({ mode: 'json', sessionId: 'session', initialMessage: 'continue', createClient,
+    daemonRuntime: '/tmp/headless runtime', signalSource: new EventEmitter(), writeOutput: line => { output.push(line); }, writeError: error => { errors.push(error); } });
+
+  expect(result).toBe(0);
+  expect(errors).toHaveLength(1);
+  expect(errors[0]).toMatch(/^Daemon .+ is running a different package\/provider build from this installation\./);
+  expect(errors[0]).not.toContain('this installation expects');
+  expect(errors[0]).toContain("Run felan daemon restart --daemon-runtime '/tmp/headless runtime' to apply the new build.");
+  expect(output).toEqual([]);
+  expect(fake.requests.filter(request => request.op === 'prompt')).toHaveLength(1);
+});

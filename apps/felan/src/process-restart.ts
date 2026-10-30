@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
+import { DaemonIdentitySchema, parseSchema, type DaemonIdentity } from '@felan-ai/session-protocol';
 
 const RESTART_WORKER_ENV = 'FELAN_RESTART_WORKER';
+const RESTART_DAEMON_ENV = 'FELAN_RESTART_DAEMON';
 const RESTART_EXIT_CODE = 75;
 
 interface RestartHandoff {
@@ -8,6 +10,7 @@ interface RestartHandoff {
   readonly sessionId?: string;
   readonly cwd: string;
   readonly restartArgs: readonly string[];
+  readonly replacing?: DaemonIdentity;
 }
 
 type SendToParent = (message: RestartHandoff, callback: (error: Error | null) => void) => boolean;
@@ -16,6 +19,7 @@ export interface RestartProcessOptions {
   readonly sessionId?: string;
   readonly cwd: string;
   readonly restartArgs?: readonly string[];
+  readonly replacing?: DaemonIdentity;
   readonly execve?: (file: string, args: readonly string[], env: NodeJS.ProcessEnv) => never;
   readonly spawn?: typeof spawn;
   readonly exit?: (code: number) => never;
@@ -26,17 +30,26 @@ export interface RestartProcessOptions {
 
 export type RestartProcess = (options: RestartProcessOptions) => Promise<never>;
 
+export function takeRestartDaemonIdentity(env: NodeJS.ProcessEnv = process.env): DaemonIdentity | undefined {
+  const identity = env[RESTART_DAEMON_ENV];
+  delete env[RESTART_DAEMON_ENV];
+  if (identity === undefined) return;
+  try { return parseSchema(DaemonIdentitySchema, JSON.parse(identity)); }
+  catch { throw new Error('Invalid daemon restart handoff.'); }
+}
+
 /** Replaces this client process with a fresh one that resumes the session; platforms without execve use a supervising parent. */
 export async function restartFelanProcess(options: RestartProcessOptions): Promise<never> {
   const handoff: RestartHandoff = { type: 'felan-restart', ...(options.sessionId ? { sessionId: options.sessionId } : {}),
-    cwd: options.cwd, restartArgs: [...(options.restartArgs ?? [])] };
+    cwd: options.cwd, restartArgs: [...(options.restartArgs ?? [])],
+    ...(options.replacing ? { replacing: parseSchema(DaemonIdentitySchema, options.replacing) } : {}) };
   const env = options.env ?? process.env;
   const execve = options.execve ?? process.execve;
   if ((options.platform ?? process.platform) !== 'win32' && execve !== undefined) {
     const previousCwd = process.cwd();
     try {
       process.chdir(handoff.cwd);
-      return execve(process.execPath, [process.execPath, ...nodeArguments(handoff)], env);
+      return execve(process.execPath, [process.execPath, ...nodeArguments(handoff)], restartEnvironment(handoff, env));
     } catch (error) {
       process.chdir(previousCwd);
       throw error;
@@ -67,10 +80,17 @@ function nodeArguments(handoff: RestartHandoff): string[] {
   return [entrypoint, ...handoff.restartArgs, ...(handoff.sessionId ? ['--session', handoff.sessionId] : [])];
 }
 
+function restartEnvironment(handoff: RestartHandoff, env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result = { ...env };
+  delete result[RESTART_DAEMON_ENV];
+  if (handoff.replacing) result[RESTART_DAEMON_ENV] = JSON.stringify(handoff.replacing);
+  return result;
+}
+
 async function runRestartWorker(spawnProcess: typeof spawn, handoff: RestartHandoff, env: NodeJS.ProcessEnv):
   Promise<{ readonly code: number | null; readonly handoff?: RestartHandoff }> {
   const child = spawnProcess(process.execPath, nodeArguments(handoff), {
-    cwd: handoff.cwd, env: { ...env, [RESTART_WORKER_ENV]: '1' }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: false,
+    cwd: handoff.cwd, env: { ...restartEnvironment(handoff, env), [RESTART_WORKER_ENV]: '1' }, stdio: ['inherit', 'inherit', 'inherit', 'ipc'], windowsHide: false,
   });
   let requested: RestartHandoff | undefined;
   child.on('message', (message: unknown) => { if (isRestartHandoff(message)) requested = message; });
@@ -81,6 +101,10 @@ async function runRestartWorker(spawnProcess: typeof spawn, handoff: RestartHand
 function isRestartHandoff(value: unknown): value is RestartHandoff {
   if (typeof value !== 'object' || value === null) return false;
   const handoff = value as Partial<RestartHandoff>;
+  if (handoff.replacing !== undefined) {
+    try { parseSchema(DaemonIdentitySchema, handoff.replacing); }
+    catch { return false; }
+  }
   return handoff.type === 'felan-restart'
     && (handoff.sessionId === undefined || typeof handoff.sessionId === 'string')
     && typeof handoff.cwd === 'string'

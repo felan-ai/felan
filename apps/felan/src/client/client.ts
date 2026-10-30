@@ -59,6 +59,13 @@ export interface SessionClientOptions {
   /** Receives connection and attachment transitions for troubleshooting; must not throw. */
   diagnostics?: (event: ClientDiagnostic) => void;
 }
+export interface DaemonBuildMismatch {
+  readonly daemonVersion: string;
+  readonly expectedDaemonVersion?: string;
+  readonly composition?: Readonly<NonNullable<OperationResult<'hello'>['composition']>>;
+  readonly expectedComposition?: Readonly<NonNullable<SessionClientOptions['expectedComposition']>>;
+  readonly activeWork?: number;
+}
 interface Pending {
   envelope: ClientEnvelope;
   payload: string;
@@ -107,12 +114,14 @@ export class SessionClient {
   private verifying: DaemonIdentity | undefined;
   private replacing: DaemonIdentity | undefined;
   private mismatchedWork: number | undefined;
+  private mismatchedBuild: DaemonBuildMismatch | undefined;
   private negotiated: OperationResult<'hello'> | undefined;
   private connectionState: 'disconnected' | 'connecting' | 'ready' | 'incompatible' | 'blocked' | 'closed' = 'disconnected';
 
   constructor(private readonly options: SessionClientOptions) {
     this.options = { ...options, target: structuredClone(options.target),
       ...(options.launch ? { launch: structuredClone(options.launch) } : {}),
+      ...(options.expectedComposition ? { expectedComposition: structuredClone(options.expectedComposition) } : {}),
       interactionKinds: [...(options.interactionKinds ?? [])], capabilities: [...(options.capabilities ?? [])] };
     this.target = resolveDaemonTarget(options.target);
     if (options.expectedDaemonVersion !== undefined && (!options.expectedDaemonVersion || Buffer.byteLength(options.expectedDaemonVersion) > 128)) throw new Error('Invalid expected daemon version.');
@@ -135,6 +144,7 @@ export class SessionClient {
   get capabilities() { return this.negotiated && structuredClone(this.negotiated); }
   /** Active work on an incompatible daemon, when it could report it; restarting it would interrupt that work. */
   get incompatibleActiveWork(): number | undefined { return this.connectionState === 'incompatible' ? this.mismatchedWork : undefined; }
+  get buildMismatch(): DaemonBuildMismatch | undefined { return this.connectionState === 'ready' ? structuredClone(this.mismatchedBuild) : undefined; }
   getInteractions(options: { includeSessions?: boolean } = {}): readonly Interaction[] {
     const items = new Map(this.interactionNotifications);
     if (options.includeSessions) for (const attachment of this.attachments.values()) {
@@ -208,9 +218,10 @@ export class SessionClient {
     return this.connecting;
   }
 
-  /** An idle daemon from another installation is replaced transparently; one with active work stays incompatible so the caller can ask. */
+  /** Only a fresh launch-capable client replaces an idle compatible build; established clients must not bounce a newer daemon. */
   private async open(launch: boolean): Promise<OperationResult<'hello'>> {
-    try { return await this.openOnce(launch); }
+    const replaceIdleBuild = !this.established && launch && !!this.options.launch && !this.options.expected;
+    try { return await this.openOnce(launch, replaceIdleBuild); }
     catch (error) {
       if (!launch || this.closed || this.connectionState !== 'incompatible' || this.mismatchedWork !== 0 || !this.options.launch || this.options.expected) throw error;
       const identity = this.pinned!;
@@ -218,12 +229,12 @@ export class SessionClient {
       if (response.outcome !== 'accepted') throw new Error('The running daemon did not accept a restart.');
       await waitForDaemonStop(this, this.lifetime.signal);
       this.pinned = undefined; this.replacing = identity;
-      return this.openOnce(launch);
+      return this.openOnce(launch, false);
     }
   }
 
-  private async openOnce(launch: boolean): Promise<OperationResult<'hello'>> {
-    this.queuedInteractions = []; this.queuedInteractionBytes = 0; this.mismatchedWork = undefined;
+  private async openOnce(launch: boolean, replaceIdleBuild: boolean): Promise<OperationResult<'hello'>> {
+    this.queuedInteractions = []; this.queuedInteractionBytes = 0; this.mismatchedWork = undefined; this.mismatchedBuild = undefined;
     // Only an explicit expected identity or this attempt's launch receipt pins the instance; an unpinned client follows daemon restarts.
     this.verifying = this.options.expected && structuredClone(this.options.expected);
     this.connectionState = 'connecting'; this.negotiated = undefined; this.emit();
@@ -262,14 +273,24 @@ export class SessionClient {
       const result = hello.result;
       assertTargetIdentity(this.target, this.verifying ?? result.identity, result.identity);
       this.pinned = structuredClone(result.identity);
+      const expectedComposition = this.options.expectedComposition;
       const versionDiffers = !!this.options.expectedDaemonVersion && result.daemonVersion !== this.options.expectedDaemonVersion;
-      if (versionDiffers || this.options.expectedComposition && (this.options.expectedComposition.managerPackage !== result.composition?.managerPackage
-        || this.options.expectedComposition.managerVersion !== result.composition?.managerVersion
-        || this.options.expectedComposition.providerDigest !== result.composition?.providerDigest)) {
-        this.mismatchedWork = await this.activeWork(result.operations);
-        this.connectionState = 'incompatible';
-        throw new Error(versionDiffers ? 'Daemon version differs from the installed package; restart it to continue.'
-          : 'Daemon provider configuration differs from the selected configuration; restart it to continue.');
+      const buildDiffers = versionDiffers || expectedComposition && (expectedComposition.managerPackage !== result.composition?.managerPackage
+        || expectedComposition.managerVersion !== result.composition?.managerVersion
+        || expectedComposition.providerDigest !== result.composition?.providerDigest);
+      if (buildDiffers) {
+        const work = await this.activeWork(result.operations);
+        if (this.closed || epoch !== this.epoch) throw new Error('Connection was superseded');
+        if (versionDiffers && replaceIdleBuild && work === 0) {
+          this.mismatchedWork = work;
+          this.connectionState = 'incompatible';
+          throw new Error('Daemon version differs from the installed package; restart it to continue.');
+        }
+        this.mismatchedBuild = { daemonVersion: result.daemonVersion,
+          ...(this.options.expectedDaemonVersion ? { expectedDaemonVersion: this.options.expectedDaemonVersion } : {}),
+          ...(result.composition ? { composition: structuredClone(result.composition) } : {}),
+          ...(expectedComposition ? { expectedComposition: structuredClone(expectedComposition) } : {}),
+          ...(work === undefined ? {} : { activeWork: work }) };
       }
       this.negotiated = structuredClone(result);
       for (const interaction of this.queuedInteractions) this.acceptInteraction(interaction);
@@ -285,6 +306,7 @@ export class SessionClient {
       this.emit();
       return structuredClone(result);
     } catch (error) {
+      this.mismatchedBuild = undefined;
       this.diagnose({ event: 'connection.failed', error: diagnosticText(error) });
       const status = this.connectionState as string;
       // An established client that will retry stays disconnected so observers do not treat a daemon restart as fatal.
@@ -581,6 +603,7 @@ export class SessionClient {
     if (this.closed) return;
     this.diagnose({ event: 'connection.lost', reason, ...(error === undefined ? {} : { error: diagnosticText(error) }) });
     const wasReady = this.connectionState === 'ready';
+    this.mismatchedBuild = undefined;
     ++this.epoch; const transport = this.transport; this.transport = undefined; transport?.close();
     this.connectionState = reason === 'invalid_frame' ? 'blocked' : 'disconnected';
     this.interactionNotifications.clear();
@@ -653,6 +676,7 @@ export class SessionClient {
 
   close(): void {
     this.closed = true; this.connectionState = 'closed'; ++this.epoch;
+    this.mismatchedBuild = undefined;
     this.lifetime.abort();
     this.interactionNotifications.clear();
     this.presentationSequences.clear(); this.presentationListeners.clear();

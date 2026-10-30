@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import type { SessionClient, SessionClientOptions } from '../src/client/client.js';
 import { clientDaemonTarget, resumeCommand, runDaemonFelan } from '../src/client-application.js';
 import { resolveInstalledDaemonEntrypoint } from '../src/daemon-entrypoint.js';
+import { snapshot } from './client-fixtures.js';
+import type { RestartProcessOptions } from '../src/process-restart.js';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -41,20 +43,26 @@ it('restarts the daemon in place and reconnects the same terminal with the previ
   expect(notices).toEqual(['Daemon restarting…', 'Daemon restarted']); expect(close).toHaveBeenCalledOnce();
 });
 
-it('restarts the daemon in place for /restart, then re-executes the client on the same session with its launch options', async () => {
+it('re-executes /restart after verified shutdown without reconnecting the old client to the new build', async () => {
   const oldIdentity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
   const order: string[] = [];
   const control = vi.fn(async (op: string) => { order.push(op); return { outcome: 'accepted' }; });
-  const connect = vi.fn(async () => { order.push('connect'); return {}; });
+  const connect = vi.fn(async () => { throw new Error('Daemon version differs from the installed package; restart it to continue.'); });
   const close = vi.fn(() => { order.push('close'); });
   const createClient = vi.fn((_options: SessionClientOptions) => ({ subscribe: () => () => {}, close, control, connect, identity: oldIdentity }) as unknown as SessionClient);
   const waitForStop = vi.fn(async () => { order.push('stopped'); });
-  const restartProcess = vi.fn(async (_options: { sessionId?: string; cwd: string; restartArgs?: readonly string[] }) => { order.push('exec'); return undefined as never; });
+  const restartProcess = vi.fn(async (_options: RestartProcessOptions) => { order.push('exec'); return undefined as never; });
   await runDaemonFelan({ cwd: '/workspace', agentDir: '/agent', sessionId: 'keep-session', restartArgs: ['--verbose'] }, { createClient, waitForStop, restartProcess,
-    runTerminal: async (_controller, options) => { expect(await options.onDaemonAction!('relaunch', false, '')).toBe(true); } });
-  expect(order).toEqual(['host.restart', 'stopped', 'connect', 'close', 'exec']);
-  expect(connect).toHaveBeenCalledExactlyOnceWith({ replacing: oldIdentity });
-  expect(restartProcess).toHaveBeenCalledExactlyOnceWith({ sessionId: 'keep-session', cwd: '/workspace', restartArgs: ['--verbose'] });
+    runTerminal: async (controller, options) => {
+      vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('current-session');
+      const current = vi.spyOn(controller, 'snapshot', 'get').mockReturnValue({ ...snapshot(), cwd: '/current-workspace' });
+      waitForStop.mockImplementationOnce(async () => { order.push('stopped'); current.mockReturnValue(undefined); });
+      expect(await options.onDaemonAction!('relaunch', false, '')).toBe(true);
+    } });
+  expect(order).toEqual(['host.restart', 'stopped', 'close', 'exec']);
+  expect(connect).not.toHaveBeenCalled();
+  expect(restartProcess).toHaveBeenCalledOnce();
+  expect(restartProcess.mock.calls[0]![0]).toEqual({ sessionId: 'current-session', cwd: '/current-workspace', restartArgs: ['--verbose'], replacing: oldIdentity });
   expect(createClient).toHaveBeenCalledOnce();
 });
 
@@ -65,6 +73,52 @@ it('keeps /daemon restart daemon-only without re-executing the client', async ()
   await runDaemonFelan({ agentDir: '/agent', sessionId: 'keep-session' }, { createClient, waitForStop: async () => {}, restartProcess,
     runTerminal: async (_controller, options) => { expect(await options.onDaemonAction!('restart', false, '')).toBe(false); } });
   expect(restartProcess).not.toHaveBeenCalled();
+});
+
+it.each([false, true])('preserves the requested force mode before relaunch (%s)', async force => {
+  const identity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
+  const control = vi.fn(async () => ({ outcome: 'accepted' }));
+  const client = { subscribe: () => () => {}, close() {}, identity, control } as unknown as SessionClient;
+  const restartProcess = vi.fn(async (_options: RestartProcessOptions) => undefined as never);
+  const waitForStop = vi.fn(async () => {});
+  await runDaemonFelan({ agentDir: '/agent', cwd: '/workspace' }, { createClient: () => client, waitForStop, restartProcess,
+    runTerminal: async (_controller, options) => { expect(await options.onDaemonAction!('relaunch', force, '')).toBe(true); } });
+  expect(control).toHaveBeenCalledExactlyOnceWith('host.restart', force ? 'force' : 'drain');
+  expect(waitForStop).toHaveBeenCalledExactlyOnceWith(client, undefined, { client: 'tui', action: 'restart' });
+  expect(restartProcess).toHaveBeenCalledOnce();
+  expect(restartProcess.mock.calls[0]![0]).toEqual({ cwd: '/workspace', replacing: identity });
+});
+
+it('consumes the validated restart identity once and gives the fresh launcher its replacement ownership', async () => {
+  const identity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
+  vi.stubEnv('FELAN_RESTART_DAEMON', JSON.stringify(identity));
+  const client = { subscribe: () => () => {}, close() {} } as unknown as SessionClient;
+  const createClient = vi.fn((_options: SessionClientOptions) => client);
+  await runDaemonFelan({ agentDir: '/agent' }, { createClient, runTerminal: async () => {} });
+  expect(createClient.mock.calls[0]?.[0].launch?.replacing).toEqual(identity);
+  expect(process.env.FELAN_RESTART_DAEMON).toBeUndefined();
+  await runDaemonFelan({ agentDir: '/agent' }, { createClient, runTerminal: async () => {} });
+  expect(createClient.mock.calls[1]?.[0].launch?.replacing).toBeUndefined();
+});
+
+it.each(['not json', '{"instanceId":"old"}'])('rejects an invalid restart handoff before creating a client: %s', async handoff => {
+  vi.stubEnv('FELAN_RESTART_DAEMON', handoff);
+  const createClient = vi.fn();
+  await expect(runDaemonFelan({}, { createClient })).rejects.toThrow('Invalid daemon restart handoff.');
+  expect(createClient).not.toHaveBeenCalled(); expect(process.env.FELAN_RESTART_DAEMON).toBeUndefined();
+});
+
+it.each(['rejected', 'shutdown failed'] as const)('never relaunches when daemon control is unsafe: %s', async failure => {
+  const identity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
+  const control = vi.fn(async () => ({ outcome: failure === 'rejected' ? 'rejected' : 'accepted' }));
+  const client = { subscribe: () => () => {}, close() {}, identity, control } as unknown as SessionClient;
+  const waitForStop = vi.fn(async () => { throw new Error('shutdown failed'); });
+  const restartProcess = vi.fn(async () => undefined as never);
+  await expect(runDaemonFelan({ agentDir: '/agent' }, { createClient: () => client, waitForStop, restartProcess,
+    runTerminal: async (_controller, options) => { await options.onDaemonAction!('relaunch', false, ''); },
+  })).rejects.toThrow(failure === 'rejected' ? 'Daemon control was not accepted' : failure);
+  expect(restartProcess).not.toHaveBeenCalled();
+  if (failure === 'rejected') expect(waitForStop).not.toHaveBeenCalled();
 });
 
 it('preserves unsubmitted startup input when version consent happens before attachment', async () => {
