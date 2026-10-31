@@ -4,7 +4,7 @@ A local, synthetic performance suite. It never reads existing sessions or connec
 
 ## Run
 
-Prerequisites: Node **22.20.0**, pnpm **9.15.5**, Python 3, and a POSIX system with `ps`, Unix sockets and PTYs (macOS/Linux).
+Prerequisites: Node **22.23.4**, pnpm **9.15.5**, Python 3, and a POSIX system with `ps`, Unix sockets and PTYs (macOS/Linux).
 
 ```sh
 pnpm install

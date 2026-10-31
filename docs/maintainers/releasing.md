@@ -27,7 +27,7 @@ workflow stores no npm credential.
 2. Add new public packages to `scripts/package-paths.mjs`, their consuming
    workspace manifests, the lockfile, packed-runtime coverage, license checks,
    and relevant notices.
-3. Run the release gates on Node.js 22.20.0 and pnpm 9.15.5:
+3. Run the release gates on Node.js 22.23.4 and pnpm 9.15.5:
 
    ```sh
    pnpm check:licenses

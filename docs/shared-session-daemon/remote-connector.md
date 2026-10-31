@@ -440,7 +440,7 @@ sessions before retrying commands.
 
 ## Local development and testing
 
-Use Node.js `22.20.0` and pnpm `9.15.5`. Run daemon and client tests through
+Use Node.js `22.23.4` and pnpm `9.15.5`. Run daemon and client tests through
 `scripts/test-isolated.sh`; it isolates HOME, agent directories and temporary
 paths. For example, from the repository root:
 

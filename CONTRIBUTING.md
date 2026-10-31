@@ -2,8 +2,8 @@
 
 ## Setup
 
-Use Node.js 22.20.0 and pnpm 9.15.5. Felan packages support Node.js 22.19.0
-or newer, but the repository toolchain is pinned to 22.20.0.
+Use Node.js 22.23.4 and pnpm 9.15.5. Felan packages support Node.js 22.19.0
+or newer, but the repository toolchain is pinned to 22.23.4.
 
 ```sh
 corepack enable

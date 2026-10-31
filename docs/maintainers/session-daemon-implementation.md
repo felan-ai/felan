@@ -3,7 +3,7 @@
 Historical pre-services handoff. The services migration supersedes the profile
 and presenter seams below; see [ADR 0036](../decisions/0036-configure-extension-services-through-trusted-providers.md)
 and [the current guide](extension-services-and-ui.md). This document retains
-the original rationale, not current release acceptance. Node `22.20.0` and
+the original rationale, not current release acceptance. Node `22.23.4` and
 pnpm `9.15.5` remain the release toolchain.
 
 The approved source is [shared-session-daemon/design.html](../../../felan-platform/docs/architecture/shared-session-daemon/design.html),

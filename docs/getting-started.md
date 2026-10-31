@@ -10,7 +10,7 @@ an existing project. No Felan account is required.
 - macOS, Linux, or another environment supported by Felan Code's Node.js and Pi
   dependencies
 
-Repository development and CI use Node.js 22.20.0 and pnpm 9.15.5. The pinned
+Repository development and CI use Node.js 22.23.4 and pnpm 9.15.5. The pinned
 development version is not the minimum supported runtime version.
 
 ## Install or run directly

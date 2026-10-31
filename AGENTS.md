@@ -1,6 +1,6 @@
 # Felan
 
-- Use Node.js 22.20.0 and pnpm 9.15.5. This is a strict ESM TypeScript workspace with packages under `apps/*` and `packages/*`.
+- Use Node.js 22.23.4 and pnpm 9.15.5. This is a strict ESM TypeScript workspace with packages under `apps/*` and `packages/*`.
 - `apps/felan` owns CLI/TUI, ACP, headless clients, client-local themes, local service providers and the default `host.json`; `apps/daemon` owns admission, canonical session/process lifetime, persistence and interaction arbitration. Local providers implement credentials, settings and host behavior without moving those responsibilities into clients. The daemon never depends on Felan or extension implementations. Ownership flows through `ext-*` (feature behavior) to `agent-core` (portable contracts and base composition).
 - Keep runtime contracts adapter-neutral and route host I/O through `AgentRuntime` or the extension API unless a scoped `AGENTS.md` names an intentional exception.
 - Keep pinned `@earendil-works/pi-*` versions aligned; `agent-core/src/index.ts` is the shared Pi composition surface.

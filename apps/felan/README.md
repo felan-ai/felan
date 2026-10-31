@@ -63,7 +63,7 @@ are unchanged; the model API identifier `azure-openai-responses` is also still
 used by Azure model definitions.
 
 Felan Code supports Node.js 22.19.0 or newer. Repository development and CI use
-Node.js 22.20.0 with pnpm 9.15.5.
+Node.js 22.23.4 with pnpm 9.15.5.
 
 ```sh
 felan

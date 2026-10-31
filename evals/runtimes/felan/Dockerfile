@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:22.20.0-trixie-slim@sha256:f3bca16c4b87ad0c7abfad97f6803898ee9b08a1f153a269140f0a08f50231d2
+FROM node:22.23.4-trixie-slim@sha256:2117f713a417f3aff682ac8f5bc2ebbdf1beed51f36e67ab1e0fd3866b6d2d8f
 
 ARG PNPM_VERSION=9.15.5
 ARG RTK_VERSION=0.45.0

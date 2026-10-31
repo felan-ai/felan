@@ -253,7 +253,7 @@ The [documentation hub](docs/README.md) routes readers by audience:
 
 ## Develop from source
 
-Repository development and CI use Node.js 22.20.0 and pnpm 9.15.5:
+Repository development and CI use Node.js 22.23.4 and pnpm 9.15.5:
 
 ```sh
 git clone https://github.com/felan-ai/felan.git

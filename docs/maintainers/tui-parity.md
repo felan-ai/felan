@@ -23,7 +23,7 @@ Isolated daemon targets still create coordinator lock files in `/private/tmp/fel
 
 ## How to run
 
-Prerequisites: Node.js 22.20.0, pnpm 9.15.5, tmux, installed 0.28.3 `felan`, and a completed workspace build. Build once before any run; nobody runs `pnpm build` or edits `dist` while runs are active. No additional npm dependencies are required.
+Prerequisites: Node.js 22.23.4, pnpm 9.15.5, tmux, installed 0.28.3 `felan`, and a completed workspace build. Build once before any run; nobody runs `pnpm build` or edits `dist` while runs are active. No additional npm dependencies are required.
 
 ```sh
 parity() {
