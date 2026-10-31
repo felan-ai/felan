@@ -50,6 +50,8 @@ it('renders a data-only agent with its real metadata and releases its subscripti
 it('preserves the selected transcript scroll position when a live projection arrives', () => {
   const data = projection();
   data.messages = Array.from({ length: 35 }, (_, index) => ({ role: 'user', content: `line-${index}`, timestamp: index }));
+  // The header shows elapsed running time, so a real clock can change it between the compared renders.
+  vi.useFakeTimers({ toFake: ['Date'] });
   const h = setup(record(data));
   try {
     const initial = h.view.render(100).slice(1, 8);
@@ -61,7 +63,7 @@ it('preserves the selected transcript scroll position when a live projection arr
     h.update(record(next));
     expect(h.view.render(100).slice(1, 8)).toEqual(before);
     expect(h.host.selectAgent).toHaveBeenCalledTimes(1);
-  } finally { h.view.dispose(); }
+  } finally { h.view.dispose(); vi.useRealTimers(); }
 });
 
 it('retains thinking toggles and live pending tools instead of inventing missing-result failures', () => {
