@@ -8,6 +8,7 @@ otherwise, paths below are relative to `$FELAN_AGENT_DIR`, which defaults to
 
 | Path | Purpose |
 | --- | --- |
+| `.env` | Optional `KEY=value` environment variables for the daemon, such as `FELAN_API_KEY`; they override variables inherited from the client that started the daemon and apply on the next daemon start |
 | `settings.json` | Local host configuration provider: built-in enablement, extension behavior, model scope, and subagent limits |
 | `tui/settings.json` | Client-owned theme, keybindings, and terminal display preferences |
 | `trust.json` | Remembered folder trust for optional project Pi extensions |
