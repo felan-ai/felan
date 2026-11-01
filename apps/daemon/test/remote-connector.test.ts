@@ -9,7 +9,7 @@ import { connectLocalIpc } from '../src/daemon/ipc.js';
 import { protocolTarget } from '../src/daemon/target.js';
 import { SessionServer } from '../src/daemon/server.js';
 import { TestHostConfiguration } from './fixtures/host-services.js';
-import { serverFixture, requestId, now } from './fixtures/server.js';
+import { serverFixture, startedSession, requestId, now } from './fixtures/server.js';
 import { offlineModel } from './fixtures/registry.js';
 import { FakePairing } from './fixtures/remote-pairing.js';
 import { RemoteStorageError } from '../src/remote/state.js';
@@ -76,6 +76,7 @@ class Platform implements ConnectorPlatform {
 
 async function fixture(options: { configured?: boolean; credential?: string; token?: Token; pairing?: FakePairing; platform?: Platform; connector?: Partial<RemoteConnectorOptions>; wired?: boolean } = {}) {
   const f = await serverFixture(); const clock = new Clock();
+  startedSession(f.root);
   const configuration = new TestHostConfiguration({ definitions: [], assertCurrent: () => f.registry.assertAdmission() });
   let connector!: RemoteConnector;
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'test', setupNeeds: () => connector?.setupNeeds() ?? [] });
@@ -155,7 +156,7 @@ describe('RemoteConnector publication', () => {
   });
 
   it('publishes at most one backlog batch before another session in each round-robin pass', async () => {
-    const f = await fixture(); const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+    const f = await fixture(); const other = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel }));
     const [backlog, live] = [f.id, other.sessionId].sort() as [string, string];
     f.connector.setShared(backlog, true); f.connector.setShared(live, true); await f.clock.tick(0); f.platform.publish.mockClear();
     f.connector.outbox.append(backlog, Array.from({ length: 1100 }, (_, index) => ({ rev: index + 1, occurredAt: now,
@@ -223,11 +224,11 @@ describe('RemoteConnector publication', () => {
     f.registry.projection(f.id).refresh();
     f.connector.setShared(f.id, true); f.change('after history'); await f.clock.tick();
     const events = f.platform.publications.flatMap(row => row.events);
-    const messages = events.filter(event => event.change.type === 'message.completed');
+    const messages = events.filter(event => event.change.type === 'message.completed').slice(1);
     expect(messages).toHaveLength(270); expect(messages.map(event => event.occurredAt)).toEqual(messages.map(event => event.change.type === 'message.completed' ? event.change.message.timestamp : 0));
     expect(messages.map(event => event.change.type === 'message.completed' ? event.change.message.content[0] : undefined)).toEqual(Array.from({ length: 270 }, (_, index) => ({ type: 'text', text: `message ${index}` })));
     expect(events.map(event => event.seq)).toEqual(events.map((_, index) => index + 1));
-    expect(events[270]!.change.type).toBe('model.updated'); expect(events.filter(event => event.change.type === 'metadata.updated').at(-1)!.change).toMatchObject({ title: 'after history' });
+    expect(events[271]!.change.type).toBe('model.updated'); expect(events.filter(event => event.change.type === 'metadata.updated').at(-1)!.change).toMatchObject({ title: 'after history' });
     expect(f.connector.outbox.pendingCount()).toBe(0); expect(f.connector.outbox.acked(f.id)).toBe(events.length);
     expect(f.connector.store.session(f.id)).toMatchObject({ backfilled: true, hostId: hostA });
     expect(f.platform.publications[0]!.session.directory).toBe('work');
@@ -236,6 +237,8 @@ describe('RemoteConnector publication', () => {
   it('captures first share-all observation without duplicating its message', async () => {
     const f = await fixture(); await f.connector.configure({ action: 'share', share: 'all' }); await f.clock.tick();
     const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+    await f.clock.tick();
+    expect(f.platform.publications.some(row => row.session.session === child.sessionId)).toBe(false);
     child.runtime.session.sessionManager.appendMessage({ role: 'user', content: [{ type: 'text', text: 'first' }], timestamp: now });
     f.registry.projection(child.sessionId).refresh(); await f.clock.tick();
     expect(f.platform.publications.flatMap(row => row.events).filter(event => event.session === child.sessionId && event.change.type === 'message.completed')).toHaveLength(1);
@@ -267,7 +270,7 @@ describe('RemoteConnector publication', () => {
 
   it('children follow their root and are unshared alongside it', async () => {
     const f = await fixture();
-    const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: f.id, rootSessionId: f.id, model: offlineModel });
+    const child = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: f.id, rootSessionId: f.id, model: offlineModel }));
     f.connector.setShared(child.sessionId, true); await f.clock.tick();
     expect(f.connector.isShared(f.id)).toBe(true); expect(f.connector.isShared(child.sessionId)).toBe(true);
     f.connector.setShared(f.id, false); await f.clock.tick();
@@ -365,7 +368,7 @@ describe('RemoteConnector publication', () => {
     const emit = (f.registry as unknown as { publish(value: TextStreamEvent): void }).publish.bind(f.registry);
     const event: TextStreamEvent = { v: 1, session: f.id, stream: { id: 'old-host', message: 'm', kind: 'text', offset: 0 }, text: 'hello ' };
     emit(event); expect(f.platform.realtime.sendText).not.toHaveBeenCalled();
-    const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+    const other = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel }));
     const publish = f.platform.publish.getMockImplementation()!; let release!: () => void;
     f.platform.publish.mockImplementationOnce(async (session, events) => {
       await new Promise<void>(resolve => { release = resolve; }); return publish(session, events);
@@ -952,7 +955,7 @@ it('returns a safe actionable status when reopening an unreadable outbox', async
 
 it.each(['invalid', 'sequence_gap'] as const)('isolates a poison %s publication until daemon restart, without starving another session', async kind => {
   const f = await fixture();
-  const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+  const other = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel }));
   const publish = f.platform.publish.getMockImplementation()!;
   f.platform.publish.mockImplementation(async (session, events) => {
     if (session.session === f.id) throw new PlatformError(kind, pat);
@@ -1047,7 +1050,7 @@ describe('re-review regressions', () => {
   it('quarantines a non-PT check violation without reconnecting or starving sessions and commands (P1)', async () => {
     const connect = vi.fn(async (source: ConnectorTokenSource) => { await source.token(); return platform; });
     const platform = new Platform(); const f = await fixture({ platform, connector: { connect } });
-    const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+    const other = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel }));
     const publish = platform.publish.getMockImplementation()!;
     platform.publish.mockImplementation(async (session, events) => {
       if (session.session === f.id) throw parsePlatformError({ code: '23514', message: pat }, 400);
@@ -1112,7 +1115,7 @@ describe('re-review regressions', () => {
     const platform = new Platform();
     const connect = vi.fn(async (source: ConnectorTokenSource) => { await source.token(); return platform; });
     const f = await fixture({ platform, connector: { connect } });
-    const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+    const other = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel }));
     f.connector.setShared(f.id, true); f.connector.setShared(other.sessionId, true); await f.clock.tick();
     const insert = f.store.database.insertOutbox.bind(f.store.database);
     vi.spyOn(f.store.database, 'insertOutbox').mockImplementation((session, seq, bytes, data) => {
@@ -1219,7 +1222,7 @@ it('unshares a locally deleted session after an unacknowledged first upload befo
 });
 
 it('isolates a corrupt durable session while publishing another session after restart', async () => {
-  const f = await fixture(); const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+  const f = await fixture(); const other = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel }));
   f.connector.setShared(f.id, true); f.connector.setShared(other.sessionId, true); await f.clock.tick();
   f.change('corrupt pending');
   f.registry.projection(other.sessionId).publish({ type: 'metadata.updated', title: 'intact backlog', state: 'open', residency: 'warm' });
@@ -1241,7 +1244,7 @@ it('counts an oversized buffered change not covered by the initial snapshot once
   });
   await f.clock.tick();
   expect(f.connector.store.session(f.id)?.skippedChanges).toBe(1);
-  expect(f.platform.publications.flatMap(row => row.events).filter(event => event.change.type === 'message.completed')).toEqual([]);
+  expect(f.platform.publications.flatMap(row => row.events).filter(event => event.change.type === "message.completed" && event.change.message.id === "large-buffered")).toEqual([]);
 });
 
 

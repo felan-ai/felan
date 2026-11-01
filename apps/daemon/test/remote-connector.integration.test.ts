@@ -14,7 +14,7 @@ import { RemoteStore } from '../src/remote/state.js';
 import { HostTokenExchangeError } from '../src/remote/token.js';
 import { TestHostConfiguration } from './fixtures/host-services.js';
 import { offlineModel } from './fixtures/registry.js';
-import { gate, serverFixture } from './fixtures/server.js';
+import { gate, serverFixture, startedSession } from './fixtures/server.js';
 import { SupabaseFixtures, assertDatabase, probeSupabase, uuidV7, waitFor } from './support/remote-supabase.js';
 
 const probe = await probeSupabase();
@@ -38,6 +38,7 @@ async function fixture() {
   const account = await fixtures.owner();
   const host = account.hosts[0];
   const f = await serverFixture({ now: Date.now });
+  startedSession(f.root);
   cleanups.push(() => f.dispose());
   let connector!: RemoteConnector;
   const configuration = new TestHostConfiguration({ definitions: [], assertCurrent: () => f.registry.assertAdmission() });
@@ -177,7 +178,7 @@ describe.skipIf(!probe.environment)(`real RemoteConnector against shared Supabas
     f.registry.projection(f.id).refresh();
     await f.share();
     const backfill = await f.events();
-    expect(backfill.filter(event => event.change.type === 'message.completed').map(event => event.change.type === 'message.completed' && event.change.message.content))
+    expect(backfill.filter(event => event.change.type === 'message.completed').map(event => event.change.type === 'message.completed' && event.change.message.content).slice(1))
       .toEqual([0, 1, 2].map(i => [{ type: 'text', text: `history ${i}` }]));
     f.change('live one'); f.change('live two');
     await waitFor(() => f.connector.outbox.pendingCount() === 0, 'live publication acknowledgement');
@@ -223,7 +224,7 @@ describe.skipIf(!probe.environment)(`real RemoteConnector against shared Supabas
 
   it('tombstones terminally drop only the deleted session outbox while another session continues', async () => {
     const f = await fixture(); await f.share();
-    const other = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+    const other = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel }));
     await f.share(other.sessionId);
     const before = await f.events();
     assertDatabase(await f.fixtures.environment.admin.from('session_tombstones').insert({ team_id: f.account.teamId, session_id: f.id, reason: 'user' }), 'tombstone published session');

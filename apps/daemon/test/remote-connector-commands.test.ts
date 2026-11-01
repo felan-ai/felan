@@ -7,7 +7,7 @@ import { RemoteCommandJournal } from '../src/remote/command-journal.js';
 import { PlatformError, parsePlatformError, type ClaimedCommand } from '../src/remote/platform.js';
 import { HostTokenExchangeError, type HostTokenInfo } from '../src/remote/token.js';
 import type { RemoteClock, TimerHandle } from '../src/remote/backoff.js';
-import { serverFixture, requestId, now } from './fixtures/server.js';
+import { serverFixture, startedSession, requestId, now } from './fixtures/server.js';
 import { FakePairing } from './fixtures/remote-pairing.js';
 
 const host = '019a0000-0000-7000-8000-000000000001';
@@ -35,6 +35,7 @@ class Clock implements RemoteClock {
 async function fixture(overrides: Partial<RemoteConnectorOptions> = {}, recovery = false,
   tokenHost: HostTokenInfo['host'] = { id: host, teamId: user, userId: user }) {
   const f = await serverFixture(); const clock = new Clock();
+  startedSession(f.root);
   if (recovery) Object.defineProperty(f.store.database, 'rebuilt', { configurable: true, get: () => true });
   const info: HostTokenInfo = { expiresAt: now + 100_000, refreshAt: now + 90_000,
     host: tokenHost, supabase: { url: 'https://db.example.test', publishableKey: 'public' } };

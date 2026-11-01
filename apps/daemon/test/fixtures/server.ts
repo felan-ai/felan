@@ -17,6 +17,11 @@ import { canonicalProspectivePath, identityFor, resolveDaemonTarget } from '../.
 import { assistant, now, offlineModel } from './registry.js';
 
 export { now, requestId } from './registry.js';
+// Remote publication waits for the first prompt, so connector fixtures seed one.
+export function startedSession<T extends { runtime: { session: { sessionManager: { appendMessage(message: never): unknown } } } }>(session: T): T {
+  session.runtime.session.sessionManager.appendMessage({ role: 'user', content: [{ type: 'text', text: 'start' }], timestamp: now } as never);
+  return session;
+}
 export function gate() {
   let resolve!: () => void;
   const promise = new Promise<void>(done => { resolve = done; });

@@ -684,6 +684,8 @@ export class RemoteConnector {
     this.backfilling.add(session);
     try {
       const projection = this.options.registry.projection(session); const snapshot = projection.snapshot();
+      // Clients open a session before the first prompt; buffered changes retry backfill once it starts.
+      if (record.origin !== 'web' && !snapshot.history.entries.length && !snapshot.queue.length && snapshot.run.state === 'idle') return;
       const revision = Math.max(1, snapshot.revision);
       const pages = [snapshot.history];
       while (pages.at(-1)!.cursor) pages.push(projection.history(pages.at(-1)!.cursor, snapshot.revision));
