@@ -103,6 +103,42 @@ describe('remote publication content', () => {
       expect(parsePublishedSession(value)).toEqual(value);
     }
   });
+  it('publishes loaded skills with project- or home-relative paths and redacted descriptions', () => {
+    const base = { session, cwd: '/home/agent/work/felan', title: 'T', state: 'open' as const, run: { state: 'idle' as const }, shared: true, home: '/home/agent' };
+    const value = publishedSession({ ...base, skills: [
+      { name: 'felan', description: 'Delegate work.', filePath: '/home/agent/work/felan/.agents/skills/felan/SKILL.md', scope: 'project' },
+      { name: 'linear', description: 'Use LINEAR_API_KEY=lin_api_secret123 here.', filePath: '/home/agent/.agents/skills/linear/SKILL.md', scope: 'user' },
+      { name: 'scratch', description: '日'.repeat(1000), filePath: '/tmp/run-1/skills/scratch/SKILL.md', scope: 'temporary' },
+      { name: 'sibling', description: '', filePath: '/home/agent/work/felan-other/SKILL.md', scope: 'user' },
+    ] });
+    expect(value.skills?.map(skill => skill.path)).toEqual(['.agents/skills/felan/SKILL.md', '~/.agents/skills/linear/SKILL.md', 'scratch/SKILL.md', '~/work/felan-other/SKILL.md']);
+    expect(value.skills?.map(skill => skill.scope)).toEqual(['project', 'user', 'temporary', 'user']);
+    expect(value.skills?.[1]?.description).not.toContain('lin_api_secret123');
+    expect(Buffer.byteLength(value.skills![2]!.description)).toBeLessThanOrEqual(1024); expect(value.skills![2]!.description).not.toContain('�');
+    expect(JSON.stringify(value.skills)).not.toContain('/home/agent');
+    const many = Array.from({ length: 300 }, (_, index) => ({ name: `s${index}`, description: '', filePath: `/home/agent/s${index}/SKILL.md`, scope: 'user' as const }));
+    expect(publishedSession({ ...base, skills: many }).skills).toHaveLength(256);
+    expect(publishedSession(base)).not.toHaveProperty('skills');
+  });
+  it('publishes only this session\'s processes, running first, with redacted commands and known exit codes', () => {
+    const base = { session, cwd: '/w', title: 'T', state: 'open' as const, run: { state: 'idle' as const }, shared: true };
+    const other = '01999999-2222-7222-8222-222222222222';
+    const process = (id: string, state: 'running' | 'exited' | 'missing' | 'interrupted', startedAt: number, extra: { exitCode?: number; session?: string; command?: string } = {}) => ({
+      id, session: extra.session ?? session, root: session, kind: 'detached' as const, state, command: extra.command ?? `run ${id}`, startedAt,
+      controllable: state === 'running', outputOffset: 99, ...(extra.exitCode === undefined ? {} : { exitCode: extra.exitCode }),
+    });
+    const value = publishedSession({ ...base, processes: [
+      process('old', 'exited', 1, { exitCode: 2 }), process('lost', 'missing', 3), process('live', 'running', 2, { command: `curl -H 'Authorization: Bearer abc.def' ${'x'.repeat(2000)}` }),
+      process('child', 'running', 4, { session: other }), process('gone', 'interrupted', 5),
+    ] });
+    expect(value.processes?.map(item => item.id)).toEqual(['live', 'gone', 'lost', 'old']);
+    expect(value.processes?.[3]).toEqual({ id: 'old', command: 'run old', kind: 'detached', state: 'exited', startedAt: 1, exitCode: 2 });
+    expect(value.processes?.[2]).not.toHaveProperty('exitCode');
+    expect(value.processes?.[0]?.command).not.toContain('abc.def'); expect(Buffer.byteLength(value.processes![0]!.command)).toBeLessThanOrEqual(1024);
+    expect(publishedSession({ ...base, processes: Array.from({ length: 300 }, (_, index) => process(`p${index}`, 'exited', index)) }).processes).toHaveLength(256);
+    expect(publishedSession({ ...base, processes: [] }).processes).toEqual([]);
+    expect(publishedSession(base)).not.toHaveProperty('processes');
+  });
   it('publishes channel origins with their provider and identities intact', () => {
     const origin = { kind: 'channel' as const, provider: 'slack', user: session, command: session };
     const change: KnownSessionChange = { type: 'run.updated', run: { state: 'running', id: 'run', origin } };

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JsonLineDecoder, encodeFrame, parsePublishedEvent, parsePublishedSession, type HostRegistration, type PublishedEvent, type PublishedSession, type RemoteCommandOutcome, type TextStreamEvent } from '@felan-ai/session-protocol';
+import { join } from 'node:path';
+import type { Process } from '@felan-ai/session-protocol';
 import { RemoteConnector, type ConnectorPlatform, type ConnectorTokenSource, type RemoteConnectorOptions } from '../src/remote/connector.js';
+import type { LoadedSkill, ProjectionOutput } from '../src/daemon/projection.js';
 import { HostTokenExchangeError, type HostTokenInfo } from '../src/remote/token.js';
 import { HostPairingFailure } from '../src/remote/pairing.js';
 import { PlatformError, parsePlatformError, type ClaimedCommand } from '../src/remote/platform.js';
@@ -352,6 +355,48 @@ describe('RemoteConnector publication', () => {
     const event: TextStreamEvent = { v: 1, session: f.id, stream: { id: 'restored', message: 'm', kind: 'text', offset: 0 }, text: 'hello ' };
     (f.registry as unknown as { publish(value: TextStreamEvent): void }).publish(event);
     expect(f.platform.publish).not.toHaveBeenCalled(); expect(f.platform.realtime.sendText).toHaveBeenCalledExactlyOnceWith(event);
+  });
+
+  it('republishes the row without events only when published skills or processes change', async () => {
+    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick(0);
+    const emit = (f.registry as unknown as { publish(value: ProjectionOutput): void }).publish.bind(f.registry);
+    const projection = f.registry.projection(f.id);
+    let skills: LoadedSkill[] = [{ name: 'review', description: 'Review code', filePath: join(f.cwd, '.agents/skills/review/SKILL.md'), scope: 'project' }];
+    vi.spyOn(projection, 'skills').mockImplementation(() => skills);
+    const view: Process = { id: 'p1', session: f.id, root: f.id, kind: 'detached', state: 'running', command: 'pnpm dev', startedAt: 1, controllable: true, outputOffset: 0 };
+    let processes = [view];
+    vi.spyOn(f.registry.processes, 'list').mockImplementation(() => processes);
+    const processChanged = () => emit({ v: 1, session: f.id, rev: 1, change: { type: 'process.updated', process: processes[0]! } });
+    const catalogChanged = () => emit({ v: 1, session: f.id, rev: 1, change: { type: 'catalog.updated', catalog: projection.catalog() } });
+    const last = () => f.platform.publish.mock.calls.at(-1)!;
+    const seq = f.connector.outbox.nextSeq(f.id); f.platform.publish.mockClear();
+
+    processChanged(); await f.clock.tick(0);
+    expect(f.platform.publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      skills: [{ name: 'review', description: 'Review code', path: '.agents/skills/review/SKILL.md', scope: 'project' }],
+      processes: [{ id: 'p1', command: 'pnpm dev', kind: 'detached', state: 'running', startedAt: 1 }],
+    }), []);
+    expect(f.connector.outbox.nextSeq(f.id)).toBe(seq);
+
+    processes = [{ ...view, outputOffset: 50 }]; processChanged(); catalogChanged(); await f.clock.tick(0);
+    expect(f.platform.publish).toHaveBeenCalledTimes(1);
+    processes = [{ ...view, state: 'exited', exitCode: 3, controllable: false }]; processChanged(); await f.clock.tick(0);
+    expect(f.platform.publish).toHaveBeenCalledTimes(2);
+    expect(last()[0].processes).toEqual([{ id: 'p1', command: 'pnpm dev', kind: 'detached', state: 'exited', startedAt: 1, exitCode: 3 }]);
+    skills = []; catalogChanged(); await f.clock.tick(0);
+    expect(f.platform.publish).toHaveBeenCalledTimes(3); expect(last()[0].skills).toEqual([]); expect(last()[1]).toEqual([]);
+
+    f.change('with events'); await f.clock.tick(0);
+    expect(last()[1]).toHaveLength(1); expect(last()[0]).toMatchObject({ skills: [], processes: [expect.objectContaining({ state: 'exited' })] });
+
+    const binding = vi.spyOn(f.registry, 'binding').mockReturnValue(undefined);
+    processes = [{ ...view, state: 'missing', controllable: false }]; processChanged(); await f.clock.tick(0);
+    expect(last()[0]).not.toHaveProperty('skills'); expect(last()[0].processes).toEqual([expect.objectContaining({ state: 'missing' })]);
+    binding.mockRestore();
+
+    f.connector.setShared(f.id, false); await f.clock.tick(0); f.platform.publish.mockClear();
+    processes = [{ ...view, state: 'interrupted', controllable: false }]; processChanged(); skills = [...skills]; catalogChanged(); await f.clock.tick(0);
+    expect(f.platform.publish).not.toHaveBeenCalled();
   });
 
   it('indexes legacy shared sessions with an acknowledged cursor but no successful-index marker once', async () => {

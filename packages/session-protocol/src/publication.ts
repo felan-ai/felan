@@ -31,11 +31,22 @@ export const PublishedEventSchema = Type.Object({
   schemaVersion: Type.Literal(ROW_SCHEMA_VERSION), session: UuidSchema, seq: SequenceSchema,
   rev: SequenceSchema, change: KnownSessionChangeSchema, occurredAt: CounterSchema,
 });
+// Paths are relative to the session directory or `~/`; hosts never publish absolute paths.
+export const PublishedSkillSchema = Type.Object({
+  name: NameSchema, description: text(1024), path: text(512, 1), scope: enumOf(['project', 'user', 'temporary'] as const),
+});
+export const PublishedProcessSchema = Type.Object({
+  id: IdSchema, command: text(1024), kind: enumOf(['foreground', 'detached', 'pty'] as const),
+  state: enumOf(['running', 'exited', 'missing', 'interrupted'] as const), startedAt: CounterSchema, exitCode: Type.Optional(Type.Integer()),
+});
+// An absent `skills` or `processes` means the host does not know the current value; the stored value stays.
 export const PublishedSessionSchema = Type.Object({
   schemaVersion: Type.Literal(ROW_SCHEMA_VERSION), session: UuidSchema, parent: Type.Optional(UuidSchema),
   directory: text(256), shared: Type.Boolean(), title: text(1024),
   state: enumOf(['open', 'closed'] as const), runState: enumOf(['idle', 'running', 'waiting', 'cancelling', 'interrupted'] as const),
   lastActivity: Type.Optional(CounterSchema),
+  skills: Type.Optional(Type.Array(PublishedSkillSchema, { maxItems: LIMITS.pageEntries })),
+  processes: Type.Optional(Type.Array(PublishedProcessSchema, { maxItems: LIMITS.pageEntries })),
 });
 export const HostProjectSchema = Type.Object({ id: IdSchema, name: text(256, 1), path: text(LIMITS.pathBytes, 1) });
 export const HostCapabilitiesSchema = Type.Object({
@@ -98,6 +109,8 @@ export const HostTokenClaimsSchema = Type.Object({
 
 export type PublishedEvent = Static<typeof PublishedEventSchema>;
 export type PublishedSession = Static<typeof PublishedSessionSchema>;
+export type PublishedSkill = Static<typeof PublishedSkillSchema>;
+export type PublishedProcess = Static<typeof PublishedProcessSchema>;
 export type HostProject = Static<typeof HostProjectSchema>;
 export type HostCapabilities = Static<typeof HostCapabilitiesSchema>;
 export type HostRegistration = Static<typeof HostRegistrationSchema>;
@@ -153,7 +166,11 @@ export function parsePublishedEvent(value: unknown): PublishedEvent {
 }
 
 export function parsePublishedSession(value: unknown): PublishedSession {
-  return parseSchema(PublishedSessionSchema, value);
+  const session = parseSchema(PublishedSessionSchema, value);
+  if (session.skills?.some(skill => /^(?:[/\\]|[A-Za-z]:)/.test(skill.path))) {
+    throw new ProtocolValidationError('invalid_request', 'Published skill path must be relative');
+  }
+  return session;
 }
 
 export function parseHostRegistration(value: unknown): HostRegistration {

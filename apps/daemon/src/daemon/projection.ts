@@ -17,6 +17,7 @@ import { boundMessage } from './message-bounds.js';
 
 export type ProjectionOutput = SessionEvent | TextStreamEvent;
 export type ProjectionExtras = Pick<SessionSnapshot, 'children' | 'processes' | 'interactions'>;
+export interface LoadedSkill { name: string; description: string; filePath: string; scope: 'user' | 'project' | 'temporary' }
 export interface ProjectionOptions {
   binding: SessionBinding;
   store: DaemonControlStore;
@@ -247,6 +248,11 @@ export class SessionProjection {
   }
 
   catalog(): SessionSnapshot['catalog'] { return this.refreshCatalog().value; }
+
+  /** Every skill the resource loader loaded, including those without an available `skill:` command. */
+  skills(): LoadedSkill[] {
+    return this.session.resourceLoader.getSkills().skills.map(skill => ({ name: skill.name, description: skill.description, filePath: skill.filePath, scope: skill.sourceInfo.scope }));
+  }
 
   snapshot(): SessionSnapshot {
     this.refresh();

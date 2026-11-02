@@ -17,7 +17,7 @@ import { retryDelay, schedule, systemClock, type RemoteClock, type TimerHandle }
 import { publicationBatches } from './batch.js';
 import { RemoteCommandJournal } from './command-journal.js';
 import { RemoteCommandExecutor, type RemoteHostIdentity } from './commands.js';
-import { publishableChange, publishedEvent, publishedSession } from './content.js';
+import { publishableChange, publishedEvent, publishedSession, type PublishedSessionInput } from './content.js';
 import { RemoteOutbox, RemoteOutboxCapacityError, type OutboxItem } from './outbox.js';
 import { PlatformClient, PlatformError } from './platform.js';
 import { sessionShared, setSessionSharing, webCreatedSession, type SharingInput } from './sharing.js';
@@ -112,6 +112,8 @@ export class RemoteConnector {
   private readonly buffered = new Map<string, { items: OutboxItem[]; bytes: number }>();
   private readonly reauthorizedPublications = new Set<string>();
   private readonly publicationGaps = new Map<string, { lastSeq: number; fastForwarded: boolean }>();
+  private readonly rowChanged = new Set<string>();
+  private readonly publishedResources = new Map<string, { skills?: string; processes?: string }>();
   private outboxErrorsWired = false;
   private readonly blocked = new Map<string, string>();
   private readonly recordingIssues = new Map<string, string>();
@@ -563,6 +565,8 @@ export class RemoteConnector {
       const stateChange = 'change' in event && (event.change.type === 'run.updated' || event.change.type === 'metadata.updated');
       if (stateChange && !this.stopped && (!this.configured || this.recordingBlocked.has(event.session))) this.markStateUnrecorded(event.session);
       if (this.stopped || !this.configured || !('change' in event) && (!this.platform || this.state !== 'connected')) return;
+      // Skills and processes are published as current values on the session row, never as events.
+      if ('change' in event && (event.change.type === 'catalog.updated' || event.change.type === 'process.updated')) { this.markRowChanged(event.session); return; }
       if ('change' in event && !isPublishedChangeType(event.change.type)) return;
       if (this.recordingBlocked.has(event.session)) return;
       const root = this.rootId(event.session);
@@ -728,8 +732,22 @@ export class RemoteConnector {
     this.text.discard(session); this.indexed.delete(session); this.rootIds.delete(session); this.buffered.delete(session);
     this.backfillIssues.delete(session); this.backfillRetryAt.delete(session);
     this.blocked.delete(session); this.recordingBlocked.delete(session); this.recordingIssues.delete(session); this.publicationGaps.delete(session);
+    this.rowChanged.delete(session); this.publishedResources.delete(session);
   }
 
+  private markRowChanged(session: string): void {
+    if (this.recordingBlocked.has(session)) return;
+    const root = this.rootId(session);
+    const sharing = root ? this.sharing(session, root) : undefined;
+    // Backfill publishes the row itself once it finishes.
+    if (!sharing || !sessionShared(sharing) || !sharing.record?.backfilled || this.backfilling.has(session)) return;
+    this.rowChanged.add(session); this.wakePublish();
+  }
+  private rowResources(session: string, root: string): Pick<PublishedSessionInput, 'skills' | 'processes'> {
+    const registry = this.options.registry;
+    // Only a live session has a resource loader; an absent `skills` keeps the published value.
+    return { processes: registry.processes.list(root), ...(registry.binding(session) ? { skills: registry.projection(session).skills() } : {}) };
+  }
   private wakePublish(): void {
     if (!this.platform || this.stopped) return;
     if (this.publishWork) { this.publishAgain = true; return; }
@@ -754,7 +772,7 @@ export class RemoteConnector {
           if (!(error instanceof RemoteStorageError || error instanceof RemoteIntegrityError)) throw error;
           this.recordingFailure('outbox', error);
         }
-        const ids = new Set([...pending, ...this.store.sessions().filter(id => {
+        const ids = new Set([...pending, ...this.rowChanged, ...this.store.sessions().filter(id => {
           const record = this.store.session(id);
           return record?.unsharedPending || record?.sharedPending || record?.backfilled && !this.indexed.has(id) && !record.terminal;
         })]);
@@ -764,6 +782,7 @@ export class RemoteConnector {
           if (this.blocked.has(id) && !record?.unsharedPending || record?.terminal) continue;
           try {
             if (await this.publishSession(platform, id)) this.publishAgain = true;
+            this.rowChanged.delete(id);
           } catch (error) {
             if (error instanceof RemoteStorageError || error instanceof RemoteIntegrityError) { this.recordingFailure(id, error); continue; }
             if (error instanceof PlatformError && error.kind === 'revoked' && error.httpStatus === 403) {
@@ -800,9 +819,15 @@ export class RemoteConnector {
       const shared = this.isShared(id);
       if (!shared && !record.unsharedPending) return false;
       const pending = shared ? this.outbox.pending(id) : [];
-      if (shared && !pending.length && !record.sharedPending && this.indexed.has(id)) { this.publicationGaps.delete(id); return false; }
       const currentRow = this.options.registry.list().find(row => row.id === id) ?? row;
-      const session = publishedSession({ ...currentRow, session: id, shared, lastActivity: currentRow.activityAt ?? currentRow.updatedAt });
+      const session = publishedSession({ ...currentRow, session: id, shared, lastActivity: currentRow.activityAt ?? currentRow.updatedAt,
+        ...(shared ? this.rowResources(id, currentRow.root) : {}) });
+      const previous = this.publishedResources.get(id);
+      const skills = session.skills ? JSON.stringify(session.skills) : previous?.skills;
+      const processes = session.processes ? JSON.stringify(session.processes) : previous?.processes;
+      const resources = { ...(skills === undefined ? {} : { skills }), ...(processes === undefined ? {} : { processes }) };
+      const resourcesChanged = resources.skills !== previous?.skills || resources.processes !== previous?.processes;
+      if (shared && !pending.length && !record.sharedPending && this.indexed.has(id) && !resourcesChanged) { this.publicationGaps.delete(id); return false; }
       const batch = publicationBatches(session, pending.map(entry => publishedEvent(id, entry)))[0]!;
       const host = this.host; const generation = this.generation;
       try {
@@ -820,6 +845,7 @@ export class RemoteConnector {
         if (next.hostId !== current.hostId || next.indexedHostId !== current.indexedHostId || next.unsharedPending !== current.unsharedPending || next.sharedPending !== current.sharedPending) this.store.setSession(id, next);
         if (host && this.host && host !== this.host) { this.terminate(id, 'forbidden'); return false; }
         this.indexed.add(id);
+        if (shared) this.publishedResources.set(id, resources);
         if (batch.length) this.outbox.acknowledge(id, acknowledged);
         this.publicationGaps.delete(id);
         return true;
@@ -851,7 +877,7 @@ export class RemoteConnector {
   }
   private terminate(session: string, terminal: 'deleted' | 'forbidden'): void {
     this.store.setSession(session, { ...this.record(session), terminal, unsharedPending: false }); this.outbox.drop(session);
-    this.indexed.delete(session); this.publicationGaps.delete(session);
+    this.indexed.delete(session); this.publicationGaps.delete(session); this.rowChanged.delete(session); this.publishedResources.delete(session);
   }
 
   private wakeClaims(): void {
@@ -941,7 +967,7 @@ export class RemoteConnector {
     }
   }
   private disconnect(): Promise<void> {
-    this.text.clear(); this.indexed.clear();
+    this.text.clear(); this.indexed.clear(); this.publishedResources.clear();
     this.unsubscribeCommands(); this.unsubscribeCommands = () => {};
     const platform = this.platform; this.platform = undefined;
     return platform ? platform.close().catch(() => {}) : Promise.resolve();

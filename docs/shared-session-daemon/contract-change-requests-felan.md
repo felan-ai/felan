@@ -625,6 +625,62 @@ and child sessions as well as other session modes. The separate built-in
 `piExtensions.llamaCpp` integration remains root-only and is unchanged.
 See [ADR 0043](../decisions/0043-apply-external-extension-settings-per-host.md).
 
+## 25. Loaded skills and background processes on the session row
+
+**What:** The web session side panel needs a session's loaded skills and its
+background processes. `catalog.updated` and `process.updated` are not in
+`PUBLISHED_CHANGE_TYPES`, and the web replays only a recent page of events, so a
+catalog sent at session start would be lost in long sessions.
+
+**Why:** The current value belongs on the `host_sessions` row, the same way the
+title and run state are published.
+
+**Proposed change:** `PublishedSessionSchema` gains two optional arrays, each at
+most `LIMITS.pageEntries` (256) items:
+
+- `skills`: `{ name, description, path, scope }`. `name` is at most 128 bytes,
+  `description` 1024 bytes and `path` 1 to 512 bytes. `scope` is `project`, `user`
+  or `temporary`. `path` is the skill file relative to the session directory
+  (`.agents/skills/x/SKILL.md`), relative to the host account's home with a `~/`
+  prefix (`~/.agents/skills/x/SKILL.md`), or otherwise only `<skill directory>/SKILL.md`.
+  `parsePublishedSession` rejects paths that start with `/`, `\` or a drive letter.
+- `processes`: `{ id, command, kind, state, startedAt, exitCode? }`. `command` is at
+  most 1024 bytes, `kind` is `foreground`, `detached` or `pty`, and `state` is
+  `running`, `exited`, `missing` or `interrupted`. `exitCode` is present only when
+  the host knows it. Output, offsets and controls are never published.
+
+An absent array means the host does not know the current value, so the platform
+should keep the stored column. An empty array means there are none. Store each
+array as a bounded JSON column, for example `skills jsonb` and `processes jsonb`,
+updated only when the key is present. `ROW_SCHEMA_VERSION` stays 1:
+`publish_session_events` already ignores unknown `p_session` keys, so daemons can
+send the fields before the migration lands.
+
+**Platform decision:** Agreed in the session side panel design (BUG-431,
+BUG-446); the migration and tabs are platform work.
+
+**Current implementation:** `remote/content.ts` builds both arrays.
+
+- Skills are every skill the session's resource loader loaded. This includes
+  skills without an available `skill:` command.
+- Processes are only those owned by the row's session, running first and then
+  the most recently started.
+- Descriptions and commands are redacted like titles.
+
+The connector treats `catalog.updated` and `process.updated` as row-only changes
+for shared, backfilled sessions. It republishes the row with `p_events: []` when
+the sanitized arrays differ from the last acknowledged ones. A change to process
+output alone does not republish. Every other row publication carries the current
+arrays too. `skills` is omitted while a session is not loaded in the daemon;
+`processes` is always sent for shared sessions. Unshared rows carry neither.
+
+Untitled subagent sessions (BUG-447) take the description their parent supplied.
+The daemon writes it as the child's Pi session name when it creates the child, so
+the published row title, `child.updated` and the session header all carry it.
+Existing and user-set titles are unchanged. No published data links a child to
+the spawning tool call, so sessions created before this change keep an empty
+title; they are not backfilled.
+
 ## Daemon status for platform change requests
 
 These refer to `platform-cr-N` in the same contract, not the daemon CR numbers

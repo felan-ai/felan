@@ -34,6 +34,21 @@ describe('registry-owned executions', () => {
     await expect(readFile(join(f.owner.target.agentDir, 'executions', f.root.sessionId, 'records.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('titles an untitled child from its description without blocking later renames', async () => {
+    const f = await realFixture();
+    const host = f.registry.executionHost(f.root.sessionId);
+    const spawned = await host.spawnSession(request('  Review the\n  scroll fix  '));
+    if (!spawned.ok) throw new Error(spawned.error.message);
+    const id = spawned.value.executionId;
+    await completed(host, id);
+    expect(f.store.session(id).title).toBe('Review the scroll fix');
+    expect(f.registry.binding(id)!.runtime.session.sessionManager.getSessionName()).toBe('Review the scroll fix');
+    expect(await readFile(f.store.session(id).piPath, 'utf8')).toContain('Review the scroll fix');
+    f.registry.binding(id)!.runtime.session.setSessionName('Renamed'); f.registry.projection(id).refresh();
+    expect(f.store.session(id).title).toBe('Renamed');
+    expect(f.store.session(f.root.sessionId).title).not.toBe('Review the scroll fix');
+  });
+
   it('applies session instructions to the root only, not to its child executions', async () => {
     const f = await realFixture();
     const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: f.root.runtime.session.model!, instructions: 'Output <no_response/> when silent.' });

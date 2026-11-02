@@ -37,6 +37,24 @@ describe('published sessions and hosts', () => {
     expect(() => parsePublishedSession({ ...row, lastActivity: -1 })).toThrow();
     expect(() => parsePublishedSession({ ...row, lastActivity: 1.5 })).toThrow();
   });
+  it('parses bounded loaded skills and processes on a session row', () => {
+    const row = { schemaVersion: 1, session, directory: 'felan', shared: true, title: 'Fix login', state: 'open', runState: 'idle' };
+    const skill = { name: 'linear', description: 'Work with Linear.', path: '~/.agents/skills/linear/SKILL.md', scope: 'user' };
+    const process = { id: 'p1', command: 'pnpm dev', kind: 'detached', state: 'exited', startedAt: 1, exitCode: 0 };
+    expect(parsePublishedSession({ ...row, skills: [skill], processes: [process] })).toEqual({ ...row, skills: [skill], processes: [process] });
+    const { exitCode: _, ...running } = { ...process, state: 'running' };
+    expect(parsePublishedSession({ ...row, skills: [], processes: [running] })).toEqual({ ...row, skills: [], processes: [running] });
+    expect(() => parsePublishedSession({ ...row, skills: [{ ...skill, path: '/home/agent/.agents/skills/linear/SKILL.md' }] })).toThrow(/relative/);
+    expect(() => parsePublishedSession({ ...row, skills: [{ ...skill, path: 'C:\\Users\\me\\SKILL.md' }] })).toThrow(/relative/);
+    expect(() => parsePublishedSession({ ...row, skills: [{ ...skill, path: '' }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, skills: [{ ...skill, scope: 'team' }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, skills: [{ ...skill, description: 'é'.repeat(513) }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, skills: Array.from({ length: LIMITS.pageEntries + 1 }, () => skill) })).toThrow();
+    expect(() => parsePublishedSession({ ...row, processes: [{ ...process, state: 'stopped' }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, processes: [{ ...process, exitCode: 1.5 }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, processes: [{ ...process, command: 'x'.repeat(1025) }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, processes: Array.from({ length: LIMITS.pageEntries + 1 }, () => process) })).toThrow();
+  });
   it('rejects duplicate host projects', () => {
     const project = { id: 'p1', name: 'felan', path: '/work/felan' };
     const registration = { name: 'MacBook', daemonVersion: '0.29.0', rowSchemaVersion: 1, capabilities: { operations: ['prompt'], interactionKinds: ['confirm'] }, projects: [project] };

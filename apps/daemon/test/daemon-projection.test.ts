@@ -323,6 +323,7 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     const final = projection.snapshot();
     expect(final.catalog).toMatchObject({ tools: [{ active: false, parameters: { properties: { path: { type: 'number' } } } }], commands: [] });
     expect(final.catalog.models.map(model => model.id)).toEqual(['fixture', 'another']);
+    expect(projection.skills()).toEqual([{ name: 'review', description: 'Changed skill', filePath: '/review', scope: 'project' }]);
     expect(final.revision).toBe(initial.revision + events.length);
     expect(parseSessionSnapshot(final)).toEqual(final);
     projection.refresh(); expect(events).toHaveLength(6);

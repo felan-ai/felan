@@ -1078,6 +1078,9 @@ export class SessionRegistry {
       this.assertAdmission();
       if (restored && this.closing.has(restored.id) || request.parentSessionId && (this.closing.has(request.parentSessionId) || this.closing.has(request.rootSessionId!))) throw new RegistryOpeningCancelled('Session is closing.');
       const manager = binding.runtime.session.sessionManager;
+      // An untitled child takes its parent's description; naming it before the first transcript write persists it and stops auto-titling.
+      const childTitle = !restored && request.execution && !manager.getSessionName()?.trim() ? request.execution.request.description.replace(/\s+/gu, ' ').trim() : '';
+      if (childTitle) manager.appendSessionInfo(childTitle);
       const initialPath = manager.getSessionFile();
       if (initialPath && !existsSync(this.options.owner.assertOwnsPath(initialPath))) {
         const path = this.options.owner.assertOwnsPath(initialPath);

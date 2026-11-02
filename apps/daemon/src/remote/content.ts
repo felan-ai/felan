@@ -1,16 +1,20 @@
-import { basename } from 'node:path';
+import { homedir } from 'node:os';
+import { basename, dirname, isAbsolute, relative, sep } from 'node:path';
 import type { TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import {
-  KnownSessionChangeSchema, PUBLISHED_CHANGE_TYPES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS, ROW_SCHEMA_VERSION,
+  KnownSessionChangeSchema, LIMITS, PUBLISHED_CHANGE_TYPES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS, ROW_SCHEMA_VERSION,
   isPublishedChangeType, parsePublishedEvent, parsePublishedSession,
-  type KnownSessionChange, type PublishedEvent, type PublishedSession, type SessionSnapshot,
+  type KnownSessionChange, type Process, type PublishedEvent, type PublishedProcess, type PublishedSession, type PublishedSkill, type SessionSnapshot,
 } from '@felan-ai/session-protocol';
+import type { LoadedSkill } from '../daemon/projection.js';
 import { redact } from '../logger.js';
 
 export type PublishedChange = Extract<KnownSessionChange, { type: typeof PUBLISHED_CHANGE_TYPES[number] }>;
 export interface PublicationEntry { seq: number; rev: number; occurredAt: number; change: PublishedChange }
-export type PublishedSessionInput = Pick<SessionSnapshot, 'session' | 'parent' | 'cwd' | 'title' | 'state' | 'run'> & { shared: boolean; lastActivity?: number };
+export type PublishedSessionInput = Pick<SessionSnapshot, 'session' | 'parent' | 'cwd' | 'title' | 'state' | 'run'> & {
+  shared: boolean; lastActivity?: number; home?: string; skills?: readonly LoadedSkill[]; processes?: readonly Process[];
+};
 
 type Schema = TSchema & {
   anyOf?: Schema[]; properties?: Record<string, Schema>; items?: Schema; minLength?: number; maxLength?: number;
@@ -117,11 +121,39 @@ export function publishedEvent(session: string, entry: PublicationEntry): Publis
   return parsePublishedEvent({ schemaVersion: ROW_SCHEMA_VERSION, session, seq: entry.seq, rev: entry.rev, occurredAt: entry.occurredAt, change: entry.change });
 }
 
+function within(base: string, path: string): string | undefined {
+  const inner = relative(base, path);
+  return inner && inner !== '..' && !inner.startsWith(`..${sep}`) && !isAbsolute(inner) ? inner.split(sep).join('/') : undefined;
+}
+
+// The web shows paths relative to the project or home; anything else keeps only the skill's own directory and file.
+function skillPath(filePath: string, cwd: string, home: string): string {
+  const project = within(cwd, filePath);
+  if (project) return project;
+  const user = within(home, filePath);
+  return user ? `~/${user}` : `${basename(dirname(filePath))}/${basename(filePath)}`;
+}
+
+function publishedSkills(skills: readonly LoadedSkill[], cwd: string, home: string): PublishedSkill[] {
+  return skills.slice(0, LIMITS.pageEntries).map(skill => ({ name: boundedPrefix(skill.name, 128), description: boundedPrefix(redact(skill.description), 1024),
+    path: boundedPrefix(redact(skillPath(skill.filePath, cwd, home)), 512), scope: skill.scope }));
+}
+
+function publishedProcesses(session: string, processes: readonly Process[]): PublishedProcess[] {
+  return processes.filter(process => process.session === session)
+    .sort((a, b) => Number(b.state === 'running') - Number(a.state === 'running') || b.startedAt - a.startedAt)
+    .slice(0, LIMITS.pageEntries)
+    .map(process => ({ id: process.id, command: boundedPrefix(redact(process.command), 1024), kind: process.kind, state: process.state, startedAt: process.startedAt,
+      ...(process.exitCode === undefined ? {} : { exitCode: process.exitCode }) }));
+}
+
 export function publishedSession(input: PublishedSessionInput): PublishedSession {
   return parsePublishedSession({
     schemaVersion: ROW_SCHEMA_VERSION, session: input.session, ...(input.parent ? { parent: input.parent } : {}),
     directory: boundedPrefix(redact(basename(input.cwd)), 256), shared: input.shared,
     title: boundedPrefix(redact(input.title), 1024), state: input.state, runState: input.run.state,
     ...(input.lastActivity !== undefined ? { lastActivity: input.lastActivity } : {}),
+    ...(input.skills ? { skills: publishedSkills(input.skills, input.cwd, input.home ?? homedir()) } : {}),
+    ...(input.processes ? { processes: publishedProcesses(input.session, input.processes) } : {}),
   });
 }
