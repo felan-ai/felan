@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { resolveExtensionConfigs } from '@felan-ai/agent-core';
-import { CODEX_CONFIG, DEFAULT_CODEX_CONFIG, validateCodexConfig } from '../src/index.js';
+import { CODEX_CONFIG, type CodexConfig, DEFAULT_CODEX_CONFIG, validateCodexConfig } from '../src/index.js';
 
 describe('Codex configuration', () => {
   it('marks the legacy boolean deprecated without dropping stored values', () => {
@@ -16,6 +16,7 @@ describe('Codex configuration', () => {
       verbosity: 'low',
       forceCachedWebSockets: true,
       postAgentRunCompaction: true,
+      imageGeneration: true,
     });
   });
 
@@ -25,11 +26,13 @@ describe('Codex configuration', () => {
       verbosity: 'high',
       forceCachedWebSockets: false,
       postAgentRunCompaction: false,
+      imageGeneration: false,
     }, 'settings.json.extensionConfig.codex')).toEqual({
       fast: true,
       verbosity: 'high',
       forceCachedWebSockets: false,
       postAgentRunCompaction: false,
+      imageGeneration: false,
     });
     expect(() => validateCodexConfig({ verbosity: 'max' }, 'settings.json.extensionConfig.codex'))
       .toThrow('settings.json.extensionConfig.codex.verbosity must be low, medium, or high');
@@ -37,6 +40,37 @@ describe('Codex configuration', () => {
       .toThrow('settings.json.extensionConfig.codex.fast must be a boolean');
     expect(() => validateCodexConfig({ postAgentRunCompaction: 'yes' }, 'settings.json.extensionConfig.codex'))
       .toThrow('settings.json.extensionConfig.codex.postAgentRunCompaction must be a boolean');
+  });
+
+  it('declares and validates the image generation setting', () => {
+    expect(CODEX_CONFIG.fields.imageGeneration).toMatchObject({
+      default: true,
+      description: 'Offer Codex subscription image models (openai-codex login) to generate_images',
+    });
+    expect(validateCodexConfig({}).imageGeneration).toBe(true);
+    for (const imageGeneration of [true, false]) {
+      expect(validateCodexConfig({ imageGeneration }).imageGeneration).toBe(imageGeneration);
+      expect(resolveExtensionConfigs([CODEX_CONFIG], [{
+        extensionId: 'codex', values: { imageGeneration }, source: 'settings',
+      }]).get('codex')?.imageGeneration).toBe(imageGeneration);
+    }
+    for (const imageGeneration of ['yes', 1, null, [], {}]) {
+      expect(() => validateCodexConfig({ imageGeneration }))
+        .toThrow('settings.json.extensionConfig.codex.imageGeneration must be a boolean');
+      expect(() => resolveExtensionConfigs([CODEX_CONFIG], [{
+        extensionId: 'codex', values: { imageGeneration }, source: 'settings',
+      }])).toThrow();
+    }
+  });
+
+  it('accepts a CodexConfig without image generation settings', () => {
+    const config: CodexConfig = {
+      fast: false,
+      verbosity: 'low',
+      forceCachedWebSockets: true,
+      postAgentRunCompaction: true,
+    };
+    expect(validateCodexConfig(config)).toEqual({ ...config, imageGeneration: true });
   });
 
   it('preserves omission and validates exactly the three priority choices', () => {

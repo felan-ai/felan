@@ -35,10 +35,12 @@ At extension initialization:
 
 - `classify` is registered only when the host supplies a classifier.
 - `generate_images` is registered only when authenticated image discovery
-  returns at least one model. Discovery failure suppresses that tool without
-  disabling the classifier or session.
-- Neither capability means neither tool is registered. Reconstruct the session
-  after configuring a previously unavailable capability.
+  returns at least one model. If no model is available or discovery fails, it
+  retries at `session_start` and registers the tool once a model is found. This
+  supports image providers registered by other extensions during startup.
+  Discovery failure does not disable the classifier or session.
+- Neither capability means neither tool is registered. Restart or create a
+  session after configuring a previously unavailable capability.
 
 Hosts must supply the shared service and effective classifier for root, ACP,
 and child sessions where those capabilities are enabled. Loading the package

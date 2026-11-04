@@ -10,13 +10,15 @@ export interface CodexConfig {
   readonly verbosity: CodexVerbosity;
   readonly forceCachedWebSockets: boolean;
   readonly postAgentRunCompaction: boolean;
+  readonly imageGeneration?: boolean;
 }
 
-export const DEFAULT_CODEX_CONFIG: CodexConfig = {
+export const DEFAULT_CODEX_CONFIG: CodexConfig & { readonly imageGeneration: boolean } = {
   fast: false,
   verbosity: 'low',
   forceCachedWebSockets: true,
   postAgentRunCompaction: true,
+  imageGeneration: true,
 };
 
 export const CODEX_CONFIG = defineExtensionConfig({
@@ -37,6 +39,10 @@ export const CODEX_CONFIG = defineExtensionConfig({
       default: true,
       description: 'Defer GPT threshold compaction until the agent run settles',
     }),
+    imageGeneration: configField.boolean({
+      default: true,
+      description: 'Offer Codex subscription image models (openai-codex login) to generate_images',
+    }),
   },
 });
 
@@ -55,6 +61,9 @@ export function validateCodexConfig(value: unknown, source = 'settings.json.exte
   if (value.postAgentRunCompaction !== undefined && typeof value.postAgentRunCompaction !== 'boolean') {
     throw new Error(`${source}.postAgentRunCompaction must be a boolean`);
   }
+  if (value.imageGeneration !== undefined && typeof value.imageGeneration !== 'boolean') {
+    throw new Error(`${source}.imageGeneration must be a boolean`);
+  }
   if (
     value.verbosity !== undefined
     && value.verbosity !== 'low'
@@ -71,6 +80,7 @@ export function validateCodexConfig(value: unknown, source = 'settings.json.exte
       ?? DEFAULT_CODEX_CONFIG.forceCachedWebSockets,
     postAgentRunCompaction: value.postAgentRunCompaction
       ?? DEFAULT_CODEX_CONFIG.postAgentRunCompaction,
+    imageGeneration: value.imageGeneration ?? DEFAULT_CODEX_CONFIG.imageGeneration,
   };
 }
 

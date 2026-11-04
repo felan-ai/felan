@@ -23,7 +23,7 @@ use the reviewed path revision.
 | `@felan-ai/ext-ask-user` | Adapted source; the snapshot originates from `edlsh/pi-ask-user` | [`pi-ask-user` 0.11.2 at `7e72e509`][ask-user-baseline] | Origin [`pi-ask-user` 0.14.0 at `2de7e145`][ask-user-reviewed]; Felan fork remains at `7e72e509` | Ported proxy-safe option handling and bounded TUI improvements; retained Felan's portable host contract. |
 | `@felan-ai/ext-background-bash` | Adapted source | [`pi-background-bash` 0.1.0 at `7e72e509`][background-bash-baseline] | Same release and revision | No upstream change; Felan now probes required POSIX runtime utilities and keeps the feature inactive when they are unavailable. |
 | `@felan-ai/ext-browser` | External CLI integration; no upstream source copied | [`agent-browser` 0.37.1 at `72007a67`][agent-browser-reviewed] | Same release and revision; Felan direct-CDP workaround for upstream auto-connect prompt bug | Felan exposes version-matched skills and CLI through portable browser tools, adds host-owned onboarding and existing-browser authorization, isolates sessions, and converts safe screenshots to native image content; it does not vendor the upstream daemon or install Chrome automatically. |
-| `@felan-ai/ext-codex` | Adapted selected code and behavior | [`@howaboua/pi-codex-conversion` 3.0.8 at `62d1501a`][codex-baseline] | Release [`3.0.26` at `f16fee5`][codex-latest-reviewed] | Ported structured skill-prompt preservation, delete-and-readd patch replacement, shutdown fencing, and the narrow `strict: null` to `strict: false` compatibility normalization for direct Responses function tools; excluded the upstream provider, voice, native compaction, Code/Notebook modes, context windows, and display sidecar. |
+| `@felan-ai/ext-codex` | Adapted selected code and behavior | [`@howaboua/pi-codex-conversion` 3.0.8 at `62d1501a`][codex-baseline] | Conversion release [`3.0.26` at `f16fee5`][codex-latest-reviewed]; image contract [`@howaboua/pi-codex-imagegen` 0.0.12 at `d67cb69b`][codex-imagegen-reviewed], reviewed 2026-11-04 | Ported structured skill-prompt preservation, delete-and-readd patch replacement, shutdown fencing, and the narrow `strict: null` to `strict: false` compatibility normalization for direct Responses function tools. Added an image-only provider using the imagegen request contract; excluded the upstream chat provider, voice, native compaction, Code/Notebook modes, context windows, and display sidecar. |
 | `@felan-ai/ext-claude-code` | Vendored MIT source with Felan adapters | [`pi-claude-bridge` 0.9.3 at `874fa7c2`][claude-code-baseline] | Same release and revision; reviewed 2026-10-21 | Removed AskClaude; added managed SDK loading, Felan settings, per-session lifecycle/UI isolation, per-session Claude Code processes kept between prompts, child-environment filtering, and isolated prompt-only requests. See [sync procedure](#claude-code-bridge). |
 | `@felan-ai/ext-codebase-memory` | Adapted behavior and prompt guidance plus external native CLI integration | [`pi-cbm` 1.2.1 at `921a749d`][codebase-memory-adaptation] and [`codebase-memory-mcp` 0.10.8 at `46ae198f`][codebase-memory-runtime-baseline] | Runtime [`codebase-memory-mcp` 0.11.0 at `8972ea69`][codebase-memory-runtime] reviewed 2026-09-26 | Retained the bounded four-tool `AgentRuntime` surface and exact-binary/no-config installation; adopted the v0.11 compact output contract and nested `.gitignore` fix while continuing to exclude watchers, LSP, ambient configuration, and automatic installation. |
 | `@felan-ai/ext-context` | Adapted source | [`pi-progressive-context` 0.1.0 at `9571293d`][context-baseline] | [`0.1.0` at monorepo `7e72e509`][context-reviewed] | No path changes since the adaptation source. |
@@ -70,6 +70,15 @@ and ownership boundaries or add unrelated product surface.
 That reference is not an extension source snapshot: Felan copies no Beads code
 and does not invoke its CLI, so it is not used as a future source-diff
 checkpoint.
+
+## Codex image generation
+
+Felan adapts the endpoint paths, request fields, headers, and response handling
+from `@howaboua/pi-codex-imagegen` 0.0.12, which follows OpenAI Codex's
+`codex-rs/codex-api/src/endpoint/images.rs`. It registers an image-only Pi
+provider, reuses the legacy `openai-codex` login, and uses Pi's `originator`
+value with its own transport code. It does not replace Pi's chat providers.
+See the [package NOTICE](../../packages/ext-codex/NOTICE) for attribution.
 
 ## Claude Code bridge
 
@@ -136,6 +145,7 @@ outcome even when the decision is "do not port."
 [background-bash-baseline]: https://github.com/mslavov/pi-extensions/tree/7e72e509fe45a5a87c4c2e176cb711de994a8c1d/packages/pi-background-bash
 [codex-baseline]: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/62d1501ac0c6acb39c4b4d225a9e9056a7ba3b91/packages/pi-codex-conversion
 [codex-latest-reviewed]: https://github.com/IgorWarzocha/howaboua-pi-stuff/commit/f16fee563f71849cc2b9a94be2b6f70e12fca804
+[codex-imagegen-reviewed]: https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/d67cb69b22decc4ea024236ba59dc4ddae9a2334/packages/pi-codex-imagegen
 [claude-code-baseline]: https://github.com/elidickinson/pi-claude-bridge/tree/874fa7c2678456336f23b64e784e2057e608d83e
 [codebase-memory-adaptation]: https://github.com/alexykn/pi-cbm/tree/921a749d5cea74bda8f647542627ef9518fec272
 [codebase-memory-runtime-baseline]: https://github.com/DeusData/codebase-memory-mcp/tree/46ae198fc11cda80e817acbc5f5908d7c2de7032

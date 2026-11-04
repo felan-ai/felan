@@ -4,7 +4,10 @@ import type {
   ExtensionContext,
   FelanExtensionAPI,
   Model,
+  ModelsService,
+  Provider,
 } from '@felan-ai/agent-core';
+import { createExtensionServiceAccess, createFelanServiceRegistry, MODELS_SERVICE } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import codexExtension from '../src/index.js';
 
@@ -690,16 +693,6 @@ describe('Codex extension activation', () => {
     ]);
   });
 
-  it('does not register or unregister shared providers', async () => {
-    const harness = createHarness();
-    await codexExtension(harness.pi);
-    expect(harness.registerProvider).not.toHaveBeenCalled();
-
-    await harness.emit('session_shutdown', {}, context('openai', 'gpt-5.4'));
-
-    expect(harness.unregisterProvider).not.toHaveBeenCalled();
-  });
-
   it('defers eligible threshold compaction until the agent settles by default', async () => {
     const harness = createHarness();
     await codexExtension(harness.pi);
@@ -1017,16 +1010,141 @@ describe('Codex extension activation', () => {
   });
 });
 
-function createHarness(processSupport = true, config: Record<string, unknown> = {}) {
+describe('Codex image provider registration', () => {
+  it('declares optional Models access without losing its execution contribution', () => {
+    expect(codexExtension.serviceRequirements).toEqual({ optional: [MODELS_SERVICE] });
+    expect(codexExtension.execution).toBeTypeOf('function');
+  });
+
+  it.each([{}, { imageGeneration: true }, { imageGeneration: undefined }])('registers only a native image provider with config %j', async (config) => {
+    const harness = createHarness(true, config);
+    await codexExtension(harness.pi);
+
+    expect(harness.registerProvider).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      id: 'openai-codex-images',
+      getModels: expect.any(Function),
+      getAllModels: expect.any(Function),
+      generateImages: expect.any(Function),
+    }));
+    const [provider] = harness.registerProvider.mock.calls[0]!;
+    expect(provider.getModels()).toEqual([]);
+    expect(provider.getAllModels?.().map(({ id }) => id)).toEqual(['gpt-image-2', 'gpt-image-2.5']);
+    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
+
+    await harness.emit('session_shutdown', {}, context('openai', 'gpt-5.4'));
+    expect(harness.unregisterProvider).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { config: { imageGeneration: false }, modelsAvailable: true },
+    { config: {}, modelsAvailable: false },
+  ])('does not register when disabled or Models is absent: %j', async ({ config, modelsAvailable }) => {
+    const harness = createHarness(true, config, modelsAvailable);
+    await codexExtension(harness.pi);
+
+    expect(harness.registerProvider).not.toHaveBeenCalled();
+    expect(harness.getAvailable).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false, 'rejected'] as const)('uses the initial availability result %s before session_start', async (available) => {
+    const harness = createHarness();
+    if (available === false) harness.getAvailable.mockResolvedValue([]);
+    if (available === 'rejected') harness.getAvailable.mockRejectedValue(new Error('unavailable'));
+    await codexExtension(harness.pi);
+    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
+    const [provider] = harness.registerProvider.mock.calls[0]!;
+    const options = {
+      signal: new AbortController().signal,
+      ctx: { env: async () => undefined, fileExists: async () => false },
+    };
+    const expected = available === true ? { type: 'api_key', source: 'OpenAI Codex login' } : undefined;
+    await expect(provider.auth.apiKey!.check!(options)).resolves.toEqual(expected);
+
+    harness.getAvailable.mockRejectedValue(new Error('must not be called again'));
+    await expect(provider.auth.apiKey!.check!(options)).resolves.toEqual(expected);
+    await expect(provider.auth.apiKey!.resolve(options)).resolves.toBeUndefined();
+    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
+  });
+
+  it.each([true, false])('uses registry auth status after session_start despite initial availability %s', async (available) => {
+    const harness = createHarness();
+    if (!available) harness.getAvailable.mockResolvedValue([]);
+    await codexExtension(harness.pi);
+    const [provider] = harness.registerProvider.mock.calls[0]!;
+    const getProviderAuthStatus = vi.fn<ExtensionContext['modelRegistry']['getProviderAuthStatus']>();
+    const getProviderAuth = vi.fn<ExtensionContext['modelRegistry']['getProviderAuth']>();
+    const ctx = context('openai-codex', 'gpt-6-astra');
+    ctx.modelRegistry = { getProviderAuthStatus, getProviderAuth } as unknown as ExtensionContext['modelRegistry'];
+    await harness.emit('session_start', {}, ctx);
+    const options = {
+      signal: new AbortController().signal,
+      ctx: { env: async () => undefined, fileExists: async () => false },
+    };
+    for (const configured of [!available, available]) {
+      getProviderAuthStatus.mockReturnValue({ configured });
+      await expect(provider.auth.apiKey!.check!(options)).resolves.toEqual(configured
+        ? { type: 'api_key', source: 'OpenAI Codex login' }
+        : undefined);
+    }
+    expect(getProviderAuthStatus).toHaveBeenCalledTimes(2);
+    expect(getProviderAuthStatus).toHaveBeenCalledWith('openai-codex');
+    expect(getProviderAuth).not.toHaveBeenCalled();
+    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
+  });
+
+  it('resolves the current session registry token only after session_start', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const [provider] = harness.registerProvider.mock.calls[0]!;
+    const getProviderAuth = vi.fn<ExtensionContext['modelRegistry']['getProviderAuth']>();
+    const ctx = context('openai-codex', 'gpt-6-astra');
+    ctx.modelRegistry = { getProviderAuth } as unknown as ExtensionContext['modelRegistry'];
+    const options = {
+      signal: new AbortController().signal,
+      ctx: { env: async () => undefined, fileExists: async () => false },
+    };
+    await expect(provider.auth.apiKey!.resolve(options)).resolves.toBeUndefined();
+    expect(getProviderAuth).not.toHaveBeenCalled();
+    await harness.emit('session_start', {}, ctx);
+
+    getProviderAuth.mockResolvedValue({ auth: { apiKey: '  test-codex-token\n' } });
+    await expect(provider.auth.apiKey!.resolve(options)).resolves.toEqual({
+      auth: { apiKey: 'test-codex-token' }, source: 'OpenAI Codex login',
+    });
+    expect(getProviderAuth).toHaveBeenCalledExactlyOnceWith('openai-codex');
+    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
+
+    for (const auth of [undefined, { auth: {} }, { auth: { apiKey: ' \n' } }]) {
+      getProviderAuth.mockResolvedValue(auth);
+      await expect(provider.auth.apiKey!.resolve(options)).resolves.toBeUndefined();
+    }
+    const nextContext = context('openai-codex', 'gpt-6-astra');
+    const nextAuth = vi.fn<ExtensionContext['modelRegistry']['getProviderAuth']>()
+      .mockResolvedValue({ auth: { apiKey: 'next-session-token' } });
+    nextContext.modelRegistry = { getProviderAuth: nextAuth } as unknown as ExtensionContext['modelRegistry'];
+    await harness.emit('session_start', {}, nextContext);
+    await expect(provider.auth.apiKey!.resolve(options)).resolves.toEqual({
+      auth: { apiKey: 'next-session-token' }, source: 'OpenAI Codex login',
+    });
+    expect(nextAuth).toHaveBeenCalledExactlyOnceWith('openai-codex');
+  });
+});
+
+function createHarness(processSupport = true, config: Record<string, unknown> = {}, modelsAvailable = true) {
   const handlers = new Map<string, Handler[]>();
   const activeTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate'];
   const registerTool = vi.fn();
-  const registerProvider = vi.fn();
+  const registerProvider = vi.fn<(provider: Provider) => void>();
   const unregisterProvider = vi.fn();
+  const getAvailable = vi.fn<ModelsService['getAvailable']>()
+    .mockResolvedValue([model('openai-codex', 'gpt-6-astra')]);
+  const services = createFelanServiceRegistry();
+  if (modelsAvailable) services.set(MODELS_SERVICE, { getAvailable } as unknown as ModelsService);
   let activeContext: ExtensionContext | undefined;
   let thinkingLevel = 'high';
   const pi = {
     runtime: unusedRuntime(processSupport),
+    services: createExtensionServiceAccess(services, codexExtension.serviceRequirements!),
     agentDir: '/agent',
     config,
     registerCapability: vi.fn(),
@@ -1059,6 +1177,7 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
     registerTool,
     registerProvider,
     unregisterProvider,
+    getAvailable,
     setLevel(level: string) { thinkingLevel = level; },
     async emit(name: string, event: unknown, ctx: ExtensionContext) {
       const results: unknown[] = [];

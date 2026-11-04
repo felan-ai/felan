@@ -2,7 +2,9 @@ import {
   associateExtensionConfig,
   type Api,
   type ConfiguredFelanExtension,
+  type ExtensionContext,
   type FelanExtension,
+  MODELS_SERVICE,
   type Model,
 } from '@felan-ai/agent-core';
 import { CODEX_CONFIG, DEFAULT_CODEX_CONFIG } from './config.js';
@@ -12,12 +14,24 @@ import { createCodexStreamFunctionWrapper } from './transport.js';
 import { registerReasoningUpdates } from './reasoning-updates.js';
 import { applyCodexRequestOptions } from './request-options.js';
 import { CODEX_TOOL_NAMES, createCodexExecutionTools, registerPatchResultEvent } from './execution-tools.js';
+import { createCodexImageProvider } from './images.js';
 
 const REPLACED_TOOL_NAMES: ReadonlySet<string> = new Set(['edit', 'write']);
 const CODEX_TOOL_NAME_SET: ReadonlySet<string> = new Set(CODEX_TOOL_NAMES);
 export function createCodexExtension(): ConfiguredFelanExtension {
   const codexExtension: FelanExtension = async (pi) => {
     const config = { ...DEFAULT_CODEX_CONFIG, ...pi.config } as import('./config.js').CodexConfig;
+    const models = pi.services.get(MODELS_SERVICE);
+    let registry: ExtensionContext['modelRegistry'] | undefined;
+    if (config.imageGeneration !== false && models) {
+      // Auth checks run inside Pi availability refreshes and must not reenter ModelRuntime.getAvailable.
+      // One factory lookup covers ext-model-tools discovery before session_start captures the registry.
+      const initiallyAvailable = models.getAvailable('openai-codex').then((found) => found.length > 0, () => false);
+      pi.registerProvider(createCodexImageProvider({
+        available: async () => registry ? registry.getProviderAuthStatus('openai-codex').configured : initiallyAvailable,
+        resolveToken: async () => (await registry?.getProviderAuth('openai-codex'))?.auth.apiKey?.trim() || undefined,
+      }));
+    }
     registerPostAgentRunCompaction(pi, config);
     const reasoningUpdates = registerReasoningUpdates(pi);
     for (const tool of createCodexExecutionTools(pi.runtime)) pi.registerTool(tool);
@@ -42,7 +56,10 @@ export function createCodexExtension(): ConfiguredFelanExtension {
       }
     };
 
-    pi.on('session_start', (_event, ctx) => synchronizeTools(ctx.model));
+    pi.on('session_start', (_event, ctx) => {
+      registry = ctx.modelRegistry;
+      synchronizeTools(ctx.model);
+    });
     pi.on('model_select', (event) => synchronizeTools(event.model));
     pi.on('context', (event, ctx) => ({ messages: reasoningUpdates.project(event.messages, ctx) }));
     pi.on('before_provider_request', (event, ctx) => {
@@ -53,6 +70,7 @@ export function createCodexExtension(): ConfiguredFelanExtension {
 
   associateExtensionConfig(codexExtension, CODEX_CONFIG);
   return Object.assign(codexExtension, {
+    serviceRequirements: { optional: [MODELS_SERVICE] },
     execution: (({ config }) => ({
       wrapStreamFunction: createCodexStreamFunctionWrapper({ ...DEFAULT_CODEX_CONFIG, ...config } as import('./config.js').CodexConfig),
       supportsNativeThinkingUpdates: supportsCodexResponsesRequest,
@@ -68,6 +86,13 @@ export { supportsCodexModel, supportsCodexResponsesRequest } from './model-polic
 export { registerPostAgentRunCompaction } from './compaction.js';
 export { applyCodexRequestOptions } from './request-options.js';
 export { CODEX_TOOL_NAMES, createCodexExecutionTools, createCodexExecutionTools as createCodexTools } from './execution-tools.js';
+export {
+  createCodexImageProvider,
+  CODEX_IMAGES_PROVIDER_ID,
+  CODEX_IMAGES_API,
+  CODEX_IMAGE_MODEL_IDS,
+  type CodexImageCredentials,
+} from './images.js';
 export {
   createCodexStreamFunctionWrapper,
   resolveCodexStreamOptions,

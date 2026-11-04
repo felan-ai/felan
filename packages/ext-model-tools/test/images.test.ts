@@ -225,6 +225,64 @@ describe('generate_images', () => {
 });
 
 describe('conditional tool availability', () => {
+  it('registers immediately without session-start discovery when models are available', async () => {
+    const getAvailableOfType = vi.fn().mockResolvedValue([model]);
+    const h = await harness({}, fakeModelsService({ getAvailableOfType }));
+    expect(h.tools.has('generate_images')).toBe(true);
+    expect(h.handlers.size).toBe(0);
+    await h.startSession();
+    expect(getAvailableOfType).toHaveBeenCalledExactlyOnceWith('image');
+    expect(h.registerTool).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('registers once at session start after factory discovery failure=%s', async failed => {
+    const getAvailableOfType = vi.fn().mockResolvedValue([model]);
+    if (failed) getAvailableOfType.mockRejectedValueOnce(new Error('secret'));
+    else getAvailableOfType.mockResolvedValueOnce([]);
+    const h = await harness({}, fakeModelsService({ getAvailableOfType }));
+    expect(h.tools.has('generate_images')).toBe(false);
+    expect(h.handlers.get('session_start')).toHaveLength(1);
+    await h.startSession();
+    expect(h.tools.has('generate_images')).toBe(true);
+    await h.startSession();
+    expect(getAvailableOfType).toHaveBeenCalledTimes(2);
+    expect(getAvailableOfType).toHaveBeenLastCalledWith('image');
+    expect(h.registerTool).toHaveBeenCalledOnce();
+    expect((await h.execute('generate_images', { action: 'list' })).details).toEqual({
+      models: [{ provider: model.provider, model: model.id, name: model.name, input: model.input, output: model.output }],
+    });
+    expect(getAvailableOfType).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not register twice when session-start handlers overlap', async () => {
+    const getAvailableOfType = vi.fn().mockResolvedValue([model]).mockResolvedValueOnce([]);
+    const h = await harness({}, fakeModelsService({ getAvailableOfType }));
+    await Promise.all([h.startSession(), h.startSession()]);
+    expect(h.tools.has('generate_images')).toBe(true);
+    expect(h.registerTool).toHaveBeenCalledOnce();
+  });
+
+  it.each([false, true])('keeps the tool unavailable without throwing on session-start discovery failure=%s', async failed => {
+    const getAvailableOfType = failed
+      ? vi.fn().mockRejectedValue(new Error('secret')).mockResolvedValueOnce([])
+      : vi.fn().mockResolvedValue([]);
+    const h = await harness({}, fakeModelsService({ getAvailableOfType }));
+    expect(h.handlers.get('session_start')).toHaveLength(1);
+    await expect(h.startSession()).resolves.toBeUndefined();
+    await expect(h.startSession()).resolves.toBeUndefined();
+    expect(getAvailableOfType).toHaveBeenCalledTimes(3);
+    expect(h.tools.has('generate_images')).toBe(false);
+    expect(h.registerTool).not.toHaveBeenCalled();
+  });
+
+  it('registers no tool or handler without a models service', async () => {
+    const h = await harness();
+    expect(h.handlers.size).toBe(0);
+    await expect(h.startSession()).resolves.toBeUndefined();
+    expect(h.tools.has('generate_images')).toBe(false);
+    expect(h.registerTool).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])('handles images with classifier=%s and isolates discovery failure', async configured => {
     const classifier = configured ? { classify: vi.fn() } : undefined;
     for (const available of [false, true, 'error']) {

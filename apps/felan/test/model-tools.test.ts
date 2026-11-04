@@ -207,11 +207,17 @@ async function registerTools(
   const services = createFelanServiceRegistry();
   if (models) services.set(MODELS_SERVICE, createLocalModelsService({ modelRuntime: models, sessionId: 'fixture' }));
   const tools = new Map<string, ToolDefinition>();
+  const sessionStart: Array<() => unknown> = [];
   await extension({
     runtime: classifier === undefined ? {} : { classifier },
     services: createExtensionServiceAccess(services, extension.serviceRequirements!),
     registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
+    on: (event: string, handler: () => unknown) => {
+      if (event === 'session_start') sessionStart.push(handler);
+      return () => undefined;
+    },
   } as unknown as FelanExtensionAPI);
+  for (const handler of sessionStart) await handler();
   return tools;
 }
 

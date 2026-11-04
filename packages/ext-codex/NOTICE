@@ -30,6 +30,15 @@ and uses Pi's native OpenAI Codex transport for connection reuse and
 cached continuation. It retains scoped reasoning updates as session entries
 and rewrites them into native OpenAI and Codex Responses input items.
 
+The Codex image request contract, including endpoint paths, request fields,
+headers, and response handling, is adapted from @howaboua/pi-codex-imagegen
+0.0.12 at npm gitHead d67cb69b22decc4ea024236ba59dc4ddae9a2334,
+https://github.com/IgorWarzocha/howaboua-pi-stuff/tree/d67cb69b22decc4ea024236ba59dc4ddae9a2334/packages/pi-codex-imagegen.
+Copyright (c) 2026 Igor Warzocha. Licensed under the MIT License.
+That package follows OpenAI Codex at https://github.com/openai/codex,
+codex-rs/codex-api/src/endpoint/images.rs, licensed under Apache-2.0.
+Copyright 2025 OpenAI. Felan uses Pi's originator and its own transport code.
+
 This package uses @earendil-works/pi-tui from
 https://github.com/earendil-works/pi, licensed under the MIT License.
 Copyright (c) 2025 Mario Zechner.

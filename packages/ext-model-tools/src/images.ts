@@ -16,11 +16,21 @@ const parameters = Type.Object({
 
 export async function registerImages(pi: FelanExtensionAPI, models?: ModelToolsRuntime): Promise<void> {
   if (!models) return;
-  try {
-    if (!(await discoverImageModels(models)).length) return;
-  } catch {
+  if ((await discoverImageModels(models).catch(() => [])).length) {
+    registerImagesTool(pi, models);
     return;
   }
+  let registered = false;
+  pi.on('session_start', async () => {
+    if (registered) return;
+    const available = await discoverImageModels(models).catch(() => []);
+    if (registered || !available.length) return;
+    registerImagesTool(pi, models);
+    registered = true;
+  });
+}
+
+function registerImagesTool(pi: FelanExtensionAPI, models: ModelToolsRuntime): void {
   pi.registerTool<typeof parameters, unknown>({
     name: 'generate_images',
     label: 'Generate images',

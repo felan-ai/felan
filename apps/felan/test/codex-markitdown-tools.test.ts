@@ -83,7 +83,12 @@ function createHarness(processSupport: boolean) {
   const runtime = unusedRuntime(processSupport);
   const pi = {
     runtime,
-    services: createExtensionServiceAccess(createFelanServiceRegistry(), markitdownExtension.serviceRequirements),
+    services: createExtensionServiceAccess(createFelanServiceRegistry(), {
+      optional: [
+        ...markitdownExtension.serviceRequirements.optional,
+        ...codexExtension.serviceRequirements!.optional!,
+      ],
+    }),
     agentDir: '/agent',
     config: {},
     registerCapability: vi.fn(),

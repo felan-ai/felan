@@ -66,7 +66,7 @@ browser and Powerline extensions:
     "prewalk": { "entryApproval": "allow", "planReview": "skip" },
     "outputStyle": { "style": "concise" },
     "codebaseMemory": { "maxCacheBytes": 0 },
-    "codex": { "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true },
+    "codex": { "verbosity": "low", "forceCachedWebSockets": true, "postAgentRunCompaction": true, "imageGeneration": true },
     "claude-code": { "plan": "pro", "longContextExtraUsage": false },
     "sessionCompaction": {
       "method": "summary",
@@ -363,8 +363,9 @@ quality and data destinations, so validate the selected model on your workflow.
 
 `builtinExtensions.modelTools` defaults to `true`. Set it to `false` to remove
 both `classify` and `generate_images`; internal classifier-guided features keep
-their own settings. Tool availability is determined when each runtime is
-constructed, including root, ACP, and child sessions.
+their own settings. Tool availability is checked when each runtime is
+constructed, including root, ACP, and child sessions. Image discovery also
+retries at session start if no image model was available during construction.
 
 `classify` appears only when the host has a configured classifier, using the
 Auto or explicit model selection above. Its arguments are a JSON-object `state`
@@ -379,9 +380,26 @@ Use `{ "action": "list" }` to see configured provider/model IDs. Generate with
 `action: "generate"`, explicit `provider` and `model`, a text `prompt`, and
 optional local `referencePaths`. Pi resolves credentials through the existing
 host auth store, `models.json`, runtime keys, and provider environment variables;
-there is no separate tool key or endpoint setting. Merely having a chat model
-does not enable image generation. Discovery failures leave the tool unavailable
+there is no separate tool key or endpoint setting. A chat model alone does not
+enable image generation without an image provider. If initial discovery finds
+no models, the tool can appear at `session_start` after another extension
+registers an image provider. Discovery failures leave the tool unavailable
 without breaking the session. Restart or create a session after adding a capability.
+
+With the Codex extension enabled and `extensionConfig.codex.imageGeneration`
+set to its default `true`, the legacy Codex login, `/login openai-codex`, enables
+provider `openai-codex-images` with models `gpt-image-2` and `gpt-image-2.5`.
+The selected chat model does not need to use Codex. Signing in with ChatGPT on
+the `openai` provider does not enable these image models. Sessions restricted by
+`enabledModels` list no image models from any provider, because the scope
+contains only chat models.
+
+Codex image requests go to
+`https://chatgpt.com/backend-api/codex/images/generations`. Up to five reference
+images switch the request to `/images/edits` on the same backend. The background
+is opaque. Requests count against the ChatGPT plan's Codex usage, not OpenAI API
+billing. These models have no API price, so Felan reports returned token usage
+without USD cost accounting.
 
 Image calls recheck authenticated availability; a disappearing model fails rather
 than silently switching providers. Prompt/reference bytes go to that provider and
@@ -679,12 +697,19 @@ file. Set `builtinExtensions.outputStyle` to `false` to disable the extension.
 {
   "verbosity": "low",
   "forceCachedWebSockets": true,
-  "postAgentRunCompaction": true
+  "postAgentRunCompaction": true,
+  "imageGeneration": true
 }
 ```
 
-`verbosity` may be `low`, `medium`, or `high`. These controls apply only to
-eligible GPT models on the exact `openai` or `openai-codex` provider.
+`verbosity` may be `low`, `medium`, or `high`. Chat request controls apply only
+to eligible GPT models on the exact `openai` or `openai-codex` provider.
+`imageGeneration` defaults to `true` and registers the separate
+`openai-codex-images` provider when the host supplies the Models service. Set it
+to `false` to disable these image models without changing Codex chat behavior.
+Changes apply to new sessions or after a restart; `/reload` keeps a provider the
+session already registered. See
+[image tools](#explicit-classifier-and-image-tools) for login and usage.
 
 Optionally add `"priority": "normal"`, `"fast"`, or `"ultrafast"` to this
 Codex configuration. Explicit priority overrides `fast`; omitting it preserves

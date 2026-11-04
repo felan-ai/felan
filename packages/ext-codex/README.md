@@ -1,8 +1,8 @@
 # @felan-ai/ext-codex
 
-First-party Felan support for the compact structured tool surface used by GPT
-coding models. It activates only when the selected model ID is GPT-family and
-the provider is exactly `openai` or `openai-codex`.
+First-party Felan support for GPT coding tools and Codex image generation.
+The structured tools activate only when the selected model ID is GPT-family
+and the provider is exactly `openai` or `openai-codex`.
 
 Active mode keeps ordinary `read`, `bash`, and all unrelated tools, replacing only
 `edit` and `write` with `apply_patch`. Switching to another model restores the
@@ -95,9 +95,31 @@ Reasoning updates do not change provider transport. `forceCachedWebSockets`
 still applies only to `openai-codex` / `openai-codex-responses`; the official
 OpenAI API continues to use Pi's native transport.
 
-The extension excludes restart-durable jobs, web access, image generation,
+The extension excludes restart-durable jobs, web access,
 Code Mode/Responses Lite, prompt replacement, native Responses compaction,
 voice, and UI widgets.
+
+## Codex image generation
+
+`extensionConfig.codex.imageGeneration` defaults to `true`. When the host
+supplies `MODELS_SERVICE`, the extension registers the image-only
+`openai-codex-images` provider with `gpt-image-2` and `gpt-image-2.5`.
+`@felan-ai/ext-model-tools` exposes these through `generate_images` when the
+session has an authenticated `openai-codex` login. Run `/login openai-codex` to
+use the legacy Codex login. Signing in with ChatGPT on the `openai` provider does
+not enable these image models. The selected chat model does not need to use
+Codex. Sessions restricted by `enabledModels` list no image models, because the
+scope contains only chat models.
+
+Requests use `POST https://chatgpt.com/backend-api/codex/images/generations`,
+or `/images/edits` on the same backend with up to five reference images. They
+set `background` to `opaque`, `quality` and `size` to `auto`, and the
+`originator` header to `pi`. Requests count against the ChatGPT plan's Codex
+usage, not OpenAI API billing. The models have no API price, so Felan reports
+returned token counts without USD cost accounting.
+
+Set `imageGeneration` to `false` to disable provider registration without
+changing Codex chat behavior. Restart or create a session after changing it.
 
 ## Development
 
@@ -111,10 +133,10 @@ See [NOTICE](NOTICE) for upstream attribution.
 
 ## Package boundary and requirements
 
-Agent Core owns the runtime contract and Pi owns provider transport. This
-package owns provider/model eligibility, structured patch replacement, and
-request controls; it does not register or replace a provider. File operations
-go through the active `AgentRuntime`.
+Agent Core owns the runtime contract and Pi owns chat-provider transport. This
+package owns provider/model eligibility, structured patch replacement, request
+controls, and the image-only provider. It does not replace Pi's chat providers.
+File operations go through the active `AgentRuntime`.
 
 The package requires a compatible `@felan-ai/agent-core` peer and TypeBox.
 Neither the root nor `/runtime` loads terminal renderers. Host mode remains
@@ -129,5 +151,6 @@ current-user access and is not a sandbox.
 ## Attribution
 
 Selected implementation behavior is adapted from the reviewed
-`@howaboua/pi-codex-conversion` sources. See [NOTICE](NOTICE) and
+`@howaboua/pi-codex-conversion` and `@howaboua/pi-codex-imagegen` sources.
+See [NOTICE](NOTICE) and
 [LICENSE](LICENSE) for source commits and attribution.
