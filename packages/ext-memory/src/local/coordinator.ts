@@ -826,6 +826,7 @@ export class LocalMemoryCoordinator {
       return;
     }
     context.writerBlocked = false;
+    if (context.failedDriver === driver) context.failedDriver = undefined;
     if (context.writerTimer) clearTimeout(context.writerTimer);
     context.writerTimer = undefined;
     const abortOnLeaseCompromise = (): void => {
