@@ -702,8 +702,11 @@ export class LocalMemoryCoordinator {
       this.#cancelTimers(context);
       return;
     }
+    // Callers capture their environment before awaiting; a member sealed since then cannot read the store.
+    const owner = environment && [...context.attachments].find(attachment => attachment.environment === environment);
+    const source = owner && (owner.closing || owner.detached) ? (this.#liveMember(context) ?? owner).environment : environment;
     try {
-      const store = this.#store(context, environment ?? driver.environment);
+      const store = this.#store(context, source ?? driver.environment);
       const control = await store.readControl();
       if (control.autoDisabled) {
         this.#cancelTimers(context);
