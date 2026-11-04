@@ -87,6 +87,8 @@ export interface MaterializeMemoryInputOptions {
   readonly baseSnapshot: MemorySnapshot;
   readonly maxInputBytes: number;
   readonly maxTranscriptBytes?: number;
+  /** Stops after this many sessions materialize; failed checkpoints do not count. */
+  readonly maxSessions?: number;
   readonly signal?: AbortSignal;
 }
 
@@ -184,6 +186,7 @@ export async function materializeMemoryInput(environment: MemoryContext, {
   baseSnapshot,
   maxInputBytes,
   maxTranscriptBytes,
+  maxSessions = Number.POSITIVE_INFINITY,
   signal,
 }: MaterializeMemoryInputOptions): Promise<MaterializeMemoryInputResult> {
   throwIfAborted(signal);
@@ -228,7 +231,7 @@ export async function materializeMemoryInput(environment: MemoryContext, {
         projection: evidence.projection,
       });
       inputBytes += evidence.byteLength;
-      if (inputBytes >= maxInputBytes) break;
+      if (inputBytes >= maxInputBytes || sessions.length >= maxSessions) break;
     } catch (error) {
       if (!(error instanceof MemoryInputMaterializationError)) throw error;
       failures.push({ checkpoint, code: error.code, message: error.message });

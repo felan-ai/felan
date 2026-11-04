@@ -1,5 +1,5 @@
 import type { ExtensionContext, FelanExtension } from '@felan-ai/agent-core';
-import type { LocalMemoryCoordinator, LocalMemoryStatus } from './coordinator.js';
+import type { LocalMemoryAttachment, LocalMemoryStatus } from './coordinator.js';
 import { sanitizeMemoryDiagnostic } from '../diagnostics.js';
 const safeMemoryText = (value: unknown) => sanitizeMemoryDiagnostic(value).replace(/\s+/gu, ' ').trim().slice(0, 500);
 const validMemoryRunId = (value: string) => /^[a-zA-Z0-9_-]{1,128}$/u.test(value);
@@ -9,8 +9,11 @@ export interface MemoryControlPresentationHost {
   openDirectory(directory: string, signal: AbortSignal): Promise<void>;
 }
 
+export type MemoryControlCoordinator = Pick<LocalMemoryAttachment,
+  'status' | 'runNow' | 'retryProject' | 'canonicalDirectory' | 'subscribeStatusChanges' | 'setSelectedModel'>;
+
 export interface CreateMemoryControlExtensionOptions {
-  readonly coordinator: LocalMemoryCoordinator;
+  readonly coordinator: MemoryControlCoordinator;
   readonly agentDir: string;
   readonly presentation: MemoryControlPresentationHost;
 }

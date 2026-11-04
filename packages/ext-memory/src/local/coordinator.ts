@@ -26,27 +26,31 @@ import type { LocalMemoryControl } from './store.js';
 import { sanitizeMemoryDiagnostic } from '../diagnostics.js';
 
 
-export interface ProjectContext {
+interface ProjectContext {
   readonly project: LocalMemoryProject;
-  readonly cwd: string;
-  readonly sessionDir?: string;
-  readonly store: LocalMemoryStore;
+  readonly stores: WeakMap<MemoryContext, LocalMemoryStore>;
+  readonly attachments: Set<AttachmentState>;
+  driver: AttachmentState | undefined;
+  failedDriver: AttachmentState | undefined;
+  recoveryDriver: AttachmentState | undefined;
   ready: Promise<void> | undefined;
   initialized: boolean;
   recovery: Promise<void> | undefined;
   recoveryAbort: AbortController | undefined;
   recoveryRetryAt: number | undefined;
+  recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   recoveryCompleted: boolean;
   diagnosticsReconciled: boolean;
   timer: ReturnType<typeof setTimeout> | undefined;
   timerDueAt: number | undefined;
   run: Promise<void> | undefined;
+  runEnvironment: MemoryContext | undefined;
   readonly followUps: Set<Promise<void>>;
   abort: AbortController | undefined;
   attempt: LocalMemoryAttempt | undefined;
   storageBlocked: boolean;
   writerBlocked: boolean;
-  statusSignature: string | undefined;
+  writerTimer: ReturnType<typeof setTimeout> | undefined;
   blocked: Map<string, MemoryCheckpointCursor>;
   state: MemoryProcessingState;
   message: string | undefined;
@@ -61,10 +65,8 @@ interface MemoryCheckpointCursor {
 
 export interface LocalMemoryCoordinatorOptions {
   readonly agentDir: string;
-  readonly models: ModelsService;
   readonly sessionDir?: string;
   readonly enabled?: boolean;
-  readonly unavailableReason?: string;
   readonly debounceMs?: number;
   readonly batchSize?: number;
   readonly maxInputBytes?: number;
@@ -74,13 +76,51 @@ export interface LocalMemoryCoordinatorOptions {
   readonly recoveryRetryMs?: number;
   readonly recover?: boolean;
   readonly dreamRunner?: LocalMemoryDreamRunner;
+  readonly leaseOptions?: LocalMemoryLeaseOptions;
+  readonly retryDelaysMs?: readonly [number, number];
+  readonly writerRetryMs?: number;
+  readonly now?: () => number;
+}
+
+
+export interface LocalMemoryAttachmentOptions {
+  readonly environment: MemoryContext;
+  readonly models: ModelsService;
+  readonly scheduling: boolean;
+  readonly unavailableReason?: string;
   readonly selectedModel?: Model<Api>;
   readonly scopedModels?: readonly Model<Api>[];
   readonly classifier?: Classifier;
-  readonly leaseOptions?: LocalMemoryLeaseOptions;
-  readonly retryDelaysMs?: readonly [number, number];
-  readonly monitorIntervalMs?: number;
-  readonly now?: () => number;
+}
+
+
+export interface LocalMemoryAttachment {
+  createSessionHost(options: LocalMemorySessionHostOptions): MemoryHost;
+  readCurrent(cwd: string, sessionStorageRoot: string): Promise<MemorySnapshot>;
+  recordCheckpoint(cwd: string, checkpoint: SessionCheckpoint): Promise<void>;
+  status(cwd: string): Promise<LocalMemoryStatus>;
+  runNow(cwd: string): Promise<LocalMemoryStatus>;
+  retryProject(cwd: string): Promise<LocalMemoryStatus>;
+  canonicalDirectory(cwd: string): Promise<string>;
+  setSelectedModel(model: Model<Api> | undefined): void;
+  setModelSelection(model: Model<Api> | undefined, scopedModels: readonly Model<Api>[] | undefined, classifier?: Classifier): void;
+  subscribeStatusChanges(listener: () => void): () => void;
+  busy(): boolean;
+  settle(mode: 'drain' | 'force'): Promise<void>;
+  detach(): Promise<void>;
+}
+
+
+interface AttachmentState extends Omit<LocalMemoryAttachmentOptions, 'selectedModel' | 'scopedModels' | 'classifier'> {
+  selectedModel: Model<Api> | undefined;
+  scopedModels: readonly Model<Api>[] | undefined;
+  classifier: Classifier | undefined;
+  readonly projections: Map<string, string>;
+  readonly listeners: Set<() => void>;
+  draining: boolean;
+  closing: boolean;
+  detached: boolean;
+  detaching: Promise<void> | undefined;
 }
 
 
@@ -103,7 +143,7 @@ interface LocalMemoryProcessingSnapshotLike {
 }
 
 
-const MEMORY_INPUT_BLOCKED_MESSAGE = 'Some memory checkpoints could not be materialized; evidence remains pending';
+const MEMORY_INPUT_BLOCKED_MESSAGE = 'Memory checkpoints are paused after a failed run; evidence remains pending';
 
 const MEMORY_AUTOMATIC_UPDATE_THRESHOLD = 5;
 
@@ -117,33 +157,59 @@ const MEMORY_MAX_BATCH_SESSIONS = 8;
 export class LocalMemoryCoordinator {
   readonly #options: LocalMemoryCoordinatorOptions;
   readonly #contexts = new Map<string, ProjectContext>();
-  readonly #projections = new Map<string, string>();
+  readonly #attachments = new Set<AttachmentState>();
   readonly #statusListeners = new Set<() => void>();
-  readonly #dreamRunner: LocalMemoryDreamRunner;
   readonly #batchSize: number;
   #enabled: boolean;
-  #selectedModel: Model<Api> | undefined;
-  #scopedModels: readonly Model<Api>[] | undefined;
-  #classifier: Classifier | undefined;
   #disposed = false;
+  #disposal: Promise<void> | undefined;
   #draining = false;
-  #monitor: ReturnType<typeof setInterval> | undefined;
-  #monitoring: Promise<void> | undefined;
   #enableVersion = 0;
 
-  constructor(readonly environment: MemoryContext, options: LocalMemoryCoordinatorOptions) {
+  constructor(options: LocalMemoryCoordinatorOptions) {
     this.#options = options;
     this.#batchSize = boundedMemoryBatchSize(options.batchSize);
     this.#enabled = options.enabled !== false;
-    this.#selectedModel = options.selectedModel;
-    this.#scopedModels = options.scopedModels === undefined ? undefined : [...options.scopedModels];
-    this.#classifier = options.classifier;
-    this.#dreamRunner = options.dreamRunner ?? createDefaultLocalMemoryDreamRunner(this.environment);
-    if (this.#enabled) this.#startMonitor();
   }
 
-  createSessionHost(options: LocalMemorySessionHostOptions): MemoryHost {
-    return new LocalMemorySessionHost(this, options);
+  attach(options: LocalMemoryAttachmentOptions): LocalMemoryAttachment {
+    if (this.#disposed) throw new Error('Local memory coordinator is closed');
+    const state: AttachmentState = {
+      ...options,
+      selectedModel: options.selectedModel,
+      scopedModels: options.scopedModels === undefined ? undefined : [...options.scopedModels],
+      classifier: options.classifier,
+      projections: new Map(),
+      listeners: new Set(),
+      draining: false,
+      closing: false,
+      detached: false,
+      detaching: undefined,
+    };
+    this.#attachments.add(state);
+    const attachment: LocalMemoryAttachment = {
+      createSessionHost: options => new LocalMemorySessionHost(attachment, options),
+      readCurrent: (cwd, root) => this.#readCurrent(state, cwd, root),
+      recordCheckpoint: (cwd, checkpoint) => this.#recordCheckpoint(state, cwd, checkpoint),
+      status: cwd => this.#status(state, cwd),
+      runNow: cwd => this.#runNow(state, cwd),
+      retryProject: cwd => this.#retryProject(state, cwd),
+      canonicalDirectory: async cwd => this.#store(await this.#context(state, cwd), state.environment).currentDirectory,
+      setSelectedModel: model => this.#setModelSelection(state, model, state.scopedModels, state.classifier),
+      setModelSelection: (model, scopedModels, classifier) => this.#setModelSelection(state, model, scopedModels, classifier),
+      subscribeStatusChanges: listener => {
+        if (state.detached || this.#disposed) return () => {};
+        state.listeners.add(listener);
+        return () => { state.listeners.delete(listener); };
+      },
+      busy: () => [...this.#contexts.values()].some(context => context.driver === state || context.recoveryDriver === state),
+      settle: mode => this.#settleAttachment(state, mode),
+      detach: () => {
+        state.detaching ??= this.#detach(state);
+        return state.detaching;
+      },
+    };
+    return attachment;
   }
 
   isEnabled(): boolean {
@@ -151,7 +217,7 @@ export class LocalMemoryCoordinator {
   }
 
   hasActiveWork(): boolean {
-    return !!this.#monitoring || [...this.#contexts.values()].some(context => !!context.run || !!context.ready || !!context.recovery || context.followUps.size > 0);
+    return [...this.#contexts.values()].some(context => !!context.run || !!context.ready || !!context.recovery || context.followUps.size > 0);
   }
 
   subscribeStatusChanges(listener: () => void): () => void {
@@ -160,36 +226,29 @@ export class LocalMemoryCoordinator {
     return () => this.#statusListeners.delete(listener);
   }
 
-  setModelSelection(
+  #setModelSelection(
+    attachment: AttachmentState,
     model: Model<Api> | undefined,
     scopedModels: readonly Model<Api>[] | undefined,
     classifier?: Classifier,
   ): void {
-    this.#scopedModels = scopedModels === undefined ? undefined : [...scopedModels];
-    this.#classifier = classifier;
-    this.setSelectedModel(model);
-  }
-
-  setSelectedModel(model: Model<Api> | undefined): void {
-    this.#selectedModel = model;
+    if (attachment.detached || this.#disposed) return;
+    attachment.selectedModel = model;
+    attachment.scopedModels = scopedModels === undefined ? undefined : [...scopedModels];
+    attachment.classifier = classifier;
     for (const context of this.#contexts.values()) {
+      if (!context.attachments.has(attachment)) continue;
       context.blocked.clear();
-      if (context.initialized) void this.#trackScheduleIfPending(context);
+      if (context.initialized) void this.#trackScheduleIfPending(context, attachment.environment);
     }
   }
 
   setEnabled(enabled: boolean): void {
     this.#enableVersion += 1;
-    enabled = enabled && !this.#options.unavailableReason;
     this.#enabled = enabled;
-    if (enabled) this.#startMonitor();
-    else if (this.#monitor) {
-      clearInterval(this.#monitor);
-      this.#monitor = undefined;
-    }
     for (const context of this.#contexts.values()) {
       if (!enabled) context.recoveryAbort?.abort();
-      if (!enabled) this.#cancelScheduledRun(context);
+      if (!enabled) this.#cancelTimers(context);
       if (!enabled) this.#cancelContext(context, 'Memory processing was disabled', true);
       if (enabled) {
         context.storageBlocked = false;
@@ -207,26 +266,27 @@ export class LocalMemoryCoordinator {
     this.#emitStatusChange();
   }
 
-  async status(cwd: string): Promise<LocalMemoryStatus> {
+  async #status(attachment: AttachmentState, cwd: string): Promise<LocalMemoryStatus> {
     try {
-      const context = await this.#context(cwd);
-      const state = await context.store.status();
-      const control = await context.store.readControl();
+      const context = await this.#context(attachment, cwd);
+      const store = this.#store(context, attachment.environment);
+      const state = await store.status();
+      const control = await store.readControl();
       const processed = Object.values(state.processed);
       const lastProcessedAt = processed
         .map((entry) => entry.processedAt)
         .sort()
         .at(-1);
       return {
-        enabled: this.#enabled && !control.autoDisabled,
-        state: !this.#enabled || control.autoDisabled ? 'disabled'
+        enabled: this.#enabled && attachment.scheduling && !control.autoDisabled,
+        state: !this.#enabled || !attachment.scheduling || control.autoDisabled ? 'disabled'
           : control.nextRetryAt && Date.parse(control.nextRetryAt) > this.#now() ? 'scheduled'
           : context.state === 'error' ? 'error'
           : control.activeAttempt ? 'processing' : context.state,
         pendingCheckpoints: Object.keys(state.pending).length,
         memoryFingerprint: state.memoryFingerprint,
         ...(lastProcessedAt === undefined ? {} : { lastProcessedAt }),
-        ...(context.message || this.#options.unavailableReason ? { message: context.message ?? this.#options.unavailableReason! } : {}),
+        ...(context.message || attachment.unavailableReason ? { message: context.message ?? attachment.unavailableReason! } : {}),
         consecutiveFailures: control.consecutiveFailures,
         ...(control.nextRetryAt ? { nextRetryAt: control.nextRetryAt } : {}),
         ...(control.autoDisabled ? { autoDisabled: control.autoDisabled } : {}),
@@ -236,39 +296,40 @@ export class LocalMemoryCoordinator {
       };
     } catch (error) {
       return {
-        enabled: this.#enabled,
-        state: this.#enabled ? 'error' : 'disabled',
+        enabled: this.#enabled && attachment.scheduling,
+        state: this.#enabled && attachment.scheduling ? 'error' : 'disabled',
         pendingCheckpoints: 0,
         message: error instanceof LocalMemoryControlError ? error.message : 'Local memory storage is unavailable',
       };
     }
   }
 
-  async readCurrent(cwd: string, sessionStorageRoot: string): Promise<MemorySnapshot> {
-    const context = await this.#context(cwd);
-    const snapshot = await context.store.readCurrent();
+  async #readCurrent(attachment: AttachmentState, cwd: string, sessionStorageRoot: string): Promise<MemorySnapshot> {
+    const context = await this.#context(attachment, cwd);
+    const store = this.#store(context, attachment.environment);
+    const snapshot = await store.readCurrent();
     const projectionKey = `${context.project.key}:${sessionStorageRoot}`;
-    const memoryPath = join(sessionStorageRoot, context.store.projectionName);
-    if (this.#projections.get(projectionKey) !== snapshot.fingerprint) {
-      const projection = await context.store.projectTo(sessionStorageRoot, snapshot);
-      this.#projections.set(projectionKey, snapshot.fingerprint);
+    const memoryPath = join(sessionStorageRoot, store.projectionName);
+    if (attachment.projections.get(projectionKey) !== snapshot.fingerprint) {
+      const projection = await store.projectTo(sessionStorageRoot, snapshot);
+      if (!attachment.detached) attachment.projections.set(projectionKey, snapshot.fingerprint);
       return projection;
     }
     return createMemoryProjectionSnapshot(snapshot, memoryPath);
   }
 
-  async recordCheckpoint(cwd: string, checkpoint: SessionCheckpoint): Promise<void> {
-    const context = await this.#context(cwd);
-    if (await context.store.recordCheckpoint(checkpoint)) {
+  async #recordCheckpoint(attachment: AttachmentState, cwd: string, checkpoint: SessionCheckpoint): Promise<void> {
+    const context = await this.#context(attachment, cwd);
+    if (await this.#store(context, attachment.environment).recordCheckpoint(checkpoint)) {
       context.blocked.delete(checkpoint.sessionId);
-      await this.#trackScheduleIfPending(context);
+      await this.#trackScheduleIfPending(context, attachment.environment);
       this.#emitStatusChange();
     }
   }
 
-  async runNow(cwd: string): Promise<LocalMemoryStatus> {
-    if (!this.#enabled || this.#draining) return this.status(cwd);
-    const context = await this.#context(cwd);
+  async #runNow(attachment: AttachmentState, cwd: string): Promise<LocalMemoryStatus> {
+    if (!this.#eligible(attachment)) return this.#status(attachment, cwd);
+    const context = await this.#context(attachment, cwd);
     this.#cancelScheduledRun(context);
     while (context.run || context.followUps.size > 0) {
       await Promise.allSettled([
@@ -278,59 +339,114 @@ export class LocalMemoryCoordinator {
       this.#cancelScheduledRun(context);
     }
     context.blocked.clear();
-    const run = this.#run(context, true);
-    context.run = run;
-    try {
-      await run;
-    } finally {
-      if (context.run === run) context.run = undefined;
-      await this.#trackScheduleIfPending(context);
-    }
-    return this.status(cwd);
+    context.storageBlocked = false;
+    context.message = undefined;
+    await this.#launchRun(context, true, attachment);
+    return this.#status(attachment, cwd);
   }
 
-  async retryProject(cwd: string): Promise<LocalMemoryStatus> {
-    if (!this.#enabled || this.#draining) return this.status(cwd);
-    const context = await this.#context(cwd);
-    if (!this.#enabled || this.#disposed || this.#draining) return this.status(cwd);
+  async #retryProject(attachment: AttachmentState, cwd: string): Promise<LocalMemoryStatus> {
+    if (!this.#eligible(attachment)) return this.#status(attachment, cwd);
+    const context = await this.#context(attachment, cwd);
+    if (!this.#eligible(attachment)) return this.#status(attachment, cwd);
     const enableVersion = this.#enableVersion;
     this.#cancelScheduledRun(context);
-    try {
-      await context.store.resetProjectControl(
-        this.#now(),
-        () => this.#enabled && !this.#disposed && !this.#draining && this.#enableVersion === enableVersion,
-      );
-    } catch (error) {
-      throw error;
-    }
+    await this.#store(context, attachment.environment).resetProjectControl(
+      this.#now(),
+      () => this.#eligible(attachment) && this.#enableVersion === enableVersion,
+    );
+    this.#emitStatusChange();
     context.abort?.abort(new Error('Memory processing was explicitly retried'));
     if (context.run) await context.run;
     context.blocked.clear();
     context.storageBlocked = false;
     context.message = undefined;
-    await this.runNow(cwd);
-    return this.status(cwd);
+    await this.#runNow(attachment, cwd);
+    return this.#status(attachment, cwd);
   }
 
-  async canonicalDirectory(cwd: string): Promise<string> {
-    const context = await this.#context(cwd);
-    return context.store.currentDirectory;
+  #eligible(attachment: AttachmentState): boolean {
+    return this.#enabled && !this.#disposed && !this.#draining
+      && attachment.scheduling && !attachment.draining && !attachment.closing && !attachment.detached;
+  }
+
+  #driver(context: ProjectContext, preferred?: AttachmentState): AttachmentState | undefined {
+    if (preferred && context.attachments.has(preferred) && this.#eligible(preferred)) return preferred;
+    return [...this.#attachments].reverse().find(attachment => context.attachments.has(attachment) && this.#eligible(attachment));
+  }
+
+  #liveMember(context: ProjectContext): AttachmentState | undefined {
+    return [...this.#attachments].reverse().find(attachment => context.attachments.has(attachment)
+      && attachment.scheduling && !attachment.draining && !attachment.closing && !attachment.detached);
+  }
+
+  #runEnvironment(context: ProjectContext, driver: AttachmentState): MemoryContext {
+    // The daemon seals closing runtimes outside their own cleanup async context.
+    const current = () => (driver.closing || driver.detached ? this.#liveMember(context) ?? driver : driver).environment;
+    const environment: MemoryContext = {
+      get runtime() { return current().runtime; },
+      get sessions() { return current().sessions; },
+    };
+    Object.defineProperty(environment, 'openWorker', { get: () => current().openWorker });
+    return environment;
+  }
+
+  async #settleAttachment(attachment: AttachmentState, mode: 'drain' | 'force'): Promise<void> {
+    attachment.draining = true;
+    if (mode === 'force') attachment.closing = true;
+    for (const context of this.#contexts.values()) {
+      if (context.recoveryDriver === attachment) context.recoveryAbort?.abort();
+      if (mode === 'force' && context.driver === attachment) {
+        this.#cancelContext(context, 'Memory processing was cancelled during shutdown', false);
+      }
+      if (!this.#driver(context)) this.#cancelTimers(context);
+    }
+    while (true) {
+      const work = [...this.#contexts.values()].flatMap(context => [
+        ...(context.driver === attachment ? [...(context.run ? [context.run] : []), ...context.followUps] : []),
+        ...(context.recoveryDriver === attachment && context.recovery ? [context.recovery] : []),
+      ]);
+      if (!work.length) break;
+      await Promise.allSettled(work);
+    }
+    for (const context of this.#contexts.values()) {
+      if (mode === 'force' && context.failedDriver === attachment) {
+        context.storageBlocked = false;
+        context.blocked.clear();
+        if (context.state === 'error' || context.state === 'blocked') context.state = 'idle';
+        context.message = undefined;
+        context.failedDriver = undefined;
+      }
+      if (!context.attachments.has(attachment) || !context.initialized) continue;
+      this.#startRecovery(context);
+      void this.#trackScheduleIfPending(context);
+    }
+  }
+
+  async #detach(attachment: AttachmentState): Promise<void> {
+    attachment.closing = true;
+    await this.#settleAttachment(attachment, 'force');
+    attachment.detached = true;
+    this.#attachments.delete(attachment);
+    attachment.listeners.clear();
+    attachment.projections.clear();
+    for (const context of this.#contexts.values()) {
+      context.attachments.delete(attachment);
+      if (!this.#driver(context)) this.#cancelTimers(context);
+    }
   }
 
   async drain(): Promise<void> {
     this.#draining = true;
-    if (this.#monitor) clearInterval(this.#monitor);
-    this.#monitor = undefined;
     for (const context of this.#contexts.values()) {
       context.recoveryAbort?.abort();
-      this.#cancelScheduledRun(context);
+      this.#cancelTimers(context);
     }
     while (true) {
       const work = [...this.#contexts.values()].flatMap(context => [
         ...(context.run ? [context.run] : []), ...(context.ready ? [context.ready] : []),
         ...(context.recovery ? [context.recovery] : []), ...context.followUps,
       ]);
-      if (this.#monitoring) work.push(this.#monitoring);
       if (!work.length) return;
       const results = await Promise.allSettled(work);
       const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
@@ -338,130 +454,164 @@ export class LocalMemoryCoordinator {
     }
   }
 
-  async dispose(): Promise<void> {
-    if (this.#disposed) return;
+  dispose(): Promise<void> {
+    this.#disposal ??= this.#dispose();
+    return this.#disposal;
+  }
+
+  async #dispose(): Promise<void> {
     this.#disposed = true;
-    if (this.#monitor) clearInterval(this.#monitor);
-    this.#monitor = undefined;
     for (const context of this.#contexts.values()) {
       context.recoveryAbort?.abort();
-      this.#cancelScheduledRun(context);
+      this.#cancelTimers(context);
       this.#cancelContext(context, 'Memory processing was cancelled during shutdown', false);
     }
     while (true) {
-      const work = [...this.#contexts.values()].flatMap((context) => [
+      const work = [...this.#contexts.values()].flatMap(context => [
         ...(context.run ? [context.run] : []),
         ...(context.ready ? [context.ready] : []),
         ...(context.recovery ? [context.recovery] : []),
         ...context.followUps,
       ]);
-      if (this.#monitoring) work.push(this.#monitoring);
-      if (work.length === 0) break;
+      if (!work.length) break;
       await Promise.allSettled(work);
     }
+    for (const attachment of this.#attachments) {
+      attachment.detached = true;
+      attachment.listeners.clear();
+      attachment.projections.clear();
+    }
+    this.#attachments.clear();
     this.#statusListeners.clear();
   }
 
-  async #context(cwd: string): Promise<ProjectContext> {
-    if (this.#disposed) throw new Error('Local memory coordinator is closed');
-    const project = await resolveLocalMemoryProject(this.environment, cwd);
-    if (this.#disposed) throw new Error('Local memory coordinator is closed');
+  async #context(attachment: AttachmentState, cwd: string): Promise<ProjectContext> {
+    if (this.#disposed || attachment.detached) throw new Error('Local memory coordinator is closed');
+    const project = await resolveLocalMemoryProject(attachment.environment, cwd);
+    if (this.#disposed || attachment.detached) throw new Error('Local memory coordinator is closed');
     const existing = this.#contexts.get(project.key);
     if (existing) {
-      await this.#initialize(existing);
+      existing.attachments.add(attachment);
+      await this.#initialize(existing, attachment);
       return existing;
     }
-    const store = new LocalMemoryStore(this.environment, this.#options.agentDir, project, {
-      ...(this.#options.retryDelaysMs ? { retryDelaysMs: this.#options.retryDelaysMs } : {}),
-    });
     const context: ProjectContext = {
       project,
-      cwd,
-      ...(this.#options.sessionDir === undefined ? {} : { sessionDir: this.#options.sessionDir }),
-      store,
+      stores: new WeakMap(),
+      attachments: new Set([attachment]),
+      driver: undefined,
+      failedDriver: undefined,
+      recoveryDriver: undefined,
       ready: undefined,
       initialized: false,
       recovery: undefined,
       recoveryAbort: undefined,
       recoveryRetryAt: undefined,
+      recoveryTimer: undefined,
       recoveryCompleted: false,
       diagnosticsReconciled: false,
       timer: undefined,
       timerDueAt: undefined,
       run: undefined,
+      runEnvironment: undefined,
       followUps: new Set(),
       abort: undefined,
       attempt: undefined,
       storageBlocked: false,
       writerBlocked: false,
-      statusSignature: undefined,
+      writerTimer: undefined,
       blocked: new Map(),
       state: this.#enabled ? 'idle' : 'disabled',
       message: undefined,
     };
     this.#contexts.set(project.key, context);
-    await this.#initialize(context);
+    await this.#initialize(context, attachment);
     return context;
   }
 
-  async #initialize(context: ProjectContext): Promise<void> {
+  #store(context: ProjectContext, environment: MemoryContext): LocalMemoryStore {
+    let store = context.stores.get(environment);
+    if (!store) {
+      store = new LocalMemoryStore(environment, this.#options.agentDir, context.project, {
+        ...(this.#options.retryDelaysMs ? { retryDelaysMs: this.#options.retryDelaysMs } : {}),
+      });
+      context.stores.set(environment, store);
+    }
+    return store;
+  }
+
+  async #initialize(context: ProjectContext, attachment: AttachmentState): Promise<void> {
     if (context.ready) {
       await context.ready;
       return;
     }
     if (context.initialized && context.diagnosticsReconciled) {
       this.#startRecovery(context);
+      void this.#trackScheduleIfPending(context, attachment.environment);
       return;
     }
-    const ready = this.#initializeContext(context).finally(() => {
+    const ready = this.#initializeContext(context, attachment).finally(() => {
       if (context.ready === ready) context.ready = undefined;
     });
     context.ready = ready;
     await ready;
   }
 
-  async #initializeContext(context: ProjectContext): Promise<void> {
+  async #initializeContext(context: ProjectContext, attachment: AttachmentState): Promise<void> {
+    const environment = attachment.environment;
+    const store = this.#store(context, environment);
     if (!context.initialized) {
-      await context.store.initialize(this.#now()).then(() => {
+      await store.initialize(this.#now()).then(() => {
         context.initialized = true;
         context.state = this.#enabled ? 'idle' : 'disabled';
         context.message = undefined;
       }).catch(async (error: unknown) => {
         if (!(error instanceof LocalMemoryControlError)) throw error;
-        const current = await context.store.readCurrent();
-        if (current.fingerprint !== (await context.store.status()).memoryFingerprint) throw error;
+        const current = await store.readCurrent();
+        if (current.fingerprint !== (await store.status()).memoryFingerprint) throw error;
         context.message = error.message;
       });
     }
     if (!context.initialized) return;
     if (!context.diagnosticsReconciled) {
       try {
-        const lease = await acquireLocalMemoryLease(this.environment, context.store.projectDirectory, this.#options.leaseOptions);
+        const lease = await acquireLocalMemoryLease(environment, store.projectDirectory, this.#options.leaseOptions);
         if (lease) {
           try {
-            await this.#reconcileRunDiagnostics(context, lease);
+            await this.#reconcileRunDiagnostics(context, environment, lease);
             context.diagnosticsReconciled = true;
+            context.storageBlocked = false;
+            context.failedDriver = undefined;
+            context.message = undefined;
           } finally {
             await lease.release();
           }
         }
       } catch (error) {
-        context.diagnosticsReconciled = true;
         context.storageBlocked = true;
+        context.failedDriver = attachment;
         context.message = `Memory diagnostics recovery is blocked: ${sanitizeMemoryDiagnostic(error)}`;
       }
     }
     if (this.#disposed) return;
-    if (this.#enabled) void this.#trackScheduleIfPending(context);
+    if (this.#enabled) void this.#trackScheduleIfPending(context, environment);
     this.#startRecovery(context);
   }
 
   #startRecovery(context: ProjectContext): void {
-    if (this.#disposed || this.#draining || !this.#enabled || this.#options.recover === false
-      || context.recoveryCompleted || context.recovery
-      || context.recoveryRetryAt !== undefined && this.#now() < context.recoveryRetryAt) return;
+    if (this.#options.recover === false || context.recoveryCompleted || context.recovery) return;
+    const driver = this.#driver(context);
+    if (!driver) return;
+    if (context.recoveryRetryAt !== undefined && this.#now() < context.recoveryRetryAt) {
+      this.#scheduleRecoveryRetry(context);
+      return;
+    }
+    if (context.recoveryTimer) clearTimeout(context.recoveryTimer);
+    context.recoveryTimer = undefined;
+    context.recoveryDriver = driver;
     const abort = new AbortController();
-    const recovery = this.#recover(context, abort.signal).then((completed) => {
+    context.recoveryAbort = abort;
+    const recovery = this.#recover(context, driver, abort.signal).then(completed => {
       if (completed) context.recoveryCompleted = true;
     }).catch(() => {
       context.message = 'Memory startup recovery could not complete';
@@ -469,69 +619,66 @@ export class LocalMemoryCoordinator {
       if (context.recovery === recovery) {
         context.recovery = undefined;
         context.recoveryAbort = undefined;
+        context.recoveryDriver = undefined;
       }
+      if (abort.signal.aborted) this.#startRecovery(context);
+      else this.#scheduleRecoveryRetry(context);
+      this.#emitStatusChange();
     });
     context.recovery = recovery;
-    context.recoveryAbort = abort;
+  }
+
+  #scheduleRecoveryRetry(context: ProjectContext): void {
+    if (context.recoveryTimer || context.recoveryCompleted || context.recoveryRetryAt === undefined || !this.#driver(context)) return;
+    const timer = setTimeout(() => {
+      if (context.recoveryTimer !== timer) return;
+      context.recoveryTimer = undefined;
+      this.#startRecovery(context);
+    }, Math.max(0, context.recoveryRetryAt - this.#now()));
+    context.recoveryTimer = timer;
+    timer.unref?.();
+  }
+
+  #scheduleWriterRetry(context: ProjectContext): void {
+    if (context.writerTimer || !this.#driver(context)) return;
+    context.writerBlocked = true;
+    const timer = setTimeout(() => {
+      if (context.writerTimer !== timer) return;
+      context.writerTimer = undefined;
+      context.writerBlocked = false;
+      if (context.run) {
+        void this.#trackScheduleIfPending(context);
+        return;
+      }
+      context.diagnosticsReconciled = false;
+      const driver = this.#driver(context);
+      if (driver) void this.#initialize(context, driver).catch(() => {});
+    }, this.#options.writerRetryMs ?? 30_000);
+    context.writerTimer = timer;
+    timer.unref?.();
   }
 
   #now(): number { return this.#options.now?.() ?? Date.now(); }
-
-  #startMonitor(): void {
-    if (this.#disposed || this.#draining || this.#monitor) return;
-    const interval = this.#options.monitorIntervalMs ?? 2_000;
-    if (!Number.isFinite(interval) || interval < 1) throw new Error('Memory monitor interval must be positive');
-    this.#monitor = setInterval(() => {
-      if (this.#monitoring) return;
-      this.#monitoring = this.#refresh().catch(() => {}).finally(() => { this.#monitoring = undefined; });
-    }, interval);
-    this.#monitor.unref?.();
-  }
-
-  async #refresh(): Promise<void> {
-    if (this.#disposed || this.#draining) return;
-    for (const context of this.#contexts.values()) {
-      try {
-        await this.#initialize(context);
-        const observedAttempt = context.attempt;
-        const control = await context.store.readControl();
-        if (observedAttempt && context.attempt === observedAttempt && (!this.#enabled || control.autoDisabled
-          || control.activeAttempt?.runId !== observedAttempt.runId
-          || control.activeAttempt?.generation !== observedAttempt.generation)) {
-          this.#cancelContext(context, 'Memory processing was cancelled by another session', true);
-        }
-        context.writerBlocked = false;
-        if (context.initialized) await this.#trackScheduleIfPending(context);
-        const signature = JSON.stringify([this.#enabled, context.state, context.message, control.updatedAt]);
-        if (signature !== context.statusSignature) {
-          context.statusSignature = signature;
-          this.#emitStatusChange();
-        }
-      } catch (error) {
-        context.state = 'error';
-        context.message = sanitizeMemoryDiagnostic(error);
-        context.abort?.abort(error);
-        this.#emitStatusChange();
-      }
-    }
-  }
 
   #cancelContext(context: ProjectContext, reason: string, cancelPersisted: boolean): void {
     const alreadyAborted = context.abort?.signal.aborted ?? false;
     context.abort?.abort(new Error(reason));
     if (alreadyAborted || !context.initialized || (!cancelPersisted && !context.attempt)) return;
+    const environment = context.runEnvironment ?? this.#liveMember(context)?.environment;
+    if (!environment) return;
+    const store = this.#store(context, environment);
     const cancellation = cancelPersisted
-      ? context.store.cancelActiveAttempt(this.#now())
-      : context.store.finishAttempt(undefined, context.attempt!, { status: 'cancelled', reason }, this.#now());
+      ? store.cancelActiveAttempt(this.#now())
+      : store.finishAttempt(undefined, context.attempt!, { status: 'cancelled', reason }, this.#now());
     const followUp = cancellation
-      .then(() => {})
+      .then(() => { this.#emitStatusChange(); })
       .catch(() => {})
       .finally(() => { context.followUps.delete(followUp); });
     context.followUps.add(followUp);
   }
 
   async #schedule(context: ProjectContext, dueAt: number): Promise<void> {
-    if (this.#disposed || this.#draining || !this.#enabled || context.run || context.storageBlocked) return;
+    if (!this.#driver(context) || context.run || context.storageBlocked) return;
     if (context.timer && context.timerDueAt === dueAt) return;
     this.#cancelScheduledRun(context);
     context.state = 'scheduled';
@@ -540,39 +687,41 @@ export class LocalMemoryCoordinator {
       if (context.timer !== timer) return;
       context.timer = undefined;
       context.timerDueAt = undefined;
-      const run = this.#run(context).catch((error: unknown) => {
-        context.state = 'error';
-        context.storageBlocked = true;
-        context.message = sanitizeMemoryDiagnostic(error);
-        this.#emitStatusChange();
-      }).finally(async () => {
-        context.run = undefined;
-        await this.#trackScheduleIfPending(context);
-      });
-      context.run = run;
+      void this.#launchRun(context)?.catch(() => {});
     }, delay);
     context.timer = timer;
     context.timerDueAt = dueAt;
     timer.unref?.();
   }
 
-  async #scheduleIfPending(context: ProjectContext): Promise<void> {
-    if (!this.#enabled || this.#disposed || this.#draining) return;
+  async #scheduleIfPending(context: ProjectContext, environment?: MemoryContext): Promise<void> {
+    const driver = this.#driver(context);
+    if (!driver) {
+      this.#cancelTimers(context);
+      return;
+    }
     try {
-      const control = await context.store.readControl();
+      const store = this.#store(context, environment ?? driver.environment);
+      const control = await store.readControl();
       if (control.autoDisabled) {
-        this.#cancelScheduledRun(context);
+        this.#cancelTimers(context);
         context.state = 'disabled';
         return;
       }
       if (context.storageBlocked) return;
       if (context.writerBlocked) return;
-      const state = await context.store.status();
+      const state = await store.status();
+      if (context.state === 'error' && context.message === 'Local memory storage is unavailable') {
+        context.state = 'idle';
+        context.message = undefined;
+      }
       const pending = Object.values(state.pending);
+      if (!this.#driver(context)) return;
       if (control.activeAttempt) {
         this.#cancelScheduledRun(context);
+        if (!context.run) this.#scheduleWriterRetry(context);
       } else if (pending.some(({ checkpoint }) => !isBlockedCheckpoint(context, checkpoint))) {
-        const acceptedUpdates = await context.store.pendingAcceptedUpdates(
+        const acceptedUpdates = await store.pendingAcceptedUpdates(
           (checkpoint) => !isBlockedCheckpoint(context, checkpoint),
         );
         if (acceptedUpdates < MEMORY_AUTOMATIC_UPDATE_THRESHOLD) {
@@ -605,36 +754,78 @@ export class LocalMemoryCoordinator {
     }
   }
 
-  #trackScheduleIfPending(context: ProjectContext): Promise<void> {
-    const followUp = this.#scheduleIfPending(context).finally(() => {
+  #trackScheduleIfPending(context: ProjectContext, environment?: MemoryContext): Promise<void> {
+    const followUp = this.#scheduleIfPending(context, environment).finally(() => {
       context.followUps.delete(followUp);
     });
     context.followUps.add(followUp);
     return followUp;
   }
 
-  async #run(context: ProjectContext, bypassRetryAt = false): Promise<void> {
+  #launchRun(context: ProjectContext, bypassRetryAt = false, preferred?: AttachmentState): Promise<void> | undefined {
+    if (context.run || context.storageBlocked || preferred && !this.#eligible(preferred)) return;
+    const driver = this.#driver(context, preferred);
+    if (!driver) return;
+    context.driver = driver;
+    context.failedDriver = undefined;
+    const environment = this.#runEnvironment(context, driver);
+    context.runEnvironment = environment;
+    const run = this.#run(context, driver, environment, bypassRetryAt).catch((error: unknown) => {
+      context.state = 'error';
+      context.failedDriver = driver;
+      if (!bypassRetryAt && !driver.closing && !driver.detached) context.storageBlocked = true;
+      context.message = sanitizeMemoryDiagnostic(error);
+      throw error;
+    }).finally(async () => {
+      if (context.run === settled) {
+        context.run = undefined;
+        context.driver = undefined;
+        context.runEnvironment = undefined;
+        context.abort = undefined;
+      }
+      await this.#trackScheduleIfPending(context);
+      this.#emitStatusChange();
+    });
+    const settled = run.catch(() => {});
+    context.run = settled;
+    return run;
+  }
+
+  async #run(context: ProjectContext, driver: AttachmentState, environment: MemoryContext, bypassRetryAt: boolean): Promise<void> {
     if (this.#disposed || this.#draining || !this.#enabled || context.storageBlocked) return;
     context.state = 'processing';
     context.message = undefined;
+    const abort = new AbortController();
+    context.abort = abort;
+    const store = this.#store(context, environment);
     let lease: LocalMemoryLease | undefined;
+    const cancelled = () => driver.closing || driver.detached || !this.#enabled || this.#disposed
+      || abort.signal.aborted && !lease?.compromised.aborted;
     try {
-      lease = await acquireLocalMemoryLease(this.environment, context.store.projectDirectory, this.#options.leaseOptions);
+      lease = await acquireLocalMemoryLease(environment, store.projectDirectory, this.#options.leaseOptions);
     } catch (error) {
-      context.writerBlocked = true;
+      if (cancelled()) {
+        context.state = 'idle';
+        context.message = driver.closing || driver.detached || this.#disposed
+          ? 'Memory processing was cancelled during shutdown' : 'Memory processing was cancelled';
+        return;
+      }
+      this.#scheduleWriterRetry(context);
       context.state = 'error';
+      context.failedDriver = driver;
       context.message = safeProcessingMessage(error);
       return;
     }
     if (!lease) {
-      context.writerBlocked = true;
+      this.#scheduleWriterRetry(context);
       context.state = 'blocked';
+      context.failedDriver = driver;
       context.message = 'Another Felan Code process owns the memory writer';
       return;
     }
     context.writerBlocked = false;
-    const abort = new AbortController();
-    context.abort = abort;
+    if (context.writerTimer) clearTimeout(context.writerTimer);
+    context.writerTimer = undefined;
     const abortOnLeaseCompromise = (): void => {
       abort.abort(new Error('Memory writer lease was lost'));
     };
@@ -644,7 +835,8 @@ export class LocalMemoryCoordinator {
     let published = false;
     let attempt: LocalMemoryAttempt | undefined;
     try {
-      const control = await this.#reconcileRunDiagnostics(context, lease);
+      if (abort.signal.aborted || !this.#enabled || this.#disposed) return;
+      const control = await this.#reconcileRunDiagnostics(context, environment, lease);
       if (control.autoDisabled) {
         context.state = 'disabled';
         return;
@@ -653,27 +845,28 @@ export class LocalMemoryCoordinator {
         context.state = 'scheduled';
         return;
       }
-      const snapshot = await context.store.processingSnapshot(
-        this.#batchSize,
+      // Every pending checkpoint is a candidate so unreadable ones cannot occupy the batch.
+      const snapshot = await store.processingSnapshot(
+        Number.POSITIVE_INFINITY,
         (checkpoint) => !isBlockedCheckpoint(context, checkpoint),
       );
       if (snapshot.checkpoints.length === 0) {
         context.state = 'idle';
         return;
       }
-      retainedRun = await LocalMemoryRun.create(this.environment, {
-        projectDirectory: context.store.projectDirectory,
+      retainedRun = await LocalMemoryRun.create(environment, {
+        projectDirectory: store.projectDirectory,
         sessionDirectory: join(this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'), 'memory'),
         projectKey: context.project.key,
         projectRoot: context.project.canonicalRoot,
-        checkpoints: snapshot.checkpoints.map(({ checkpoint }) => checkpoint),
+        checkpoints: snapshot.checkpoints.slice(0, this.#batchSize).map(({ checkpoint }) => checkpoint),
         baseFingerprint: snapshot.fingerprint,
         ...(control.lastDisabledRunId ? { protectedRunIds: [control.lastDisabledRunId] } : {}),
       });
       staging = retainedRun.workspace;
       const memoryDirectory = join(staging, '.memory');
-      await hydrateMemoryDirectory(this.environment, snapshot.artifact, memoryDirectory, { memoryPath: '.memory', mode: 'read' });
-      const manifest = await materializeMemoryInput(this.environment, {
+      await hydrateMemoryDirectory(environment, snapshot.artifact, memoryDirectory, { memoryPath: '.memory', mode: 'read' });
+      const manifest = await materializeMemoryInput(environment, {
         stagingDirectory: staging,
         checkpoints: snapshot.checkpoints.map(({ checkpoint }) => checkpoint),
         previousCheckpoints: Object.fromEntries(
@@ -684,14 +877,19 @@ export class LocalMemoryCoordinator {
         ...(this.#options.maxTranscriptBytes === undefined
           ? {}
           : { maxTranscriptBytes: this.#options.maxTranscriptBytes }),
+        maxSessions: this.#batchSize,
         signal: abort.signal,
       });
-      for (const failure of manifest.failures) {
-        context.blocked.set(failure.checkpoint.sessionId, {
-          leafId: failure.checkpoint.leafId,
-          transcriptDigest: failure.checkpoint.transcriptDigest,
-        });
-      }
+      // A cancelled read reports as a failure; it must not drop evidence.
+      if (abort.signal.aborted || !this.#enabled || this.#disposed) throw new Error('Memory processing was cancelled');
+      // A reachable Sessions service shows the failures belong to the checkpoints, not to the service.
+      if (manifest.failures.length > 0) await environment.sessions.list({ scope: 'project' }, { limit: 1, signal: abort.signal });
+      const dropped = manifest.failures.length === 0 ? 0 : await store.dropCheckpoints(
+        lease,
+        manifest.failures.map(({ checkpoint, code }) => ({ checkpoint, reason: code })),
+        this.#now(),
+      );
+      const droppedMessage = dropped === 0 ? undefined : droppedCheckpointsMessage(dropped);
       const processedCheckpoints = snapshot.checkpoints.filter(({ checkpoint }) =>
         manifest.sessions.some((session) =>
           session.checkpoint.sessionId === checkpoint.sessionId
@@ -699,14 +897,14 @@ export class LocalMemoryCoordinator {
         ),
       );
       if (processedCheckpoints.length === 0) {
-        context.state = 'blocked';
-        context.message = MEMORY_INPUT_BLOCKED_MESSAGE;
-        await retainedRun.finish('blocked', MEMORY_INPUT_BLOCKED_MESSAGE);
+        context.state = 'idle';
+        context.message = droppedMessage;
+        await retainedRun.finish('blocked', droppedMessage ?? 'Memory checkpoints changed before they could be read');
         return;
       }
       await retainedRun.record({ phase: 'model', checkpoints: processedCheckpoints.map(({ checkpoint }) => checkpoint) });
       if (abort.signal.aborted || !this.#enabled || this.#disposed) throw new Error('Memory processing was cancelled');
-      attempt = await context.store.beginAttempt(lease, {
+      attempt = await store.beginAttempt(lease, {
         runId: retainedRun.metadata.sessionId,
         baseFingerprint: snapshot.fingerprint,
         checkpoints: processedCheckpoints,
@@ -718,16 +916,16 @@ export class LocalMemoryCoordinator {
       }
       context.attempt = attempt;
       this.#emitStatusChange();
-      const result = await this.#dreamRunner({
+      const result = await (this.#options.dreamRunner ?? createDefaultLocalMemoryDreamRunner(environment))({
         stagingDirectory: staging,
         memoryDirectory,
         inputDirectory: join(staging, '.dreaming', 'input'),
         baseSnapshot: createMemorySnapshot(snapshot.artifact, '.memory', { mode: 'read' }),
         manifest,
-        models: this.#options.models,
-        ...(this.#selectedModel === undefined ? {} : { selectedModel: this.#selectedModel }),
-        ...(this.#scopedModels === undefined ? {} : { scopedModels: this.#scopedModels }),
-        ...(this.#classifier === undefined ? {} : { classifier: this.#classifier }),
+        models: driver.models,
+        ...(driver.selectedModel === undefined ? {} : { selectedModel: driver.selectedModel }),
+        ...(driver.scopedModels === undefined ? {} : { scopedModels: driver.scopedModels }),
+        ...(driver.classifier === undefined ? {} : { classifier: driver.classifier }),
         sessionDirectory: join(
           this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'),
           'memory',
@@ -736,9 +934,9 @@ export class LocalMemoryCoordinator {
         signal: abort.signal,
       });
       if (abort.signal.aborted || !this.#enabled || this.#disposed) throw new Error('Memory processing was cancelled');
-      if (result) await hydrateMemoryDirectory(this.environment, result, memoryDirectory, { replace: true, memoryPath: '.memory' });
+      if (result) await hydrateMemoryDirectory(environment, result, memoryDirectory, { replace: true, memoryPath: '.memory' });
       await retainedRun.record({ phase: 'validate' });
-      const artifact = await readMemoryDirectory(this.environment, memoryDirectory, {
+      const artifact = await readMemoryDirectory(environment, memoryDirectory, {
         memoryPath: '.memory',
         sourceSessionIds: allowedSourceIds(snapshot, manifest),
         requireSources: true,
@@ -747,7 +945,7 @@ export class LocalMemoryCoordinator {
         phase: 'publish',
         outputFingerprint: createMemorySnapshot(artifact, '.memory').fingerprint,
       });
-      await context.store.commit(
+      await store.commit(
         lease,
         snapshot.fingerprint,
         artifact,
@@ -755,24 +953,19 @@ export class LocalMemoryCoordinator {
         attempt,
       );
       published = true;
-      await context.store.finishAttempt(lease, attempt, { status: 'success' }, this.#now());
+      await store.finishAttempt(lease, attempt, { status: 'success' }, this.#now());
       await retainedRun.finish('completed');
-      if (manifest.failures.length > 0) {
-        context.state = 'blocked';
-        context.message = MEMORY_INPUT_BLOCKED_MESSAGE;
-      } else {
-        context.state = 'idle';
-      }
-      this.#emitStatusChange();
+      context.state = 'idle';
+      context.failedDriver = undefined;
+      context.message = droppedMessage;
     } catch (error) {
-      const leaseValid = await lease.verify();
-      const explicitlyCancelled = !this.#enabled || this.#disposed
-        || (abort.signal.aborted && !lease.compromised.aborted);
+      const leaseValid = await lease.verify().catch(() => false);
+      const explicitlyCancelled = cancelled();
       const unavailableModel = error instanceof MemoryModelUnavailableError;
       const blockedBeforeInference = retainedRun !== undefined && attempt === undefined && !explicitlyCancelled;
       if (attempt && (leaseValid || explicitlyCancelled)) {
         try {
-          const control = await context.store.finishAttempt(
+          const control = await store.finishAttempt(
             explicitlyCancelled || unavailableModel ? undefined : lease,
             attempt,
             explicitlyCancelled || unavailableModel ? { status: 'cancelled' }
@@ -781,16 +974,24 @@ export class LocalMemoryCoordinator {
           );
           published ||= control.lastOutcome?.runId === attempt.runId && control.lastOutcome.status === 'success';
         } catch {
-          context.storageBlocked = true;
+          if (!explicitlyCancelled) context.storageBlocked = true;
         }
+      }
+      if (explicitlyCancelled) {
+        context.state = 'idle';
+        context.message = driver.closing || driver.detached || this.#disposed
+          ? 'Memory processing was cancelled during shutdown' : 'Memory processing was cancelled';
+        await retainedRun?.finish('cancelled', error).catch(() => {});
+        return;
       }
       if (published) {
         context.state = 'idle';
+        context.failedDriver = context.storageBlocked ? driver : undefined;
         context.message = 'Memory was published, but its diagnostics could not be fully saved';
-        this.#emitStatusChange();
         return;
       }
       context.state = 'error';
+      context.failedDriver = driver;
       context.message = !leaseValid
         ? safeProcessingMessage(new Error('Memory writer lease was lost'))
         : safeProcessingMessage(error);
@@ -804,57 +1005,61 @@ export class LocalMemoryCoordinator {
         context.storageBlocked = true;
         context.message = `Memory processing is paused: ${sanitizeMemoryDiagnostic(error)}`;
       }
-      await retainedRun?.finish(explicitlyCancelled ? 'cancelled'
-        : unavailableModel || blockedBeforeInference ? 'blocked'
+      await retainedRun?.finish(unavailableModel || blockedBeforeInference ? 'blocked'
         : !leaseValid ? 'interrupted' : 'failed', error).catch(() => {
         context.storageBlocked = true;
         context.message = 'Memory diagnostics could not be saved; evidence remains pending';
       });
-      this.#emitStatusChange();
     } finally {
       lease.compromised.removeEventListener('abort', abortOnLeaseCompromise);
-      context.abort = undefined;
       context.attempt = undefined;
-      await lease.release();
+      await lease.release().catch(error => {
+        if (!cancelled()) throw error;
+      });
     }
   }
 
-  async #reconcileRunDiagnostics(context: ProjectContext, lease: LocalMemoryLease): Promise<LocalMemoryControl> {
-    let control = await context.store.readControl();
-    control = await context.store.reconcileAbandonedAttempt(lease, this.#now());
+  async #reconcileRunDiagnostics(context: ProjectContext, environment: MemoryContext, lease: LocalMemoryLease): Promise<LocalMemoryControl> {
+    const store = this.#store(context, environment);
+    const previous = await store.readControl();
+    const control = await store.reconcileAbandonedAttempt(lease, this.#now());
+    if (previous.updatedAt !== control.updatedAt) this.#emitStatusChange();
     const options = {
-      projectDirectory: context.store.projectDirectory,
+      projectDirectory: store.projectDirectory,
       projectKey: context.project.key,
       sessionDirectory: join(this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'), 'memory'),
       ...(control.lastDisabledRunId ? { protectedRunIds: [control.lastDisabledRunId] } : {}),
     };
-    if (control.lastOutcome) await LocalMemoryRun.reconcile(this.environment, options, control.lastOutcome);
-    await LocalMemoryRun.reconcileAbandoned(this.environment, options, [
+    if (control.lastOutcome) await LocalMemoryRun.reconcile(environment, options, control.lastOutcome);
+    await LocalMemoryRun.reconcileAbandoned(environment, options, [
       ...(control.activeAttempt ? [control.activeAttempt.runId] : []),
       ...(control.lastOutcome ? [control.lastOutcome.runId] : []),
     ], this.#now());
     return control;
   }
 
-  async #recover(context: ProjectContext, signal: AbortSignal): Promise<boolean> {
+  async #recover(context: ProjectContext, driver: AttachmentState, signal: AbortSignal): Promise<boolean> {
     let cursor: string | undefined;
     let recovered = false;
     const stableAfter = this.#options.recoveryStableMs ?? 30_000;
+    const store = this.#store(context, driver.environment);
     const stopped = () => this.#disposed || this.#draining || !this.#enabled || signal.aborted;
     try {
       do {
-        const page = await this.environment.sessions.list({ scope: 'project' }, { ...(cursor ? { cursor } : {}), signal });
+        const page = await driver.environment.sessions.list({ scope: 'project' }, { ...(cursor ? { cursor } : {}), signal });
         for (const info of page.items) {
           if (stopped()) return false;
           if (info.parent || this.#now() - info.updatedAt < stableAfter) continue;
+          let checkpoint: SessionCheckpoint;
           try {
-            const checkpoint = await readMemorySessionCheckpoint(this.environment.sessions, info.id, signal);
-            if (stopped()) return false;
-            recovered = (await context.store.recordCheckpoint(checkpoint)) || recovered;
+            checkpoint = await readMemorySessionCheckpoint(driver.environment.sessions, info.id, signal);
           } catch {
             if (stopped()) return false;
             // A session that cannot be read now is skipped; its live checkpoint or a later run records it.
+            continue;
           }
+          if (stopped()) return false;
+          recovered = (await store.recordCheckpoint(checkpoint)) || recovered;
         }
         cursor = page.nextCursor;
       } while (cursor);
@@ -875,11 +1080,20 @@ export class LocalMemoryCoordinator {
   }
 
   #emitStatusChange(): void {
-    for (const listener of [...this.#statusListeners]) {
+    for (const listener of [...this.#statusListeners, ...[...this.#attachments].flatMap(attachment => [...attachment.listeners])]) {
       try {
         listener();
       } catch {}
     }
+  }
+
+  #cancelTimers(context: ProjectContext): void {
+    this.#cancelScheduledRun(context);
+    if (context.recoveryTimer) clearTimeout(context.recoveryTimer);
+    if (context.writerTimer) clearTimeout(context.writerTimer);
+    context.recoveryTimer = undefined;
+    context.writerTimer = undefined;
+    context.writerBlocked = false;
   }
 
   #cancelScheduledRun(context: ProjectContext): void {
@@ -891,11 +1105,11 @@ export class LocalMemoryCoordinator {
 
 
 class LocalMemorySessionHost implements MemoryHost {
-  readonly #coordinator: LocalMemoryCoordinator;
+  readonly #coordinator: LocalMemoryAttachment;
   readonly #cwd: string;
   readonly #sessionStorageRoot: string;
 
-  constructor(coordinator: LocalMemoryCoordinator, options: LocalMemorySessionHostOptions) {
+  constructor(coordinator: LocalMemoryAttachment, options: LocalMemorySessionHostOptions) {
     this.#coordinator = coordinator;
     this.#cwd = options.cwd;
     this.#sessionStorageRoot = options.sessionStorageRoot;
@@ -946,6 +1160,11 @@ function allowedSourceIds(
     ...snapshot.artifact.files.flatMap(({ content }) => extractSourceIds(content)),
     ...manifest.sessions.map(({ checkpoint }) => checkpoint.sessionId),
   ])];
+}
+
+
+function droppedCheckpointsMessage(count: number): string {
+  return `Dropped ${count} memory checkpoint${count === 1 ? '' : 's'} that could not be read`;
 }
 
 

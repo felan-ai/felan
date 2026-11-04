@@ -54,7 +54,7 @@ async function fixture() {
   const create = (options: Partial<Omit<LocalMemoryCoordinatorOptions, 'debounceMs'>> & { debounceMs?: number | undefined } = {}) => {
     const coordinator = new LocalMemoryCoordinator({
       agentDir, sessionDir: join(root, 'sessions'), models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
-      recover: false, monitorIntervalMs: 60_000,
+      recover: false,
       ...(Object.hasOwn(options, 'debounceMs') ? options.debounceMs === undefined ? {} : { debounceMs: options.debounceMs } : { debounceMs: 60_000 }),
       dreamRunner: async (input) => input.baseSnapshot,
       ...Object.fromEntries(Object.entries(options).filter(([, value]) => value !== undefined)),
@@ -153,36 +153,43 @@ describe('memory retry scheduling', () => {
     await expect(running).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
   });
 
-  it('keeps the persisted publication deadline when another process records a newer checkpoint', async () => {
+  it('derives the persisted publication deadline when a separate process next checks status', async () => {
     const f = await fixture();
-    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    let now = Date.now();
     const options: Partial<LocalMemoryCoordinatorOptions> = {
       debounceMs: 60_000,
-      monitorIntervalMs: 100,
+      now: () => now,
     };
     const first = f.create(options);
     const second = f.create(options);
-    const longTimerCalls = () => setTimeoutSpy.mock.calls
-      .filter(([, delay]) => typeof delay === 'number' && delay > 50_000)
-      .length;
 
     await recordAcceptedUpdates(f, 5);
     await first.runNow(f.cwd);
-    await recordAcceptedUpdates(f, 5);
+    const publishedAt = Date.parse(Object.values((await f.store.status()).processed)[0]!.processedAt);
+    now = publishedAt + 1_000;
     await second.status(f.cwd);
-    await expect.poll(longTimerCalls).toBeGreaterThanOrEqual(2);
-    await new Promise((resolve) => setTimeout(resolve, 10));
+    await expect.poll(() => first.hasActiveWork() || second.hasActiveWork()).toBe(false);
+    const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const publicationTimers = () => setTimeoutSpy.mock.calls
+      .filter(([, delay]) => delay === publishedAt + 60_000 - now);
+
+    await recordAcceptedUpdates(f, 5);
+    await first.status(f.cwd);
+    await expect.poll(() => first.hasActiveWork()).toBe(false);
+    expect(publicationTimers()).toHaveLength(1);
+
+    await second.status(f.cwd);
+    await expect.poll(() => second.hasActiveWork()).toBe(false);
+    expect(publicationTimers()).toHaveLength(2);
 
     f.entries.push({
       type: 'message', id: 'new-leaf', parentId: String(f.entries.at(-1)!.id), timestamp: new Date().toISOString(),
       message: { role: 'user', content: 'Newer evidence.' },
     });
     await first.recordCheckpoint(f.cwd, await f.save());
-    const beforeSecondRefresh = longTimerCalls();
-
-    await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(longTimerCalls()).toBe(beforeSecondRefresh);
     expect(await second.status(f.cwd)).toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
+    await expect.poll(() => first.hasActiveWork() || second.hasActiveWork()).toBe(false);
+    expect(publicationTimers()).toHaveLength(2);
   });
 
   it('defaults the automatic publication interval to 24 hours', async () => {
@@ -204,28 +211,38 @@ describe('memory retry scheduling', () => {
     expect(await restarted.status(f.cwd)).toMatchObject({ state: 'scheduled', pendingCheckpoints: 1 });
   });
 
-  it('waits for the monitor before retrying writer lease contention', async () => {
+  it('retries writer lease contention on its targeted timer and processes pending evidence after release', async () => {
     const f = await fixture();
     await f.store.initialize();
     const lease = await acquireLocalMemoryLease(f.store.projectDirectory);
     expect(lease).toBeDefined();
     const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
-    const coordinator = f.create({ debounceMs: 0, monitorIntervalMs: 200 });
+    let calls = 0;
+    const writerRetryMs = 100;
+    const coordinator = f.create({ debounceMs: 0, writerRetryMs, dreamRunner: async (input) => {
+      calls += 1;
+      return input.baseSnapshot;
+    } });
     const zeroDelayTimers = () => setTimeoutSpy.mock.calls
       .filter(([, delay]) => delay === 0)
       .length;
 
     try {
       await recordAcceptedUpdates(f, 5);
-      await expect.poll(() => coordinator.status(f.cwd)).toMatchObject({
+      await expect(coordinator.runNow(f.cwd)).resolves.toMatchObject({
         state: 'blocked',
         message: 'Another Felan Code process owns the memory writer',
       });
       const attempts = zeroDelayTimers();
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-
+      expect(calls).toBe(0);
+      expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === writerRetryMs)).toHaveLength(1);
+      await lease!.release();
+      await expect.poll(() => f.store.readControl(), { timeout: 4_000 })
+        .toMatchObject({ consecutiveFailures: 0, lastOutcome: { status: 'success' } });
+      expect(await f.store.status()).toMatchObject({ pending: {}, processed: { source: { checkpoint: expect.any(Object) } } });
+      expect(calls).toBe(1);
       expect(zeroDelayTimers()).toBeLessThanOrEqual(attempts + 1);
+      expect(setTimeoutSpy.mock.calls.filter(([, delay]) => delay === writerRetryMs)).toHaveLength(1);
     } finally {
       await lease!.release();
     }
@@ -284,12 +301,11 @@ describe('memory retry scheduling', () => {
     expect(calls).toBe(3);
   });
 
-  it('does not stretch retries to the automatic idle delay', async () => {
+  it('retries automatically at the persisted backoff deadline instead of the publication interval', async () => {
     const f = await fixture();
     let calls = 0;
     const coordinator = f.create({
       debounceMs: 60_000,
-      monitorIntervalMs: 60_000,
       retryDelaysMs: [200, 400],
       dreamRunner: async (input) => {
         calls += 1;
@@ -300,7 +316,10 @@ describe('memory retry scheduling', () => {
     await recordAcceptedUpdates(f, 5);
 
     expect(await coordinator.runNow(f.cwd)).toMatchObject({ consecutiveFailures: 1 });
-    expect(await coordinator.runNow(f.cwd)).toMatchObject({ state: 'idle', consecutiveFailures: 0, pendingCheckpoints: 0 });
+    await expect.poll(() => f.store.readControl(), { timeout: 2_000, interval: 10 }).toMatchObject({
+      consecutiveFailures: 0, lastOutcome: { status: 'success' },
+    });
+    expect(await f.store.status()).toMatchObject({ pending: {}, processed: { source: { checkpoint: expect.any(Object) } } });
     expect(calls).toBe(2);
   });
 
@@ -341,28 +360,28 @@ describe('memory retry scheduling', () => {
     expect((await f.store.readControl()).nextRetryAt).toBeUndefined();
   });
 
-  it('shares an automatic three-attempt ceiling, survives restart, and recovers explicitly', async () => {
+  it('shares an automatic three-attempt ceiling across attachments, survives restart, and recovers explicitly', async () => {
     const f = await fixture();
     let calls = 0;
     let fail = true;
     const options: Partial<LocalMemoryCoordinatorOptions> = {
-      debounceMs: 1, monitorIntervalMs: 5, retryDelaysMs: [10, 20],
+      debounceMs: 1, retryDelaysMs: [10, 20],
       dreamRunner: async (input) => { calls += 1; if (fail) throw new Error('Provider failed'); return input.baseSnapshot; },
     };
     const first = f.create(options);
-    const second = f.create(options);
+    const second = first.attachSession();
     await recordAcceptedUpdates(f, 5);
     await second.status(f.cwd);
-    await expect.poll(() => first.status(f.cwd), { timeout: 3_000, interval: 10 }).toMatchObject({
-      state: 'disabled', consecutiveFailures: 3, pendingCheckpoints: 1,
+    await expect.poll(() => f.store.readControl(), { timeout: 3_000, interval: 10 }).toMatchObject({
+      consecutiveFailures: 3, autoDisabled: { runId: expect.any(String) },
     });
+    expect(await first.status(f.cwd)).toMatchObject({ state: 'disabled', pendingCheckpoints: 1 });
     expect(calls).toBe(3);
     await second.runNow(f.cwd);
-    second.setEnabled(false);
-    second.setEnabled(true);
+    first.setEnabled(false);
+    first.setEnabled(true);
     expect((await second.status(f.cwd)).state).toBe('disabled');
     await first.dispose();
-    await second.dispose();
     const restarted = f.create(options);
     expect((await restarted.runNow(f.cwd)).state).toBe('disabled');
     expect(calls).toBe(3);
@@ -373,33 +392,71 @@ describe('memory retry scheduling', () => {
     expect((await f.store.readControl()).lastDisabledRunId).toBe(disabledRun);
   });
 
-  it('cancels active work when another process resets the project generation', async () => {
+  it('cancels active work immediately when another attachment resets the project generation', async () => {
     const f = await fixture();
     const started = deferred();
-    let aborted = false;
-    const first = f.create({ monitorIntervalMs: 5, dreamRunner: async (input) => {
-      const cancellation = waitForMemoryAbort(input.signal);
-      started.resolve();
-      await cancellation;
-      aborted = true;
+    const aborted = deferred();
+    let signal: AbortSignal | undefined;
+    let calls = 0;
+    const first = f.create({ dreamRunner: async (input) => {
+      calls += 1;
+      if (calls === 1) {
+        signal = input.signal;
+        const cancellation = waitForMemoryAbort(input.signal);
+        started.resolve();
+        await cancellation;
+        aborted.resolve();
+      }
       return input.baseSnapshot;
     } });
-    let replacementCalls = 0;
-    const second = f.create({ monitorIntervalMs: 5, dreamRunner: async (input) => {
-      replacementCalls += 1;
-      return input.baseSnapshot;
-    } });
-    await recordAcceptedUpdates(f, 5);
+    const second = first.attachSession();
+    await first.recordCheckpoint(f.cwd, f.checkpoint);
     const running = trackWork(first.runNow(f.cwd));
     await waitForMilestone(started.promise, running);
-    await trackWork(second.retryProject(f.cwd));
-    const callsBeforeRelease = replacementCalls;
+    const generation = (await f.store.readControl()).generation;
+    const retrying = trackWork(second.retryProject(f.cwd));
+    await waitForMilestone(aborted.promise, retrying);
+    expect(signal?.aborted).toBe(true);
+    await expect(retrying).resolves.toMatchObject({ state: 'idle', consecutiveFailures: 0, pendingCheckpoints: 0 });
     await running;
 
-    expect(aborted).toBe(true);
-    expect(callsBeforeRelease).toBeLessThanOrEqual(1);
-    expect(await second.status(f.cwd)).toMatchObject({ consecutiveFailures: 0 });
-    expect((await second.status(f.cwd)).pendingCheckpoints).toBeLessThanOrEqual(1);
+    expect(calls).toBe(2);
+    expect(await f.store.readControl()).toMatchObject({ generation: generation + 1, consecutiveFailures: 0, lastOutcome: { status: 'success' } });
+  });
+
+  it('fences publication without consuming a failure when a separate process resets an active attempt', async () => {
+    const f = await fixture();
+    const started = deferred();
+    const { gate, release } = cleanupGate();
+    let signal: AbortSignal | undefined;
+    const first = f.create({ dreamRunner: async (input) => {
+      signal = input.signal;
+      started.resolve();
+      await gate;
+      return input.baseSnapshot;
+    } });
+    const second = f.create();
+    const commit = vi.spyOn(Store.prototype, 'commit');
+    await first.recordCheckpoint(f.cwd, f.checkpoint);
+    const before = await f.store.status();
+    const running = trackWork(first.runNow(f.cwd));
+    await waitForMilestone(started.promise, running);
+    const generation = (await f.store.readControl()).generation;
+
+    await expect(second.retryProject(f.cwd)).resolves.toMatchObject({ state: 'blocked', consecutiveFailures: 0, pendingCheckpoints: 1 });
+    const resetControl = await f.store.readControl();
+    expect(resetControl).toMatchObject({ generation: generation + 1, consecutiveFailures: 0 });
+    expect(resetControl.activeAttempt).toBeUndefined();
+    expect(signal?.aborted).toBe(false);
+    release();
+    await expect(running).resolves.toMatchObject({ state: 'error', consecutiveFailures: 0, pendingCheckpoints: 1 });
+
+    expect(signal?.aborted).toBe(false);
+    expect(commit).toHaveBeenCalledOnce();
+    await expect(commit.mock.results[0]!.value).rejects.toThrow('Memory publication is disabled or the attempt was fenced');
+    expect(await f.store.status()).toEqual(before);
+    expect(await f.store.readControl()).toEqual(resetControl);
+    await expect(second.runNow(f.cwd)).resolves.toMatchObject({ state: 'idle', consecutiveFailures: 0, pendingCheckpoints: 0 });
   });
 
   it('cancels a queued automatic worker when shutdown precedes runner entry', async () => {
@@ -550,15 +607,18 @@ describe('memory retry scheduling', () => {
     expect(await readFile(f.store.controlPath, 'utf8')).toBe('{invalid');
   });
 
-  it('retries initialization after another writer releases recovery ownership', async () => {
+  it('retries initialization on the next attachment call after another writer releases ownership', async () => {
     const f = await fixture();
     const lease = await acquireLocalMemoryLease(f.store.projectDirectory);
     expect(lease).toBeDefined();
-    const coordinator = f.create({ monitorIntervalMs: 5 });
+    const initialize = vi.spyOn(Store.prototype, 'initialize');
+    const coordinator = f.create();
     expect(await coordinator.status(f.cwd)).toMatchObject({ state: 'error', message: 'Local memory storage is unavailable' });
+    expect(initialize).toHaveBeenCalledOnce();
 
     await lease!.release();
-    await expect.poll(() => coordinator.status(f.cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    expect(await coordinator.status(f.cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    expect(initialize).toHaveBeenCalledTimes(2);
     await expect(f.store.readCurrent()).resolves.toMatchObject({ fingerprint: expect.any(String) });
   });
 });

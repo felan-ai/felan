@@ -112,15 +112,13 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it.each([false, true])('notifies status subscribers when the pending count changes (monitor refresh: %s)', async (refreshDuringRun) => {
+  it('notifies attached status subscribers when checkpoints and processing state change', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
     const entered = deferred();
     const release = deferred();
-    const monitorChanged = deferred();
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
@@ -132,48 +130,44 @@ describe('LocalMemoryCoordinator', () => {
       },
     });
     const fixture = trackMemoryFixture(coordinator, release.resolve);
-    fixture.restoreWith(() => vi.useRealTimers());
-    let awaitingMonitor = false;
-    const statusChanged = vi.fn(() => {
-      if (awaitingMonitor) monitorChanged.resolve();
-    });
+    const otherSession = coordinator.attachSession();
+    const statusChanged = vi.fn();
+    const attachedStatusChanged = vi.fn();
     const unsubscribe = coordinator.subscribeStatusChanges(statusChanged);
+    otherSession.subscribeStatusChanges(attachedStatusChanged);
     const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
 
     try {
       await host.recordCheckpoint(checkpointFor(sessionFile));
       expect(statusChanged).toHaveBeenCalledTimes(1);
+      expect(attachedStatusChanged).toHaveBeenCalledTimes(1);
       expect(await host.status()).toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
+      expect(await otherSession.status(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
 
       const running = fixture.runNow(cwd);
       await waitForMemoryMilestone(entered.promise, running, 'runner entry');
       expect(statusChanged).toHaveBeenCalledTimes(2);
+      expect(attachedStatusChanged).toHaveBeenCalledTimes(2);
       expect(await host.status()).toMatchObject({ state: 'processing', pendingCheckpoints: 1 });
-
-      if (refreshDuringRun) {
-        awaitingMonitor = true;
-        vi.advanceTimersByTime(2_000);
-        await waitForMemoryMilestone(monitorChanged.promise, running, 'monitor status refresh');
-        awaitingMonitor = false;
-        expect(statusChanged).toHaveBeenCalledTimes(3);
-        expect(await host.status()).toMatchObject({ state: 'processing', pendingCheckpoints: 1 });
-      }
+      expect(await otherSession.status(cwd)).toMatchObject({ state: 'processing', pendingCheckpoints: 1 });
 
       release.resolve();
       await expect(running).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
-      const expectedNotifications = refreshDuringRun ? 4 : 3;
-      expect(statusChanged).toHaveBeenCalledTimes(expectedNotifications);
+      expect(statusChanged).toHaveBeenCalledTimes(3);
+      expect(attachedStatusChanged).toHaveBeenCalledTimes(3);
+      expect(await otherSession.status(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
 
       unsubscribe();
       const remainingSubscriber = vi.fn();
-      coordinator.subscribeStatusChanges(remainingSubscriber);
+      otherSession.subscribeStatusChanges(remainingSubscriber);
       await writeResumedSession(sessionFile, cwd);
-      await host.recordCheckpoint(resumedCheckpointFor(sessionFile));
+      await otherSession.recordCheckpoint(cwd, resumedCheckpointFor(sessionFile));
       expect(remainingSubscriber).toHaveBeenCalledTimes(1);
       expect(await host.status()).toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
       await expect(fixture.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
       expect(remainingSubscriber).toHaveBeenCalledTimes(3);
-      expect(statusChanged).toHaveBeenCalledTimes(expectedNotifications);
+      expect(statusChanged).toHaveBeenCalledTimes(3);
+      expect(attachedStatusChanged).toHaveBeenCalledTimes(6);
     } finally {
       unsubscribe();
       await fixture.cleanup();
@@ -221,7 +215,6 @@ describe('LocalMemoryCoordinator', () => {
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
       now: () => now,
-      monitorIntervalMs: 60 * 60 * 1_000,
       dreamRunner: async () => {
         runs += 1;
         return updatedArtifact();
@@ -415,13 +408,15 @@ describe('LocalMemoryCoordinator', () => {
     await host.recordCheckpoint(checkpointFor(validSessionFile, 'valid-session'));
 
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({
-      pendingCheckpoints: 1,
-      state: 'blocked',
-      message: 'Some memory checkpoints could not be materialized; evidence remains pending',
+      pendingCheckpoints: 0,
+      state: 'idle',
+      message: 'Dropped 1 memory checkpoint that could not be read',
     });
     expect(runs).toBe(1);
     expect(observedSessionIds).toEqual(['valid-session']);
 
+    await host.recordCheckpoint({ ...checkpointFor(badSessionFile, 'bad-session'), transcriptDigest: '0'.repeat(64) });
+    await expect(coordinator.status(cwd)).resolves.toMatchObject({ pendingCheckpoints: 0 });
     await host.recordCheckpoint(checkpointFor(badSessionFile, 'bad-session'));
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ pendingCheckpoints: 0 });
     expect(runs).toBe(2);
@@ -529,7 +524,34 @@ describe('LocalMemoryCoordinator', () => {
     }
   });
 
-  it('suspends an all-invalid batch until its cursor changes', async () => {
+  it('keeps unreadable checkpoints pending while the Sessions service is unavailable', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+    const sessionFile = await writeSession(cwd, 'session-1');
+    const coordinator = new LocalMemoryCoordinator({
+      agentDir,
+      models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
+      recover: false,
+      debounceMs: 0,
+      dreamRunner: async () => updatedArtifact(),
+    });
+    const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
+    await host.recordCheckpoint({ ...checkpointFor(sessionFile), transcriptDigest: '0'.repeat(64) });
+    faults.listFailures = 1;
+
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'blocked', pendingCheckpoints: 1 });
+    const project = await resolveLocalMemoryProject(cwd);
+    const statePath = join(localMemoryProjectDirectory(agentDir, project), 'state.json');
+    expect(JSON.parse(await readFile(statePath, 'utf8')).dropped).toBeUndefined();
+
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    expect(Object.keys(JSON.parse(await readFile(statePath, 'utf8')).dropped)).toEqual(['session-1']);
+    await coordinator.dispose();
+  });
+
+  it('drops an all-invalid batch until its cursor changes', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
@@ -552,9 +574,9 @@ describe('LocalMemoryCoordinator', () => {
     });
 
     await expect(coordinator.runNow(cwd)).resolves.toMatchObject({
-      state: 'blocked',
-      pendingCheckpoints: 1,
-      message: 'Some memory checkpoints could not be materialized; evidence remains pending',
+      state: 'idle',
+      pendingCheckpoints: 0,
+      message: 'Dropped 1 memory checkpoint that could not be read',
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(runs).toBe(0);
@@ -568,36 +590,87 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it('processes valid evidence alongside blocked checkpoints', async () => {
+  it('fills the batch past unreadable checkpoints in one run', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     let runs = 0;
+    const observedSessionIds: string[] = [];
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
-      debounceMs: 100,
-      batchSize: 8,
+      debounceMs: 60_000,
+      batchSize: 2,
       dreamRunner: async (input) => {
         runs += 1;
+        observedSessionIds.push(...input.manifest.sessions.map(({ checkpoint }) => checkpoint.sessionId));
         return updatedArtifact(input.manifest.sessions[0]!.checkpoint.sessionId);
       },
     });
     const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
-    for (let index = 0; index < 7; index += 1) {
+    await host.recordCheckpoint(checkpointFor(await writeSession(cwd, 'seed-session'), 'seed-session'));
+    await coordinator.runNow(cwd);
+    observedSessionIds.length = 0;
+    for (let index = 0; index < 3; index += 1) {
       const sessionId = `invalid-${index}`;
       const path = await writeSession(cwd, sessionId);
       await host.recordCheckpoint({ ...checkpointFor(path, sessionId), transcriptDigest: '0'.repeat(64) });
     }
-    expect(await coordinator.runNow(cwd)).toMatchObject({ state: 'blocked', pendingCheckpoints: 7 });
-    expect(runs).toBe(0);
+    for (const sessionId of ['valid-1', 'valid-2', 'valid-3']) {
+      await host.recordCheckpoint(checkpointFor(await writeSession(cwd, sessionId), sessionId));
+    }
 
-    const valid = await writeSession(cwd, 'valid-session');
-    await host.recordCheckpoint(checkpointFor(valid, 'valid-session'));
-    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'blocked', pendingCheckpoints: 7 });
-    expect(runs).toBe(1);
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({
+      state: 'idle',
+      pendingCheckpoints: 1,
+      message: 'Dropped 3 memory checkpoints that could not be read',
+    });
+    expect(runs).toBe(2);
+    expect(observedSessionIds).toEqual(['valid-1', 'valid-2']);
     await coordinator.dispose();
+  });
+
+  it('does not restore dropped checkpoints after a restart', async () => {
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    const agentDir = join(root, 'agent');
+    await mkdir(cwd, { recursive: true });
+    const sessionFile = await writeSession(cwd, 'session-1');
+    const invalid = { ...checkpointFor(sessionFile), transcriptDigest: '0'.repeat(64) };
+    let runs = 0;
+    const options = {
+      agentDir,
+      models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
+      recover: false,
+      debounceMs: 0,
+      dreamRunner: async () => {
+        runs += 1;
+        return updatedArtifact();
+      },
+    };
+    const first = new LocalMemoryCoordinator(options);
+    await first.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).recordCheckpoint(invalid);
+    await expect(first.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    await first.dispose();
+    const project = await resolveLocalMemoryProject(cwd);
+    const state = JSON.parse(await readFile(join(localMemoryProjectDirectory(agentDir, project), 'state.json'), 'utf8'));
+    expect(state.pending).toEqual({});
+    expect(state.dropped['session-1']).toMatchObject({
+      checkpoint: { leafId: invalid.leafId, transcriptDigest: invalid.transcriptDigest },
+      reason: 'checkpoint_changed',
+    });
+
+    const second = new LocalMemoryCoordinator(options);
+    const host = second.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
+    await host.recordCheckpoint(invalid);
+    await expect(second.status(cwd)).resolves.toMatchObject({ pendingCheckpoints: 0 });
+    await host.recordCheckpoint(checkpointFor(sessionFile));
+    await expect(second.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+    expect(runs).toBe(1);
+    const after = JSON.parse(await readFile(join(localMemoryProjectDirectory(agentDir, project), 'state.json'), 'utf8'));
+    expect(after.dropped).toEqual({});
+    await second.dispose();
   });
 
   it('enforces the eight-session durable metadata bound', async () => {
@@ -666,7 +739,7 @@ describe('LocalMemoryCoordinator', () => {
     }
 
     coordinator.setEnabled(true);
-    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'blocked', pendingCheckpoints: 2 });
+    await expect(coordinator.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 1 });
     expect(processedSessionIds).toEqual(['session-1']);
     await coordinator.dispose();
   });
@@ -862,7 +935,6 @@ describe('LocalMemoryCoordinator', () => {
       models: { getAvailable } as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
       debounceMs: 60_000,
-      monitorIntervalMs: 5,
     });
     const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
     await host.recordCheckpoint(checkpointFor(sessionFile));
@@ -918,7 +990,7 @@ describe('LocalMemoryCoordinator', () => {
     faults.failingHistory.add('recovery-failing');
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
-      recoveryStableMs: 0, monitorIntervalMs: 5,
+      recoveryStableMs: 0,
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
     await vi.waitFor(() => {
@@ -940,7 +1012,7 @@ describe('LocalMemoryCoordinator', () => {
     faults.listFailures = Number.POSITIVE_INFINITY;
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
-      recoveryStableMs: 0, recoveryRetryMs: 20, monitorIntervalMs: 5,
+      recoveryStableMs: 0, recoveryRetryMs: 20,
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
     await vi.waitFor(() => expect(faults.listCalls).toBe(2), { timeout: 4_000 });
@@ -950,7 +1022,7 @@ describe('LocalMemoryCoordinator', () => {
     await coordinator.dispose();
   });
 
-  it('records stable sessions when the retried session listing succeeds', async () => {
+  it('retries startup session listing without another attachment call and records stable sessions', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
@@ -959,11 +1031,12 @@ describe('LocalMemoryCoordinator', () => {
     faults.listFailures = 1;
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
-      recoveryStableMs: 0, recoveryRetryMs: 20, monitorIntervalMs: 5,
+      recoveryStableMs: 0, recoveryRetryMs: 20,
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
+    const store = new LocalMemoryStore(join(root, 'agent'), await resolveLocalMemoryProject(cwd));
     await vi.waitFor(async () => {
-      expect(await coordinator.status(cwd)).toMatchObject({ pendingCheckpoints: 1 });
+      expect(await store.status()).toMatchObject({ pending: { 'recovery-after-retry': { checkpoint: { sessionId: 'recovery-after-retry' } } } });
     }, { timeout: 4_000 });
     expect(faults.listCalls).toBe(2);
     await coordinator.dispose();
@@ -978,7 +1051,7 @@ describe('LocalMemoryCoordinator', () => {
     faults.heldHistory.add('recovery-held');
     const coordinator = new LocalMemoryCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
-      recoveryStableMs: 0, monitorIntervalMs: 5,
+      recoveryStableMs: 0,
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
     await vi.waitFor(() => expect(faults.historyReads).toContain('recovery-held'), { timeout: 4_000 });

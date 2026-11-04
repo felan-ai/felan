@@ -8,12 +8,16 @@ The package root requires the core `felan.runtime@1`, `felan.models@1`, and
 checkpoint recovery, dreaming, retention and `/memory` commands. There is no
 memory-specific provider or service contract.
 
-Only a loaded root extension schedules work. Reader sessions recall the current
-artifact without recording checkpoints or starting workers. Files and atomic
+The daemon process shares one memory coordinator per agent directory across its
+sessions. Only loaded root sessions whose host provides workers and runtime
+lifetime can drive processing. Reader sessions and limited hosts can recall the
+current artifact without starting workers; readers do not record checkpoints.
+Processing is event-driven, with targeted recovery retries and writer re-checks
+instead of a polling monitor. Files and atomic
 storage operations use the scoped Runtime; model selection uses the authenticated
 Models facade. Restricted dreaming sessions and lifecycle settlement go through
-Sessions. Missing capabilities prevent activation rather than opening an
-independent, untracked worker.
+Sessions. Missing worker or lifetime capabilities disable processing rather than
+opening an independent, untracked worker.
 
 The canonical layout remains `<agentDir>/memory/v1/projects/<projectKey>` and
 retained journals remain under `<agentDir>/sessions/memory`. A session's `.memory`
@@ -103,9 +107,9 @@ lineage and create a deterministic, redacted visible-branch delta. Diverged
 lineages emit the complete current branch. Output limits reject an oversized
 projection instead of truncating a JSONL record. Sessions providers supply the complete journal; the extension stages successful
 projections. Large source session
-files are not rejected solely for their total size. Deterministic source
-failures remain pending for retry, while valid checkpoints in the same batch
-can still be published.
+files are not rejected solely for their total size. A checkpoint that cannot be
+materialized is dropped and remembered in `state.json`, so it is not retried
+after a restart; the run fills its batch with the next pending checkpoints.
 
 The memory schema keeps the wiki sparse. It prioritizes durable user-authored
 facts, preferences, decisions, corrections, and uncodified rationale, followed

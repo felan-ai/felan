@@ -3,7 +3,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { HostAgentRuntime, SessionManager, type SessionsService } from '@felan-ai/agent-core';
 import type { SessionCheckpoint } from '../../src/index.js';
-import { LocalMemoryCoordinator as Coordinator, type LocalMemoryCoordinatorOptions } from '../../src/local/coordinator.js';
+import { LocalMemoryCoordinator as Coordinator, type LocalMemoryCoordinatorOptions, type LocalMemoryAttachment, type LocalMemoryAttachmentOptions, type LocalMemorySessionHostOptions } from '../../src/local/coordinator.js';
 import { materializeMemoryInput as rawMaterializeMemoryInput, createDefaultLocalMemoryDreamRunner as rawCreateDefaultLocalMemoryDreamRunner, type MaterializeMemoryInputOptions, type LocalMemoryDreamRunnerOptions } from '../../src/local/dreamer.js';
 import { LocalMemoryStore as Store, type LocalMemoryStoreOptions } from '../../src/local/store.js';
 import { LocalMemoryRun as Run, memoryRunUsage as rawMemoryRunUsage, type CreateMemoryRunOptions } from '../../src/local/run.js';
@@ -14,6 +14,11 @@ import { readMemoryDirectory as rawReadMemoryDirectory, hydrateMemoryDirectory a
 import { listLocalSessionHistory as rawListLocalSessionHistory, readMemoryHistorySnapshot as rawReadMemoryHistorySnapshot, safeMemoryText as rawSafeMemoryText, validMemoryRunId as rawValidMemoryRunId, type MemoryHistoryOptions, type MemoryHistorySession } from '../../src/local/history.js';
 import type { LocalMemoryProject } from '../../src/local/project.js';
 import type { MemoryHydrationOptions, MemoryArtifact, MemoryFile, MemorySnapshot } from '../../src/contracts.js';
+
+type TestCoordinatorOptions = LocalMemoryCoordinatorOptions & Omit<LocalMemoryAttachmentOptions, 'environment' | 'scheduling'>;
+type TestCoordinator = Coordinator & Pick<LocalMemoryAttachment,
+  'createSessionHost' | 'readCurrent' | 'recordCheckpoint' | 'status' | 'runNow' | 'retryProject' | 'canonicalDirectory' | 'setSelectedModel' | 'setModelSelection'>
+  & { attachSession(options?: Partial<Omit<LocalMemoryAttachmentOptions, 'environment'>>): LocalMemoryAttachment };
 
 /** The daemon's checkpoint digest: canonical JSON of the full branch, memory-context entries included. */
 function daemonBranchDigest(branch: readonly unknown[]): string {
@@ -106,14 +111,41 @@ export function createMemoryBackend() {
     safeMemoryText: rawSafeMemoryText, validMemoryRunId: rawValidMemoryRunId,
   };
   class LocalMemoryCoordinator extends Coordinator {
-    constructor(options: LocalMemoryCoordinatorOptions) {
-      super(environment, options);
+    readonly #options: TestCoordinatorOptions;
+    readonly #attachment: LocalMemoryAttachment;
+    constructor(options: TestCoordinatorOptions) {
+      super(options);
+      this.#options = options;
+      this.#attachment = this.attachSession();
       directories.add(options.sessionDir ?? `${options.agentDir}/sessions`);
     }
-    override recordCheckpoint(cwd: string, checkpoint: SessionCheckpoint) {
-      registerCheckpoint(checkpoint);
-      return super.recordCheckpoint(cwd, checkpoint);
+    /** Attaches another fixture session; checkpoints recorded through it stay readable by the fixture's Sessions service. */
+    attachSession(options: Partial<Omit<LocalMemoryAttachmentOptions, 'environment'>> = {}): LocalMemoryAttachment {
+      const attachment = this.attach({ ...this.#options, scheduling: this.#options.unavailableReason === undefined, ...options, environment });
+      const registered: LocalMemoryAttachment = { ...attachment,
+        createSessionHost: host => ({ readCurrent: () => registered.readCurrent(host.cwd, host.sessionStorageRoot),
+          recordCheckpoint: checkpoint => registered.recordCheckpoint(host.cwd, checkpoint), status: () => registered.status(host.cwd) }),
+        recordCheckpoint: (cwd, checkpoint) => {
+          registerCheckpoint(checkpoint);
+          return attachment.recordCheckpoint(cwd, checkpoint);
+        } };
+      return registered;
     }
+    createSessionHost(options: LocalMemorySessionHostOptions) {
+      return {
+        readCurrent: () => this.readCurrent(options.cwd, options.sessionStorageRoot),
+        recordCheckpoint: (checkpoint: SessionCheckpoint) => this.recordCheckpoint(options.cwd, checkpoint),
+        status: () => this.status(options.cwd),
+      };
+    }
+    readCurrent(cwd: string, root: string) { return this.#attachment.readCurrent(cwd, root); }
+    recordCheckpoint(cwd: string, checkpoint: SessionCheckpoint) { return this.#attachment.recordCheckpoint(cwd, checkpoint); }
+    status(cwd: string) { return this.#attachment.status(cwd); }
+    runNow(cwd: string) { return this.#attachment.runNow(cwd); }
+    retryProject(cwd: string) { return this.#attachment.retryProject(cwd); }
+    canonicalDirectory(cwd: string) { return this.#attachment.canonicalDirectory(cwd); }
+    setSelectedModel(...args: Parameters<LocalMemoryAttachment['setSelectedModel']>) { this.#attachment.setSelectedModel(...args); }
+    setModelSelection(...args: Parameters<LocalMemoryAttachment['setModelSelection']>) { this.#attachment.setModelSelection(...args); }
   }
   function materializeMemoryInput(options: MaterializeMemoryInputOptions) {
     for (const checkpoint of options.checkpoints) registerCheckpoint(checkpoint);
@@ -124,7 +156,8 @@ export function createMemoryBackend() {
     directories.add(options.sessionDir); return backend.listLocalSessionHistory(options);
   }
 
-  return { ...backend, LocalMemoryCoordinator, materializeMemoryInput, listLocalSessionHistory, faults };
+  const CoordinatorConstructor: new (options: TestCoordinatorOptions) => TestCoordinator = LocalMemoryCoordinator;
+  return { ...backend, LocalMemoryCoordinator: CoordinatorConstructor, materializeMemoryInput, listLocalSessionHistory, faults };
 }
 
 export { LocalMemoryControlError } from '../../src/local/store.js';
@@ -141,4 +174,4 @@ export { safeMemoryText, validMemoryRunId } from '../../src/local/history.js';
 export { localMemoryProjectDirectory } from '../../src/local/project.js';
 export { memoryRunUsage } from '../../src/local/run.js';
 
-export type LocalMemoryCoordinator = import('../../src/local/coordinator.js').LocalMemoryCoordinator;
+export type LocalMemoryCoordinator = InstanceType<ReturnType<typeof createMemoryBackend>['LocalMemoryCoordinator']>;

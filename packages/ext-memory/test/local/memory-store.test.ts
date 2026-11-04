@@ -85,6 +85,30 @@ describe('local memory store', () => {
     expect((await store.status()).pending['session-1']).toMatchObject({ acceptedUpdates: 2, checkpoint: second });
   });
 
+  it('drops only matching pending cursors and ignores them when recorded again', async () => {
+    const { store } = await createStore();
+    const unreadable = checkpointFor('session-1', 'e'.repeat(64));
+    const older = checkpointFor('session-2', 'f'.repeat(64));
+    const newer = { ...older, leafId: 'leaf-2', transcriptDigest: '9'.repeat(64) };
+    await store.recordCheckpoint(unreadable);
+    await store.recordCheckpoint(newer);
+    const lease = await writer(store);
+
+    await expect(store.dropCheckpoints(lease, [
+      { checkpoint: unreadable, reason: 'source_unavailable' },
+      { checkpoint: older, reason: 'source_unavailable' },
+    ])).resolves.toBe(1);
+    const state = await store.status();
+    expect(Object.keys(state.pending)).toEqual(['session-2']);
+    expect(state.dropped).toMatchObject({ 'session-1': { checkpoint: unreadable, reason: 'source_unavailable' } });
+    await expect(store.recordCheckpoint(unreadable)).resolves.toBe(false);
+
+    await lease.release();
+    await expect(store.dropCheckpoints(lease, [{ checkpoint: newer, reason: 'source_unavailable' }]))
+      .rejects.toThrow('Memory writer lease was lost');
+    expect(Object.keys((await store.status()).pending)).toEqual(['session-2']);
+  });
+
   it('restores project control when local eligibility changes during retry reset persistence', async () => {
     const { store } = await createStore();
     const before = await store.readControl();

@@ -51,22 +51,22 @@ their own evidence.
 The portable `@felan-ai/ext-memory` package owns the artifact schema,
 validation, hydration, root checkpoint contracts, checkpoint-input compaction,
 bounded candidate extraction, classifier question/answer policy, and
-reader/root extension behavior. It does not choose a project scope, obtain
-credentials, read host transcript files, schedule or run a worker, call a
-provider, or publish files.
-
-The local TUI owns the coordinator, automatic evidence/time gates, startup
+reader/root extension behavior. It also owns local coordination, scheduling,
 recovery, retries, shutdown cancellation, model selection, retained sessions,
-history UI, staging, validation, and publication. Automatic processing requires
-five accepted checkpoint updates and 24 hours since the latest successful
-publication; repeated updates from one root session count. The absolute
-publication deadline is reconstructed by later processes, so closing Felan Code does
-not discard pending work. No portable memory-session-kind contract is added. A
-managed host can implement an
-equivalent coordinator without changing the portable package.
+staging, and publication. Runtime, Models and Sessions services supply host I/O,
+credentials, model scope, worker admission and session lifetime.
+
+The daemon process holds one memory coordinator per agent directory, shared by
+its sessions. Only root sessions whose host provides workers and runtime lifetime
+can drive processing. Readers and limited hosts can read captured memory but
+cannot schedule work. Processing is event-driven rather than driven by a polling
+monitor. Automatic processing requires five accepted checkpoint updates and 24
+hours since the latest successful publication; repeated updates from one root
+session count. The absolute publication deadline is reconstructed by later
+processes, so closing Felan Code does not discard pending work.
 
 Felan Platform keeps its separate Supabase persistence, cron scheduling, team
-archive, and entitlement flows. The local TUI policy does not change those
+archive, and entitlement flows. The local memory policy does not change those
 systems or their database contracts.
 
 ## Lifecycle
@@ -114,10 +114,15 @@ in pending order using the same post-add 10 MiB soft byte target as cloud; it
 retains the delta that reaches or crosses the target and does not truncate
 individual deltas. The local session-count bound keeps durable attempt metadata
 within its storage limit. Checkpoints beyond that batch remain pending. A large
-source session file is not rejected solely because its total size is large. A
-changed, missing, or malformed source remains pending without blocking valid
-checkpoints in the same batch. A diverged lineage emits the complete current
-visible lineage and records the prior cursor for downstream reconciliation.
+source session file is not rejected solely because its total size is large.
+When a checkpoint's source is changed, missing, malformed, or over a size limit,
+the run drops that checkpoint and reads the next pending one, so unreadable
+checkpoints never take up batch slots. `state.json` records each dropped cursor
+under `dropped`, and the store ignores that exact cursor if a session or startup
+recovery records it again, including after a restart. A newer cursor from the
+same session is accepted normally. A cancelled run drops nothing. A diverged
+lineage emits the complete current visible lineage and records the prior cursor
+for downstream reconciliation.
 
 ### 3. Dreamer worker
 
@@ -179,7 +184,13 @@ not already recorded in the repository. Every run audits existing memory and
 may remove ineligible or duplicate pages even when citations are valid. It
 preserves supported contradictions and never invents facts, links, or source IDs.
 
-Publication uses a fenced single-writer lease. Model, validation, cancellation,
+File locks and a fenced single-writer lease still protect against other processes,
+including cloud config-sync, daemon replacement and crash recovery. Changes made
+by another process to `control.json` are enforced at publication time rather than
+observed while a run is in flight. A stale attempt cannot publish memory or consume
+the failure budget. Checkpoints that another process records in `state.json` are
+scheduled here only at this process's next memory event or session call. Model,
+validation, cancellation,
 timeout, or publication failures leave evidence pending for a retry rather than
 partially replacing canonical memory.
 
@@ -241,9 +252,15 @@ claim that canonical memory changed immediately.
 ## Failure and recovery
 
 Existing memory remains readable without model credentials. Missing credentials,
-source corruption, cancellation, or a lost publication lease leaves affected
-evidence pending without spending the attempt-failure budget. Valid checkpoints
-in the same batch can still proceed when one source fails deterministically.
+cancellation, or a lost publication lease leaves affected evidence pending
+without spending the attempt-failure budget. A checkpoint whose source cannot be
+materialized is dropped permanently, and the status reports how many were
+dropped. Valid checkpoints in the same run still proceed.
+
+A failed startup session listing retries once after `recoveryRetryMs`. A writer
+lease or active attempt held by another process schedules a re-check after
+`writerRetryMs`. Both default to 30 seconds. These targeted timers replace periodic
+polling.
 
 After the first failed processing attempt, processing waits 60 seconds; after
 the second, it waits 300 seconds. The third consecutive failure durably
@@ -283,9 +300,6 @@ also treats Markdown links and navigation as best-effort content.
 The projection is copied from canonical files when loaded; canonical memory is
 the authority. Resolvable summary and root-index paths are rebased only in the
 session projection so they remain directly openable from that session.
-
-After installing an updated Felan Code build, restart existing TUI processes so
-workers use the new lifecycle code loaded at process startup.
 
 See [Context and memory](../user-guide/context-and-memory.md) for user commands
 and [`@felan-ai/ext-memory`](../../packages/ext-memory/README.md) for the

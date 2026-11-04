@@ -63,7 +63,7 @@ export async function acquireLocalMemoryLease(environment: MemoryContext, projec
     });
   } catch (error) {
     await gateLock.release().catch(() => {});
-    await gateLock.retire(staleMs);
+    await gateLock.retire(staleMs).catch(() => {});
     if (isLocked(error)) return undefined;
     throw error;
   }
@@ -90,12 +90,12 @@ export async function acquireLocalMemoryLease(environment: MemoryContext, projec
   } catch (error) {
     await removeIfPresent(environment, temporaryOwnerPath).catch(() => {});
     await removeOwnerIfToken(environment, ownerPath, token);
-    await fileLock.release().catch(() => {});
-    await fileLock.retire(staleMs);
     gateLock.compromised.removeEventListener('abort', onCompromise);
     fileLock.compromised.removeEventListener('abort', onCompromise);
+    await fileLock.release().catch(() => {});
     await gateLock.release().catch(() => {});
-    await gateLock.retire(staleMs);
+    await fileLock.retire(staleMs).catch(() => {});
+    await gateLock.retire(staleMs).catch(() => {});
     throw error;
   }
 
@@ -128,12 +128,16 @@ export async function acquireLocalMemoryLease(environment: MemoryContext, projec
       if (ownsOwnerRecord) await removeIfPresent(environment, ownerPath).catch(() => {});
       // LocalFileLock guards the underlying directory identity before rmdir, so
       // releasing a fenced handle stops its heartbeat without removing a successor.
-      await fileLock.release().catch(() => {});
-      await fileLock.retire(staleMs);
+      // Both heartbeats stop before any retirement I/O, which can fail on a closed runtime.
       gateLock.compromised.removeEventListener('abort', onCompromise);
       fileLock.compromised.removeEventListener('abort', onCompromise);
+      await fileLock.release().catch(() => {});
       await gateLock.release().catch(() => {});
-      await gateLock.retire(staleMs);
+      try {
+        await fileLock.retire(staleMs);
+      } finally {
+        await gateLock.retire(staleMs);
+      }
     },
   };
 }

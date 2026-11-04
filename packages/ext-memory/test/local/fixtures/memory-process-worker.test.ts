@@ -38,7 +38,6 @@ describe.skipIf(!configPath)('memory process worker', () => {
       enabled: !config.automatic,
       recover: false,
       debounceMs: config.automatic ? 0 : 60_000,
-      monitorIntervalMs: 60_000,
       retryDelaysMs: config.retryDelaysMs ?? [0, 0],
       ...(config.leaseStaleMs ? { leaseOptions: { staleMs: config.leaseStaleMs, updateMs: 1_000 } } : {}),
       dreamRunner: async (input) => {

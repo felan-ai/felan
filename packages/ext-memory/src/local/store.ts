@@ -29,6 +29,13 @@ export interface ProcessedCheckpoint extends StoredCheckpoint {
 }
 
 
+export interface DroppedCheckpoint {
+  readonly checkpoint: SessionCheckpoint;
+  readonly droppedAt: string;
+  readonly reason: string;
+}
+
+
 export const STATE_VERSION = 1 as const;
 
 export interface LocalMemoryState {
@@ -36,6 +43,8 @@ export interface LocalMemoryState {
   readonly memoryFingerprint: string;
   readonly pending: Readonly<Record<string, StoredCheckpoint>>;
   readonly processed: Readonly<Record<string, ProcessedCheckpoint>>;
+  /** Cursors that could not be materialized; recording the same cursor again is ignored. */
+  readonly dropped?: Readonly<Record<string, DroppedCheckpoint>>;
   readonly updatedAt: string;
 }
 
@@ -176,6 +185,7 @@ export class LocalMemoryStore {
             memoryFingerprint: fingerprint,
             pending: existing?.pending ?? {},
             processed: existing?.processed ?? {},
+            ...(existing?.dropped ? { dropped: existing.dropped } : {}),
             updatedAt: new Date(now).toISOString(),
           });
         }
@@ -208,7 +218,8 @@ export class LocalMemoryStore {
       const state = await this.readState();
       const previousPending = state.pending[checkpoint.sessionId];
       const previousProcessed = state.processed[checkpoint.sessionId];
-      if (sameCursor(previousPending?.checkpoint, checkpoint) || sameCursor(previousProcessed?.checkpoint, checkpoint)) {
+      if (sameCursor(previousPending?.checkpoint, checkpoint) || sameCursor(previousProcessed?.checkpoint, checkpoint)
+        || sameCursor(state.dropped?.[checkpoint.sessionId]?.checkpoint, checkpoint)) {
         return false;
       }
       const recordedAt = new Date().toISOString();
@@ -220,8 +231,38 @@ export class LocalMemoryStore {
           acceptedUpdates: previousPending === undefined ? 1 : acceptedCheckpointUpdates(previousPending) + 1,
         },
       };
-      await writeState(this.environment, this.statePath, { ...state, pending, updatedAt: recordedAt });
+      const dropped = { ...state.dropped };
+      delete dropped[checkpoint.sessionId];
+      await writeState(this.environment, this.statePath, {
+        ...state, pending, ...(state.dropped ? { dropped } : {}), updatedAt: recordedAt,
+      });
       return true;
+    });
+  }
+
+  /** Removes pending checkpoints whose cursor still matches and remembers them as dropped. */
+  async dropCheckpoints(
+    lease: LocalMemoryLease,
+    failures: readonly { readonly checkpoint: SessionCheckpoint; readonly reason: string }[],
+    now = Date.now(),
+  ): Promise<number> {
+    return withStateLock(this.environment, this, async () => {
+      await verifyLease(lease);
+      const state = await this.readState();
+      const pending = { ...state.pending };
+      const dropped = { ...state.dropped };
+      const droppedAt = new Date(now).toISOString();
+      let count = 0;
+      for (const { checkpoint, reason } of failures) {
+        if (!sameCursor(pending[checkpoint.sessionId]?.checkpoint, checkpoint)) continue;
+        delete pending[checkpoint.sessionId];
+        dropped[checkpoint.sessionId] = { checkpoint, droppedAt, reason };
+        count += 1;
+      }
+      if (count === 0) return 0;
+      await verifyLease(lease);
+      await writeState(this.environment, this.statePath, { ...state, pending, dropped, updatedAt: droppedAt });
+      return count;
     });
   }
 
@@ -589,7 +630,8 @@ async function readState(environment: MemoryContext, path: string): Promise<Loca
   try {
     const value = JSON.parse(new TextDecoder().decode(await environment.runtime.readFile(path))) as unknown;
     if (!isRecord(value) || value.version !== STATE_VERSION || typeof value.memoryFingerprint !== 'string'
-      || !isRecord(value.pending) || !isRecord(value.processed) || typeof value.updatedAt !== 'string') {
+      || !isRecord(value.pending) || !isRecord(value.processed) || typeof value.updatedAt !== 'string'
+      || value.dropped !== undefined && !isRecord(value.dropped)) {
       throw new Error('Local memory state is malformed or unsupported; processing is blocked');
     }
     return {
@@ -597,6 +639,7 @@ async function readState(environment: MemoryContext, path: string): Promise<Loca
       memoryFingerprint: value.memoryFingerprint,
       pending: value.pending as Record<string, StoredCheckpoint>,
       processed: value.processed as Record<string, ProcessedCheckpoint>,
+      ...(value.dropped === undefined ? {} : { dropped: value.dropped as Record<string, DroppedCheckpoint> }),
       updatedAt: value.updatedAt,
     };
   } catch (error) {

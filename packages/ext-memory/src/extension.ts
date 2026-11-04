@@ -1,6 +1,6 @@
 import { HOST_WORKERS_SERVICE, RUNTIME_LIFETIME_SERVICE, MODELS_SERVICE, SESSIONS_SERVICE, type ConfiguredFelanExtension, type FelanExtensionAPI } from '@felan-ai/agent-core';
 import { createMemoryExtension } from './index.js';
-import { LocalMemoryCoordinator } from './local/coordinator.js';
+import { acquireSharedLocalMemoryCoordinator } from './local/shared.js';
 import { createMemoryControlExtension } from './local/control.js';
 import { createMemoryPresentation } from './local/ui.js';
 export * from './index.js';
@@ -23,15 +23,34 @@ const extension = Object.assign((pi: FelanExtensionAPI) => {
   const environment = { runtime: pi.runtime, sessions, ...(openWorker ? { openWorker } : {}) };
   const root = sessions.current.id === sessions.current.root;
   const schedulingAvailable = !!openWorker && !!lifetime;
-  const coordinator = new LocalMemoryCoordinator(environment, { agentDir: pi.agentDir, models, enabled: root && schedulingAvailable,
+  const shared = acquireSharedLocalMemoryCoordinator({ agentDir: pi.agentDir });
+  const attachment = shared.coordinator.attach({ environment, models, scheduling: root && schedulingAvailable,
     ...(root && !schedulingAvailable ? { unavailableReason: 'Dream scheduling is unavailable on this host; captured memory remains readable.' } : {}),
     ...(models.classifier ? { classifier: models.classifier } : {}) });
-  const host = coordinator.createSessionHost({ cwd: pi.runtime.cwd, sessionStorageRoot: pi.runtime.storage('session').root });
-  const release = root && lifetime ? lifetime.register({ busy: () => coordinator.hasActiveWork(),
-    settle: mode => mode === 'drain' ? coordinator.drain() : coordinator.dispose(), dispose: () => coordinator.dispose() }) : undefined;
-  createMemoryExtension({ role: root ? 'root' : 'reader', host })(pi);
-  if (root) createMemoryControlExtension({ coordinator, agentDir: pi.agentDir, presentation: createMemoryPresentation(pi, environment) })(pi);
-  pi.on('session_shutdown', async () => { await coordinator.dispose(); release?.(); });
+  let release: (() => void) | undefined;
+  let closed: Promise<void> | undefined;
+  const close = (): Promise<void> => {
+    closed ??= (async () => {
+      try {
+        await attachment.detach();
+      } finally {
+        release?.();
+        await shared.release();
+      }
+    })();
+    return closed;
+  };
+  pi.on('session_shutdown', close);
+  try {
+    const host = attachment.createSessionHost({ cwd: pi.runtime.cwd, sessionStorageRoot: pi.runtime.storage('session').root });
+    release = root && lifetime ? lifetime.register({ busy: () => attachment.busy(),
+      settle: mode => attachment.settle(mode), dispose: close }) : undefined;
+    createMemoryExtension({ role: root ? 'root' : 'reader', host })(pi);
+    if (root) createMemoryControlExtension({ coordinator: attachment, agentDir: pi.agentDir, presentation: createMemoryPresentation(pi, environment) })(pi);
+  } catch (error) {
+    void close();
+    throw error;
+  }
 }, { serviceRequirements: { required: [MODELS_SERVICE, SESSIONS_SERVICE], optional: [HOST_WORKERS_SERVICE, RUNTIME_LIFETIME_SERVICE] } }) as ConfiguredFelanExtension;
 
 export default extension;

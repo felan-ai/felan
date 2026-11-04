@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
 import { createMemoryControlExtension } from './backend.js';
 
-import type { LocalMemoryCoordinator } from '../../src/local/coordinator.js';
+import type { MemoryControlCoordinator } from '../../src/local/control.js';
 
 it('clears status before joining a pending view so a later session cannot be cleared by stale shutdown', async () => {
   const events = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
@@ -12,7 +12,7 @@ it('clears status before joining a pending view so a later session cannot be cle
   const removeStatus = vi.fn(async () => {}); const setStatus = vi.fn(async () => {}); const ctx = { cwd: '/fixture', hasUI: true, mode: 'print',
     sessionManager: { getSessionId: () => 'session' }, ui: { setStatus, notify: vi.fn() } } as unknown as ExtensionContext;
   const coordinator = { status: async () => ({ enabled: true, state: 'idle', pendingCheckpoints: 0 }),
-    subscribeStatusChanges: () => () => {} } as unknown as LocalMemoryCoordinator;
+    subscribeStatusChanges: () => () => {} } as unknown as MemoryControlCoordinator;
   createMemoryControlExtension({ coordinator, agentDir: '/fixture', presentation: {
     async openDirectory() {}, showHistory() { entered(); return held; },
   } })({ ui: { status: setStatus, removeStatus, notify: vi.fn(async () => {}) }, registerCommand(_name: string, value: { handler: typeof command }) { command = value.handler; },
