@@ -580,9 +580,11 @@ export class LocalMemoryCoordinator {
           try {
             await this.#reconcileRunDiagnostics(context, environment, lease);
             context.diagnosticsReconciled = true;
-            context.storageBlocked = false;
-            context.failedDriver = undefined;
-            context.message = undefined;
+            if (context.storageBlocked) {
+              context.storageBlocked = false;
+              context.failedDriver = undefined;
+              context.message = undefined;
+            }
           } finally {
             await lease.release();
           }

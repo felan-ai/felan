@@ -93,7 +93,6 @@ describe('Agent Core Pi exports', () => {
 
     for (const name of [
       'InMemoryCredentialStore',
-      'StringEnum',
       'clampThinkingLevel',
       'createAssistantMessageEventStream',
       'getCurrentSystemPrompt',
@@ -108,6 +107,14 @@ describe('Agent Core Pi exports', () => {
     }
 
     expect(agentCore.builtinProviders).toBe(piProviders.builtinProviders);
+  });
+
+  it('preserves TypeBox string enum schemas', () => {
+    expect(agentCore.StringEnum(['a', 'b'] as const, { description: 'd' })).toEqual({
+      type: 'string',
+      enum: ['a', 'b'],
+      description: 'd',
+    });
   });
 
   it('exposes the Pi types used by Felan applications', () => {

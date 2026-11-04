@@ -272,7 +272,7 @@ export class PromptCaptures {
  *  without a custom prompt. Machine-generated, so operator text never carries it;
  *  forwarding it makes Claude Code's subscription path read the request as a
  *  third-party app. */
-export const PI_PREAMBLE = "You are an expert coding assistant operating inside pi";
+export const PI_PREAMBLE = "You are a coding assistant running inside pi";
 
 /** Both doc paths from pi's documentation-routing line. Anthropic's subscription gate
  *  rejects a system prompt carrying both, while either alone passes (issues #883, #88). */

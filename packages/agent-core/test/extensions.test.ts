@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from 'node:buffer';
 import type { ExtensionAPI, InlineExtension } from '@earendil-works/pi-coding-agent';
 import { describe, expect, it, vi } from 'vitest';
 import {
@@ -90,6 +91,7 @@ describe('Felan extension bridge', () => {
         killed: false,
       }),
     });
+    const exec = vi.spyOn(runtime, 'exec');
     const pi = {
       marker: 'pi receiver',
       getActiveTools(this: { marker: string }) {
@@ -123,9 +125,28 @@ describe('Felan extension bridge', () => {
       command: 'literal-command',
       args: ['two words', '$HOME', ';'],
     });
+    expect(exec).toHaveBeenCalledWith('literal-command', ['two words', '$HOME', ';'], {
+      maxBuffer: Math.min(256 * 1024 * 1024, bufferConstants.MAX_STRING_LENGTH),
+    });
+    expect(execOutput).toMatchObject({ stderr: '', code: 0, killed: false, truncated: false });
     expect(() => lateRegister!({ id: 'late', instructions: 'Too late' })).toThrow(
       'Capability registration from @felan-ai/test-extension is only available during initialization',
     );
+  });
+
+  it.each([0, 1_024])('preserves exec options and result fields with maxBuffer %i', async (maxBuffer) => {
+    const runtime = new TestAgentRuntime();
+    const result = { stdout: 'output', stderr: 'error', code: 17, killed: true, truncated: true };
+    const exec = vi.spyOn(runtime, 'exec').mockResolvedValue(result);
+    const options = { maxBuffer, maxOutputBytes: 16, timeout: 100, cwd: '/workspace', signal: new AbortController().signal };
+    const inline = bindFelanExtension('@felan-ai/test-extension', async (felanPi) => {
+      expect(await felanPi.exec('literal-command', ['argument'], options)).toEqual(result);
+    }, runtime);
+
+    await inlineFactory(inline)({} as ExtensionAPI);
+
+    expect(exec).toHaveBeenCalledOnce();
+    expect(exec).toHaveBeenCalledWith('literal-command', ['argument'], options);
   });
 
   it('forwards session-only model selection options through the Felan bridge', async () => {

@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/agent-core",
-  "version": "0.14.6",
+  "version": "0.15.0",
   "description": "Portable Felan agent contracts and composition",
   "license": "MIT",
   "type": "module",
@@ -39,7 +39,8 @@
     "@earendil-works/pi-telemetry": "catalog:pi",
     "@earendil-works/pi-tui": "catalog:pi",
     "@felan-ai/session-protocol": "workspace:*",
-    "@lydell/node-pty": "1.2.0-beta.14"
+    "@lydell/node-pty": "1.2.0-beta.14",
+    "typebox": "1.3.27"
   },
   "publishConfig": {
     "access": "public",

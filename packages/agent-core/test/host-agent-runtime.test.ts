@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from 'node:buffer';
 import { chmod, lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -135,6 +136,145 @@ describe('HostAgentRuntime', () => {
     expect(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)).toBeLessThanOrEqual(1_024);
     await expect(runtime.exec(process.execPath, ['--version'], { maxOutputBytes: -1 }))
       .rejects.toThrow('maxOutputBytes must be a non-negative safe integer');
+  });
+
+  it.each(['stdout', 'stderr'] as const)(
+    'discards an incomplete UTF-8 suffix when maxOutputBytes truncates %s',
+    async (stream) => {
+      const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+      const result = await runtime.exec(process.execPath, [
+        '-e', `process.${stream}.write('😀😀')`,
+      ], { maxOutputBytes: 5 });
+
+      expect(result).toEqual({
+        stdout: stream === 'stdout' ? '😀' : '',
+        stderr: stream === 'stderr' ? '😀' : '',
+        code: 0,
+        killed: false,
+        truncated: true,
+      });
+    },
+  );
+
+  it.each([{ maxOutputBytes: -1 }, { maxBuffer: -1 }])(
+    'returns a killed result before validating output limits for a pre-aborted signal: %j',
+    async (options) => {
+      const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+      const controller = new AbortController();
+      controller.abort();
+
+      await expect(runtime.exec(process.execPath, ['--version'], { ...options, signal: controller.signal }))
+        .resolves.toEqual({ stdout: '', stderr: '', code: 143, killed: true });
+    },
+  );
+
+  it('terminates noisy commands promptly when combined output exceeds maxBuffer', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const started = Date.now();
+    const result = await runtime.exec(process.execPath, [
+      '-e',
+      "setInterval(() => { process.stdout.write('x'.repeat(768)); process.stderr.write('y'.repeat(768)); }, 10)",
+    ], { maxBuffer: 1_024, timeout: 5_000 });
+
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(result).toMatchObject({ truncated: true, killed: true });
+    expect(result.code).not.toBe(0);
+    expect(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)).toBe(1_024);
+    expect(result.stdout).toMatch(/^x*$/);
+    expect(result.stderr).toMatch(/^y*$/);
+  });
+
+  it.skipIf(process.platform === 'win32')('closes inherited output pipes on maxBuffer overflow', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const started = Date.now();
+    try {
+      const result = await runtime.exec(process.execPath, ['-e', `
+        const child = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
+          detached: true, stdio: ['ignore', 1, 2],
+        });
+        require('node:fs').writeFileSync('descendant.pid', String(child.pid));
+        child.unref();
+        process.stdout.write('x'.repeat(2048));
+      `], { maxBuffer: 1_024, timeout: 3_000 });
+
+      expect(Date.now() - started).toBeLessThan(3_000);
+      expect(result).toMatchObject({ stdout: 'x'.repeat(1_024), truncated: true, killed: true });
+      expect(result.code).not.toBe(0);
+    } finally {
+      const pid = Number(new TextDecoder().decode(await runtime.readFile('descendant.pid')));
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+      }
+    }
+  }, 10_000);
+
+  it.each([6, 7])('preserves output at or below maxBuffer %i', async (maxBuffer) => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const result = await runtime.exec(process.execPath, [
+      '-e', "process.stdout.write('abc'); process.stderr.write('def')",
+    ], { maxBuffer });
+
+    expect(result).toMatchObject({ stdout: 'abc', stderr: 'def', code: 0, killed: false });
+    expect(result.truncated).toBeFalsy();
+  });
+
+  it.each([-1, 1.5, NaN, Infinity, bufferConstants.MAX_STRING_LENGTH + 1])(
+    'rejects invalid maxBuffer %s',
+    async (maxBuffer) => {
+      const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+      const execution = runtime.exec(process.execPath, ['--version'], { maxBuffer });
+
+      await expect(execution).rejects.toBeInstanceOf(RangeError);
+      await expect(execution).rejects.toThrow(
+        `maxBuffer must be an integer between 0 and ${bufferConstants.MAX_STRING_LENGTH} bytes`,
+      );
+    },
+  );
+
+  it('supports maxBuffer zero for silent and output-producing commands', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const silent = await runtime.exec(process.execPath, ['-e', ''], { maxBuffer: 0 });
+    expect(silent).toMatchObject({ stdout: '', stderr: '', code: 0, killed: false });
+    expect(silent.truncated).toBeFalsy();
+
+    const noisy = await runtime.exec(process.execPath, ['-e', "process.stdout.write('x')"], { maxBuffer: 0 });
+    expect(noisy).toMatchObject({ stdout: '', stderr: '', truncated: true, killed: true });
+    expect(noisy.code).not.toBe(0);
+  });
+
+  it.each([
+    { maxBuffer: 1_024, maxOutputBytes: 16 },
+    { maxBuffer: 16, maxOutputBytes: 1_024 },
+  ])('uses the smaller capture limit while enforcing maxBuffer: %j', async (options) => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const result = await runtime.exec(process.execPath, [
+      '-e', "setInterval(() => process.stdout.write('x'.repeat(2_048)), 10)",
+    ], { ...options, timeout: 5_000 });
+
+    expect(result).toMatchObject({ stdout: 'x'.repeat(16), stderr: '', truncated: true, killed: true });
+    expect(result.code).not.toBe(0);
+  });
+
+  it('does not terminate at maxOutputBytes when maxBuffer allows more output', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const result = await runtime.exec(process.execPath, [
+      '-e', "process.stdout.write('x'.repeat(64))",
+    ], { maxBuffer: 128, maxOutputBytes: 16 });
+
+    expect(result).toMatchObject({ stdout: 'x'.repeat(16), stderr: '', code: 0, killed: false, truncated: true });
+  });
+
+  it('discards an incomplete UTF-8 suffix rather than exceeding maxBuffer', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const result = await runtime.exec(process.execPath, [
+      '-e', "process.stdout.write('😀😀')",
+    ], { maxBuffer: 5 });
+
+    expect(result).toMatchObject({ stdout: '😀', stderr: '', truncated: true, killed: true });
+    expect(result.code).not.toBe(0);
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(5);
   });
 
   it.skipIf(process.platform === 'win32')(

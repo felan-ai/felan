@@ -84,6 +84,7 @@ const piPackageNames = [
   '@earendil-works/pi-codemode',
   '@earendil-works/pi-coding-agent',
   '@earendil-works/pi-mcp',
+  '@earendil-works/pi-schema',
   '@earendil-works/pi-telemetry',
   '@earendil-works/pi-tui',
 ];

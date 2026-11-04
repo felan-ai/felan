@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-model-tools",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Portable classifier and image generation tools for Felan",
   "license": "MIT",
   "type": "module",

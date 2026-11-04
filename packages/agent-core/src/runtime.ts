@@ -8,12 +8,12 @@ import type { RuntimeFiles } from './runtime-files.js';
 export type ExecOptions = PiExecOptions;
 
 export interface AgentRuntimeExecOptions extends PiExecOptions {
-  /** Maximum combined stdout/stderr bytes retained by the host adapter. */
+  /** Maximum combined stdout/stderr bytes retained by the host adapter, without terminating the command. */
   readonly maxOutputBytes?: number;
 }
 
-export interface AgentRuntimeExecResult extends PiExecResult {
-  /** True when the host discarded output after reaching maxOutputBytes. */
+export interface AgentRuntimeExecResult extends Omit<PiExecResult, 'truncated'> {
+  /** True when output exceeded maxOutputBytes or maxBuffer. Only maxBuffer terminates the command. */
   readonly truncated?: boolean;
 }
 

@@ -123,7 +123,8 @@ export type {
   SessionHistoryOptions, SessionHistoryPage, SessionPage, SessionPageOptions, SessionRef,
   SessionsEvent, SessionsHistory, SessionsRequestOptions, SessionsService, SessionsServiceErrorCode,
 } from './services/sessions.js';
-export { Type } from '@earendil-works/pi-ai';
+export { Type } from 'typebox';
+export { StringEnum } from './string-enum.js';
 export { buildSessionContext, parseSessionEntries } from '@earendil-works/pi-coding-agent';
 export type { SessionInfo } from '@earendil-works/pi-coding-agent';
 export {
@@ -245,7 +246,6 @@ export type {
 } from '@earendil-works/pi-coding-agent';
 export {
   InMemoryCredentialStore,
-  StringEnum,
   calculateCost,
   clampThinkingLevel,
   contentText,

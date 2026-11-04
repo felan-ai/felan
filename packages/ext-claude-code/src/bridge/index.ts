@@ -1148,7 +1148,7 @@ const VALID_EFFORTS = new Set<string>(["low", "medium", "high", "xhigh", "max"])
 // level CC accepts.
 function effortForReasoning(model: Model<any>, reasoning: string | undefined): EffortLevel | undefined {
 	if (!reasoning) return undefined;
-	const mapped = model.thinkingLevelMap?.[reasoning];
+	const mapped = (model.thinkingLevelMap as Partial<Record<string, string | null>> | undefined)?.[reasoning];
 	if (mapped === undefined) return REASONING_TO_EFFORT[reasoning];
 	return VALID_EFFORTS.has(mapped as EffortLevel) ? mapped as EffortLevel : undefined;
 }
@@ -1156,7 +1156,7 @@ function effortForReasoning(model: Model<any>, reasoning: string | undefined): E
 // Felan: pi's "off" level arrives as no reasoning. Disable thinking where the model allows it,
 // as pi-ai's Anthropic adapter does; without this Claude Code's default adaptive thinking runs.
 function thinkingDisabled(model: Model<any>, reasoning: string | undefined): boolean {
-	return !reasoning && model.reasoning === true && model.thinkingLevelMap?.off !== null;
+	return !reasoning && model.reasoning === true && (model.thinkingLevelMap as Partial<Record<string, string | null>> | undefined)?.off !== null;
 }
 
 // --- Provider helpers: misc ---

@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from 'node:buffer';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { closeSync, constants as fsConstants, fstatSync, openSync } from 'node:fs';
 import {
@@ -19,6 +20,7 @@ import {
 } from 'node:fs/promises';
 import { constants as osConstants, homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import type { IDisposable, IPty } from '@lydell/node-pty';
 import type {
   AgentRuntime,
@@ -406,7 +408,11 @@ export class HostAgentRuntime implements AgentRuntime {
     if (options?.signal?.aborted) {
       return killedResult();
     }
+    const maxBuffer = validateMaxBuffer(options?.maxBuffer);
     const maxOutputBytes = validateMaxOutputBytes(options?.maxOutputBytes);
+    const captureLimit = maxBuffer === undefined
+      ? maxOutputBytes
+      : Math.min(maxOutputBytes ?? maxBuffer, maxBuffer);
 
     return new Promise((resolveResult) => {
       const child = spawn(command, args, {
@@ -420,7 +426,9 @@ export class HostAgentRuntime implements AgentRuntime {
       const stdout: Uint8Array[] = [];
       const stderr: Uint8Array[] = [];
       let capturedOutputBytes = 0;
+      let outputBytes = 0;
       let outputTruncated = false;
+      let maxBufferExceeded = false;
       let killed = false;
       let spawnError: Error | undefined;
       let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -439,27 +447,38 @@ export class HostAgentRuntime implements AgentRuntime {
         if (killed) killChild(child, 'SIGKILL');
         if (forceKillTimeout) clearTimeout(forceKillTimeout);
         options?.signal?.removeEventListener('abort', kill);
+        const exitCode = code ?? (spawnError ? 1 : 0);
+        const decodeOutput = (chunks: Uint8Array[]): string => {
+          const output = Buffer.concat(chunks);
+          return outputTruncated
+            ? new StringDecoder('utf8').write(output)
+            : output.toString();
+        };
         resolveResult({
-          stdout: Buffer.concat(stdout).toString(),
-          stderr: spawnError?.message ?? Buffer.concat(stderr).toString(),
-          code: killed ? 143 : (code ?? (spawnError ? 1 : 0)),
+          stdout: decodeOutput(stdout),
+          stderr: spawnError?.message ?? decodeOutput(stderr),
+          code: maxBufferExceeded ? (exitCode || 1) : (killed ? 143 : exitCode),
           killed,
           ...(outputTruncated ? { truncated: true } : {}),
         });
       };
 
-      child.stdout.on('data', (chunk: Uint8Array) => {
-        const captured = captureOutputChunk(chunk, maxOutputBytes, capturedOutputBytes);
+      const captureOutput = (chunk: Uint8Array, output: Uint8Array[]): void => {
+        if (maxBufferExceeded) return;
+        const captured = captureOutputChunk(chunk, captureLimit, capturedOutputBytes);
         capturedOutputBytes = captured.nextBytes;
         outputTruncated ||= captured.truncated;
-        if (captured.chunk.length > 0) stdout.push(captured.chunk);
-      });
-      child.stderr.on('data', (chunk: Uint8Array) => {
-        const captured = captureOutputChunk(chunk, maxOutputBytes, capturedOutputBytes);
-        capturedOutputBytes = captured.nextBytes;
-        outputTruncated ||= captured.truncated;
-        if (captured.chunk.length > 0) stderr.push(captured.chunk);
-      });
+        if (captured.chunk.length > 0) output.push(captured.chunk);
+        if (maxBuffer === undefined) return;
+        outputBytes += chunk.byteLength;
+        if (outputBytes <= maxBuffer) return;
+        maxBufferExceeded = true;
+        child.stdout.destroy();
+        child.stderr.destroy();
+        kill();
+      };
+      child.stdout.on('data', (chunk: Uint8Array) => captureOutput(chunk, stdout));
+      child.stderr.on('data', (chunk: Uint8Array) => captureOutput(chunk, stderr));
       child.once('error', (error) => {
         spawnError = error;
       });
@@ -1243,6 +1262,14 @@ function isPermissionError(error: unknown): boolean {
 
 function killedResult(): ExecResult {
   return { stdout: '', stderr: '', code: 143, killed: true };
+}
+
+function validateMaxBuffer(value: number | undefined): number | undefined {
+  if (value === undefined) return undefined;
+  if (!Number.isInteger(value) || value < 0 || value > bufferConstants.MAX_STRING_LENGTH) {
+    throw new RangeError(`maxBuffer must be an integer between 0 and ${bufferConstants.MAX_STRING_LENGTH} bytes`);
+  }
+  return value;
 }
 
 function validateMaxOutputBytes(value: number | undefined): number | undefined {

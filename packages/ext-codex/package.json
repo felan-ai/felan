@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-codex",
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "Codex-compatible structured tools and OpenAI request controls for Felan",
   "license": "MIT",
   "type": "module",
@@ -38,7 +38,7 @@
     "typebox": "1.1.38"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.14.0"
+    "@felan-ai/agent-core": "^0.15.0"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

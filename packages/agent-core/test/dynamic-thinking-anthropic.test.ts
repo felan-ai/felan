@@ -31,7 +31,7 @@ describe('Anthropic mid-conversation effort transport', () => {
     await stream.result();
 
     expect(payload).toMatchObject({
-      output_config: { effort: 'high' },
+      output_config: { effort: 'low' },
       thinking: { type: 'adaptive' },
     });
     expect(payload?.betas).toEqual(expect.arrayContaining(['mid-conversation-output-config-2026-07-01']));

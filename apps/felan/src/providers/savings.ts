@@ -58,7 +58,7 @@ export interface SavingsPrice {
   readonly output: number;
   readonly cacheRead: number;
   readonly cacheWrite: number;
-  readonly tiers?: readonly SavingsPriceTier[];
+  readonly tiers?: readonly SavingsPriceTier[] | undefined;
   readonly fingerprint: string;
 }
 

@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from 'node:buffer';
 import type {
   ExtensionAPI,
   InlineExtension,
@@ -23,6 +24,8 @@ import {
   getExtensionConfigDefinition,
   resolveExtensionConfigs,
 } from './extension-config.js';
+
+const DEFAULT_EXEC_MAX_BUFFER = Math.min(256 * 1024 * 1024, bufferConstants.MAX_STRING_LENGTH);
 
 export type { ExtensionConfigWriter } from './extension-config-write.js';
 
@@ -348,11 +351,17 @@ function createFelanExtensionAPI(
         return registerCapability;
       }
       if (property === 'exec') {
-        return (
+        return async (
           command: string,
           args: string[],
           options?: Parameters<AgentRuntime['exec']>[2],
-        ) => runtime.exec(command, args, options);
+        ) => {
+          const result = await runtime.exec(command, args, {
+            ...options,
+            maxBuffer: options?.maxBuffer ?? DEFAULT_EXEC_MAX_BUFFER,
+          });
+          return { ...result, truncated: result.truncated ?? false };
+        };
       }
       if (property === 'setModel') {
         if (!boundMethods.has(property)) {

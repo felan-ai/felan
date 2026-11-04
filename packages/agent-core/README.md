@@ -249,12 +249,24 @@ does not enable it automatically. Felan's local host supports `codemode.mode`
 values `off`, `on`, and `only`, defaults to `off`, and disables the sandbox's
 extra model helpers with `models: false`.
 
-Agent Core 0.14 follows Pi 1.4's public contracts. Extension integrations must
-handle `aborted` on `agent_settled` events, include `durationMs` and `outputPad`
-when implementing Pi tool-render callbacks, and provide
+Agent Core 0.15 follows Pi 1.5's public contracts. Extension integrations must
+handle `aborted` on `agent_settled` events, include `durationMs`, `outputPad`,
+`keyText`, and `keyHint` when implementing Pi tool-render callbacks, and provide
 `ToolLoadout.getPromptGuidelines()`. Custom stream functions should return an
 `AssistantMessageEventStream`, typically created by
 `createAssistantMessageEventStream()`.
+
+Tool-argument validation runs on Pi's `@earendil-works/pi-schema`. It coerces
+numeric strings to numbers and single values to arrays, and reports failures
+such as `- path: missing`. It does not apply TypeBox-only features such as
+`Type.Refine`, codecs, or the TypeBox `Format` registry. Pi no longer exports
+TypeBox's `Type`. Agent Core re-exports `Type` from TypeBox 1.3.27 and supplies
+its own TypeBox-compatible `StringEnum`.
+
+The host implementation of `AgentRuntime.exec` honors `maxBuffer` by terminating
+the command when its combined stdout and stderr exceed the limit, then returning
+`truncated: true` with a non-zero code. `maxOutputBytes` only limits captured
+output and does not terminate the command.
 
 Agent Core also exposes shared `xhigh`, `high`, `medium`, and `low` model tiers for
 extensions that need model-strength selection:

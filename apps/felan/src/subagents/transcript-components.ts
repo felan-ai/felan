@@ -1,4 +1,4 @@
-import { convertToPng, type AgentSession, type Theme, type ToolDefinition } from '@earendil-works/pi-coding-agent';
+import { convertToPng, keyHint, keyText, type AgentSession, type Theme, type ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Box, Container, Image, Markdown, MouseRegion, Spacer, Text, getCapabilities, stripTerminalSequences, type Component, type MarkdownTheme, type TUI } from '@earendil-works/pi-tui';
 import { renderThinkingGroupMarkdown } from '../thinking-groups.js';
 import { clientMarkdownTransform, type MermaidMode } from '../tui/markdown.js';
@@ -143,7 +143,7 @@ export class TranscriptTool extends Container {
     return { args: this.args, toolCallId: this.id, invalidate: () => { this.invalidate(); this.tui.requestRender(); }, lastComponent, state: this.state,
       cwd: this.cwd, executionStarted: this.started, argsComplete: this.argsComplete, isPartial: this.partial,
       expanded: this.expanded, showImages: this.options.showImages, isError: this.result?.isError ?? false,
-      durationMs: this.partial ? undefined : this.result?.durationMs, outputPad: this.options.outputPad };
+      durationMs: this.partial ? undefined : this.result?.durationMs, outputPad: this.options.outputPad, keyText, keyHint };
   }
   private callFallback(): Component {
     const args = JSON.stringify(this.args, null, 2);
