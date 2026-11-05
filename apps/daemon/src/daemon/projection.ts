@@ -50,6 +50,7 @@ export class SessionProjection {
   private readonly streams = new Map<string, StreamState>();
   private streamsBytes = 0;
   private readonly completionOnly = new Map<string, SessionSnapshot['completionOnlyStreams'][number]>();
+  private readonly omitted = new Map<string, string>();
   private readonly dirtyCompletionOnly = new Set<string>();
   private readonly presentation = new Map<string, Presentation>();
   private readonly completedStreams = new Set<string>();
@@ -225,6 +226,7 @@ export class SessionProjection {
       this.entryIds.add(entry.id);
       for (const [id, stream] of this.streams) if (stream.value.message === message.id) this.removeStream(id);
       for (const [id, stream] of this.completionOnly) if (stream.message === message.id) this.completionOnly.delete(id);
+      for (const [id, omittedMessage] of this.omitted) if (omittedMessage === message.id) this.omitted.delete(id);
       this.options.publish({ v: 1, session: this.id, rev: commit.value.revision, change: { type: 'message.completed', message } });
       if (this.activeDisplay?.message === message.id) { this.activeDisplay = undefined; this.displayDirty = true; }
     }
@@ -312,7 +314,7 @@ export class SessionProjection {
     this.unsubscribe();
     for (const restore of this.restoreQueueMethods.reverse()) restore();
     this.restoreQueueMethods.length = 0; this.queued.clear(); this.compactionQueue.length = 0;
-    this.streams.clear(); this.streamsBytes = 0; this.completionOnly.clear(); this.dirtyCompletionOnly.clear();
+    this.streams.clear(); this.streamsBytes = 0; this.completionOnly.clear(); this.omitted.clear(); this.dirtyCompletionOnly.clear();
   }
 
   private receive(event: AgentSessionEvent): void {
@@ -404,8 +406,12 @@ export class SessionProjection {
   private delta(message: string, index: number, kind: Stream['kind'], text: string): void {
     if (this.completedStreams.has(message)) return;
     const id = `${message}:${index}`;
-    if (this.completionOnly.has(id)) return;
+    if (this.completionOnly.has(id) || this.omitted.has(id)) return;
     const old = this.streams.get(id);
+    if (!old && this.streams.size + this.completionOnly.size >= LIMITS.activeStreams) {
+      // Capped streams stay omitted so later deltas cannot publish an incomplete prefix.
+      this.omitted.set(id, message); return;
+    }
     text = (old?.pendingHighSurrogate ?? '') + text;
     const lastCodeUnit = text.charCodeAt(text.length - 1);
     const pendingHighSurrogate = lastCodeUnit >= 0xd800 && lastCodeUnit <= 0xdbff ? text.slice(-1) : '';
@@ -419,11 +425,9 @@ export class SessionProjection {
       nextOffset++;
     }
     const bytes = Buffer.byteLength(text);
-    if (malformed || (!old && this.streams.size + this.completionOnly.size >= LIMITS.activeStreams)
-      || (old?.bytes ?? 0) + bytes > LIMITS.activeStreamBytes
+    if (malformed || (old?.bytes ?? 0) + bytes > LIMITS.activeStreamBytes
       || this.streamsBytes + bytes > LIMITS.activeStreamsBytes) {
       this.removeStream(id);
-      if (this.streams.size + this.completionOnly.size >= LIMITS.activeStreams) throw new Error('Active stream capacity exceeded.');
       const stream: SessionSnapshot['completionOnlyStreams'][number] = { id, message, kind, reason: malformed ? 'lost' : 'limit' };
       this.completionOnly.set(id, stream); this.dirtyCompletionOnly.add(id);
       this.publishCompletionOnly(id);

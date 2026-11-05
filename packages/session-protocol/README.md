@@ -257,6 +257,10 @@ become `completionOnlyStreams` (`limit|lost`), with no fabricated text. Ignore
 later deltas for that stream until the authoritative completed message replaces
 its transients. Completed streams ignore late text only when the caller retains
 that terminal identity.
+A stream that starts while the session holds `LIMITS.activeStreams` active plus
+completion-only streams stays omitted until its message completes. The host sends
+no deltas or `stream.completion_only` notice for it, and the completed message
+carries its text.
 
 Every other meaningful change is revisioned. `classifyRevision` distinguishes
 next/duplicate/gap. Coalesce high-volume tool output/status into bounded

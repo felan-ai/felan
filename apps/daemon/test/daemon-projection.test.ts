@@ -583,24 +583,94 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     expect(snapshot.completionOnlyStreams).toEqual([]);
   });
 
-  it('counts completion-only streams toward the active stream capacity', async () => {
+  it('omits new streams when active and completion-only streams fill the capacity', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     f.registry.projection(b.sessionId).dispose();
-    const errors: unknown[] = [];
+    const errors: unknown[] = []; const events: Array<SessionEvent | TextStreamEvent> = [];
     const projection = new SessionProjection({ binding: b, store: f.store, extras: () => ({ children: [], processes: [], interactions: [] }),
-      publish() {}, onError: error => errors.push(error) });
+      publish: event => events.push(event), onError: error => errors.push(error) });
     try {
       const runtime = f.instances.get(b.sessionId)!; const message = assistant(); runtime.emit({ type: 'message_start', message });
       for (let index = 0; index < LIMITS.activeStreams; index++) runtime.emit({ type: 'message_update', message,
         assistantMessageEvent: { type: 'text_delta', contentIndex: index, delta: index ? '' : 'x'.repeat(LIMITS.activeStreamBytes + 1), partial: message } });
-      expect(projection.snapshot().activeStreams).toHaveLength(LIMITS.activeStreams - 1);
-      expect(projection.snapshot().completionOnlyStreams).toHaveLength(1);
+      const snapshot = projection.snapshot(); const eventCount = events.length;
+      expect(snapshot.activeStreams).toHaveLength(LIMITS.activeStreams - 1);
+      expect(snapshot.completionOnlyStreams).toHaveLength(1);
       expect(errors).toEqual([]);
       runtime.emit({ type: 'message_update', message,
         assistantMessageEvent: { type: 'text_delta', contentIndex: LIMITS.activeStreams, delta: 'x', partial: message } });
-      expect(errors).toHaveLength(1);
-      expect(errors[0]).toMatchObject({ message: 'Active stream capacity exceeded.' });
+      expect(errors).toEqual([]);
+      expect(events).toHaveLength(eventCount);
+      expect(projection.snapshot()).toEqual(snapshot);
+      expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
     } finally { projection.dispose(); }
+  });
+
+  it('keeps a run with nine thinking blocks active and publishes every block on completion', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const diagnostic = vi.fn(); f.registry.options.onDiagnostic = diagnostic;
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const events: Array<SessionEvent | TextStreamEvent> = [];
+    f.registry.subscribe(b.sessionId, event => { events.push(event); });
+    const message = { ...assistant(), content: Array.from({ length: 9 }, (_, index) => ({ type: 'thinking' as const, thinking: `Reasoning ${index}` })) };
+    runtime.emit({ type: 'agent_start' }); runtime.emit({ type: 'message_start', message });
+    for (const [contentIndex, part] of message.content.entries()) runtime.emit({ type: 'message_update', message,
+      assistantMessageEvent: { type: 'thinking_delta', contentIndex, delta: part.thinking, partial: message } });
+    const snapshot = projection.snapshot(); const messageId = snapshot.activeStreams[0]!.message;
+    expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+    expect(snapshot.activeStreams).toHaveLength(LIMITS.activeStreams);
+    expect(snapshot.activeStreams.every(stream => stream.kind === 'thinking')).toBe(true);
+    expect(snapshot.completionOnlyStreams).toEqual([]);
+    expect(events.filter(event => 'stream' in event).map(event => event.text)).toEqual(message.content.slice(0, LIMITS.activeStreams).map(part => part.thinking));
+    expect(events.some(event => 'stream' in event && event.stream.id === `${messageId}:8`)).toBe(false);
+    await f.registry.settleWriters();
+    expect(f.store.session(b.sessionId).run.state).toBe('running');
+    expect(diagnostic).not.toHaveBeenCalled(); expect(runtime.abort).not.toHaveBeenCalled();
+    expect(() => f.registry.assertAdmission()).not.toThrow(); expect(() => f.registry.assertDispatch(b.sessionId)).not.toThrow();
+    runtime.emit({ type: 'message_end', message }); b.runtime.session.sessionManager.appendMessage(message); projection.refresh();
+    await f.registry.settleWriters();
+    const completed = projection.snapshot();
+    expect(parseSessionSnapshot(completed)).toEqual(completed);
+    expect(completed.activeStreams).toEqual([]); expect(completed.completionOnlyStreams).toEqual([]);
+    expect(events.flatMap(event => 'change' in event && event.change.type === 'message.completed' ? [event.change.message] : [])).toEqual([
+      expect.objectContaining({ id: messageId, content: message.content.map(part => ({ type: 'thinking', text: part.thinking })) }),
+    ]);
+    expect(events.some(event => 'change' in event && event.change.type === 'run.updated' && event.change.run.state === 'cancelling')).toBe(false);
+    expect(events.some(event => 'change' in event && event.change.type === 'stream.completion_only')).toBe(false);
+    expect(diagnostic).not.toHaveBeenCalled(); expect(runtime.abort).not.toHaveBeenCalled();
+    expect(() => f.registry.assertAdmission()).not.toThrow();
+    for (const event of events) expect(() => encodeFrame(event)).not.toThrow();
+  });
+
+  it('keeps an omitted stream omitted after other messages release their slots', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    const events: Array<SessionEvent | TextStreamEvent> = [];
+    f.registry.subscribe(b.sessionId, event => { events.push(event); });
+    const first = assistant('First'); runtime.emit({ type: 'message_start', message: first });
+    for (let contentIndex = 0; contentIndex < LIMITS.activeStreams; contentIndex++) runtime.emit({ type: 'message_update', message: first,
+      assistantMessageEvent: { type: 'text_delta', contentIndex, delta: 'First', partial: first } });
+    expect(projection.snapshot().activeStreams).toHaveLength(LIMITS.activeStreams);
+    runtime.emit({ type: 'message_end', message: first });
+    const second = assistant('Second'); runtime.emit({ type: 'message_start', message: second });
+    const delta = (contentIndex: number, text: string) => runtime.emit({ type: 'message_update', message: second,
+      assistantMessageEvent: { type: 'text_delta', contentIndex, delta: text, partial: second } });
+    const beforeOmission = events.length; delta(0, 'Dropped prefix');
+    expect(events).toHaveLength(beforeOmission);
+    b.runtime.session.sessionManager.appendMessage(first); projection.refresh();
+    expect(projection.snapshot().activeStreams).toEqual([]);
+    const beforeRetry = events.length; delta(0, 'Dropped tail');
+    const omitted = projection.snapshot();
+    expect(parseSessionSnapshot(omitted)).toEqual(omitted);
+    expect(omitted.activeStreams).toEqual([]); expect(omitted.completionOnlyStreams).toEqual([]);
+    expect(events).toHaveLength(beforeRetry);
+    delta(1, 'Visible');
+    const snapshot = projection.snapshot();
+    expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+    expect(snapshot.activeStreams).toEqual([expect.objectContaining({ id: expect.stringMatching(/:1$/), kind: 'assistant', text: 'Visible', offset: 7 })]);
+    expect(snapshot.completionOnlyStreams).toEqual([]);
+    expect(events.slice(beforeRetry).filter(event => 'stream' in event).map(event => event.text)).toEqual(['Visible']);
+    expect(() => f.registry.assertAdmission()).not.toThrow();
   });
 
   it('publishes the prompt cursor before the first response delta so a delayed refresh cannot clear it', async () => {
