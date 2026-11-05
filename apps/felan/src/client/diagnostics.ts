@@ -15,8 +15,8 @@ export type ClientDiagnostic =
   | { event: 'connection.lost'; reason: string; error?: string }
   | { event: 'attachment.attached'; session: string; trigger: AttachTrigger; outcome: 'accepted' | 'rejected' | 'indeterminate'; durationMs: number;
     code?: string; message?: string; revision?: number; snapshotBytes?: number; counts?: Record<string, number> }
-  | { event: 'attachment.recovering'; session: string; cause: RecoveryCause; attempts: number; op?: Operation }
-  | { event: 'attachment.blocked'; session: string; attempts: number; reason: BlockedReason };
+  | { event: 'attachment.recovering'; session: string; cause: RecoveryCause; attempts: number; op?: Operation; error?: string }
+  | { event: 'attachment.blocked'; session: string; attempts: number; reason: BlockedReason; error?: string };
 
 const causes: Record<RecoveryCause, string> = {
   revision_gap: 'missed session updates',
@@ -28,6 +28,7 @@ const causes: Record<RecoveryCause, string> = {
   buffer_overflow: 'too many updates arrived during recovery',
   stale_snapshot: 'the snapshot was older than updates already received',
   daemon_resync: 'the daemon asked the client to resynchronize',
+  invalid_update: 'an invalid session update',
 };
 
 export function describeBlocked(reason: BlockedReason | undefined): string | undefined {

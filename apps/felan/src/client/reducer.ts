@@ -6,7 +6,7 @@ import {
 type Update = SessionEvent | TextStreamEvent;
 /** Why the client discarded its live view and asked the daemon for a new snapshot. */
 export type RecoveryCause = 'revision_gap' | 'stream_mismatch' | 'stream_gap' | 'stream_limit' | 'presentation_conflict'
-  | 'state_size_limit' | 'buffer_overflow' | 'stale_snapshot' | 'daemon_resync';
+  | 'state_size_limit' | 'buffer_overflow' | 'stale_snapshot' | 'daemon_resync' | 'invalid_update';
 export interface SessionState {
   readonly session: string;
   readonly snapshot?: SessionSnapshot;
@@ -25,7 +25,7 @@ export type SessionAction =
   | { type: 'snapshot'; snapshot: SessionSnapshot; bufferGeneration?: number }
   | { type: 'update'; update: Update }
   | { type: 'recovery_started' }
-  | { type: 'resync'; cause: RecoveryCause }
+  | { type: 'resync'; cause: RecoveryCause; discardedRevision?: number }
   | { type: 'disconnected' };
 
 export function createSessionState(session: string): SessionState {
@@ -140,7 +140,9 @@ function applyEvent(state: SessionState, event: SessionEvent): SessionState {
 
 export function reduceSession(state: SessionState, action: SessionAction): SessionState {
   if (action.type === 'disconnected') return { ...state, status: 'disconnected', buffered: [], bufferedBytes: 0 };
-  if (action.type === 'resync') return { ...state, status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : 'recovering', recoveryCause: action.cause };
+  if (action.type === 'resync') return { ...state, status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : 'recovering', recoveryCause: action.cause,
+    ...(action.discardedRevision === undefined ? {} : { bufferGeneration: state.bufferGeneration + 1,
+      discardedRevision: Math.max(state.discardedRevision, action.discardedRevision) }) };
   if (action.type === 'recovery_started') return { ...state, recoveryAttempts: state.recoveryAttempts + 1,
     status: state.recoveryAttempts >= MAX_RECOVERIES ? 'blocked' : state.status };
   if (action.type === 'snapshot') {

@@ -399,6 +399,7 @@ export class SessionClient {
   }
 
   private receive(value: unknown) {
+    let update: { session: string; discardedRevision: number } | undefined;
     try {
       if (value !== null && typeof value === 'object' && 'control' in value) {
         const reply = parseControlResponse(value);
@@ -414,6 +415,13 @@ export class SessionClient {
       const record = typeof re === 'string' ? this.records.get(re) : undefined;
       // Replies are decoded against the operation that produced them, never a union of result shapes.
       if (re !== undefined && !record) throw new Error('Uncorrelated response');
+      if (this.negotiated && value !== null && typeof value === 'object' && !Array.isArray(value)
+        && 'v' in value && value.v === PROTOCOL_VERSION && 'session' in value && typeof value.session === 'string'
+        && this.attachments.has(value.session) && !('re' in value) && !('interaction' in value) && !('presentationEvent' in value)
+        && ('rev' in value || 'change' in value || 'stream' in value)) {
+        update = { session: value.session,
+          discardedRevision: 'rev' in value && typeof value.rev === 'number' && Number.isSafeInteger(value.rev) && value.rev > 0 ? value.rev : 0 };
+      }
       const message = parseServerEnvelope(value, record?.envelope.op);
       if ('re' in message) {
         if (!record) throw new Error('Uncorrelated response');
@@ -451,7 +459,16 @@ export class SessionClient {
       const current = this.renewRecoveryBudget(attachment);
       this.store({ ...current, state: reduceSession(current.state, { type: 'update', update: message }) });
       this.recover(message.session); this.emit();
-    } catch (error) { this.lost('invalid_frame', error); }
+    } catch (error) {
+      const attachment = update && this.attachments.get(update.session);
+      if (attachment && update) {
+        if (attachment.state.status === 'blocked' || attachment.state.status === 'disconnected') return;
+        const current = this.renewRecoveryBudget(attachment);
+        this.store({ ...current, state: reduceSession(current.state, { type: 'resync', cause: 'invalid_update', discardedRevision: update.discardedRevision }) },
+          { error: diagnosticText(error) });
+        this.recover(update.session); this.emit();
+      } else this.lost('invalid_frame', error);
+    }
   }
 
   private acceptInteraction(interaction: Interaction): void {
@@ -529,23 +546,24 @@ export class SessionClient {
 
   private resync(session: string, op: Operation) {
     const attachment = this.attachments.get(session);
-    if (attachment) {
-      const current = this.renewRecoveryBudget(attachment);
-      this.store({ ...current, state: reduceSession(current.state, { type: 'resync', cause: 'daemon_resync' }) }, { op });
-    }
+    if (!attachment || attachment.state.status === 'blocked' || attachment.state.status === 'disconnected') return;
+    const current = this.renewRecoveryBudget(attachment);
+    this.store({ ...current, state: reduceSession(current.state, { type: 'resync', cause: 'daemon_resync' }) }, { op });
     this.recover(session);
   }
 
   /** Updates an attachment and reports transitions into recovery or a blocked state, keeping why it blocked. A snapshot that cannot go live is a new recovery. */
-  private store(next: AttachmentState, detail: { op?: Operation; failure?: BlockedReason; snapshot?: boolean } = {}): void {
+  private store(next: AttachmentState, detail: { op?: Operation; failure?: BlockedReason; snapshot?: boolean; error?: string } = {}): void {
     const previous = this.attachments.get(next.session)?.state.status;
     const { state } = next;
-    if (state.status === 'recovering' && (previous !== 'recovering' || detail.snapshot) && state.recoveryCause) {
-      this.diagnose({ event: 'attachment.recovering', session: next.session, cause: state.recoveryCause, attempts: state.recoveryAttempts, ...(detail.op ? { op: detail.op } : {}) });
+    if (state.status === 'recovering' && (previous !== 'recovering' || detail.snapshot || detail.error !== undefined) && state.recoveryCause) {
+      this.diagnose({ event: 'attachment.recovering', session: next.session, cause: state.recoveryCause, attempts: state.recoveryAttempts,
+        ...(detail.op ? { op: detail.op } : {}), ...(detail.error === undefined ? {} : { error: detail.error }) });
     }
     if (state.status === 'blocked' && previous !== 'blocked') {
       const reason: BlockedReason = detail.failure ?? { kind: 'recovery_limit', ...(state.recoveryCause ? { cause: state.recoveryCause } : {}) };
-      this.diagnose({ event: 'attachment.blocked', session: next.session, attempts: state.recoveryAttempts, reason });
+      this.diagnose({ event: 'attachment.blocked', session: next.session, attempts: state.recoveryAttempts, reason,
+        ...(detail.error === undefined ? {} : { error: detail.error }) });
       this.attachments.set(next.session, { ...next, blocked: reason });
       return;
     }
