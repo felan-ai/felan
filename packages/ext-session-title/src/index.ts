@@ -280,7 +280,7 @@ function selectSessionTitleModel(
 }
 
 function sessionTitleContext(initialPrompt: string): Context | undefined {
-  const prompt = initialPrompt.trim().slice(0, SESSION_TITLE_PROMPT_MAX_LENGTH);
+  const prompt = Array.from(initialPrompt.trim()).slice(0, SESSION_TITLE_PROMPT_MAX_LENGTH).join('');
   if (!prompt) return undefined;
   return {
     systemPrompt: SESSION_TITLE_SYSTEM_PROMPT,
@@ -295,11 +295,11 @@ function sessionTitleContext(initialPrompt: string): Context | undefined {
 }
 
 function rawResponseExcerpt(response: AssistantMessage): string {
-  return response.content
+  const raw = response.content
     .filter((part): part is { type: 'text'; text: string } => part.type === 'text')
     .map((part) => part.text)
-    .join('\n')
-    .slice(0, 200);
+    .join('\n');
+  return Array.from(raw).slice(0, 200).join('');
 }
 
 function generatedSessionTitle(response: AssistantMessage): string | undefined {
@@ -325,8 +325,10 @@ function generatedSessionTitle(response: AssistantMessage): string | undefined {
     .trim();
   if (!title) return undefined;
 
-  if (title.length > SESSION_TITLE_MAX_LENGTH) {
-    title = title.slice(0, SESSION_TITLE_MAX_LENGTH).trimEnd();
+  title = (title as string & { toWellFormed(): string }).toWellFormed();
+  const titleCodePoints = Array.from(title);
+  if (titleCodePoints.length > SESSION_TITLE_MAX_LENGTH) {
+    title = titleCodePoints.slice(0, SESSION_TITLE_MAX_LENGTH).join('').trimEnd();
     const lastSpace = title.lastIndexOf(' ');
     if (lastSpace >= 30) title = title.slice(0, lastSpace);
   }

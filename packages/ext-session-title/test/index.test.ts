@@ -133,6 +133,33 @@ describe('@felan-ai/ext-session-title', () => {
     );
   });
 
+  it.each([
+    ['an emoji at the CJK cutoff', '中'.repeat(79) + '😀' + '文'.repeat(10), '中'.repeat(79) + '😀'],
+    ['an astral CJK character at the cutoff', '中'.repeat(79) + '𠮷' + '文'.repeat(10), '中'.repeat(79) + '𠮷'],
+    ['a lone high surrogate at the cutoff', '中'.repeat(79) + '\uD800' + '文'.repeat(10), '中'.repeat(79) + '\uFFFD'],
+    ['a lone low surrogate', 'Repair \uDC00 title', 'Repair \uFFFD title'],
+    ['a title at the code point limit', '中'.repeat(30) + ' ' + '文'.repeat(48) + '😀', '中'.repeat(30) + ' ' + '文'.repeat(48) + '😀'],
+    ['a word boundary at 30', 'a'.repeat(30) + ' ' + 'b'.repeat(60), 'a'.repeat(30)],
+    ['a word boundary before 30', 'a'.repeat(29) + ' ' + 'b'.repeat(60), 'a'.repeat(29) + ' ' + 'b'.repeat(50)],
+    ['trailing whitespace at the cutoff', 'a'.repeat(79) + ' ' + 'b'.repeat(10), 'a'.repeat(79)],
+  ])('handles %s when bounding generated titles', async (_label, title, expected) => {
+    const complete = vi.fn().mockResolvedValue(response(title));
+    const setSessionName = vi.fn();
+    const setTitleIfMissing = vi.fn().mockResolvedValue(true);
+    const host = { ...testHost(complete), setTitleIfMissing };
+    const handlers = install(createSessionTitleExtension(host), setSessionName);
+
+    handlers.before({ prompt: 'Name this session' }, context({ entries: [] }));
+    await vi.waitFor(() => expect(setSessionName).toHaveBeenCalledOnce());
+
+    expect(setSessionName).toHaveBeenCalledWith(expected);
+    expect(setTitleIfMissing).toHaveBeenCalledWith(expect.objectContaining({ title: expected }));
+    const generatedTitle: string = setSessionName.mock.calls[0]![0];
+    expect(Array.from(generatedTitle).length).toBeLessThanOrEqual(80);
+    expect(generatedTitle).not.toMatch(/[\uD800-\uDFFF]/u);
+    await handlers.shutdown();
+  });
+
   it('selects the cheapest text-capable model and bounds the prompt', async () => {
     const complete = vi.fn().mockResolvedValue(response('Fix login timeout'));
     const host = testHost(complete, [model('expensive', 10, 10), model('cheap', 1, 1), model('image', 0, 0, ['image'])]);
@@ -143,6 +170,37 @@ describe('@felan-ai/ext-session-title', () => {
     expect(complete.mock.calls[0]?.[0].model.id).toBe('cheap');
     expect(complete.mock.calls[0]?.[0].context.messages[0]?.content).toContain('x'.repeat(4_000));
     expect(complete.mock.calls[0]?.[0].options).toMatchObject({ maxTokens: 64, maxRetries: 0, reasoning: 'minimal', timeoutMs: 30_000 });
+  });
+
+  it('bounds the prompt on code points', async () => {
+    const complete = vi.fn().mockResolvedValue(response('Review session titles'));
+    const handlers = install(createSessionTitleExtension(testHost(complete)), vi.fn());
+    const boundedPrompt = '中'.repeat(3_999) + '😀';
+
+    handlers.before({ prompt: boundedPrompt + '文' }, context({ entries: [] }));
+    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+
+    expect(complete.mock.calls[0]?.[0].context.messages[0]?.content).toBe(
+      `Initial request JSON:\n${JSON.stringify(boundedPrompt)}`,
+    );
+    await handlers.shutdown();
+  });
+
+  it('bounds empty-title diagnostic excerpts on code points', async () => {
+    const excerpt = '```' + '中'.repeat(196) + '😀';
+    const complete = vi.fn().mockResolvedValue(response(excerpt + '文'));
+    const reportSkip = vi.fn();
+    const handlers = install(createSessionTitleExtension({ ...testHost(complete), reportSkip }), vi.fn());
+
+    handlers.before({ prompt: 'Name this session' }, context({ entries: [] }));
+    await vi.waitFor(() => expect(reportSkip).toHaveBeenCalledOnce());
+
+    expect(reportSkip).toHaveBeenCalledWith({
+      sessionId: 'session-1',
+      reason: 'empty-title',
+      detail: `model=test/cheap stop=stop raw=${JSON.stringify(excerpt)}`,
+    });
+    await handlers.shutdown();
   });
 
   it('retries a failed title request on the next prompt', async () => {
