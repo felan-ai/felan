@@ -12,6 +12,8 @@
     } },
     { "id": "felan.runtime.dependencies", "major": 1, "use": "@felan-ai/felan/providers/runtime-dependencies" },
     { "id": "felan.models", "major": 1, "use": "@felan-ai/felan/providers/models" },
+    { "id": "felan.host.models", "major": 1, "use": "@felan-ai/felan/providers/host-models" },
+    { "id": "felan.memory.scheduler", "major": 1, "use": "@felan-ai/ext-memory/daemon" },
     { "id": "felan.secrets", "major": 1, "use": "@felan-ai/felan/providers/secrets" },
     { "id": "felan.sessions", "major": 1, "use": "@felan-ai/felan/providers/sessions" },
     { "id": "felan.sessions.history", "major": 1, "use": "@felan-ai/felan/providers/sessions" },

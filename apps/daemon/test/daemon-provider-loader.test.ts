@@ -1,6 +1,6 @@
 import { Type } from 'typebox';
 import { afterEach, describe, expect, expectTypeOf, it, vi } from 'vitest';
-import { defineServiceContract, type AgentRuntime, type ModelReference, type ModelRuntime } from '@felan-ai/agent-core';
+import { defineServiceContract, HOST_MAINTENANCE_SERVICE, type AgentRuntime, type HostMaintenance, type ModelReference, type ModelRuntime } from '@felan-ai/agent-core';
 import { parseSchema } from '@felan-ai/session-protocol';
 import { HostConfigSchema, type HostConfig } from '../src/daemon/host-config.js';
 import { createConfiguredProviders, ProviderStartupError } from '../src/daemon/provider-loader.js';
@@ -31,6 +31,34 @@ function providerFor(_specifier: string) {
 }
 
 describe('configured service providers', () => {
+  it.each(['requires', 'optional'] as const)('seeds host maintenance for a daemon provider with a %s dependency', async edge => {
+    let maintenance!: HostMaintenance;
+    let busy = true;
+    providers.set('@test/maintenance', defineServiceProvider({ scope: 'daemon', provides: [contractA], [edge]: [HOST_MAINTENANCE_SERVICE], async create(context) {
+      maintenance = context.services.get(HOST_MAINTENANCE_SERVICE)!;
+      expect(Object.isFrozen(maintenance)).toBe(true);
+      expect(() => maintenance.agentDir).toThrow('unavailable');
+      expect(() => maintenance.modelRuntime).toThrow('unavailable');
+      expect(() => maintenance.sessions({ kind: 'all' })).toThrow('unavailable');
+      expect(() => maintenance.openWorker({} as never)).toThrow('unavailable');
+      return { ...instance(contractA), busy: () => busy };
+    } }));
+    const loaded = await loadFake([slot(contractA, '@test/maintenance')]);
+    expect(loaded.busy()).toBe(true); busy = false; expect(loaded.busy()).toBe(false);
+    await loaded.settle('drain');
+    expect(maintenance.signal.aborted).toBe(true);
+    expect(() => maintenance.sessions({ kind: 'all' })).toThrow(expect.objectContaining({ name: 'AbortError' }));
+    expect(() => loaded.maintenance.bind({} as never)).toThrow('cannot be rebound');
+    await loaded.dispose();
+    expect(loaded.busy()).toBe(false);
+    expect(() => maintenance.openWorker({} as never)).toThrow(expect.objectContaining({ name: 'AbortError' }));
+  });
+
+  it('rejects a configured replacement for daemon-owned host maintenance', async () => {
+    await expect(loadFake([{ id: HOST_MAINTENANCE_SERVICE.id, major: 1, use: '@test/replacement' }]))
+      .rejects.toThrow('provided by the daemon');
+  });
+
   it('exposes only declared read-only dependencies to provider factories', async () => {
     providers.set('@test/dependency', defineServiceProvider({ provides: [contractA], async create() {
       return instance(contractA);

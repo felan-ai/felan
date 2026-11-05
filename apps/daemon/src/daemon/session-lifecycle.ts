@@ -215,7 +215,7 @@ export function createSessionLifecycle(options: SessionLifecycleOptions): Sessio
           return activation ??= (async () => {
             await scope!.activate(); await bindings?.onSession?.(runtime.session);
             await runtime.session.bindExtensions({ mode: 'print', ...(bindings?.uiContext ? { uiContext: bindings.uiContext } : {}) });
-            if (request.allowedTools) restrictActiveTools(runtime.session, request.allowedTools);
+            if (request.allowedTools) restrictActiveTools(runtime.session, request.allowedTools, { reopened: true });
           })();
         };
         if (!options.deferActivation) await activate();

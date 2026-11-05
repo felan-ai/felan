@@ -167,6 +167,7 @@ export class LocalMemoryStore {
     const recoveryLease = await acquireLocalMemoryLease(this.environment, this.projectDirectory);
     try {
       await withStateLock(this.environment, this, async () => {
+        await tryWriteProjectMetadata(this.environment, this);
         if (!(await readControl(this.environment, this.controlPath))) await writeControl(this.environment, this.controlPath, emptyControl(now));
         if (recoveryLease) await recoverTransaction(this.environment, this, recoveryLease, now);
         const current = await safeLstat(this.environment, this.currentDirectory);
@@ -772,6 +773,19 @@ async function withPublicationEvidence(environment: MemoryContext, store: LocalM
     ...control,
     activeAttempt: { ...active, published: { fingerprint: state.memoryFingerprint, at: state.updatedAt } },
   };
+}
+
+
+async function tryWriteProjectMetadata(environment: MemoryContext, store: LocalMemoryStore): Promise<void> {
+  const path = join(store.projectDirectory, 'project.json');
+  try {
+    const snapshot = await environment.runtime.files!.snapshot(path, 64 * 1_024);
+    const metadata: unknown = JSON.parse(new TextDecoder().decode(snapshot.content));
+    if (!snapshot.truncated && isRecord(metadata) && metadata.version === 1 && metadata.canonicalRoot === store.project.canonicalRoot) return;
+  } catch {}
+  try {
+    await writeJson(environment, path, { version: 1, canonicalRoot: store.project.canonicalRoot });
+  } catch {}
 }
 
 

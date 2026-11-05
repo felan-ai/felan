@@ -26,6 +26,7 @@ it('loads the packaged Felan runtime provider from its trusted managing-package 
     const manager = { packageName: '@felan-ai/felan', version: FELAN_VERSION,
       resolveFrom: new URL('../dist/daemon-host.js', import.meta.url).href,
       resolveProvider: (specifier: string) => {
+        if (specifier === '@felan-ai/ext-memory/daemon') return import.meta.resolve(specifier);
         const prefix = '@felan-ai/felan/providers/';
         if (!specifier.startsWith(prefix) || !/^[a-z-]+$/u.test(specifier.slice(prefix.length))) throw new Error(`Unexpected fixture provider: ${specifier}`);
         return new URL(`../dist/providers/${specifier.slice(prefix.length)}.js`, import.meta.url).href;

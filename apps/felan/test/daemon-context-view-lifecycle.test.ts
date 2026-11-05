@@ -110,7 +110,8 @@ it('stops the real daemon on the first force command with an attached context vi
   } finally { await owner.release(); }
   const service = await startDaemonService(target, { hostConfigPath, drainTimeoutMs: 2000,
     manager: { packageName: '@felan-ai/felan', version: FELAN_VERSION, resolveFrom: import.meta.url,
-      resolveProvider: specifier => new URL(`../src/providers/${specifier.split('/').at(-1)}.ts`, import.meta.url).href },
+      resolveProvider: specifier => specifier === '@felan-ai/ext-memory/daemon' ? import.meta.resolve(specifier)
+        : new URL(`../src/providers/${specifier.split('/').at(-1)}.ts`, import.meta.url).href },
     createModelRuntime: async () => {
       const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
       models.registerProvider('offline', { api: offlineModel.api, baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel] });

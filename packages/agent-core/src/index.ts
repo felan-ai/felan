@@ -292,5 +292,5 @@ export type {
 } from '@earendil-works/pi-ai';
 export { builtinProviders } from '@earendil-works/pi-ai/providers/all';
 
-export { HOST_WORKERS_SERVICE, RUNTIME_LIFETIME_SERVICE } from './host-workers.js';
-export type { HostWorkerOptions, HostWorker, HostWorkerLauncher, RuntimeLifecycle, RuntimeLifetime } from './host-workers.js';
+export { HOST_WORKERS_SERVICE, HOST_MAINTENANCE_SERVICE, HOST_MODELS_SERVICE, RUNTIME_LIFETIME_SERVICE } from './host-workers.js';
+export type { HostMaintenance, HostSessionsSelector, HostWorkerOptions, HostWorker, HostWorkerLauncher, RuntimeLifecycle, RuntimeLifetime } from './host-workers.js';

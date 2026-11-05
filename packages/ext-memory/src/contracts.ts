@@ -1,3 +1,5 @@
+import { defineServiceContract } from '@felan-ai/agent-core';
+
 export const MEMORY_ARTIFACT_VERSION = 1 as const;
 export const MEMORY_INPUT_MANIFEST_VERSION = 1 as const;
 export const MEMORY_INPUT_PROJECTION_VERSION = 1 as const;
@@ -66,6 +68,17 @@ export interface MemoryHost {
   recordCheckpoint(checkpoint: SessionCheckpoint): Promise<void>;
   status(): Promise<MemoryStatus>;
 }
+
+export interface MemorySchedulerProjectStatus {
+  readonly projectRoot: string;
+  readonly status: MemoryStatus;
+}
+
+export interface MemorySchedulerService {
+  status(): Promise<readonly MemorySchedulerProjectStatus[]>;
+}
+
+export const MEMORY_SCHEDULER_SERVICE = defineServiceContract<MemorySchedulerService>('felan.memory.scheduler', 1);
 
 export interface MemoryInputSession {
   readonly checkpoint: SessionCheckpoint;

@@ -1,8 +1,8 @@
-import type { AgentRuntime, HostWorkerLauncher, SessionsService } from '@felan-ai/agent-core';
+import type { AgentRuntime, HostWorkerLauncher, SessionsHistory } from '@felan-ai/agent-core';
 
 export interface MemoryContext {
   readonly runtime: AgentRuntime;
-  readonly sessions: SessionsService;
+  readonly sessions: SessionsHistory;
   readonly openWorker?: HostWorkerLauncher;
 }
 

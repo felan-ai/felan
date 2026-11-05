@@ -87,6 +87,7 @@ export interface LocalMemoryAttachmentOptions {
   readonly environment: MemoryContext;
   readonly models: ModelsService;
   readonly scheduling: boolean;
+  readonly persistent?: boolean;
   readonly unavailableReason?: string;
   readonly selectedModel?: Model<Api>;
   readonly scopedModels?: readonly Model<Api>[];
@@ -104,6 +105,7 @@ export interface LocalMemoryAttachment {
   canonicalDirectory(cwd: string): Promise<string>;
   setSelectedModel(model: Model<Api> | undefined): void;
   setModelSelection(model: Model<Api> | undefined, scopedModels: readonly Model<Api>[] | undefined, classifier?: Classifier): void;
+  setScheduling(scheduling: boolean, unavailableReason?: string): void;
   subscribeStatusChanges(listener: () => void): () => void;
   busy(): boolean;
   settle(mode: 'drain' | 'force'): Promise<void>;
@@ -111,7 +113,9 @@ export interface LocalMemoryAttachment {
 }
 
 
-interface AttachmentState extends Omit<LocalMemoryAttachmentOptions, 'selectedModel' | 'scopedModels' | 'classifier'> {
+interface AttachmentState extends Omit<LocalMemoryAttachmentOptions, 'selectedModel' | 'scopedModels' | 'classifier' | 'scheduling' | 'unavailableReason'> {
+  scheduling: boolean;
+  unavailableReason: string | undefined;
   selectedModel: Model<Api> | undefined;
   scopedModels: readonly Model<Api>[] | undefined;
   classifier: Classifier | undefined;
@@ -144,6 +148,7 @@ interface LocalMemoryProcessingSnapshotLike {
 
 
 const MEMORY_INPUT_BLOCKED_MESSAGE = 'Memory checkpoints are paused after a failed run; evidence remains pending';
+const MEMORY_PROJECT_UNAVAILABLE_MESSAGE = 'Memory project root is unavailable; evidence remains pending';
 
 const MEMORY_AUTOMATIC_UPDATE_THRESHOLD = 5;
 
@@ -179,6 +184,7 @@ export class LocalMemoryCoordinator {
       selectedModel: options.selectedModel,
       scopedModels: options.scopedModels === undefined ? undefined : [...options.scopedModels],
       classifier: options.classifier,
+      unavailableReason: options.unavailableReason,
       projections: new Map(),
       listeners: new Set(),
       draining: false,
@@ -197,6 +203,19 @@ export class LocalMemoryCoordinator {
       canonicalDirectory: async cwd => this.#store(await this.#context(state, cwd), state.environment).currentDirectory,
       setSelectedModel: model => this.#setModelSelection(state, model, state.scopedModels, state.classifier),
       setModelSelection: (model, scopedModels, classifier) => this.#setModelSelection(state, model, scopedModels, classifier),
+      setScheduling: (scheduling, unavailableReason) => {
+        if (state.detached || this.#disposed) return;
+        state.scheduling = scheduling;
+        state.unavailableReason = unavailableReason;
+        for (const context of this.#contexts.values()) {
+          if (!context.attachments.has(state)) continue;
+          if (!this.#driver(context)) this.#cancelTimers(context);
+          if (scheduling && context.initialized) {
+            this.#startRecovery(context);
+            void this.#trackScheduleIfPending(context, state.environment);
+          }
+        }
+      },
       subscribeStatusChanges: listener => {
         if (state.detached || this.#disposed) return () => {};
         state.listeners.add(listener);
@@ -371,13 +390,16 @@ export class LocalMemoryCoordinator {
   }
 
   #driver(context: ProjectContext, preferred?: AttachmentState): AttachmentState | undefined {
-    if (preferred && context.attachments.has(preferred) && this.#eligible(preferred)) return preferred;
-    return [...this.#attachments].reverse().find(attachment => context.attachments.has(attachment) && this.#eligible(attachment));
+    const members = [...this.#attachments].reverse().filter(attachment => context.attachments.has(attachment) && this.#eligible(attachment));
+    if (preferred && !preferred.persistent && members.includes(preferred)) return preferred;
+    return members.find(attachment => !attachment.persistent)
+      ?? (preferred && members.includes(preferred) ? preferred : members[0]);
   }
 
   #liveMember(context: ProjectContext): AttachmentState | undefined {
-    return [...this.#attachments].reverse().find(attachment => context.attachments.has(attachment)
+    const members = [...this.#attachments].reverse().filter(attachment => context.attachments.has(attachment)
       && attachment.scheduling && !attachment.draining && !attachment.closing && !attachment.detached);
+    return members.find(attachment => !attachment.persistent) ?? members[0];
   }
 
   #runEnvironment(context: ProjectContext, driver: AttachmentState): MemoryContext {
@@ -722,6 +744,10 @@ export class LocalMemoryCoordinator {
       }
       const pending = Object.values(state.pending);
       if (!this.#driver(context)) return;
+      if (pending.length && !await this.#projectAvailable(context, source ?? driver.environment)) {
+        this.#cancelScheduledRun(context);
+        return;
+      }
       if (control.activeAttempt) {
         this.#cancelScheduledRun(context);
         if (!context.run) this.#scheduleWriterRetry(context);
@@ -765,6 +791,24 @@ export class LocalMemoryCoordinator {
     });
     context.followUps.add(followUp);
     return followUp;
+  }
+
+  async #projectAvailable(context: ProjectContext, environment: MemoryContext): Promise<boolean> {
+    if (!environment.openWorker) return true;
+    try {
+      if ((await environment.runtime.files!.inspect(context.project.canonicalRoot)).kind === 'directory') {
+        if (context.message === MEMORY_PROJECT_UNAVAILABLE_MESSAGE) {
+          context.message = undefined;
+          if (context.state === 'blocked') context.state = 'idle';
+        }
+        return true;
+      }
+    } catch (error) {
+      if (!error || typeof error !== 'object' || !('code' in error) || error.code !== 'ENOENT') throw error;
+    }
+    context.state = 'blocked';
+    context.message = MEMORY_PROJECT_UNAVAILABLE_MESSAGE;
+    return false;
   }
 
   #launchRun(context: ProjectContext, bypassRetryAt = false, preferred?: AttachmentState): Promise<void> | undefined {
@@ -860,6 +904,7 @@ export class LocalMemoryCoordinator {
         context.state = 'idle';
         return;
       }
+      if (!await this.#projectAvailable(context, environment)) return;
       retainedRun = await LocalMemoryRun.create(environment, {
         projectDirectory: store.projectDirectory,
         sessionDirectory: join(this.#options.sessionDir ?? join(this.#options.agentDir, 'sessions'), 'memory'),
@@ -966,7 +1011,8 @@ export class LocalMemoryCoordinator {
       context.message = droppedMessage;
     } catch (error) {
       const leaseValid = await lease.verify().catch(() => false);
-      const explicitlyCancelled = cancelled();
+      const explicitlyCancelled = cancelled() || !!error && typeof error === 'object'
+        && 'name' in error && error.name === 'AbortError';
       const unavailableModel = error instanceof MemoryModelUnavailableError;
       const blockedBeforeInference = retainedRun !== undefined && attempt === undefined && !explicitlyCancelled;
       if (attempt && (leaseValid || explicitlyCancelled)) {

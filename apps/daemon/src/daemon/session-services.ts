@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
-import { SessionsServiceError, type SessionRef, type SessionsService } from '@felan-ai/agent-core';
+import { SessionsServiceError, type HostSessionsSelector, type SessionRef, type SessionsHistory, type SessionsService } from '@felan-ai/agent-core';
 import { createSessionHistoryBackend, type SessionHistorySource } from '../session-history.js';
 import { guardOwnedPaths } from './persistence.js';
 import type { SessionRegistry } from './registry.js';
@@ -37,57 +38,7 @@ export function createRegistrySessionsService(registry: SessionRegistry, current
     assertCurrent();
     return sessionExecutions(registry, identity.id);
   };
-  const history = createSessionHistoryBackend({
-    current: identity,
-    project,
-    inventory: async ({ signal }) => {
-      assertCurrent(); signal?.throwIfAborted();
-      const rows: SessionHistorySource[] = [];
-      for (const stored of registry.listed()) {
-        signal?.throwIfAborted();
-        let bytes: number | undefined;
-        let diagnostic: 'inaccessible' | 'oversize' | undefined;
-        let updatedAt = stored.updatedAt;
-        try {
-          const info = await stat(registry.options.owner.assertOwnsPath(stored.piPath));
-          if (!info.isFile()) diagnostic = 'inaccessible';
-          else {
-            bytes = info.size; updatedAt = Math.max(updatedAt, Math.floor(info.mtimeMs));
-            if (bytes > 64 * 1024 * 1024) diagnostic = 'oversize';
-          }
-        } catch { diagnostic = 'inaccessible'; }
-        rows.push({ key: stored.piPath, sessionId: stored.id, id: stored.id, root: stored.root,
-          ...(stored.parent ? { parent: stored.parent } : {}), cwd: stored.cwd, title: stored.title,
-          updatedAt, state: stored.state,
-          ...(bytes === undefined ? {} : { bytes }), ...(diagnostic ? { diagnostic } : {}) });
-      }
-      return rows;
-    },
-    read: async (source, { maxBytes, signal }) => {
-      assertCurrent(); signal?.throwIfAborted();
-      const path = registry.options.owner.assertOwnsPath(source.key);
-      const check = guardOwnedPaths(registry.options.owner, [path]);
-      const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
-      try {
-        const before = await file.stat({ bigint: true });
-        if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(registry.options.owner.target.uid)) throw new SessionsServiceError('inaccessible');
-        if (before.size > BigInt(maxBytes)) throw new SessionsServiceError('oversize');
-        const buffer = Buffer.alloc(Number(before.size) + 1);
-        let offset = 0;
-        while (offset < buffer.length) {
-          signal?.throwIfAborted();
-          const { bytesRead } = await file.read(buffer, offset, Math.min(65_536, buffer.length - offset), offset);
-          if (!bytesRead) break;
-          offset += bytesRead;
-        }
-        const after = await file.stat({ bigint: true });
-        if (offset !== Number(before.size) || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
-          || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw new SessionsServiceError('stale');
-        check(); assertCurrent(); signal?.throwIfAborted();
-        return buffer.subarray(0, offset);
-      } finally { await file.close(); }
-    },
-  });
+  const history = createRegistrySessionsHistory(registry, identity, project, assertCurrent);
   return Object.freeze({
     ...history,
     async setTitleIfMissing(title, requestId, options) {
@@ -120,4 +71,73 @@ export function createRegistrySessionsService(registry: SessionRegistry, current
       return () => { stopExecutions(); stopHistory(); };
     },
   } satisfies SessionsService);
+}
+
+export function createHostSessionsHistory(registry: SessionRegistry, selector: HostSessionsSelector,
+  assertAccess = () => registry.assertAdmission()): SessionsHistory {
+  if (!selector || selector.kind !== 'all' && (selector.kind !== 'project' || typeof selector.cwd !== 'string')) throw new SessionsServiceError('invalid');
+  const selection = Object.freeze({ ...selector });
+  const id = `host-${randomUUID()}`;
+  const history = createRegistrySessionsHistory(registry, { id, root: id }, selection.kind === 'project' ? selection.cwd : '',
+    assertAccess, selection);
+  return Object.freeze({
+    ...history,
+    list: (filter, options) => history.list(filter && ['root', 'project', 'visible'].includes(filter.scope) ? { scope: 'visible' } : filter, options),
+  } satisfies SessionsHistory);
+}
+
+function createRegistrySessionsHistory(registry: SessionRegistry, current: SessionRef, project: string, assertAccess: () => void,
+  selector?: HostSessionsSelector): SessionsHistory {
+  return createSessionHistoryBackend({
+    current,
+    project,
+    inventory: async ({ signal }) => {
+      assertAccess(); signal?.throwIfAborted();
+      const rows: SessionHistorySource[] = [];
+      for (const stored of registry.listed()) {
+        signal?.throwIfAborted();
+        if (selector?.kind === 'project' && stored.cwd !== selector.cwd) continue;
+        let bytes: number | undefined;
+        let diagnostic: 'inaccessible' | 'oversize' | undefined;
+        let updatedAt = stored.updatedAt;
+        try {
+          const info = await stat(registry.options.owner.assertOwnsPath(stored.piPath));
+          if (!info.isFile()) diagnostic = 'inaccessible';
+          else {
+            bytes = info.size; updatedAt = Math.max(updatedAt, Math.floor(info.mtimeMs));
+            if (bytes > 64 * 1024 * 1024) diagnostic = 'oversize';
+          }
+        } catch { diagnostic = 'inaccessible'; }
+        rows.push({ key: stored.piPath, sessionId: stored.id, id: stored.id, root: stored.root,
+          ...(stored.parent ? { parent: stored.parent } : {}), cwd: stored.cwd, title: stored.title,
+          updatedAt, state: stored.state,
+          ...(bytes === undefined ? {} : { bytes }), ...(diagnostic ? { diagnostic } : {}) });
+      }
+      return rows;
+    },
+    read: async (source, { maxBytes, signal }) => {
+      assertAccess(); signal?.throwIfAborted();
+      const path = registry.options.owner.assertOwnsPath(source.key);
+      const check = guardOwnedPaths(registry.options.owner, [path]);
+      const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+      try {
+        const before = await file.stat({ bigint: true });
+        if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(registry.options.owner.target.uid)) throw new SessionsServiceError('inaccessible');
+        if (before.size > BigInt(maxBytes)) throw new SessionsServiceError('oversize');
+        const buffer = Buffer.alloc(Number(before.size) + 1);
+        let offset = 0;
+        while (offset < buffer.length) {
+          signal?.throwIfAborted();
+          const { bytesRead } = await file.read(buffer, offset, Math.min(65_536, buffer.length - offset), offset);
+          if (!bytesRead) break;
+          offset += bytesRead;
+        }
+        const after = await file.stat({ bigint: true });
+        if (offset !== Number(before.size) || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
+          || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw new SessionsServiceError('stale');
+        check(); assertAccess(); signal?.throwIfAborted();
+        return buffer.subarray(0, offset);
+      } finally { await file.close(); }
+    },
+  });
 }

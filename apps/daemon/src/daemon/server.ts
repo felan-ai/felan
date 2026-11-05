@@ -46,6 +46,7 @@ export interface SessionServerOptions {
   broker?: BrokerDispatchPort;
   management?: { lifecycle: HostLifecycle; logs(params: OperationParams<'host.logs'>): OperationResult<'host.logs'> };
   setupNeeds?(): OperationResult<'host.status'>['setupNeeds'];
+  providersBusy?(): boolean;
   currentComposition?(): Promise<HostCompositionInfo>;
   prepareRoot?(request: { cwd: string; extensions?: readonly string[] }, caller: { recipient?: string; signal: AbortSignal }): Promise<RootPreparation>;
 }
@@ -435,12 +436,12 @@ export class SessionServer {
         work: await this.activeWork(), attachments: [...this.connections].reduce((sum, connection) => sum + connection.attachments.size, 0) }, setupNeeds: this.options.setupNeeds?.() ?? [] });
   }
 
-  /** Everything a restart would interrupt: busy sessions, child executions, processes and unanswered host questions. */
+  /** Everything a restart would interrupt: busy sessions and providers, child executions, processes and unanswered host questions. */
   private async activeWork(): Promise<number> {
     const { registry } = this.options;
     const interactions = (this.options.broker?.pending?.() ?? registry.options.store.interactions())
       .filter(item => item.state === 'waiting' && item.scope.kind === 'host').length;
-    return await registry.activeWork() + interactions;
+    return await registry.activeWork() + interactions + Number(this.options.providersBusy?.() ?? false);
   }
 
   private async currentComposition(): Promise<HostCompositionInfo | undefined> {

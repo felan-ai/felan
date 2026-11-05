@@ -340,7 +340,7 @@ export function createDefaultLocalMemoryDreamRunner(environment: MemoryContext, 
         const assistant = [...activeSession.messages].reverse().find((message) => message.role === 'assistant');
         if (!assistant) throw new Error('Memory dream completed without an assistant response');
         if (assistant.stopReason === 'error') throw new Error(assistant.errorMessage || 'Local memory model request failed');
-        if (assistant.stopReason === 'aborted') throw new Error('Memory model request was interrupted');
+        if (assistant.stopReason === 'aborted') throw new DOMException('Memory model request was interrupted', 'AbortError');
         if (run) {
           const usage = memoryRunUsage(sessionManager.getEntries());
           await run.record({ status: 'worker_completed', ...(usage === undefined ? {} : { usage }) });

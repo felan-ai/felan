@@ -86,11 +86,11 @@ export async function openSessionManager(request: SessionOpenRequest, resolved: 
 
 export async function createWorkerBinding(request: SessionOpenRequest, manager: SessionManager, options: Pick<SessionLifecycleOptions, 'wrapRuntime' | 'composition'>): Promise<SessionBinding> {
   const worker = request.worker!;
-  if (!request.parentSessionId || !request.rootSessionId) throw new Error('Worker requires a registered parent scope.');
+  if (!request.rootSessionId || (worker.host ? request.parentSessionId !== undefined || request.rootSessionId !== manager.getSessionId() : !request.parentSessionId)) throw new Error('Worker requires a valid parent or host scope.');
   const runtimeRequest = createRuntimeStorageRequest(request.resources.cwd, request.resources.agentDir, request.rootSessionId);
   const runtime = options.wrapRuntime?.(worker.runtime, runtimeRequest) ?? worker.runtime;
   const wrapStreamFunction = options.composition.wrapWorkerStream?.({
-    id: manager.getSessionId(), root: request.rootSessionId, parent: request.parentSessionId,
+    id: manager.getSessionId(), root: request.rootSessionId, ...(request.parentSessionId ? { parent: request.parentSessionId } : {}),
   });
   const factory = createAgentCoreSessionRuntimeFactory(async () => ({ runtime, modelRuntime: worker.modelRuntime,
     settingsManager: worker.settingsManager, model: worker.model,
@@ -105,7 +105,7 @@ export async function createWorkerBinding(request: SessionOpenRequest, manager: 
   const tools = TrustedToolCatalog.fromSession(created.session, options.composition.toolPolicy);
   return {
     runtime: created, agentRuntime: runtime, sessionId: manager.getSessionId(), rootSessionId: request.rootSessionId,
-    parentSessionId: request.parentSessionId, resources: request.resources, diagnostics: created.diagnostics,
+    ...(request.parentSessionId ? { parentSessionId: request.parentSessionId } : {}), resources: request.resources, diagnostics: created.diagnostics,
     tools, toolProvenance: tools.provenance,
     activate: async () => {
       await created.session.bindExtensions({ mode: 'print' });
@@ -114,10 +114,13 @@ export async function createWorkerBinding(request: SessionOpenRequest, manager: 
   };
 }
 
-export function restrictActiveTools(session: AgentSession, allowedTools: readonly string[]): void {
-  session.setActiveToolsByName([...allowedTools]);
+// A reopened worker transcript no longer has the worker's custom tools, so it keeps only the stored tools that still exist.
+export function restrictActiveTools(session: AgentSession, allowedTools: readonly string[], options: { readonly reopened?: boolean } = {}): void {
+  const available = new Set(session.getAllTools().map(tool => tool.name));
+  const expected = options.reopened ? allowedTools.filter(name => available.has(name)) : allowedTools;
+  session.setActiveToolsByName([...expected]);
   const actual = session.getActiveToolNames();
-  if (actual.length !== allowedTools.length || actual.some(name => !allowedTools.includes(name))) throw new Error('Worker tool restrictions could not be installed.');
+  if (actual.length !== expected.length || actual.some(name => !expected.includes(name))) throw new Error('Worker tool restrictions could not be installed.');
 }
 
 // A transcript linked from elsewhere (for example a symlinked dotfile store) keeps its listed path.

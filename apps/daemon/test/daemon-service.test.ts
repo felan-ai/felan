@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream } from '@felan-ai/agent-core';
+import { HOST_MAINTENANCE_SERVICE, HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, SessionManager, SettingsManager, createAssistantMessageEventStream,
+  defineServiceContract, type HostMaintenance, type HostWorkerOptions, type SessionsHistory } from '@felan-ai/agent-core';
 import { SessionClient } from '../../felan/src/client/client.js';
 import { settleDaemonWork, startDaemonService } from '../src/daemon/service.js';
 import { acquireDaemonOwnership } from '../src/daemon/ownership.js';
@@ -11,6 +12,9 @@ import { resolveDaemonTarget } from '../src/daemon/target.js';
 import { assistant, offlineModel } from './fixtures/registry.js';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-services.js';
+import * as providerLoader from '../src/daemon/provider-loader.js';
+import { defineServiceProvider } from '../src/daemon/provider.js';
+import { createRuntimeStorageRequest } from '../src/runtime-factory.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -77,6 +81,91 @@ it('starts forced cancellation before joining a broker continuation that needs i
   const work = settleDaemonWork({ shutdown, waitForDrain: vi.fn(async () => {}) }, { drain }, 'force');
   try { expect(drain).toHaveBeenCalledOnce(); expect(shutdown).toHaveBeenCalledWith({ interrupt: true }); }
   finally { release(); await work; }
+});
+
+it.each(['drain', 'force'] as const)('binds host maintenance before activation and joins workers and provider settlement on %s', async mode => {
+  const { target: input, hostConfigPath } = await target();
+  const config = JSON.parse(await readFile(hostConfigPath, 'utf8'));
+  const contract = defineServiceContract<object>('test.maintenance', 1);
+  config.services.push({ id: contract.id, major: 1, use: '@felan-ai/test-manager/maintenance' });
+  await writeFile(hostConfigPath, JSON.stringify(config));
+  let release!: () => void; const held = new Promise<void>(resolve => { release = resolve; });
+  let entered!: () => void; const entering = new Promise<void>(resolve => { entered = resolve; });
+  let maintenance!: HostMaintenance; let history!: SessionsHistory; let request!: HostWorkerOptions;
+  let finishProvider!: () => void; const provider = new Promise<void>(resolve => { finishProvider = resolve; });
+  let closeMaintenance!: ReturnType<typeof vi.fn>;
+  let workerFinished = false; let providerBusy = true;
+  cleanups.push(async () => { release(); providerBusy = false; finishProvider(); });
+  const settle = vi.fn(async () => {
+    expect(workerFinished).toBe(true);
+    expect(maintenance.signal.aborted).toBe(true);
+    expect(() => maintenance.sessions({ kind: 'all' })).toThrow();
+    expect(() => maintenance.openWorker(request)).toThrow();
+    await provider;
+  });
+  const dispose = vi.fn(async () => {});
+  const definition = defineServiceProvider({ scope: 'daemon', provides: [contract], requires: [HOST_MAINTENANCE_SERVICE], async create(context) {
+    maintenance = context.services.get(HOST_MAINTENANCE_SERVICE)!;
+    expect(() => maintenance.sessions({ kind: 'all' })).toThrow('unavailable');
+    return { implementations: [{ contract, value: {} }], busy: () => providerBusy, settle, dispose,
+      async activate() {
+        history = maintenance.sessions({ kind: 'all' });
+        expect((await history.list({ scope: 'visible' })).items).toEqual([]);
+        const agentDir = maintenance.agentDir;
+        const cwd = join(agentDir, 'storage', 'agent', 'memory', 'staging');
+        const sessionDir = join(agentDir, 'sessions');
+        await mkdir(cwd, { recursive: true }); await mkdir(sessionDir, { recursive: true });
+        const created = SessionManager.create(input.directory, sessionDir);
+        await writeFile(created.getSessionFile()!, JSON.stringify(created.getHeader()) + '\n');
+        const sessionManager = SessionManager.open(created.getSessionFile()!, sessionDir, input.directory);
+        request = { runtime: new HostAgentRuntime(cwd, createRuntimeStorageRequest(cwd, agentDir, sessionManager.getSessionId())),
+          sessionManager, settingsManager: SettingsManager.create(cwd, agentDir), model: offlineModel, allowedTools: ['read'] };
+        const worker = await maintenance.openWorker(request);
+        void worker.prompt('Wait for shutdown.').then(() => { throw new Error('Worker should be interrupted.'); }, error => {
+          expect(error).toMatchObject({ name: 'AbortError' }); workerFinished = true;
+        });
+        await entering;
+      } };
+  } });
+  const url = new URL('./fixtures/maintenance-provider.ts', import.meta.url).href;
+  const original = providerLoader.createConfiguredProviders;
+  const loader = vi.spyOn(providerLoader, 'createConfiguredProviders').mockImplementation(async options => {
+    const providers = await original({ ...options,
+      importModule: async specifier => specifier === url ? { default: definition } : import(specifier) });
+    closeMaintenance = vi.fn(() => providers.maintenance.close());
+    return { ...providers, maintenance: { ...providers.maintenance, close: closeMaintenance } };
+  });
+  cleanups.push(async () => { loader.mockRestore(); });
+  const manager = { ...testManager, resolveProvider: (specifier: string) => specifier === '@felan-ai/test-manager/maintenance' ? url : testManager.resolveProvider(specifier) };
+  const service = await startDaemonService(input, { manager, hostConfigPath, createModelRuntime: async () => {
+    const runtime = await models();
+    runtime.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel], streamSimple: () => {
+      const stream = createAssistantMessageEventStream(); entered();
+      void held.then(() => stream.push({ type: 'done', reason: 'stop', message: assistant() })); return stream;
+    } });
+    return runtime;
+  } });
+  cleanups.push(async () => { release(); providerBusy = false; finishProvider(); if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
+  expect(maintenance.modelRuntime).toBe(service.server.options.models);
+  expect(service.registry.listed()).toEqual([]);
+  expect(await service.registry.activeWork()).toBe(0);
+  expect(maintenance.signal.aborted).toBe(false);
+  const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui', expected: service.owner.identity });
+  cleanups.push(async () => client.close()); await client.connect();
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { active: { work: 1 } } });
+  await service.requestStop('stop', mode);
+  expect(maintenance.signal.aborted).toBe(mode === 'force');
+  expect(settle).not.toHaveBeenCalled(); expect(dispose).not.toHaveBeenCalled();
+  release();
+  await vi.waitFor(() => expect(settle).toHaveBeenCalledOnce());
+  expect(closeMaintenance).toHaveBeenCalledOnce();
+  expect(service.lifecycle.state).toBe('draining'); expect(dispose).not.toHaveBeenCalled();
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { active: { work: 1 } } });
+  providerBusy = false; finishProvider();
+  await service.stopped;
+  expect(dispose).toHaveBeenCalledOnce();
+  expect(() => maintenance.agentDir).toThrow(expect.objectContaining({ name: 'AbortError' }));
+  await expect(history.list({ scope: 'visible' })).rejects.toThrow();
 });
 
 it('forces an owned foreground process to settle and persists its interrupted run before release', async () => {

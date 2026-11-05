@@ -84,6 +84,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const models = await makeModels(owner.target.agentDir);
     let services: RegistryOptions['services'];
     registry = new SessionRegistry({ owner, store, lifecycle: sessionLifecycle, services: context => services(context),
+      onShutdown: () => loadedProviders.maintenance.close(),
       onDiagnostic: event => log.failure(event),
       ...(sessionRuntime.acquireRun ? { acquireRun: sessionRuntime.acquireRun.bind(sessionRuntime) } : {}),
       onViewCancellationDiagnostic: event => sink!.write('stderr', JSON.stringify({ event: 'view_cancellation', ...event })),
@@ -101,6 +102,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
     runtimeDependencies = createRuntimeDependenciesPort(setup, broker);
     const liveSetup = setup;
     services = createDaemonExecutionServices(registry, broker, sessionRuntime);
+    loadedProviders.maintenance.bind({ registry, agentDir: owner.target.agentDir, modelRuntime: models, configuration: host.configuration });
     await loadedProviders.activate();
     let finish!: (action: HostAction) => void;
     const stopped = new Promise<HostAction>(resolve => { finish = resolve; });
@@ -120,7 +122,10 @@ export async function startDaemonService(target: DaemonTarget, options: {
         const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
         if (failures.length) throw new AggregateError(failures, 'Daemon settlement failed.');
         signal.throwIfAborted(); await shutdownStep('server-commands', () => liveServer.settleCommands());
-        await shutdownStep('providers-settle', () => loadedProviders.settle(mode));
+        await shutdownStep('providers-settle', async () => {
+          await loadedProviders.settle(mode);
+          signal.throwIfAborted();
+        });
       },
       record: event => log.record(event),
       complete: async action => {
@@ -133,6 +138,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
       },
     });
     server = new SessionServer({ registry, configuration: host.configuration, models, version: DAEMON_VERSION, broker, composition,
+      providersBusy: () => loadedProviders.busy(),
       currentComposition: async () => {
         const currentConfig = await loadHostConfig({ agentDir: owner.target.agentDir,
           ...(options.hostConfigPath ? { explicitPath: options.hostConfigPath } : {}),
@@ -178,6 +184,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
   } catch (error) {
     sink?.write('stderr', error instanceof Error ? redact(`${error.name}: ${error.message}`) : 'Daemon startup failed.');
     try {
+      providers?.maintenance.close();
       await connector?.stop(); server?.close(); await setup?.drain(); await registry?.shutdown(); await sessionLifecycle?.dispose(); await providers?.dispose(); await agentLogs.close();
       if (error instanceof ProviderStartupError) await error.cleanup();
       store?.close(); sink?.close(); await owner.release();

@@ -81,6 +81,7 @@ export interface SessionOpenRequest {
 }
 
 export interface SessionWorkerConfiguration {
+  readonly host?: true;
   readonly runtime: AgentRuntime;
   readonly modelRuntime: ModelRuntime;
   readonly sessionManager: SessionManager;

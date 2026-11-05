@@ -48,6 +48,10 @@
       "types": "./dist/providers/models.d.ts",
       "import": "./dist/providers/models.js"
     },
+    "./providers/host-models": {
+      "types": "./dist/providers/host-models.d.ts",
+      "import": "./dist/providers/host-models.js"
+    },
     "./providers/secrets": {
       "types": "./dist/providers/secrets.d.ts",
       "import": "./dist/providers/secrets.js"

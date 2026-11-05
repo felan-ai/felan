@@ -64,6 +64,61 @@ afterEach(async () => {
 });
 
 describe('local memory store', () => {
+  it('writes private project metadata without replacing valid metadata', async () => {
+    const { store } = await createStore();
+    const path = join(store.projectDirectory, 'project.json');
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 1, canonicalRoot: store.project.canonicalRoot });
+    const before = await stat(path);
+    if (process.platform !== 'win32') expect(before.mode & 0o777).toBe(0o600);
+    await store.initialize();
+    const after = await stat(path);
+    expect(after.ino).toBe(before.ino);
+    expect(after.mtimeMs).toBe(before.mtimeMs);
+  });
+
+  it('repairs missing project metadata while another store holds the writer lease', async () => {
+    const { store } = await createStore();
+    const path = join(store.projectDirectory, 'project.json');
+    const before = await store.readCurrent();
+    await rm(path);
+    const lease = await writer(store);
+    const reader = new LocalMemoryStore(store.agentDir, store.project);
+    await expect(reader.initialize()).resolves.toBeUndefined();
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 1, canonicalRoot: store.project.canonicalRoot });
+    await expect(reader.readCurrent()).resolves.toEqual(before);
+    await expect(reader.recordCheckpoint(checkpointFor('session-1', 'a'.repeat(64)))).resolves.toBe(true);
+    await expect(lease.verify()).resolves.toBe(true);
+  });
+
+  it.each([
+    ['corrupt', '{"version":1,'],
+    ['unsupported', JSON.stringify({ version: 2 })],
+    ['conflicting', JSON.stringify({ version: 1, canonicalRoot: '/different' })],
+    ['oversized', JSON.stringify({ version: 1, canonicalRoot: 'x'.repeat(65 * 1_024) })],
+  ])('repairs %s project metadata without writer ownership', async (_name, content) => {
+    const { store } = await createStore();
+    const path = join(store.projectDirectory, 'project.json');
+    await writeFile(path, content);
+    const lease = await writer(store);
+    await expect(store.initialize()).resolves.toBeUndefined();
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 1, canonicalRoot: store.project.canonicalRoot });
+    await expect(lease.verify()).resolves.toBe(true);
+  });
+
+  it('cleans up a failed atomic project metadata write and can retry initialization', async () => {
+    const { store } = await createStore();
+    const path = join(store.projectDirectory, 'project.json');
+    await rm(path);
+    faults.renameTarget = path;
+    await expect(store.initialize()).resolves.toBeUndefined();
+    await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' });
+    expect((await readdir(store.projectDirectory)).filter(name => name.startsWith('project.json'))).toEqual([]);
+    await expect(store.readCurrent()).resolves.toMatchObject({ fingerprint: expect.any(String) });
+    await expect(store.recordCheckpoint(checkpointFor('session-1', 'a'.repeat(64)))).resolves.toBe(true);
+    await store.initialize();
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ version: 1, canonicalRoot: store.project.canonicalRoot });
+  });
+
   it('initializes canonical current memory and records idempotent checkpoints', async () => {
     const { store } = await createStore();
     await expect(store.readCurrent()).resolves.toMatchObject({ files: expect.any(Array), fingerprint: expect.any(String) });

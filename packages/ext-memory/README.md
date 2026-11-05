@@ -5,11 +5,10 @@ and Pi extension behavior for Felan hosts.
 
 The package root requires the core `felan.runtime@1`, `felan.models@1`, and
 `felan.sessions@1` services. It owns the local store, project coordination,
-checkpoint recovery, dreaming, retention and `/memory` commands. There is no
-memory-specific provider or service contract.
+checkpoint recovery, dreaming, retention and `/memory` commands.
 
 The daemon process shares one memory coordinator per agent directory across its
-sessions. Only loaded root sessions whose host provides workers and runtime
+sessions. Loaded root sessions whose host provides workers and runtime
 lifetime can drive processing. Reader sessions and limited hosts can recall the
 current artifact without starting workers; readers do not record checkpoints.
 Processing is event-driven, with targeted recovery retries and writer re-checks
@@ -18,6 +17,27 @@ storage operations use the scoped Runtime; model selection uses the authenticate
 Models facade. Restricted dreaming sessions and lifecycle settlement go through
 Sessions. Missing worker or lifetime capabilities disable processing rather than
 opening an independent, untracked worker.
+
+`@felan-ai/ext-memory/daemon` exports a default daemon provider and
+`createMemoryDaemonProvider(options?)`. It provides `felan.memory.scheduler@1`,
+requires `felan.host.maintenance@1`, and optionally uses `felan.host.models@1`.
+The provider shares the extension's coordinator and keeps one persistent
+attachment per discovered project, so pending work can run with no loaded
+session. It coalesces coordinator status changes within two seconds and rescans
+every ten minutes. Without host models it tracks projects but disables scheduling.
+The scheduler's `status()` returns each tracked project root and its memory status.
+Hosts can supply a `runtime` instance or a `() => AgentRuntime` factory called
+during activation, extra `projects`, and a project-to-session `selector`.
+Explicit project roots resolve once per activation. `discover` defaults to `true`;
+set it to `false` to track only `projects` without listing stored project directories.
+For shared team memory, pass the team workspace in `projects`, `discover: false`,
+and a selector that returns `{ kind: 'all' }`. By default, session listings include
+sessions whose cwd resolves to the same project, including git subdirectories.
+Checkpoint and history reads use the host's full authorized inventory.
+Attachments use the host's allowed model scope and refresh it on rescan.
+Host drain immediately stops scheduling through every persistent attachment.
+Settlement detaches the provider and releases its
+coordinator reference without closing other sessions' attachments.
 
 The canonical layout remains `<agentDir>/memory/v1/projects/<projectKey>` and
 retained journals remain under `<agentDir>/sessions/memory`. A session's `.memory`

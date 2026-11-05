@@ -1,6 +1,7 @@
-import { createExtensionServiceAccess, createFelanServiceRegistry, defineServiceContract, type FelanServiceRegistry } from '@felan-ai/agent-core';
+import { createExtensionServiceAccess, createFelanServiceRegistry, defineServiceContract, HOST_MAINTENANCE_SERVICE, type FelanServiceRegistry } from '@felan-ai/agent-core';
 import { parseSchema, type JsonValue } from '@felan-ai/session-protocol';
 import { resolveHostComposition, type HostComposition, type HostConfig } from './host-config.js';
+import { createHostMaintenance } from './maintenance.js';
 import {
   defineServiceProvider,
   type ProviderCreateContext,
@@ -13,6 +14,8 @@ import {
 export interface LoadedProviders {
   readonly services: FelanServiceRegistry;
   readonly composition: HostComposition;
+  readonly maintenance: ReturnType<typeof createHostMaintenance>;
+  busy(): boolean;
   activate(): Promise<void>;
   openSession(
     context: Omit<ProviderSessionContext, 'services' | 'options' | 'signal'>,
@@ -43,6 +46,7 @@ export async function createConfiguredProviders(options: {
   checkStartup(options.signal);
   const configuredByKey = new Map(options.config.services.map(service => [`${service.id}@${service.major}`, service]));
   if (configuredByKey.size !== options.config.services.length) throw new Error('A service has more than one configured provider.');
+  if (configuredByKey.has(HOST_MAINTENANCE_SERVICE.key)) throw new Error('Host maintenance is provided by the daemon.');
   for (const required of options.requiredDaemonServices ?? []) if (!configuredByKey.has(required)) {
     throw new Error(`Required daemon service ${required} has no configured provider.`);
   }
@@ -94,6 +98,7 @@ export async function createConfiguredProviders(options: {
     for (const contract of definition.requires ?? []) {
       const key = `${contract.id}@${contract.major}`;
       mandatoryContracts.add(key);
+      if (key === HOST_MAINTENANCE_SERVICE.key) continue;
       const dependency = providerFor.get(key);
       if (!dependency) throw new Error(`Provider ${moduleUrl} requires unconfigured service ${key}.`);
       if (definition.scope !== 'session' && modules.get(dependency)!.scope === 'session') {
@@ -153,7 +158,10 @@ export async function createConfiguredProviders(options: {
     }
   }
 
-  const daemon = createProviderScope(createFelanServiceRegistry());
+  const maintenance = createHostMaintenance();
+  const services = createFelanServiceRegistry();
+  services.set(HOST_MAINTENANCE_SERVICE, maintenance.service);
+  const daemon = createProviderScope(services);
   try {
     await start(daemon, undefined, options.signal);
     checkStartup(options.signal);
@@ -166,6 +174,8 @@ export async function createConfiguredProviders(options: {
   return Object.freeze({
     services: daemon.api.services,
     composition,
+    maintenance,
+    busy: () => daemon.api.busy(),
     activate() {
       if (closing) return Promise.reject(new Error('Configured providers are shutting down.'));
       return daemon.api.activate();
@@ -194,6 +204,7 @@ export async function createConfiguredProviders(options: {
     async settle(mode: 'drain' | 'force') {
       if ([...sessions].some(record => record.opening)) throw new Error('Session providers are still starting.');
       closing = true;
+      maintenance.close();
       for (const record of [...sessions].reverse()) await record.scope.api.settle(mode);
       await daemon.api.settle(mode);
     },
@@ -203,6 +214,7 @@ export async function createConfiguredProviders(options: {
       }
       if (!disposal) {
         closing = true;
+        maintenance.close();
         disposal = (async () => {
           for (const record of [...sessions].reverse()) await record.scope.api.dispose();
           await daemon.api.dispose();

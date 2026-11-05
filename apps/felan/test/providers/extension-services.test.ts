@@ -19,9 +19,15 @@ it('names every provider contract in host.json and exports each module', async (
   expect(config.services.some(row => row.id.startsWith('felan.local.'))).toBe(false);
   const manifest = JSON.parse(await readFile(new URL('../../package.json', import.meta.url), 'utf8'));
   for (const use of new Set(config.services.map(row => row.use))) {
-    const subpath = `.${use.slice('@felan-ai/felan'.length)}`;
-    expect(manifest.exports[subpath]).toBeDefined();
-    const module = await import(new URL(`../../src/${subpath.slice(2)}.ts`, import.meta.url).href) as { default: ServiceProviderDefinition };
+    let moduleUrl: string;
+    if (use.startsWith('@felan-ai/felan/')) {
+      const subpath = `.${use.slice('@felan-ai/felan'.length)}`;
+      expect(manifest.exports[subpath]).toBeDefined();
+      moduleUrl = new URL(`../../src/${subpath.slice(2)}.ts`, import.meta.url).href;
+    } else {
+      moduleUrl = import.meta.resolve(use);
+    }
+    const module = await import(moduleUrl) as { default: ServiceProviderDefinition };
     expect(module.default.provides.map(contract => contract.key).sort()).toEqual(config.services
       .filter(row => row.use === use).map(row => `${row.id}@${row.major}`).sort());
   }
@@ -50,7 +56,11 @@ it('creates extension services from providers even when no extension is enabled'
   registry.revoke();
 });
 
-it('does not create memory work when the memory extension is absent', async () => {
-  const config = await readFile(new URL('../../src/host.json', import.meta.url), 'utf8');
-  expect(config).not.toContain('felan.memory');
+it('configures memory scheduling as a daemon service rather than a session provider', async () => {
+  const config = JSON.parse(await readFile(new URL('../../src/host.json', import.meta.url), 'utf8'));
+  expect(config.services.filter((row: { id: string }) => row.id.startsWith('felan.memory'))).toEqual([
+    { id: 'felan.memory.scheduler', major: 1, use: '@felan-ai/ext-memory/daemon' },
+  ]);
+  const { default: provider } = await import('@felan-ai/ext-memory/daemon');
+  expect(provider.scope).toBe('daemon');
 });

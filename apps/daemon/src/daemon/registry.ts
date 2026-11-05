@@ -22,6 +22,8 @@ import { canonicalProspectivePath, pathInside } from './target.js';
 import { sessionTip } from './session-cursor.js';
 import type { createUiVocabulary } from './ui-vocabulary.js';
 import { shutdownStep } from './shutdown-error.js';
+import { HostWorkers } from './host-workers.js';
+import { assertStagedWorker } from './worker.js';
 
 export interface RegistryOpenRequest extends Omit<SessionOpenRequest, 'resources' | 'ownership' | 'services' | 'policy' | 'execution'> {
   cwd: string;
@@ -47,6 +49,7 @@ export interface RegistryOptions {
   idleMs?: number;
   processAdapter?: ProcessAdapter;
   acquireRun?: SessionRuntime['acquireRun'];
+  onShutdown?(): void;
   commandAvailable?(session: string, name: string): boolean;
   onViewCancellationDiagnostic?(event: { session: string; elementId: string; reason: 'failed' | 'timeout' | 'limit' }): void;
   onDiagnostic?(event: { scope: 'projection' | 'registry'; session?: string; error: unknown }): void;
@@ -85,7 +88,8 @@ export class SessionRegistry {
   readonly recovery: ReturnType<DaemonControlStore['recover']>['value'] | undefined;
   private readonly entries = new Map<string, Entry>();
   private readonly executionManagers = new Map<string, RegistryExecutions>();
-  private readonly runtimeOpening = new AsyncLocalStorage<{ scope?: { session: string; root: string } }>();
+  private readonly runtimeOpening = new AsyncLocalStorage<{ workerSession?: string; scope?: { session: string; root: string } }>();
+  private readonly hostWorkers: HostWorkers;
   private readonly bindingActivation = new AsyncLocalStorage<{ binding: SessionBinding; active: boolean }>();
   private readonly opening = new Map<string, Promise<SessionBinding>>();
   private readonly pathClaims = new Set<string>();
@@ -123,13 +127,23 @@ export class SessionRegistry {
     this.recovery = options.store.needsRecovery ? options.store.recover().value : undefined;
     this.processes = new RegistryProcesses({ ...(options.processAdapter ? { processAdapter: options.processAdapter } : {}), store: options.store, now: this.now, assertCurrent: () => options.owner.assertCurrent(),
       changed: (id, process, rev) => this.publish({ v: 1, session: id, rev, change: { type: 'process.updated', process } }) });
+    this.hostWorkers = new HostWorkers({ owner: options.owner, processes: this.processes, lifecycle: () => this.options.lifecycle,
+      assertNewWork: () => this.assertHostWork(), fail: error => this.fence(error),
+      claim: (id, path) => {
+        if (this.options.store.findSessionMetadata(id) || this.hostWorkers.owns(id)) throw registryError('invalid_request', 'Worker transcript must have a fresh identity.');
+        if (this.pathClaims.has(path) || this.reservations.has(path) || this.copyClaims.has(path) || this.list().some(row => row.piPath === path)) throw registryError('busy', 'Session transcript already has a writer.');
+        this.pathClaims.add(path);
+      },
+      release: path => this.pathClaims.delete(path),
+      openSession: request => this.runtimeOpening.run({ workerSession: request.worker!.sessionManager.getSessionId() }, () => this.options.lifecycle.openSession(request)),
+    });
     this.lossUnsubscribe = options.owner.onLost(error => { this.fence(error); });
   }
 
   wrapOpeningRuntime(runtime: AgentRuntime, root: string): AgentRuntime {
     const opening = this.runtimeOpening.getStore();
     if (!opening) throw new Error('Runtime factories must run inside lifecycle.openSession.');
-    const scope = { session: '', root };
+    const scope = { session: opening.workerSession ?? '', root };
     opening.scope = scope;
     return this.processes.wrap(runtime, scope);
   }
@@ -162,12 +176,21 @@ export class SessionRegistry {
     if (this.draining) throw registryError('busy', 'Daemon is draining.');
   }
 
+  assertHostWork(): void {
+    try { this.assertNewWork(); }
+    catch (error) {
+      if (error instanceof Error && (this.failure || this.stopping || this.draining)) error.name = 'AbortError';
+      throw error;
+    }
+  }
+
   failExecution(error: unknown): void { this.fence(error); }
   get fenced(): boolean { return this.failure !== undefined; }
 
   beginDrain(): void {
     if (this.draining && this.stopping && !this.failure) { this.options.owner.assertCurrent(); this.options.store.assertCurrent(); return; }
     this.assertAdmission(); this.draining = true;
+    this.hostWorkers.interrupt();
   }
 
   /** Reopens admission after an abandoned drain; a registry that started shutting down cannot resume. */
@@ -183,6 +206,7 @@ export class SessionRegistry {
       signal?.throwIfAborted();
       await this.join([...this.entries.keys()].map(id => this.cancelViews(id)));
       await this.join([...this.opening.values(), ...this.closes.values(), ...this.lifecycleWriters], undefined, true);
+      await this.hostWorkers.settle();
       for (const entry of this.entries.values()) {
         await entry.host?.settle();
         await entry.cancelling;
@@ -226,18 +250,8 @@ export class SessionRegistry {
     const owner = this.options.store.sessionMetadata(parent);
     const root = this.require(owner.root).binding;
     const manager = worker.sessionManager;
-    const file = manager.getSessionFile();
-    if (!file || this.list().some(row => row.id === manager.getSessionId())) throw registryError('invalid_request', 'Worker transcript must have a fresh identity.');
-    const path = this.options.owner.assertOwnsPath(file);
-    if (!pathInside(root.resources.sessionDir, path)) throw registryError('forbidden', 'Worker transcript is outside the root session directory.');
-    const workspace = this.options.owner.assertOwnsPath(worker.runtime.cwd);
-    if (!(root.resources.workerRoots ?? []).some(directory => pathInside(directory, workspace))) {
-      throw registryError('forbidden', 'Worker workspace is outside managed staging storage.');
-    }
-    const tools = new Set(['read', 'ls', 'grep', 'edit', 'write', ...(worker.customTools ?? []).map(tool => tool.name)]);
-    if (!worker.allowedTools.length || worker.allowedTools.some(name => !tools.has(name) || name === 'bash')) {
-      throw registryError('forbidden', 'Worker tools exceed the staged-artifact policy.');
-    }
+    const { path } = assertStagedWorker(this.options.owner, root.resources, worker,
+      id => this.hostWorkers.owns(id) || this.list().some(row => row.id === id));
     const key = randomUUID();
     const opening = this.open({ cwd: manager.getCwd(), sessionDir: dirname(path), target: { kind: 'resume', sessionFile: path },
       parentSessionId: parent, rootSessionId: owner.root, policy: this.getPolicy(parent),
@@ -246,7 +260,14 @@ export class SessionRegistry {
     try { return await opening; } finally { this.opening.delete(key); }
   }
 
+  openHostWorker(worker: import('./session-lifecycle-contracts.js').SessionWorkerConfiguration): Promise<SessionBinding> { return this.hostWorkers.open(worker); }
+
+  hostWorkSignal(): AbortSignal { this.assertHostWork(); return this.hostWorkers.signal; }
+
+  closeHostWorker(id: string): Promise<void> { return this.hostWorkers.close(id); }
+
   async runWorker<T>(id: string, operation: () => Promise<T>): Promise<T> {
+    if (this.hostWorkers.owns(id)) return this.hostWorkers.run(id, operation);
     this.assertNewWork(); this.assertDispatch(id);
     const entry = this.require(id);
     if (!entry.binding.runtime.session.isIdle || entry.writers.size) throw registryError('busy', 'Worker is already running.');
@@ -319,7 +340,7 @@ export class SessionRegistry {
     const rows = await this.legacyListing.value;
     const current = this.options.store.sessionMetadatas();
     const ids = new Set(current.map(session => session.id)); const paths = new Set(current.map(session => session.piPath));
-    return rows.filter(row => !ids.has(row.id) && !paths.has(row.path) && (cwd === undefined || row.cwd === cwd));
+    return rows.filter(row => !ids.has(row.id) && !this.hostWorkers.owns(row.id) && !paths.has(row.path) && (cwd === undefined || row.cwd === cwd));
   }
 
   legacySummary(row: LegacySession): Promise<LegacySummary> { return this.legacy.summary(row); }
@@ -876,6 +897,7 @@ export class SessionRegistry {
 
   close(id: string): Promise<void> {
     this.options.owner.assertCurrent();
+    if (this.hostWorkers.owns(id)) return this.closeHostWorker(id);
     const stored = this.options.store.sessionMetadata(id);
     const pending = this.closes.get(id);
     if (pending) return pending;
@@ -922,6 +944,7 @@ export class SessionRegistry {
   }
 
   async shutdown(options: { interrupt?: boolean } = {}): Promise<void> {
+    this.options.onShutdown?.();
     if (options.interrupt) for (const row of this.list()) {
       if (row.state === 'open' && ['running', 'waiting', 'cancelling'].includes(row.run.state) && row.run.id) this.shutdownInterruptions.set(row.id, row.run.id);
     }
@@ -929,6 +952,7 @@ export class SessionRegistry {
     if (this.failure) {
       await shutdownStep('registry-fenced', async () => { await this.failureSettlement; throw new Error('Registry is fenced; verify settlement before releasing ownership.'); });
     }
+    const hostWorkers = shutdownStep('session-dispose', () => this.hostWorkers.shutdown());
     const cancellations = [...this.entries].map(([id, entry]) => {
       if (!options.interrupt) return shutdownStep('session-cancel-views', () => this.cancelViews(id), id);
       this.closing.add(id);
@@ -944,7 +968,7 @@ export class SessionRegistry {
       // Failed closes retain their intent; force retries them after in-flight closes finish.
       if (!options.interrupt || this.failure) throw error;
     });
-    await this.join([...cancellations, shutdownStep('registry-pending', () => this.join([...this.opening.values(), closing, ...this.lifecycleWriters], undefined, true))]);
+    await this.join([hostWorkers, ...cancellations, shutdownStep('registry-pending', () => this.join([...this.opening.values(), closing, ...this.lifecycleWriters], undefined, true))]);
     if (this.failure) await shutdownStep('registry-fenced', async () => { await this.failureSettlement; throw this.failure; });
     if (options.interrupt) {
       const retry = [...this.closes.keys()]; this.closes.clear();
@@ -1072,7 +1096,7 @@ export class SessionRegistry {
     } };
     try {
       const { execution = restored?.execution, ...sessionRequest } = request;
-      binding = await this.runtimeOpening.run({}, () => this.options.lifecycle.openSession({ ...sessionRequest, resources, ownership, policy: initialPolicy, services,
+      binding = await this.runtimeOpening.run(request.worker ? { workerSession: request.worker.sessionManager.getSessionId() } : {}, () => this.options.lifecycle.openSession({ ...sessionRequest, resources, ownership, policy: initialPolicy, services,
         ...(execution ? { execution: { ...(execution.request.label === undefined ? {} : { label: execution.request.label }) } } : {}),
       }));
       this.assertAdmission();
@@ -1105,7 +1129,7 @@ export class SessionRegistry {
       if (!actualPath || manager.getSessionId() !== binding.sessionId || manager.getCwd() !== resources.cwd) throw new Error('Lifecycle returned inconsistent session identity.');
       const path = this.options.owner.assertOwnsPath(actualPath);
       if (restored && (binding.sessionId !== restored.id || path !== restored.piPath || binding.rootSessionId !== restored.root)) throw new Error('Restored session identity changed.');
-      if (this.entries.has(binding.sessionId) || (this.pathClaims.has(path) && claim !== path)) throw new Error('Session already has a live writer.');
+      if (this.entries.has(binding.sessionId) || this.hostWorkers.owns(binding.sessionId) || (this.pathClaims.has(path) && claim !== path)) throw new Error('Session already has a live writer.');
       if (claim && claim !== path) this.pathClaims.delete(claim);
       claim = path; this.pathClaims.add(path);
       const effectivePolicy = openingPolicy();
@@ -1382,6 +1406,7 @@ export class SessionRegistry {
     this.diagnostic({ scope: 'registry', error });
     this.failure = error;
     this.processes.sealAll();
+    this.hostWorkers.interrupt();
     for (const entry of this.entries.values()) { entry.runAbort?.abort(); entry.projection.dispose(); }
     this.failureSettlement ??= Promise.resolve().then(() => this.settleAfterLoss());
     void this.failureSettlement.catch(() => {});
@@ -1390,6 +1415,7 @@ export class SessionRegistry {
     if (this.failureSettlement) await this.failureSettlement;
     else {
       const failures: unknown[] = [];
+      await this.join([this.hostWorkers.settle()], failures);
       do { await this.join(this.pendingWriters(), failures); }
       while (this.hasPendingWriters());
       for (const error of this.cancellationFailures) if (!failures.includes(error)) failures.push(error);
@@ -1398,8 +1424,8 @@ export class SessionRegistry {
   }
   private async settleAfterLoss(): Promise<void> {
     const failures: unknown[] = [];
-    const roots = new Set([...this.entries.values()].map(entry => entry.binding.rootSessionId).concat([...this.processes.liveRoots()]));
-    const pending: Promise<unknown>[] = [...this.opening.values(), ...this.closes.values(), ...[...roots].map(root => this.processes.settle(root, true))];
+    const roots = new Set([...this.entries.values()].map(entry => entry.binding.rootSessionId).concat(this.hostWorkers.roots(), [...this.processes.liveRoots()]));
+    const pending: Promise<unknown>[] = [this.hostWorkers.settle(), ...this.opening.values(), ...this.closes.values(), ...[...roots].map(root => this.processes.settle(root, true))];
     for (const entry of this.entries.values()) {
       pending.push(entry.binding.runtime.session.abort(), ...(entry.disposing ? [entry.disposing] : []), ...(entry.cancelling ? [entry.cancelling] : []), ...(entry.projectionCancellation ? [entry.projectionCancellation] : []));
       if (entry.host) pending.push((async () => {

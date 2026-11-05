@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Type } from 'typebox';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, SessionManager, SettingsManager } from '@felan-ai/agent-core';
@@ -29,6 +30,37 @@ function fixture() {
 }
 
 describe('admitted worker launcher', () => {
+  it('binds the wrapped worker runtime to its own lifetime', async () => {
+    const f = await serverFixture();
+    const lifecycle = await createTestSessionLifecycle({ agentDir: f.owner.target.agentDir,
+      wrapRuntime: (runtime, request) => f.registry.wrapOpeningRuntime(runtime, request.rootSessionId),
+    });
+    fixtures.push(async () => { await f.dispose(); await lifecycle.dispose(); });
+    f.registry.options.lifecycle = lifecycle;
+    const workspace = join(f.root.resources.sessionStorageBase, f.root.sessionId, 'worker'); await mkdir(workspace, { recursive: true });
+    const manager = SessionManager.create(f.cwd, f.root.resources.sessionDir);
+    await writeFile(manager.getSessionFile()!, JSON.stringify(manager.getHeader()) + '\n');
+    const original = new HostAgentRuntime(workspace, createRuntimeStorageRequest(workspace, f.owner.target.agentDir, f.root.sessionId));
+    const worker = await f.registry.openWorker(f.root.sessionId, {
+      runtime: original, modelRuntime: f.root.runtime.session.modelRuntime, model: offlineModel, sessionManager: manager,
+      settingsManager: SettingsManager.create(workspace, f.owner.target.agentDir), allowedTools: ['read'],
+    });
+    const runtime = worker.agentRuntime;
+    expect(runtime).not.toBe(original);
+    const content = new TextEncoder().encode('worker artifact');
+    await runtime.writeFile('artifact.txt', content);
+    expect(await runtime.readFile('artifact.txt')).toEqual(content);
+    const process = await runtime.processes!.startShell('printf worker-output');
+    expect(f.registry.processes.list(f.root.sessionId)).toContainEqual(expect.objectContaining({
+      session: worker.sessionId, root: f.root.sessionId,
+    }));
+    await process.dispose();
+    await f.registry.close(worker.sessionId);
+    await expect(runtime.readFile('artifact.txt')).rejects.toThrow('Session runtime is closed to new work.');
+    await expect(runtime.writeFile('artifact.txt', content)).rejects.toThrow('Session runtime is closed to new work.');
+    await expect(f.root.agentRuntime.readFile(join(workspace, 'artifact.txt'))).resolves.toEqual(content);
+  });
+
   it('passes worker identity to the host stream wrapper before dispatching inference', async () => {
     const stream = vi.fn();
     const wrapped = vi.fn();
@@ -40,12 +72,12 @@ describe('admitted worker launcher', () => {
     });
     fixtures.push(() => f.dispose());
     const workspace = join(f.root.resources.sessionStorageBase, f.root.sessionId, 'worker'); await mkdir(workspace, { recursive: true });
-    const manager = SessionManager.create(workspace, f.root.resources.sessionDir);
+    const manager = SessionManager.create(f.cwd, f.root.resources.sessionDir);
     await writeFile(manager.getSessionFile()!, JSON.stringify(manager.getHeader()) + '\n');
     const worker = await f.registry.openWorker(f.root.sessionId, {
       runtime: new HostAgentRuntime(workspace, createRuntimeStorageRequest(workspace, f.owner.target.agentDir, f.root.sessionId)),
       modelRuntime: f.root.runtime.session.modelRuntime, model: offlineModel,
-      sessionManager: SessionManager.open(manager.getSessionFile()!, f.root.resources.sessionDir, workspace),
+      sessionManager: SessionManager.open(manager.getSessionFile()!, f.root.resources.sessionDir, f.cwd),
       settingsManager: SettingsManager.create(workspace, f.owner.target.agentDir), allowedTools: ['read'],
     });
     expect(wrapWorkerStream).toHaveBeenCalledExactlyOnceWith({ id: worker.sessionId, root: f.root.sessionId, parent: f.root.sessionId });
@@ -111,7 +143,7 @@ describe('admitted worker launcher', () => {
     const root = await registry.create({ cwd: f.cwd, target: { kind: 'new' }, extensionPaths: [path], model: offlineModel });
     expect(root.runtime.session.getActiveToolNames()).toContain('host_probe');
     const workspace = join(root.resources.sessionStorageBase, root.sessionId, 'worker'); await mkdir(workspace, { recursive: true });
-    const manager = SessionManager.create(workspace, root.resources.sessionDir);
+    const manager = SessionManager.create(f.cwd, root.resources.sessionDir);
     await writeFile(manager.getSessionFile()!, JSON.stringify(manager.getHeader()) + '\n');
     const worker = await registry.openWorker(root.sessionId, {
       runtime: new HostAgentRuntime(workspace, createRuntimeStorageRequest(workspace, f.owner.target.agentDir, root.sessionId)),
@@ -127,5 +159,37 @@ describe('admitted worker launcher', () => {
     expect(store.session(worker.sessionId).profile?.extensionPaths).toEqual([path]);
     expect(restored.runtime.session.getAllTools().map(tool => tool.name)).toContain('host_probe');
     expect(restored.runtime.session.getActiveToolNames()).toEqual(['read']);
+  });
+
+  it('reopens a closed worker without its custom tools and never widens its stored tool set', async () => {
+    const f = await registryFixture(); await f.registry.shutdown();
+    let registry: SessionRegistry;
+    let store = f.store;
+    const profile = await createTestSessionLifecycle({ agentDir: f.owner.target.agentDir,
+      runtimeFactory: request => registry.wrapOpeningRuntime(new HostAgentRuntime(request.cwd, request), request.rootSessionId),
+      createModelRuntime: async () => {
+        const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
+        models.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel] });
+        return models;
+      } });
+    fixtures.push(() => profile.dispose());
+    const create = () => new SessionRegistry({ ...f.registry.options, store, lifecycle: profile });
+    registry = create(); f.replaceRegistry(registry, store);
+    const root = await registry.create({ cwd: f.cwd, target: { kind: 'new' }, model: offlineModel });
+    const workspace = join(root.resources.sessionStorageBase, root.sessionId, 'worker'); await mkdir(workspace, { recursive: true });
+    const manager = SessionManager.create(f.cwd, root.resources.sessionDir);
+    await writeFile(manager.getSessionFile()!, JSON.stringify(manager.getHeader()) + '\n');
+    const stageProbe = { name: 'stage_probe', label: 'Stage probe', description: 'Probe', parameters: Type.Object({}),
+      async execute() { return { content: [{ type: 'text' as const, text: 'probe' }], details: {} }; } };
+    const worker = await registry.openWorker(root.sessionId, {
+      runtime: new HostAgentRuntime(workspace, createRuntimeStorageRequest(workspace, f.owner.target.agentDir, root.sessionId)),
+      modelRuntime: root.runtime.session.modelRuntime, model: offlineModel, sessionManager: manager,
+      settingsManager: SettingsManager.create(workspace, f.owner.target.agentDir), allowedTools: ['read', 'stage_probe'], customTools: [stageProbe],
+    });
+    expect(worker.runtime.session.getActiveToolNames().sort()).toEqual(['read', 'stage_probe']);
+    await registry.close(worker.sessionId);
+    const reopened = await registry.adopt(worker.sessionId, {});
+    expect(reopened.runtime.session.getAllTools().map(tool => tool.name)).not.toContain('stage_probe');
+    expect(reopened.runtime.session.getActiveToolNames()).toEqual(['read']);
   });
 });
