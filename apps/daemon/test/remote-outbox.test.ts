@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PUBLICATION_LIMITS } from '@felan-ai/session-protocol';
+import { publishedEvent } from '../src/remote/content.js';
 import { REMOTE_OUTBOX_PENDING_BYTES_LIMIT, REMOTE_OUTBOX_TOTAL_PENDING_BYTES_LIMIT, RemoteOutbox, RemoteOutboxCapacityError, type OutboxItem } from '../src/remote/outbox.js';
 import { RemoteIntegrityError, RemoteStorageError } from '../src/remote/state.js';
 import type { PersistenceBoundary, RemoteDatabase } from '../src/daemon/persistence.js';
@@ -135,6 +136,26 @@ describe('durable remote outbox', () => {
     }
     box.flush(); const reopened = new RemoteOutbox(fixture.reopen()); expect(reopened.nextSeq(id)).toBe(201); expect(reopened.pendingCount()).toBe(200);
     expect(reopened.pending(id).map(entry => entry.seq)).toEqual(Array.from({ length: 200 }, (_, index) => index + 1));
+  });
+  it.each([false, true])('sanitizes legacy NUL-containing entries after reopening, with fast-forward %s', async fastForward => {
+    const fixture = await openRemoteDatabase(); const id = randomUUID();
+    const entry = { seq: 1, ...message('before\0after') };
+    const data = JSON.stringify(entry);
+    fixture.database.transaction(() => {
+      fixture.database.insertOutbox(id, 1, Buffer.byteLength(data) + 1, data);
+      fixture.database.putRecord('outbox_cursor', id, JSON.stringify({ version: 1, acked: 0, lastSeq: 1, dropped: false }));
+    });
+    const database = fixture.reopen(); const box = new RemoteOutbox(database);
+    expect(database.outbox(id)[0]!.data).toContain('\\u0000');
+    if (fastForward) box.fastForward(id, 10);
+    const pending = box.pending(id);
+    const events = pending.map(value => publishedEvent(id, value));
+    expect(events).toHaveLength(1); expect(events[0]).toMatchObject({ seq: fastForward ? 11 : 1, rev: 1, occurredAt: 1,
+      change: { message: { content: [{ type: 'text', text: 'before\uFFFDafter' }] } } });
+    expect(JSON.stringify(events)).not.toContain('\\u0000');
+    expect(Buffer.byteLength(JSON.stringify(events[0]!.change))).toBeLessThanOrEqual(PUBLICATION_LIMITS.changeBytes);
+    if (!fastForward) expect(database.outbox(id)[0]!.data).toBe(data);
+    box.acknowledge(id, events[0]!.seq); expect(box.pending(id)).toEqual([]); expect(box.pendingCount()).toBe(0);
   });
   it('trims only acknowledged entries atomically, retaining the high-water mark after full trim', async () => {
     const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database); const id = randomUUID();

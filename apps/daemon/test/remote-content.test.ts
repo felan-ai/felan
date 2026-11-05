@@ -49,6 +49,40 @@ describe('remote publication content', () => {
       expect(change).toMatchObject({ tool: { output: 'short', truncated } });
     }
   });
+  it('replaces NUL in tool output, identities and object keys before applying publication limits', () => {
+    const id = `t${'\0'.repeat(127)}`;
+    const original: KnownSessionChange = { type: 'tool.updated', tool: {
+      id, message: id, name: 'bash\0', state: 'completed', output: '\0'.repeat(5000), truncated: false,
+      details: { 'key\0': ['value\0', { '\0nested': '\0' }] },
+    } };
+    const change = publishableChange(original)!;
+    const event = publishedEvent(session, { seq: 1, rev: 1, occurredAt: 1, change });
+    expect(JSON.stringify(event).includes('\\u0000')).toBe(false);
+    expect(change).toMatchObject({ tool: {
+      id: `t${'\uFFFD'.repeat(42)}`, message: `t${'\uFFFD'.repeat(42)}`, name: 'bash\uFFFD',
+      output: '\uFFFD'.repeat(PUBLISHED_TOOL_OUTPUT_CHARACTERS), truncated: true,
+      details: { 'key\uFFFD': ['value\uFFFD', { '\uFFFDnested': '\uFFFD' }] },
+    } });
+    expect(Buffer.byteLength(JSON.stringify(change))).toBeLessThanOrEqual(PUBLICATION_LIMITS.changeBytes);
+    expect(original.tool.output).toBe('\0'.repeat(5000)); expect(original.tool.id).toBe(id);
+  });
+  it('replaces NUL throughout completed messages and fits their encoded byte budget', () => {
+    const original: KnownSessionChange = { type: 'message.completed', message: {
+      id: 'm\0', entryId: 'e\0', role: 'assistant', timestamp: 1, content: [
+        { type: 'text', text: '\0'.repeat(400_000) }, { type: 'thinking', text: 'thought\0' },
+        { type: 'tool_call', id: 't\0', name: 'tool\0', arguments: { 'key\0': ['argument\0'] } },
+        { type: 'tool_result', id: 't\0', text: 'result\0', isError: false, details: { 'key\0': 'detail\0' } },
+      ], details: { 'key\0': 'detail\0' },
+    } };
+    const change = publishableChange(original)!;
+    const event = publishedEvent(session, { seq: 1, rev: 1, occurredAt: 1, change });
+    expect(JSON.stringify(event).includes('\\u0000')).toBe(false);
+    expect(change).toMatchObject({ message: { id: 'm\uFFFD', entryId: 'e\uFFFD', details: { 'key\uFFFD': 'detail\uFFFD' } } });
+    expect(JSON.stringify(change)).toContain('thought\uFFFD'); expect(JSON.stringify(change)).toContain('argument\uFFFD');
+    expect(JSON.stringify(change)).toContain('result\uFFFD');
+    expect(Buffer.byteLength(JSON.stringify(change))).toBeLessThanOrEqual(PUBLICATION_LIMITS.changeBytes);
+    expect(original.message.content[0]).toEqual({ type: 'text', text: '\0'.repeat(400_000) });
+  });
   it('redacts provider keys, PATs, JWTs and Bearer headers in text, thinking, results and nested argument leaves', () => {
     const secrets = ['sk-secret123456789', 'fln_pat_test123456789', 'bzy_team_test123456789', 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhIn0.signature', 'Bearer abc123456789'];
     const text = secrets.join(' ');
@@ -102,6 +136,20 @@ describe('remote publication content', () => {
       expect(value.directory).not.toContain('/private'); expect(value.title).not.toContain('fln_pat_'); expect(value.title).not.toContain('�');
       expect(parsePublishedSession(value)).toEqual(value);
     }
+  });
+  it('replaces NUL throughout session rows and bounds the replacement text in UTF-8', () => {
+    const value = publishedSession({
+      session, cwd: `/work/${'\0'.repeat(300)}`, title: `Title\0${'\0'.repeat(1024)}`, state: 'open', run: { state: 'idle' }, shared: true,
+      skills: [{ name: 'skill\0', description: '\0'.repeat(1024), filePath: `/work/${'\0'.repeat(600)}/SKILL.md`, scope: 'project' }],
+      processes: [{ id: '\0'.repeat(128), session, root: session, kind: 'detached', state: 'running', command: '\0'.repeat(1024), startedAt: 0,
+        controllable: true, outputOffset: 0 }],
+    });
+    expect(JSON.stringify(value)).not.toContain('\\u0000'); expect(value.title).toMatch(/^Title\uFFFD/u);
+    expect(Buffer.byteLength(value.title)).toBeLessThanOrEqual(1024); expect(Buffer.byteLength(value.directory)).toBeLessThanOrEqual(256);
+    expect(value.skills?.[0]?.name).toBe('skill\uFFFD');
+    expect(Buffer.byteLength(value.skills![0]!.description)).toBeLessThanOrEqual(1024); expect(Buffer.byteLength(value.skills![0]!.path)).toBeLessThanOrEqual(512);
+    expect(Buffer.byteLength(value.processes![0]!.id)).toBeLessThanOrEqual(128); expect(Buffer.byteLength(value.processes![0]!.command)).toBeLessThanOrEqual(1024);
+    expect(parsePublishedSession(value)).toEqual(value);
   });
   it('publishes loaded skills with project- or home-relative paths and redacted descriptions', () => {
     const base = { session, cwd: '/home/agent/work/felan', title: 'T', state: 'open' as const, run: { state: 'idle' as const }, shared: true, home: '/home/agent' };

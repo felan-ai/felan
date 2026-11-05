@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, relative, sep } from 'node:path';
 import type { TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import {
-  KnownSessionChangeSchema, LIMITS, PUBLISHED_CHANGE_TYPES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS, ROW_SCHEMA_VERSION,
+  KnownSessionChangeSchema, LIMITS, PUBLISHED_CHANGE_TYPES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS, PublishedSessionSchema, ROW_SCHEMA_VERSION,
   isPublishedChangeType, parsePublishedEvent, parsePublishedSession,
   type KnownSessionChange, type Process, type PublishedEvent, type PublishedProcess, type PublishedSession, type PublishedSkill, type SessionSnapshot,
 } from '@felan-ai/session-protocol';
@@ -55,18 +55,19 @@ function sanitize(schema: Schema, value: unknown, key = '', free = false): unkno
   const node = branch(schema, value);
   free ||= node['x-jsonValue'] === true;
   if (typeof value === 'string') {
-    if (!free && (Object.hasOwn(node, 'const') || node.enum)) return value;
+    const text = value.replaceAll('\0', '\uFFFD');
+    if (!free && (Object.hasOwn(node, 'const') || node.enum)) return text;
     // Protocol identities must keep matching across requests, answers and later events.
-    if (!free && node['x-maxBytes'] === 128 && identityKeys.has(key)) return value;
+    if (!free && node['x-maxBytes'] === 128 && identityKeys.has(key)) return boundedPrefix(text, node['x-maxBytes']);
     const secret = /^(?:[\w-]*(?:api[_-]?key|token|secret|password|authorization|credential)[\w-]*)$/iu.test(key);
-    const redacted = secret ? '[redacted]' : redact(value);
+    const redacted = secret ? '[redacted]' : redact(text);
     return boundedPrefix(redacted, node['x-maxBytes'] ?? Number.MAX_SAFE_INTEGER);
   }
   if (Array.isArray(value)) return value.map(item => sanitize(node.items ?? node, item, key, free));
   if (value !== null && typeof value === 'object') {
     const record = value as ObjectValue;
     if (record.type === 'image' && typeof record.data === 'string') return { type: 'text', text: '[image omitted]' };
-    return Object.fromEntries(Object.entries(record).map(([name, child]) => [name, sanitize(childSchema(node, name), child, name, free)]));
+    return Object.fromEntries(Object.entries(record).map(([name, child]) => [name.replaceAll('\0', '\uFFFD'), sanitize(childSchema(node, name), child, name, free)]));
   }
   return value;
 }
@@ -117,8 +118,14 @@ export function publishableChange(change: KnownSessionChange): PublishedChange |
 }
 
 export function publishedEvent(session: string, entry: PublicationEntry): PublishedEvent {
-  if (Buffer.byteLength(JSON.stringify(entry.change)) > PUBLICATION_LIMITS.changeBytes) throw new Error('Published change exceeds its byte limit.');
-  return parsePublishedEvent({ schemaVersion: ROW_SCHEMA_VERSION, session, seq: entry.seq, rev: entry.rev, occurredAt: entry.occurredAt, change: entry.change });
+  let change = entry.change; let encoded = JSON.stringify(change);
+  // Older outbox rows reach this boundary without passing through the current sanitizer.
+  if (encoded.includes('\\u0000')) {
+    change = sanitize(KnownSessionChangeSchema as Schema, change) as PublishedChange;
+    encoded = JSON.stringify(change);
+  }
+  if (Buffer.byteLength(encoded) > PUBLICATION_LIMITS.changeBytes) throw new Error('Published change exceeds its byte limit.');
+  return parsePublishedEvent({ schemaVersion: ROW_SCHEMA_VERSION, session, seq: entry.seq, rev: entry.rev, occurredAt: entry.occurredAt, change });
 }
 
 function within(base: string, path: string): string | undefined {
@@ -148,12 +155,12 @@ function publishedProcesses(session: string, processes: readonly Process[]): Pub
 }
 
 export function publishedSession(input: PublishedSessionInput): PublishedSession {
-  return parsePublishedSession({
+  return parsePublishedSession(sanitize(PublishedSessionSchema as Schema, {
     schemaVersion: ROW_SCHEMA_VERSION, session: input.session, ...(input.parent ? { parent: input.parent } : {}),
     directory: boundedPrefix(redact(basename(input.cwd)), 256), shared: input.shared,
     title: boundedPrefix(redact(input.title), 1024), state: input.state, runState: input.run.state,
     ...(input.lastActivity !== undefined ? { lastActivity: input.lastActivity } : {}),
     ...(input.skills ? { skills: publishedSkills(input.skills, input.cwd, input.home ?? homedir()) } : {}),
     ...(input.processes ? { processes: publishedProcesses(input.session, input.processes) } : {}),
-  });
+  }));
 }
