@@ -7,6 +7,7 @@ import {
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
 import { accepted, commandError } from './commands.js';
 import type { ControlCommit, DaemonControlStore } from './control-store.js';
+import { toolId, toolName } from './message-sanitize.js';
 import type { SessionRegistry } from './registry.js';
 
 type ClientKind = OperationParams<'hello'>['kind'];
@@ -50,6 +51,20 @@ interface Waiter {
   resolve(outcome: BrokerOutcome): void;
   cleanup(): void;
   recipient?: string;
+}
+
+function toolInputSummary(input: unknown): string {
+  let serialized: string | undefined;
+  try { serialized = JSON.stringify(input); }
+  catch { return '[Tool input could not be displayed.]'; }
+  if (serialized === undefined) return '[Tool input could not be displayed.]';
+  let summary = ''; let bytes = 0;
+  for (const point of serialized) {
+    bytes += Buffer.byteLength(point);
+    if (bytes > 24_000) break;
+    summary += point;
+  }
+  return summary;
 }
 
 export class InteractionBroker {
@@ -289,8 +304,8 @@ export class InteractionBroker {
         const binding = registry.binding(sessionId);
         if (!binding) return { block: true, reason: 'Session is no longer available.' };
         if (!binding.tools.requiresApproval(registry.getPolicy(sessionId), event.toolName)) return;
-        const outcome = await this.request({ kind: 'tool_approval', toolCallId: event.toolCallId, toolName: event.toolName,
-          summary: `${event.toolName}\n${Buffer.from(JSON.stringify(event.input)).subarray(0, 24_000).toString('utf8')}`,
+        const outcome = await this.request({ kind: 'tool_approval', toolCallId: toolId(event.toolCallId), toolName: toolName(event.toolName),
+          summary: `${toolName(event.toolName)}\n${toolInputSummary(event.input)}`,
           options: [{ id: 'allow-once', title: 'Allow once' }, { id: 'reject-once', title: 'Reject' }] },
         { kind: 'session', session: sessionId, root: binding.rootSessionId }, context.signal ? { signal: context.signal } : {});
         if (outcome.state === 'answered' && outcome.answer.kind === 'tool_approval' && outcome.answer.optionId === 'allow-once') return;

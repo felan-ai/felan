@@ -28,9 +28,9 @@ describe('tool result content projection', () => {
     expect(projectPiMessage(entry).details).toMatchObject({ artifacts: ['fixture.png'],
       [MESSAGE_DISPLAY_KEY]: { kind: 'tool', name: 'generate_images', timestamp: 0 } });
   });
-  it('does not silently discard invalid image data', () => {
+  it('replaces invalid image data with a text placeholder', () => {
     const invalid = { ...entry, message: { ...result, content: [{ ...image, data: '@@@' }] } };
-    expect(() => projectPiMessage(invalid)).toThrow();
+    expect(projectPiMessage(invalid).content).toContainEqual({ type: 'text', text: '[Image omitted: invalid data]' });
   });
 });
 

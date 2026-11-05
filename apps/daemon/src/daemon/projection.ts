@@ -3,17 +3,18 @@ import { isConversationEntry } from './session-files.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { getSupportedThinkingLevels, type AgentSession, type AgentSessionEvent, type SessionEntry } from '@felan-ai/agent-core';
 import {
-  CatalogSchema, JsonValueSchema, LIMITS, MessageSchema, PresentationSchema, PromptSchema, parseOperationResult, parseSchema, trimSnapshotLists, validateBase64, validatePrompt,
+  CatalogSchema, CommandCatalogEntrySchema, LIMITS, ModelSchema, PresentationSchema, PromptSchema, ThinkingSchema, ToolCatalogEntrySchema, parseOperationResult, parseSchema, trimSnapshotLists, validatePrompt,
   type KnownSessionChange, type Message, type OperationResult, type Origin, type Presentation, type SessionEvent,
   type SessionSnapshot, type TextStreamEvent,
-  MESSAGE_DISPLAY_KEY, MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,
+  MESSAGE_DISPLAY_ID, type ActiveMessageDisplay,
 } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from './control-store.js';
 import type { ControlSessionMetadata } from './control-state.js';
 import type { SessionBinding } from './session-lifecycle-contracts.js';
 import { messageDisplay } from './message-display.js';
 import { sessionTip } from './session-cursor.js';
-import { boundMessage } from './message-bounds.js';
+import { catalogEntry, plainJson, sanitizeMessage, toolId, toolName, undisplayableMessage } from './message-sanitize.js';
+import { boundSnapshot } from './snapshot-bounds.js';
 
 export type ProjectionOutput = SessionEvent | TextStreamEvent;
 export type ProjectionExtras = Pick<SessionSnapshot, 'children' | 'processes' | 'interactions'>;
@@ -35,6 +36,8 @@ type QueuedMessage = Parameters<AgentSession['agent']['steer']>[0];
 type Tool = SessionSnapshot['tools'][number];
 type Stream = SessionSnapshot['activeStreams'][number];
 type StreamState = { value: Stream; bytes: number; pendingHighSurrogate: string };
+type CachedMessage = { id: string; liveId: string | undefined; originKey: string | undefined;
+  project: SessionBinding['projectMessage']; source: unknown; message: Message; bytes: number };
 
 export class SessionProjection {
   private readonly session: AgentSession;
@@ -45,6 +48,8 @@ export class SessionProjection {
   private readonly messageIds = new Map<string, string>();
   private readonly liveIds = new WeakMap<object, string>();
   private readonly origins = new Map<string, Origin>();
+  private readonly messages = new Map<string, CachedMessage>();
+  private messagesBytes = 0;
   private readonly tools = new Map<string, Tool>();
   private readonly dirtyTools = new Set<string>();
   private readonly streams = new Map<string, StreamState>();
@@ -221,7 +226,7 @@ export class SessionProjection {
       if (!isMessageEntry(entry)) { this.entryIds.add(entry.id); continue; }
       if (isConversationEntry(entry) && this.options.store.sessionMetadata(this.id).draft) this.materialize();
       if (this.origin) this.origins.set(entry.id, this.origin);
-      const message = this.message(entry);
+      const { message } = this.message(entry);
       const commit = this.options.store.project(this.id, [{ type: 'message', id: message.id, entryId: entry.id, state: 'observed' }], true);
       this.entryIds.add(entry.id);
       for (const [id, stream] of this.streams) if (stream.value.message === message.id) this.removeStream(id);
@@ -238,11 +243,14 @@ export class SessionProjection {
     for (const [id, tool] of this.tools) if (this.tools.size > LIMITS.pageEntries && tool.state !== 'running') this.tools.delete(id);
     this.refreshQueue();
     const stored = this.options.store.sessionMetadata(this.id);
-    const title = manager.getSessionName() ?? '';
+    const name = manager.getSessionName();
+    const title = ((typeof name === 'string' ? name : '') as string & { toWellFormed(): string }).toWellFormed();
     if (stored.title !== title) this.publish({ type: 'metadata.updated', title, state: stored.state, residency: stored.residency }, { title });
-    const model = this.session.model && { provider: this.session.model.provider, id: this.session.model.id };
-    const thinking = this.session.thinkingLevel;
-    if (model && (digest(stored.model) !== digest(model) || stored.thinking !== thinking)) this.publish({ type: 'model.updated', model, thinking }, { model, thinking });
+    const selection = catalogEntry(() => ({ model: parseSchema(ModelSchema, this.session.model && { provider: this.session.model.provider, id: this.session.model.id }),
+      thinking: parseSchema(ThinkingSchema, this.session.thinkingLevel) }))[0];
+    if (selection && (digest(stored.model) !== digest(selection.model) || stored.thinking !== selection.thinking)) {
+      this.publish({ type: 'model.updated', ...selection }, selection);
+    }
     this.syncCursor();
     const catalog = this.refreshCatalog();
     if (this.catalogKey !== catalog.key) { this.publish({ type: 'catalog.updated', catalog: catalog.value }); this.catalogKey = catalog.key; }
@@ -261,7 +269,7 @@ export class SessionProjection {
     const stored = this.options.store.sessionMetadata(this.id);
     if (!stored.model || !stored.thinking) throw new Error('Session has no selected model; select an available model before attaching.');
     const history = this.history(undefined, stored.revision);
-    return trimSnapshotLists({
+    return boundSnapshot(trimSnapshotLists({
       session: this.id, root: stored.root, ...(stored.parent ? { parent: stored.parent } : {}),
       revision: stored.revision, cwd: stored.cwd, title: stored.title, state: stored.state, residency: stored.residency,
       branch: history.branch, history, model: stored.model, thinking: stored.thinking, run: stored.run,
@@ -269,7 +277,7 @@ export class SessionProjection {
       tools: [...this.tools.values()], presentation: [...this.presentation.values()],
       ...(this.executionsGeneration ? { executionsGeneration: this.executionsGeneration } : {}),
       activeStreams: [...this.streams.values()].map(stream => stream.value), completionOnlyStreams: [...this.completionOnly.values()],
-    });
+    }));
   }
 
   history(cursor?: string, revision = this.options.store.sessionMetadata(this.id).revision, limit: number = LIMITS.pageEntries): SessionSnapshot['history'] {
@@ -287,8 +295,7 @@ export class SessionProjection {
     const page: Message[] = [];
     let bytes = 0;
     while (end > 0 && page.length < limit) {
-      const message = this.message(entries[end - 1]!);
-      const size = Buffer.byteLength(JSON.stringify(message));
+      const { message, bytes: size } = this.message(entries[end - 1]!);
       if (bytes + size > LIMITS.pageBytes / 2) {
         if (!page.length) throw new Error('A transcript entry exceeds the history page budget.');
         break;
@@ -370,14 +377,15 @@ export class SessionProjection {
       this.liveIds.set(event.message, this.assistant); this.completedStreams.add(this.assistant); if (this.completedStreams.size > 256) this.completedStreams.delete(this.completedStreams.values().next().value!); this.assistant = undefined;
     }
     if (event.type === 'tool_execution_start') {
-      this.tools.set(event.toolCallId, { id: event.toolCallId, name: event.toolName, message: this.assistant ?? this.latestAssistantId(), state: 'running', output: '', truncated: false });
-      this.dirtyTools.add(event.toolCallId);
+      const id = toolId(event.toolCallId);
+      this.tools.set(id, { id, name: toolName(event.toolName), message: this.assistant ?? this.latestAssistantId(), state: 'running', output: '', truncated: false });
+      this.dirtyTools.add(id);
     }
     if (event.type === 'tool_execution_update' || event.type === 'tool_execution_end') {
-      const tool = this.tools.get(event.toolCallId);
+      const tool = this.tools.get(toolId(event.toolCallId));
       if (tool) {
         const result = event.type === 'tool_execution_update' ? event.partialResult : event.result;
-        const output = resultText(result);
+        const output = (resultText(result) as string & { toWellFormed(): string }).toWellFormed();
         this.tools.set(tool.id, { ...tool, output: boundedText(output, LIMITS.statusTextBytes), truncated: Buffer.byteLength(output) > LIMITS.statusTextBytes,
           state: event.type === 'tool_execution_end' ? event.isError ? 'failed' : 'completed' : tool.state });
         this.dirtyTools.add(tool.id);
@@ -525,22 +533,23 @@ export class SessionProjection {
   private refreshCatalog(): SessionProjection['cachedCatalog'] {
     const active = new Set(this.session.getActiveToolNames());
     const provenance = new Map(this.options.binding.tools.provenance.map(tool => [tool.name, tool]));
-    const tools = this.session.getAllTools().map(tool => {
+    const tools = this.session.getAllTools().flatMap(tool => catalogEntry(() => {
       const source = provenance.get(tool.name);
-      return { name: tool.name, label: tool.name, description: tool.description, parameters: tool.parameters,
-        provenance: source?.source ?? 'external', source: boundedText(source?.sourceId ?? 'unknown', 128), active: active.has(tool.name) };
-    });
-    const commands: SessionSnapshot['catalog']['commands'] = this.session.extensionRunner.getRegisteredCommands().filter(command => this.options.commandAvailable?.(command.name) ?? false).map(command => ({ name: command.name,
-      description: command.description ?? '', source: boundedText(command.sourceInfo?.path ?? 'extension', 128), scope: command.sourceInfo?.scope, kind: 'extension' as const }));
+      return parseSchema(ToolCatalogEntrySchema, { name: tool.name, label: tool.name, description: tool.description ?? '', parameters: plainJson(tool.parameters),
+        provenance: source?.source ?? 'external', source: boundedText(source?.sourceId ?? 'unknown', 128), active: active.has(tool.name) });
+    }));
+    const commands = this.session.extensionRunner.getRegisteredCommands().filter(command => this.options.commandAvailable?.(command.name) ?? false).flatMap(command => catalogEntry(() => parseSchema(CommandCatalogEntrySchema, { name: command.name,
+      description: command.description ?? '', source: boundedText(command.sourceInfo?.path ?? 'extension', 128), ...(command.sourceInfo?.scope ? { scope: command.sourceInfo.scope } : {}), kind: 'extension' })));
     const skills = this.session.settingsManager?.getEnableSkillCommands() === false ? [] : this.session.resourceLoader.getSkills().skills;
     for (const skill of skills) {
       const name = `skill:${skill.name}`;
-      if (!commands.some(command => command.name === name) && (this.options.commandAvailable?.(name) ?? false)) commands.push({ name,
-        description: skill.description, source: boundedText(skill.filePath, 128), scope: skill.sourceInfo.scope, kind: 'skill' });
+      if (!commands.some(command => command.name === name) && (this.options.commandAvailable?.(name) ?? false)) commands.push(...catalogEntry(() => parseSchema(CommandCatalogEntrySchema, { name,
+        description: skill.description, source: boundedText(skill.filePath, 128), scope: skill.sourceInfo.scope, kind: 'skill' })));
     }
     const available = this.session.scopedModels.length ? this.session.scopedModels.map(({ model }) => model)
       : this.session.modelRuntime.getAvailableSnapshot();
-    const models = available.map(model => ({ provider: model.provider, id: model.id, label: model.name, thinking: getSupportedThinkingLevels(model) }));
+    const models = available.flatMap(model => catalogEntry(() => parseSchema(CatalogSchema.properties.models.items,
+      { provider: model.provider, id: model.id, label: model.name, thinking: getSupportedThinkingLevels(model) })));
     const raw = { tools, commands, models };
     const serialized = JSON.stringify(raw);
     if (this.cachedCatalog?.serialized === serialized) return this.cachedCatalog;
@@ -555,13 +564,36 @@ export class SessionProjection {
     }
     return id;
   }
-  private message(entry: MessageEntry): Message {
-    const message = projectPiMessage(entry, this.messageId(entry), this.origins.get(entry.id));
+  private message(entry: MessageEntry): CachedMessage {
+    const id = this.messageId(entry);
+    const origin = this.origins.get(entry.id);
+    const originKey = JSON.stringify(origin);
     const project = this.options.binding.projectMessage;
-    if (!project) return message;
-    const value = parseSchema(MessageSchema, project(entry, message));
-    if (value.id !== message.id || value.entryId !== message.entryId) throw new Error('Message projection changed canonical identity.');
-    return boundMessage(value);
+    const source = entry.type === 'message' ? entry.message : entry;
+    const liveId = entry.type === 'message' ? this.liveIds.get(entry.message) : undefined;
+    // Pi can mutate a live message in place until message_end, even if it is already in history.
+    const cacheable = !liveId || liveId !== this.assistant;
+    const cached = this.messages.get(entry.id);
+    if (cacheable && cached?.id === id && cached.liveId === liveId && cached.originKey === originKey
+      && cached.project === project && cached.source === source) {
+      this.messages.delete(entry.id); this.messages.set(entry.id, cached); return cached;
+    }
+    if (cached) { this.messages.delete(entry.id); this.messagesBytes -= cached.bytes; }
+    let message = projectPiMessage(entry, id, origin);
+    if (project) {
+      const fallback = undisplayableMessage(message);
+      try { message = sanitizeMessage(project(entry, message), fallback); }
+      catch { message = fallback; }
+    }
+    const result = { id, liveId, originKey, project, source, message, bytes: Buffer.byteLength(JSON.stringify(message)) };
+    if (cacheable && result.bytes <= LIMITS.pageBytes) {
+      this.messages.set(entry.id, result); this.messagesBytes += result.bytes;
+      while (this.messages.size > 2 * LIMITS.pageEntries || this.messagesBytes > LIMITS.pageBytes) {
+        const [key, value] = this.messages.entries().next().value!;
+        this.messages.delete(key); this.messagesBytes -= value.bytes;
+      }
+    }
+    return result;
   }
 }
 
@@ -571,43 +603,41 @@ function isMessageEntry(entry: SessionEntry): entry is MessageEntry {
   return entry.type === 'message' || entry.type === 'custom_message' && entry.display || entry.type === 'compaction' || entry.type === 'branch_summary';
 }
 export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Origin): Message {
-  const raw = entry.type === 'compaction' ? { role: 'system' as const, content: entry.summary }
-    : entry.type === 'branch_summary' ? { role: 'system' as const, content: entry.summary } : entry.type === 'custom_message' ? { role: 'custom' as const, content: entry.content, customType: entry.customType, details: entry.details } : entry.message;
-  const content: Message['content'] = [];
-  const rawContent = 'content' in raw ? raw.content : raw.role === 'bashExecution' ? `$ ${raw.command}\n${raw.output}` : 'summary' in raw ? raw.summary : undefined;
-  if (typeof rawContent === 'string') content.push({ type: 'text', text: rawContent });
-  else if (Array.isArray(rawContent)) for (const part of rawContent) {
-    if (part.type === 'text') content.push({ type: 'text', text: part.text });
-    else if (part.type === 'thinking') content.push({ type: 'thinking', text: part.thinking });
-    else if (part.type === 'image') {
-      validateBase64(part.data);
-      content.push({ type: 'image', mimeType: part.mimeType as 'image/png', data: part.data });
+  const role = entry.type === 'message' ? entry.message?.role : entry.type === 'custom_message' ? 'custom' : 'system';
+  const fallback = undisplayableMessage({ id, entryId: entry.id, ...(entry.parentId ? { parentEntryId: entry.parentId } : {}),
+    role: role === 'toolResult' ? 'tool' : ['user', 'assistant', 'system', 'custom'].includes(role) ? role as Message['role'] : 'custom',
+    timestamp: Math.max(0, Date.parse(entry.timestamp) || 0) });
+  try {
+    const raw = entry.type === 'compaction' ? { role: 'system' as const, content: entry.summary }
+      : entry.type === 'branch_summary' ? { role: 'system' as const, content: entry.summary } : entry.type === 'custom_message' ? { role: 'custom' as const, content: entry.content, customType: entry.customType, details: entry.details } : entry.message;
+    const content: unknown[] = [];
+    const rawContent = 'content' in raw ? raw.content : raw.role === 'bashExecution' ? `$ ${raw.command}\n${raw.output}` : 'summary' in raw ? raw.summary : undefined;
+    if (typeof rawContent === 'string') content.push({ type: 'text', text: rawContent });
+    else if (Array.isArray(rawContent)) for (const part of rawContent) {
+      if (part.type === 'text') content.push({ type: 'text', text: part.text });
+      else if (part.type === 'thinking') content.push({ type: 'thinking', text: part.thinking });
+      else if (part.type === 'image') content.push({ type: 'image', mimeType: part.mimeType, data: part.data });
+      else if (part.type === 'toolCall') content.push({ type: 'tool_call', id: part.id, name: part.name, arguments: part.arguments });
     }
-    else if (part.type === 'toolCall') content.push({ type: 'tool_call', id: part.id, name: part.name, arguments: parseSchema(JsonValueSchema, part.arguments) });
-  }
-  if (raw.role === 'toolResult') {
-    const images = content.filter(part => part.type === 'image');
-    content.splice(0, content.length, { type: 'tool_result', id: raw.toolCallId, text: resultText(raw), isError: raw.isError,
-      ...(raw.details === undefined ? {} : { details: parseSchema(JsonValueSchema, raw.details) }) }, ...images);
-  }
-  const display = entry.type === 'message' ? messageDisplay(entry.message) : undefined;
-  let details = 'details' in raw ? raw.details : undefined;
-  if (raw.role === 'bashExecution') {
-    details = { command: raw.command, exitCode: raw.exitCode ?? null, cancelled: raw.cancelled, truncated: raw.truncated,
-      excludeFromContext: raw.excludeFromContext ?? false, ...(raw.fullOutputPath ? { fullOutputPath: raw.fullOutputPath } : {}) };
-    content.splice(0, content.length, { type: 'text', text: raw.output });
-  }
-  // Tool results keep their own details on the tool_result part, so non-object details are replaced to carry display metadata.
-  if (display) details = details !== null && typeof details === 'object' && !Array.isArray(details)
-    ? { ...details, [MESSAGE_DISPLAY_KEY]: display } : { [MESSAGE_DISPLAY_KEY]: display };
-  return boundMessage(parseSchema(MessageSchema, { id, entryId: entry.id, ...(entry.parentId ? { parentEntryId: entry.parentId } : {}),
-    role: raw.role === 'toolResult' ? 'tool' : ['user', 'assistant', 'system', 'custom'].includes(raw.role) ? raw.role : 'custom',
-    content, timestamp: Math.max(0, Date.parse(entry.timestamp) || 0),
-    ...('customType' in raw ? { customType: raw.customType } : {}),
-    ...(raw.role === 'bashExecution' ? { customType: 'bashExecution' } : {}),
-    ...(details === undefined ? {} : { details }),
-    ...(origin ? { origin } : {}),
-  }));
+    if (raw.role === 'toolResult') {
+      const images = Array.isArray(rawContent) ? rawContent.filter(part => part.type === 'image').map(part => ({ type: 'image', mimeType: part.mimeType, data: part.data })) : [];
+      content.splice(0, content.length, { type: 'tool_result', id: raw.toolCallId, text: resultText(raw), isError: raw.isError,
+        ...(raw.details === undefined ? {} : { details: raw.details }) }, ...images);
+    }
+    const display = entry.type === 'message' ? messageDisplay(entry.message) : undefined;
+    let details = 'details' in raw ? raw.details : undefined;
+    if (raw.role === 'bashExecution') {
+      details = { command: raw.command, exitCode: raw.exitCode ?? null, cancelled: raw.cancelled, truncated: raw.truncated,
+        excludeFromContext: raw.excludeFromContext ?? false, ...(raw.fullOutputPath ? { fullOutputPath: raw.fullOutputPath } : {}) };
+      content.splice(0, content.length, { type: 'text', text: raw.output });
+    }
+    return sanitizeMessage({ ...fallback, content,
+      ...('customType' in raw ? { customType: raw.customType } : {}),
+      ...(raw.role === 'bashExecution' ? { customType: 'bashExecution' } : {}),
+      ...(details === undefined ? {} : { details }),
+      ...(origin ? { origin } : {}),
+    }, fallback, display);
+  } catch { return fallback; }
 }
 export function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value) ?? 'null').digest('hex'); }
 export function boundedText(value: string, bytes: number): string {
