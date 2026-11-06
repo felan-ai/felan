@@ -1,8 +1,10 @@
 # ADR 0002: Share the Bash process surface across models
 
-> Status: Accepted
+> Status: Accepted; foreground execution superseded by ADR 0047
 > Date: 2026-09-09
 > Deciders: Felan maintainers
+
+Foreground execution now follows [ADR 0047](0047-run-foreground-bash-in-process.md).
 
 ## Context
 

@@ -18,6 +18,7 @@ export function createLocalProcessAdapter(): ProcessAdapter {
         || typeof info.command !== 'string' || !Number.isSafeInteger(info.startedAt)
         || !['running', 'completed', 'failed', 'killed', 'unknown'].includes(info.status)
         || info.processToken !== undefined && typeof info.processToken !== 'string') throw new Error('Invalid background job identity.');
+      if (info.executionMode === 'attached') return undefined;
       return {
         id: info.id, kind: info.executionMode === 'pty' ? 'pty' : 'detached', status: info.status,
         command: info.command, startedAt: info.startedAt, outputPath: info.logPath,

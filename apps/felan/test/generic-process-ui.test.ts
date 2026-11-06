@@ -23,7 +23,7 @@ async function fixture(count = 20) {
   const h = extensionFixture();
   let jobs = Array.from({ length: count }, (_, index) => job(count - index));
   const shell = vi.fn(async () => ({ code: 0, killed: false, stdout: '', stderr: '' }));
-  Object.assign(h.api.runtime, { shell });
+  Object.assign(h.api.runtime, { shell, processes: { startShell: vi.fn() } });
   Object.assign(h.api, { setActiveTools: vi.fn(), sendMessage: vi.fn() });
   const list = vi.spyOn(BackgroundBashManager.prototype, 'list').mockRejectedValue(new Error('Unexpected unbounded process list'));
   const query = vi.spyOn(BackgroundBashManager.prototype, 'query').mockImplementation(async (options = {}) => {

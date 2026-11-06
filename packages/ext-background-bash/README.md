@@ -3,14 +3,15 @@
 Provider-neutral project-local Bash execution for Felan sessions. The extension augments
 `bash` with explicit backgrounding, bounded foreground waiting, optional PTY input,
 and adds tools to list, read, wait for, write to, and stop processes.
-Output and process metadata live under
+Background job output and metadata live under
 `<session-storage>/background-bash/<workspace-key>/jobs`. Local Felan maps
 `<session-storage>` to
 `$FELAN_AGENT_DIR/storage/sessions/<encoded-root-session-id>`, while cloud
 adapters map it to their root-session state path.
 
 The implementation routes filesystem and process operations through the active
-`AgentRuntime`. Background launch uses a detached POSIX shell runner. Host,
+`AgentRuntime`. Foreground execution requires `runtime.processes.startShell`.
+Detached background launch uses a POSIX shell runner. Host,
 Docker, and Daytona runtimes need `nohup`, `ps`, `sleep`, and either `setsid`
 or shell job control so each process receives an isolated process group. The extension
 captures `runtime.storage('session')` once; that handle must be
@@ -30,13 +31,14 @@ policy belongs to the model-facing prompt/tool composition, not to process
 ownership or runtime capability checks.
 
 This release requires a compatible `@felan-ai/agent-core` release because it uses the
-runtime's explicit POSIX shell flavor.
+runtime's explicit POSIX shell flavor and `runtime.processes.startShell`.
 
 ## Tools and controls
 
-- `bash({ command, background: true })` starts a detached process.
-- `bash({ command, timeout: 120 })` waits in the tool, then promotes the same process without restarting it.
-- `bash({ command, timeout: 0, tty: true })` starts an interactive PTY immediately.
+- `bash({ command })` runs an in-process child through `runtime.processes.startShell` without creating a job record.
+- `bash({ command, timeout: 120 })` waits up to 120 seconds, then promotes the same child to an attached background job without restarting it.
+- `bash({ command, background: true })` or `bash({ command, timeout: 0 })` starts a detached process with a durable job record.
+- `bash({ command, timeout: 0, tty: true })` starts an interactive PTY immediately. All `tty: true` jobs create their record before launch so the daemon can register the PTY under its job ID.
 - `write_background_bash({ id, chars })` sends exact stdin/control bytes to a PTY job.
 - `list_background_bash` returns 10 recent workspace processes. Optional
   `limit` (1–100), `cursor`, `status`, and
@@ -51,17 +53,38 @@ runtime's explicit POSIX shell flavor.
 The native TUI process/log view uses an inline frame. Its completion messages use
 a compact one-line summary; `Alt+A` reveals bounded details.
 
+Non-PTY foreground output returns the last 2000 lines / 50 KB. Only output above
+either limit is written in full to
+`<session-storage>/background-bash/<workspace-key>/output/output-*.log`. The
+extension keeps the newest 20 spill files in that workspace's output directory.
+
 The default foreground promotion window is 120 seconds and can be changed with
-`extensionConfig.backgroundBash.foregroundTimeoutSeconds`. Cancelling a foreground
-wait terminates its process tree; cancelling a wait for an already-backgrounded job
-does not terminate that job. Detached jobs remain discoverable after restart when
-their runtime storage persists. PTY handles are root-session-scoped and are not
-reattachable after shutdown. The native TUI footer shows the number of running processes.
+`extensionConfig.backgroundBash.foregroundTimeoutSeconds`. Promotion creates a
+job with `executionMode: 'attached'`, an `output.log`, and completion messages.
+It appears in `list_background_bash` and `/processes`, but stops when the session
+that started it closes or reloads; a subagent's promoted job ends with that
+subagent. Cancelling a turn does not stop it. Stopped attached jobs record
+`killed` and are never reattached. They have no stdin; use `tty: true` for
+interactive input. Attached output is appended to `output.log` as it is read.
+
+A foreground command finishes when its shell exits. A background descendant
+started with `cmd &` that keeps the output pipes open delays the result by at
+most 500 ms; it keeps running and is not tracked.
+
+The daemon tracks the live child as a `foreground` process before and after
+promotion so it can stop the child on shutdown. The native TUI footer excludes
+foreground processes, including promoted commands, from its running-process
+count. It counts running detached and PTY jobs.
+
+Cancelling a foreground wait terminates its process tree; cancelling a wait for
+an already-backgrounded job does not terminate that job. Detached jobs remain
+discoverable after restart when their runtime storage persists. PTY handles are
+root-session-scoped and are not reattachable after shutdown.
 Live PTY status comes from its root-session handle, not detached-runner PID probes.
 Status reads and input remain available while another caller waits in the foreground.
 Terminal outcomes and completion timestamps are recorded once. An orphaned PTY is
 reported as `unknown`; its stored PID is not used to reattach or signal a process.
-Processes started by the active session deliver a
+Jobs returned as background processes by `bash` in the active session deliver a
 completion message automatically. The message steers an active run at its next
 model-call boundary or triggers a turn when the agent is idle. A terminal result
 returned directly by `list_background_bash`, `read_background_bash`,
@@ -115,8 +138,10 @@ Verified terminal jobs beyond the newest 1,000, or older than seven days, are
 eligible. A five-minute completion grace period protects recent notifications.
 Running, unknown, malformed, legacy-only, mismatched, or otherwise unverified
 records are retained. Matching `info.json` and `completion.json` terminal
-status/timestamps are required; any recorded PID and process group must be
-positively absent. Records with a PID but no verifiable group are preserved.
+status/timestamps are required. Runner completion times truncated to whole
+seconds are valid even when the millisecond start time is later within that same
+second. Any recorded PID and process group must be positively absent. Records
+with a PID but no verifiable group are preserved.
 Uncertain process probes retain the record. Removal optionally uses `python3`
 through `AgentRuntime.exec`, opening the complete directory chain with
 `O_NOFOLLOW` and unlinking only known flat job files relative to pinned directory
@@ -193,7 +218,7 @@ the POSIX shell/process facilities listed in
 does not install operating-system utilities, and the feature remains inactive
 when they are unavailable.
 
-The extension owns detached job records, logs, lifecycle, PTY controls, and the
+The extension owns background job records, logs, lifecycle, PTY controls, and the
 six model-facing process controls. It does not provide a sandbox.
 
 ## Related documentation

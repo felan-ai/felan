@@ -125,6 +125,23 @@ describe('incremental terminal retention', () => {
     expect(storage.files.has(`${store.jobsDir}/${id(30)}/info.json`)).toBe(true);
   });
 
+  it.each([
+    { limit: 'count', count: 1_001, age: 60 * 60 * 1_000 },
+    { limit: 'age', count: 1, age: TERMINAL_MAX_AGE_MS + 1_000 },
+  ])('counts second-truncated completions for $limit retention but keeps completions before the starting second', async ({ count, age }) => {
+    const { store, storage, runtime } = fixture(0);
+    const completedAt = Math.floor((Date.now() - age) / 1_000) * 1_000;
+    for (let n = 0; n <= count; n++) {
+      seed(storage, store.jobsDir, n, 'completed', undefined, completedAt);
+      patch(storage, store.jobsDir, n, { startedAt: completedAt + (n === count ? 1_000 : 999) });
+    }
+    const retention = maintenance(runtime, storage, store.jobsDir);
+    for (let n = 0; n < 32 * RETENTION_INTERVAL; n++) await retention.recordMutation();
+    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(`${store.jobsDir}/${id(0)}`, { recursive: true });
+    expect(storage.files.has(`${store.jobsDir}/${id(0)}/info.json`)).toBe(false);
+    expect(storage.files.has(`${store.jobsDir}/${id(count)}/info.json`)).toBe(true);
+  });
+
   it('triggers at 32 mutations, expiring only verified inactive terminal records', async () => {
     const { store, storage, runtime } = fixture(0);
     for (let n = 0; n < 7; n++) seed(storage, store.jobsDir, n, n === 1 ? 'unknown' : n === 2 ? 'running' : 'completed', undefined, Date.now() - TERMINAL_MAX_AGE_MS - 1);
@@ -161,6 +178,21 @@ describe('incremental terminal retention', () => {
       code: command.startsWith('ps -p ') ? 1 : 0, stdout: command.startsWith('ps -p ') ? '' : '456\n', stderr: '', killed: false,
     }));
     for (let n = 0; n < RETENTION_INTERVAL; n++) await retention.recordMutation();
+    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(`${store.jobsDir}/${id(0)}`, { recursive: true });
+  });
+
+  it('expires an old terminal attached job once its PID and process group are absent', async () => {
+    const { store, storage, runtime } = fixture(0);
+    seed(storage, store.jobsDir, 0, 'completed', undefined, Date.now() - TERMINAL_MAX_AGE_MS - 1);
+    patch(storage, store.jobsDir, 0, { executionMode: 'attached', pid: 123, processGroupId: 123 });
+    vi.mocked(runtime.shell).mockImplementation(async command => ({
+      code: command.startsWith('ps -p ') ? 1 : 0,
+      stdout: command.startsWith('ps -p ') ? '' : '456\n', stderr: '', killed: false,
+    }));
+    const retention = maintenance(runtime, storage, store.jobsDir);
+    for (let n = 0; n < RETENTION_INTERVAL; n++) await retention.recordMutation();
+    expect(runtime.shell).toHaveBeenCalledWith("ps -p '123' -o pid=", { shellFlavor: 'posix' });
+    expect(runtime.shell).toHaveBeenCalledWith('ps -eo pgid=', { shellFlavor: 'posix' });
     expect(storage.remove).toHaveBeenCalledExactlyOnceWith(`${store.jobsDir}/${id(0)}`, { recursive: true });
   });
 

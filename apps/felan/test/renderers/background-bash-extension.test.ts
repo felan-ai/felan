@@ -330,26 +330,32 @@ describe('background bash extension activation', () => {
 
   it('promotes a foreground command after its timeout without killing it', async () => {
     const running = backgroundJob('running');
-    vi.spyOn(BackgroundBashManager.prototype, 'start').mockResolvedValue(running);
-    vi.spyOn(BackgroundBashManager.prototype, 'wait').mockResolvedValue({ job: running, timedOut: true });
-    const harness = createHarness();
+    const start = vi.spyOn(BackgroundBashManager.prototype, 'start');
+    const promote = vi.spyOn(BackgroundBashManager.prototype, 'promote').mockResolvedValue(running);
+    const terminate = vi.fn(async () => {});
+    const child = {
+      pid: 123,
+      read: async (_offset: number, options?: { waitMs?: number }) => {
+        await new Promise((resolve) => setTimeout(resolve, options?.waitMs ?? 0));
+        return { output: new Uint8Array(), nextOffset: 0, running: true };
+      },
+      write: vi.fn(async () => {}),
+      terminate,
+      dispose: vi.fn(async () => {}),
+    };
+    const harness = createHarness({ ...unusedRuntime(), processes: { startShell: vi.fn(async () => child) } });
     await harness.activate();
     await harness.emit('session_start', {}, context('anthropic'));
-    const bash = harness.registerTool.mock.calls[0]?.[0] as {
-      execute: (
-        id: string,
-        params: { command: string; timeout: number },
-        signal: AbortSignal | undefined,
-        update: undefined,
-        ctx: ExtensionContext,
-      ) => Promise<unknown>;
-    };
+    const bash = registeredTool(harness, 'bash');
 
-    const result = await bash.execute('call', { command: 'sleep 5', timeout: 2 }, undefined, undefined, context('anthropic'));
+    const result = await bash.execute('call', { command: 'sleep 5', timeout: 0.05 }, undefined, undefined, context('anthropic'));
     expect(result).toMatchObject({
       content: [{ type: 'text', text: expect.stringContaining('Started background process.') }],
       details: { background: true, id: running.meta.id },
     });
+    expect(promote).toHaveBeenCalledWith('sleep 5', child, expect.any(Number));
+    expect(start).not.toHaveBeenCalled();
+    expect(terminate).not.toHaveBeenCalled();
   });
 
   it('waits through PTY output until the command actually exits', async () => {
@@ -643,6 +649,7 @@ function unusedRuntime(): AgentRuntime {
       remove: unused,
     }),
     exec: unused,
+    processes: { startShell: unused },
     shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }),
     readFile: unused,
     writeFile: unused,

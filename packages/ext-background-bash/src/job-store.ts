@@ -38,7 +38,7 @@ export interface BackgroundBashInfo {
   startedAt: number;
   updatedAt: number;
   status: BackgroundBashStatus;
-  executionMode?: 'detached' | 'pty';
+  executionMode?: 'detached' | 'pty' | 'attached';
   promotedAt?: number;
   outputTruncated?: boolean;
   pid?: number;
@@ -68,7 +68,7 @@ export interface BackgroundBashMeta {
   processGroupId?: number;
   processToken?: string;
   creatorPid: number;
-  executionMode?: 'detached' | 'pty';
+  executionMode?: 'detached' | 'pty' | 'attached';
   promotedAt?: number;
   outputTruncated?: boolean;
 }
@@ -83,7 +83,7 @@ export interface BackgroundBashStatusFile {
   signal?: string | null;
   completedAt?: number;
   error?: string;
-  executionMode?: 'detached' | 'pty';
+  executionMode?: 'detached' | 'pty' | 'attached';
   promotedAt?: number;
   outputTruncated?: boolean;
 }
@@ -160,7 +160,11 @@ export class BackgroundBashJobStore {
     this.#retention = new BackgroundBashRetention(runtime, storage, this.jobsDir, () => this.listIds(), (id, operation) => this.withJob(id, operation));
   }
 
-  async createJob(command: string, executionMode: 'detached' | 'pty' = 'detached'): Promise<BackgroundBashJob> {
+  async createJob(
+    command: string,
+    executionMode: 'detached' | 'pty' | 'attached' = 'detached',
+    options?: { startedAt?: number; pid?: number; processGroupId?: number; promotedAt?: number },
+  ): Promise<BackgroundBashJob> {
     await this.#storage.mkdir(this.jobsDir, { recursive: true });
 
     let id = generateJobId();
@@ -189,12 +193,15 @@ export class BackgroundBashJobStore {
       runnerPath: join(jobDir, 'runner.sh'),
       shell: 'sh',
       shellArgs: [],
-      startedAt: now,
+      startedAt: options?.startedAt ?? now,
       updatedAt: now,
       status: 'running',
       executionMode,
       creatorPid: process.pid,
-      processToken: randomBytes(16).toString('hex'),
+      ...(executionMode === 'attached' ? {} : { processToken: randomBytes(16).toString('hex') }),
+      ...(options?.pid === undefined ? {} : { pid: options.pid }),
+      ...(options?.processGroupId === undefined ? {} : { processGroupId: options.processGroupId }),
+      ...(options?.promotedAt === undefined ? {} : { promotedAt: options.promotedAt }),
     };
 
     const job = await this.withJob(id, async () => {
@@ -272,7 +279,7 @@ export class BackgroundBashJobStore {
     id: string,
     pid: number,
     processGroupId?: number,
-    options?: { executionMode?: 'detached' | 'pty'; promotedAt?: number },
+    options?: { executionMode?: 'detached' | 'pty' | 'attached'; promotedAt?: number },
   ): Promise<BackgroundBashJob | undefined> {
     return this.withJob(id, async () => {
       const job = await this.readStoredJob(id);
@@ -323,7 +330,7 @@ export class BackgroundBashJobStore {
 
   async markRunning(
     id: string,
-    executionMode: 'detached' | 'pty',
+    executionMode: 'detached' | 'pty' | 'attached',
     promotedAt: number,
   ): Promise<BackgroundBashJob | undefined> {
     return this.withJob(id, async () => {
@@ -555,8 +562,8 @@ function statusValue(value: unknown): BackgroundBashStatus | undefined {
     : undefined;
 }
 
-function executionMode(value: unknown): 'detached' | 'pty' {
-  return value === 'pty' ? 'pty' : 'detached';
+function executionMode(value: unknown): 'detached' | 'pty' | 'attached' {
+  return value === 'pty' || value === 'attached' ? value : 'detached';
 }
 
 function numberValue(value: unknown): number | undefined {

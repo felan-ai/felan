@@ -9,7 +9,7 @@ import { createLocalProcessAdapter } from '../../src/providers/process-adapter.j
 const temporary: string[] = [];
 afterEach(async () => { await Promise.all(temporary.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
-it('describes background job storage as a neutral process record', async () => {
+it.each(['detached', 'pty', 'attached'] as const)('handles %s background job records', async executionMode => {
   const directory = await mkdtemp(join(tmpdir(), 'felan-process-adapter-')); temporary.push(directory);
   await mkdir(join(directory, 'session'));
   await mkdir(join(directory, 'agent'));
@@ -21,15 +21,17 @@ it('describes background job storage as a neutral process record', async () => {
   } }) as AgentRuntime;
   const job = await new BackgroundBashManager(runtime).start('synthetic detached');
   const adapter = createLocalProcessAdapter();
-  const bytes = await runtime.storage().readFile(job.meta.infoPath);
-  expect(adapter.describeJob(runtime, job.meta.infoPath, bytes)).toEqual({
-    id: job.meta.id, kind: 'detached', status: 'running', command: 'synthetic detached',
+  const bytes = new TextEncoder().encode(JSON.stringify({ ...job.info, executionMode }));
+  const record = adapter.describeJob(runtime, job.meta.infoPath, bytes);
+  if (executionMode === 'attached') expect(record).toBeUndefined();
+  else expect(record).toEqual({
+    id: job.meta.id, kind: executionMode, status: 'running', command: 'synthetic detached',
     startedAt: job.meta.startedAt, startIdentity: job.meta.processToken,
     outputPath: job.meta.logPath, commandIdentity: [job.meta.runnerPath, job.meta.processToken],
   });
   expect(adapter.describeJob(runtime, job.meta.logPath, bytes)).toBeUndefined();
   for (const change of [{ id: 'invalid' }, { infoPath: '/other/info.json' }, { jobDir: '/other' }, { logPath: '/other/output.log' }]) {
-    const altered = new TextEncoder().encode(JSON.stringify({ ...job.info, ...change }));
+    const altered = new TextEncoder().encode(JSON.stringify({ ...job.info, executionMode, ...change }));
     expect(() => adapter.describeJob(runtime, job.meta.infoPath, altered)).toThrow('identity');
   }
   expect(() => adapter.describeJob(runtime, job.meta.infoPath, new TextEncoder().encode('{'))).toThrow('record');

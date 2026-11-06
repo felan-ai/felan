@@ -78,6 +78,73 @@ describe.skipIf(!supported)('registry process ownership', () => {
     expect(f.store.resource(row.id)).toBeUndefined(); expect(dispose).toHaveBeenCalledOnce();
   });
 
+  it('records an aborted foreground exit when its caller terminates and disposes without reading', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    let running = true;
+    const handle: AgentRuntimeProcess = { pid: 42,
+      read: vi.fn(async offset => ({ output: new Uint8Array(), nextOffset: offset, running, ...(running ? {} : { exitCode: 130 }) })),
+      write: vi.fn(async () => {}), terminate: vi.fn(async () => { running = false; }), dispose: vi.fn(async () => {}),
+    };
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, { processes: { startShell: async () => handle } });
+    const process = await runtime.processes!.startShell('aborted foreground');
+    const row = f.store.resources(b.rootSessionId)[0]!;
+    expect(f.registry.processes.activeCount(b.rootSessionId)).toBe(1);
+    await process.terminate(); await process.dispose();
+    expect(handle.read).toHaveBeenCalledExactlyOnceWith(0, { maxBytes: 0 });
+    expect(handle.dispose).toHaveBeenCalledOnce();
+    expect(f.store.resource(row.id)).toMatchObject({ state: 'exited', exitCode: 130 });
+    expect(f.registry.processes.activeCount(b.rootSessionId)).toBe(0);
+    expect(f.registry.processes.blocksEviction(b.rootSessionId)).toBe(false);
+    expect(f.registry.processes.liveRoots().size).toBe(0);
+    expect(await f.registry.processes.interruptibleCount()).toBe(0);
+    await expect(f.registry.processes.prepareStop(b.sessionId, row.id)).resolves.toBeUndefined();
+    await expect(f.registry.processes.stopForSession(b.sessionId, row.id, 'SIGTERM')).resolves.toBeUndefined();
+    await expect(f.registry.processes.stop(b.rootSessionId, row.id, 'SIGKILL')).resolves.toBeUndefined();
+    await expect(process.read(0)).resolves.toMatchObject({ running: false, exitCode: 130, signal: 'SIGTERM' });
+    await process.dispose(); await f.registry.processes.settle(b.rootSessionId);
+    expect(handle.terminate).toHaveBeenCalledOnce(); expect(handle.dispose).toHaveBeenCalledOnce();
+    expect(handle.read).toHaveBeenCalledOnce();
+  });
+
+  for (const disposal of ['caller', 'daemon'] as const) it(`releases a completed foreground handle after ${disposal} disposal`, async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const output = new TextEncoder().encode('finished');
+    const handle: AgentRuntimeProcess = { pid: 42,
+      read: vi.fn(async (offset, options) => { const data = output.slice(offset, offset + (options?.maxBytes ?? output.byteLength));
+        return { output: data, nextOffset: offset + data.byteLength, running: false, exitCode: 23 }; }),
+      write: vi.fn(async () => {}), terminate: vi.fn(async () => {}), dispose: vi.fn(async () => {}),
+    };
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, { processes: { startShell: async () => handle } });
+    const process = await runtime.processes!.startShell('completed foreground');
+    const row = f.store.resources(b.rootSessionId)[0]!;
+    await process.read(0);
+    expect(f.registry.processes.list(b.rootSessionId)[0]).toMatchObject({ outputOffset: output.byteLength, state: 'exited' });
+    if (disposal === 'caller') await process.dispose(); else await f.registry.processes.settle(b.rootSessionId);
+    expect(f.registry.processes.list(b.rootSessionId)[0]).toMatchObject({ command: 'completed foreground', state: 'exited', exitCode: 23, outputOffset: 0, controllable: false });
+    expect(await f.registry.processes.read(b.sessionId, row.id, 3, 4)).toEqual({ data: new Uint8Array(), offset: 3, nextOffset: 3, state: 'exited', exitCode: 23 });
+    await expect(f.registry.processes.write(b.sessionId, row.id, new Uint8Array())).rejects.toThrow('stdin is unavailable');
+    expect(() => f.registry.processes.assertWritable(b.sessionId, row.id)).toThrow('stdin is unavailable');
+    expect(f.registry.processes.activeCount(b.rootSessionId)).toBe(0); expect(f.registry.processes.liveRoots().size).toBe(0);
+    expect(await f.registry.processes.interruptibleCount()).toBe(0);
+    await process.dispose(); expect(handle.dispose).toHaveBeenCalledOnce(); expect(handle.terminate).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a released process view when an earlier read finishes after disposal', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const gate = deferred(); f.releases.add(gate.resolve);
+    const handle: AgentRuntimeProcess = { pid: 42,
+      read: async (offset, options) => {
+        if (options?.maxBytes === 1) { await gate.promise; return { output: new Uint8Array([1]), nextOffset: 1, running: true }; }
+        return { output: new Uint8Array(), nextOffset: offset, running: false, exitCode: 0 };
+      },
+      write: async () => {}, terminate: async () => {}, dispose: async () => {},
+    };
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, { processes: { startShell: async () => handle } });
+    const process = await runtime.processes!.startShell('late read'); const reading = process.read(0, { maxBytes: 1 });
+    await process.dispose(); gate.resolve(); await reading;
+    expect(f.registry.processes.list(b.rootSessionId)[0]).toMatchObject({ state: 'exited', outputOffset: 0, exitCode: 0 });
+  });
+
   it('reconstructs terminal metadata without a probe and validates detached output only on demand', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42 }));

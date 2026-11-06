@@ -1,5 +1,5 @@
-import { join } from 'node:path';
-import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import { join, resolve } from 'node:path';
+import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeStorage } from '@felan-ai/agent-core';
 import { BackgroundBashCoordinator, type InteractiveBashProcess } from './coordinator.js';
 import { shellQuote } from './runtime-support.js';
 import { createOutputLog, readLogTail } from './logs.js';
@@ -22,13 +22,16 @@ const WAIT_POLL_MS = 500;
 const PROCESS_STATUS_GRACE_MS = 5_000;
 const STOP_PROCESS_WAIT_MS = 5_000;
 const RUNNER_MARKER_MAX_AGE_SECONDS = 3;
+const UNATTACHED_PROCESS_ERROR = 'Process is not attached to a live root session; its exit status is unavailable.';
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const pendingLaunches = new Map<string, Promise<void>>();
+const attachedOwners = new Map<string, BackgroundBashManager>();
 
 export class BackgroundBashManager {
   readonly #store: BackgroundBashJobStore;
   readonly #storage: AgentRuntimeStorage;
+  readonly #appendedSnapshots = new WeakSet<InteractiveBashProcess>();
 
   readonly #coordinator: BackgroundBashCoordinator;
 
@@ -36,6 +39,32 @@ export class BackgroundBashManager {
     this.#storage = runtime.storage('session');
     this.#store = new BackgroundBashJobStore(runtime, this.#storage);
     this.#coordinator = new BackgroundBashCoordinator(runtime, snapshot => this.#persistInteractiveSnapshot(snapshot.id, snapshot));
+  }
+
+  async promote(command: string, process: AgentRuntimeProcess, startedAt: number): Promise<BackgroundBashJob> {
+    const job = await this.#store.createJob(command, 'attached', {
+      startedAt,
+      ...(process.pid === undefined ? {} : { pid: process.pid, processGroupId: process.pid }),
+      promotedAt: Date.now(),
+    });
+    const key = resolve(job.meta.jobDir);
+    const finishLaunch = trackLaunch(key);
+    try {
+      await createOutputLog(this.#storage, job.meta.logPath);
+      attachedOwners.set(key, this);
+      await this.#coordinator.adopt(job.meta.id, process);
+      const updated = await this.#store.readJob(job.meta.id);
+      if (!updated) throw new Error(`Background process disappeared during promotion: ${job.meta.id}`);
+      return updated;
+    } catch (error) {
+      attachedOwners.delete(key);
+      await this.#store.markStatus(job.meta.id, {
+        status: 'failed', exitCode: null, signal: null, error: errorMessage(error),
+      });
+      throw error;
+    } finally {
+      finishLaunch();
+    }
   }
 
   async startInteractive(command: string): Promise<{ job: BackgroundBashJob; process: InteractiveBashProcess }> {
@@ -87,10 +116,28 @@ export class BackgroundBashManager {
   }
 
   async shutdownInteractive(): Promise<void> {
-    await this.#coordinator.shutdown();
+    try {
+      await this.#coordinator.shutdown();
+    } finally {
+      this.#releaseAttachedOwners();
+    }
   }
 
-  async markPromoted(id: string, executionMode: 'detached' | 'pty' = 'detached'): Promise<BackgroundBashJob | undefined> {
+  async shutdownAttached(): Promise<void> {
+    try {
+      await this.#coordinator.stopAttached();
+    } finally {
+      this.#releaseAttachedOwners();
+    }
+  }
+
+  #releaseAttachedOwners(): void {
+    for (const [key, owner] of attachedOwners) {
+      if (owner === this) attachedOwners.delete(key);
+    }
+  }
+
+  async markPromoted(id: string, executionMode: 'detached' | 'pty' | 'attached' = 'detached'): Promise<BackgroundBashJob | undefined> {
     return this.#store.markRunning(id, executionMode, Date.now());
   }
 
@@ -167,7 +214,7 @@ export class BackgroundBashManager {
   }
 
   async get(id: string): Promise<BackgroundBashJob> {
-    const wasStarting = pendingLaunches.has(join(this.#store.jobsDir, id));
+    const wasStarting = pendingLaunches.has(resolve(this.#store.jobsDir, id));
     const job = await this.#store.readJob(id);
     if (!job) throw new Error(`Background process not found: ${id}`);
     if (wasStarting) return job;
@@ -176,7 +223,13 @@ export class BackgroundBashManager {
 
   async #refreshJob(job: BackgroundBashJob): Promise<BackgroundBashJob> {
     const id = job.meta.id;
-    if (pendingLaunches.has(job.meta.jobDir) || this.#coordinator.isStarting(id)) return job;
+    const key = resolve(job.meta.jobDir);
+    if (pendingLaunches.has(key) || this.#coordinator.isStarting(id)) return job;
+    if (job.meta.executionMode === 'attached') {
+      const owner = attachedOwners.get(key);
+      if (owner && owner !== this) return owner.get(id);
+      if (owner !== this) return this.#normalizeJob(job);
+    }
     if (this.#coordinator.has(id)) {
       await this.readInteractive(id);
       const refreshed = await this.#store.readJob(id);
@@ -209,9 +262,29 @@ export class BackgroundBashManager {
 
   async stop(id: string, signal: NodeJS.Signals = 'SIGTERM'): Promise<BackgroundBashJob> {
     if (!isBackgroundBashJobId(id)) throw new Error(`Background process not found: ${id}`);
-    await pendingLaunches.get(join(this.#store.jobsDir, id));
+    const key = resolve(this.#store.jobsDir, id);
+    await pendingLaunches.get(key);
+    const stored = await this.#store.readJob(id);
+    if (!stored) throw new Error(`Background process not found: ${id}`);
+    if (stored.meta.executionMode === 'attached') {
+      const owner = attachedOwners.get(key);
+      if (owner && owner !== this) return owner.stop(id, signal);
+      if (owner !== this || !this.#coordinator.has(id)) {
+        return await this.#store.markStatus(id, {
+          status: 'unknown', exitCode: null, signal: null, error: UNATTACHED_PROCESS_ERROR,
+        }) ?? stored;
+      }
+    }
     if (this.#coordinator.has(id)) {
-      await this.stopInteractive(id, signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM');
+      try {
+        await this.stopInteractive(id, signal === 'SIGKILL' ? 'SIGKILL' : 'SIGTERM');
+      } catch (error) {
+        if (!this.#coordinator.has(id)) {
+          const latest = await this.#store.readJob(id);
+          if (latest && isTerminalStatus(latest.status.status)) return latest;
+        }
+        throw error;
+      }
       const interactive = await this.#store.readJob(id);
       if (interactive) return interactive;
     }
@@ -273,13 +346,22 @@ export class BackgroundBashManager {
   async #persistInteractiveSnapshot(id: string, snapshot: InteractiveBashProcess): Promise<void> {
     const job = await this.#store.readJob(id);
     if (!job) throw new Error(`Background process not found: ${id}`);
-    await this.#storage.writeFile(job.meta.logPath, encoder.encode(snapshot.output));
+    if (job.meta.executionMode === 'attached') {
+      if (!this.#appendedSnapshots.has(snapshot)) {
+        await this.#storage.appendFile(job.meta.logPath, encoder.encode(snapshot.output));
+        this.#appendedSnapshots.add(snapshot);
+      }
+    } else {
+      await this.#storage.writeFile(job.meta.logPath, encoder.encode(snapshot.output));
+    }
     if (snapshot.running) return;
     await this.#store.markStatus(id, snapshot.signal
       ? { status: 'killed', exitCode: null, signal: snapshot.signal }
       : snapshot.exitCode === undefined
         ? { status: 'unknown', exitCode: null, error: 'Interactive process exited without reporting an exit code.' }
         : { status: snapshot.exitCode === 0 ? 'completed' : 'failed', exitCode: snapshot.exitCode });
+    const key = resolve(job.meta.jobDir);
+    if (attachedOwners.get(key) === this) attachedOwners.delete(key);
   }
 
   async #stopUnregisteredProcess(job: BackgroundBashJob, pid: number): Promise<void> {
@@ -303,6 +385,12 @@ export class BackgroundBashManager {
   async #normalizeJob(job: BackgroundBashJob): Promise<BackgroundBashJob> {
     if (job.status.status !== 'running') return job;
 
+    if (job.meta.executionMode === 'attached') {
+      if (Date.now() - (job.meta.promotedAt ?? job.meta.startedAt) <= PROCESS_STATUS_GRACE_MS) return job;
+      return await this.#store.markStatus(job.meta.id, {
+        status: 'unknown', exitCode: null, signal: null, error: UNATTACHED_PROCESS_ERROR,
+      }) ?? job;
+    }
     const pid = job.status.pid ?? job.meta.pid;
     const now = Date.now();
     if (now - job.status.startedAt <= PROCESS_STATUS_GRACE_MS) return job;
@@ -639,11 +727,12 @@ function compareJobsForList(a: BackgroundBashJob, b: BackgroundBashJob): number 
 }
 
 function trackLaunch(path: string): () => void {
+  const key = resolve(path);
   let finish!: () => void;
   const pending = new Promise<void>((resolve) => { finish = resolve; });
-  pendingLaunches.set(path, pending);
+  pendingLaunches.set(key, pending);
   return () => {
-    if (pendingLaunches.get(path) === pending) pendingLaunches.delete(path);
+    if (pendingLaunches.get(key) === pending) pendingLaunches.delete(key);
     finish();
   };
 }

@@ -162,10 +162,10 @@ function processRuntime(f: Awaited<ReturnType<typeof serverFixture>>, session = 
     terminate: vi.fn(async () => { running = false; }), dispose: vi.fn(async () => {}),
   };
   const start = vi.fn(async () => process);
-  f.registry.processes.wrap({ ...f.root.agentRuntime, processes: { startShell: start } }, { session, root: f.store.session(session).root });
+  const runtime = f.registry.processes.wrap({ ...f.root.agentRuntime, processes: { startShell: start } }, { session, root: f.store.session(session).root });
   const request = requestId();
   f.store.admit({ v: 1, id: request, op: 'shell.execute', session, params: { command: 'synthetic', includeInContext: false } }, 'owner');
-  return { process, start, request, writes, setOutput: (bytes: Uint8Array) => { output = new Uint8Array(bytes); } };
+  return { process, start, request, runtime, writes, setOutput: (bytes: Uint8Array) => { output = new Uint8Array(bytes); } };
 }
 
 describe('registry-backed command dispatch', () => {
@@ -302,6 +302,27 @@ describe('registry-backed command dispatch', () => {
     expect(p.process.terminate).toHaveBeenCalledWith('SIGTERM');
     expect(await f.registry.processes.read(id, resourceId, 0, 64)).toMatchObject({ state: 'exited', exitCode: 0 });
     await expect(f.registry.processes.write(id, resourceId, input)).rejects.toThrow('stdin is unavailable');
+  });
+
+  it('cancels shell.execute without stopping a foreground process started through the wrapped runtime', async () => {
+    const f = await fixture(); const id = f.root.sessionId; const foreground = processRuntime(f);
+    f.store.markDispatched(foreground.request);
+    const { resourceId } = await f.registry.processes.startForeground(foreground.request, id, { command: 'synthetic', includeInContext: false });
+    const background = processRuntime(f);
+    const process = await background.runtime.processes!.startShell('background job');
+    try {
+      expect(resourceId).toBe(`foreground:${foreground.request}`);
+      expect(await f.registry.processes.read(id, resourceId, 0, 64)).toMatchObject({ state: 'running' });
+      expect(f.store.resources(id).find(row => row.id !== resourceId)).toMatchObject({ kind: 'foreground', state: 'running' });
+      await f.registry.processes.cancelForeground(id);
+      expect(foreground.process.terminate).toHaveBeenCalledExactlyOnceWith('SIGTERM');
+      expect(await f.registry.processes.read(id, resourceId, 0, 64)).toMatchObject({ state: 'exited' });
+      expect(background.process.terminate).not.toHaveBeenCalled();
+      expect(await process.read(0, { maxBytes: 0 })).toMatchObject({ running: true });
+    } finally { await f.registry.processes.settle(id); }
+    expect(foreground.process.dispose).toHaveBeenCalledOnce();
+    expect(background.process.terminate).toHaveBeenCalledExactlyOnceWith('SIGTERM');
+    expect(background.process.dispose).toHaveBeenCalledOnce();
   });
 
   it('bounds process byte ranges, reports discarded offsets and rejects raw-PID or foreign-root access', async () => {

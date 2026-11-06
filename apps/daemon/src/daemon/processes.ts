@@ -13,6 +13,8 @@ import { boundedText } from './projection.js';
 import { readOwnedOutputRange } from './session-files.js';
 import { pathInside } from './target.js';
 
+const FOREGROUND_RESOURCE_PREFIX = 'foreground:';
+
 interface Scope { session: string; root: string }
 interface Lifetime { scope: Scope; runtime: AgentRuntime; draining: boolean; revoked: boolean }
 interface LiveProcess { raw: AgentRuntimeProcess; process: AgentRuntimeProcess; view: ProcessView; transport: boolean; settled: boolean; disposed: boolean; signal?: AgentRuntimeTerminationSignal }
@@ -165,7 +167,7 @@ export class RegistryProcesses {
     if (request.identity.bytes !== Buffer.byteLength(payload) || request.identity.sha256 !== createHash('sha256').update(payload).digest('hex')) throw new Error('Shell command differs from its admitted payload.');
     if (!lifetime.runtime.processes) throw new Error('Foreground processes are unavailable.');
     if (this.foregroundStarts.has(requestId)) throw new Error('Foreground dispatch cannot be repeated.');
-    const resourceId = `foreground:${requestId}`;
+    const resourceId = `${FOREGROUND_RESOURCE_PREFIX}${requestId}`;
     if (this.options.store.resource(resourceId)) throw processFault('already_resolved', 'Foreground dispatch already has a durable resource intent.');
     this.foregroundStarts.set(requestId, resourceId);
     return this.track((async () => {
@@ -220,7 +222,8 @@ export class RegistryProcesses {
   }
 
   async cancelForeground(session: string): Promise<void> {
-    const rows = this.options.store.resources().filter(row => row.session === session && row.kind === 'foreground' && row.state === 'running');
+    const rows = this.options.store.resources().filter(row => row.session === session && row.kind === 'foreground'
+      && row.id.startsWith(FOREGROUND_RESOURCE_PREFIX) && row.state === 'running');
     for (const row of rows) await this.stop(row.root, row.id);
   }
 
@@ -295,10 +298,10 @@ export class RegistryProcesses {
   async prepareStop(requester: string, id: string): Promise<void> {
     let row = this.authorizeResource(requester, id);
     this.assertLifetime(this.creatorLifetime(row));
-    if (this.live.has(id)) return;
+    if (row.state === 'exited' || this.live.has(id)) return;
     await this.refresh(row.root);
     row = this.authorizeResource(requester, id); this.assertLifetime(this.creatorLifetime(row));
-    if (row.kind !== 'detached' || !this.views.get(id)?.controllable) throw processFault('unavailable', 'Process identity is missing or unverified.');
+    if (row.state !== 'exited' && (row.kind !== 'detached' || !this.views.get(id)?.controllable)) throw processFault('unavailable', 'Process identity is missing or unverified.');
   }
 
   async stopForSession(requester: string, id: string, signal: 'SIGTERM' | 'SIGKILL'): Promise<void> {
@@ -416,8 +419,10 @@ export class RegistryProcesses {
     if (!row || row.root !== root) throw new Error('Process not found in this root session.');
     const live = this.live.get(id);
     if (live) { await live.process.terminate(signal); await live.process.read(0, { maxBytes: 0 }); return; }
+    if (row.state === 'exited') return;
     await this.refresh(root);
     this.options.assertCurrent();
+    if (this.options.store.resource(id)?.state === 'exited') return;
     const runtime = this.runtime(row.session, root) ?? this.runtime(root, root);
     if (!runtime || !this.views.get(id)?.controllable || row.kind !== 'detached') throw new Error('Process identity is missing or unverified.');
     const adapter = this.options.processAdapter;
@@ -445,6 +450,7 @@ export class RegistryProcesses {
       const pending = [...this.operations].filter(([, { scope }]) => owns(scope)).map(([operation]) => operation);
       await join(pending);
       await join(handles.map(async item => {
+        if (item.disposed) return;
         const snapshot = await item.raw.read(0, { maxBytes: 0 });
         if (snapshot.running) throw new Error('A live process did not settle.');
         item.settled = true;
@@ -454,6 +460,7 @@ export class RegistryProcesses {
           if (row) this.update(row, 'exited', item.view);
         }
         await item.raw.dispose(); item.disposed = true;
+        this.live.delete(item.view.id); this.views.delete(item.view.id);
       }));
       if (failures.length) throw new AggregateError(failures, 'Owned processes did not settle.');
       if (![...this.operations.values()].some(({ scope }) => owns(scope)) && ![...this.live.values()].some(settles)) break;
@@ -502,8 +509,17 @@ export class RegistryProcesses {
           current();
           // A PTY outlives its starting runtime across reload; its callers check their own current lifetime.
           if ((key === 'write' || key === 'resize') && kind !== 'pty') this.assertLifetime(lifetime);
-          return this.track(Promise.resolve(Reflect.apply(value, target, args)).then(result => {
-            this.options.assertCurrent(); if (key === 'dispose') live.disposed = true; return result;
+          return this.track(Promise.resolve(Reflect.apply(value, target, args)).then(async result => {
+            this.options.assertCurrent();
+            if (key === 'dispose') {
+              live.disposed = true;
+              const snapshot = await live.raw.read(live.view.outputOffset, { maxBytes: 0 }); this.options.assertCurrent();
+              if (!snapshot.running) {
+                this.record(live, row, snapshot, false);
+                this.live.delete(id); this.views.delete(id);
+              }
+            }
+            return result;
           }), scope);
         };
       } });
@@ -536,6 +552,7 @@ export class RegistryProcesses {
     });
   }
   private record(live: LiveProcess, row: ControlResource, snapshot: { running: boolean; nextOffset: number; exitCode?: number }, advance: boolean): void {
+    if (this.live.get(row.id) !== live) return;
     live.settled ||= !snapshot.running;
     live.view = { ...live.view, state: live.settled ? 'exited' : 'running', controllable: !live.settled, outputOffset: advance ? Math.max(live.view.outputOffset, snapshot.nextOffset) : live.view.outputOffset, ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }) };
     if (this.options.store.resource(row.id)) this.update(row, live.view.state, live.view);

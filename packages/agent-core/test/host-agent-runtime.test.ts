@@ -686,6 +686,135 @@ describe('HostAgentRuntime', () => {
     await expect(waitForProcessExit(pid)).resolves.toBeUndefined();
   });
 
+  it.skipIf(process.platform === 'win32')('completes when the shell exits before its background descendants', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const started = Date.now();
+    const processHandle = await runtime.processes.startShell('(sleep 3) & echo started', {
+      shellFlavor: 'posix', login: false,
+    });
+    try {
+      const completed = await vi.waitFor(async () => {
+        const snapshot = await processHandle.read(0);
+        expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
+        return snapshot;
+      }, { timeout: 2_000 });
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(new TextDecoder().decode(completed.output)).toBe('started\n');
+    } finally {
+      try { process.kill(-processHandle.pid!, 'SIGKILL'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+      await processHandle.dispose();
+    }
+  });
+
+  it.skipIf(process.platform === 'win32').each(['stdout', 'stderr'] as const)(
+    'ignores chatty descendant %s after shell completion',
+    async (stream) => {
+      const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+      const processHandle = await runtime.processes.startShell(
+        `yes > /dev/null & yes${stream === 'stderr' ? ' >&2' : ''} &`,
+        { shellFlavor: 'posix', login: false },
+      );
+      try {
+        const completed = await vi.waitFor(async () => {
+          const snapshot = await processHandle.read(0, { maxBytes: 32 });
+          expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
+          return snapshot;
+        }, { timeout: 2_000 });
+        expect(completed.output.length).toBeGreaterThan(0);
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+          await delay(30);
+          await expect(processHandle.read(completed.nextOffset, { maxBytes: 32 })).resolves.toEqual({
+            output: new Uint8Array(), nextOffset: completed.nextOffset, running: false, exitCode: 0,
+          });
+        }
+      } finally {
+        try { process.kill(-processHandle.pid!, 'SIGKILL'); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+        await processHandle.dispose();
+      }
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')('escalates termination during the shell exit drain window', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const processHandle = await runtime.processes.startShell(
+      `sh -c 'trap "" TERM; echo ready; sleep 30' & echo $! > descendant.pid; exit 0`,
+      { shellFlavor: 'posix', login: false },
+    );
+    try {
+      const ready = await processHandle.read(0, { waitMs: 1_000 });
+      expect(new TextDecoder().decode(ready.output)).toContain('ready');
+      await waitForProcessExit(processHandle.pid!);
+      expect(await processHandle.read(ready.nextOffset)).toMatchObject({ running: true });
+      const descendantPid = Number(new TextDecoder().decode(await waitForFile(runtime, 'descendant.pid')));
+      const kill = vi.spyOn(process, 'kill');
+      await processHandle.terminate();
+      expect(kill).toHaveBeenCalledWith(-processHandle.pid!, 'SIGKILL');
+      await expect(waitForProcessExit(descendantPid)).resolves.toBeUndefined();
+      expect(await processHandle.read(ready.nextOffset)).toMatchObject({ running: false, exitCode: 0 });
+    } finally {
+      try { process.kill(-processHandle.pid!, 'SIGKILL'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+      await processHandle.dispose();
+    }
+  });
+
+  it('drains shell output before completion and releases it on dispose', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const script = "process.stdout.write('x'.repeat(200_000))";
+    const processHandle = await runtime.processes.startShell(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
+    );
+    try {
+      const completed = await vi.waitFor(async () => {
+        const snapshot = await processHandle.read(0);
+        expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
+        return snapshot;
+      }, { timeout: 2_000 });
+      expect(new TextDecoder().decode(completed.output)).toBe('x'.repeat(200_000));
+      expect(completed.nextOffset).toBe(200_000);
+      await processHandle.dispose();
+      const disposed = { output: new Uint8Array(), nextOffset: 200_000, running: false, exitCode: 0 };
+      await expect(processHandle.read(0)).resolves.toEqual(disposed);
+      await expect(processHandle.read(completed.nextOffset)).resolves.toEqual(disposed);
+      await processHandle.dispose();
+      await expect(processHandle.read(0)).resolves.toEqual(disposed);
+    } finally {
+      await processHandle.dispose();
+    }
+  });
+
+  it.skipIf(process.platform === 'win32')('discards late descendant output without closing its pipes on dispose', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const script = [
+      "const fs = require('node:fs')",
+      "const timer = setInterval(() => { if (fs.existsSync('release')) { clearInterval(timer); process.stdout.write('later', () => fs.writeFileSync('done', 'done')); } }, 10)",
+    ].join(';');
+    const processHandle = await runtime.processes.startShell(
+      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)} & echo started`,
+      { shellFlavor: 'posix', login: false },
+    );
+    try {
+      const completed = await vi.waitFor(async () => {
+        const snapshot = await processHandle.read(0);
+        expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
+        return snapshot;
+      }, { timeout: 2_000 });
+      await processHandle.dispose();
+      await runtime.writeFile('release', new Uint8Array());
+      await expect(waitForFile(runtime, 'done')).resolves.toEqual(new TextEncoder().encode('done'));
+      await delay(50);
+      await expect(processHandle.read(0)).resolves.toEqual({
+        output: new Uint8Array(), nextOffset: completed.nextOffset, running: false, exitCode: 0,
+      });
+    } finally {
+      try { process.kill(-processHandle.pid!, 'SIGKILL'); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+      await processHandle.dispose();
+    }
+  });
+
   it('supports literal stdio processes with separate bounded streams', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const script = "process.stdout.write('out\\n'); process.stderr.write('err\\n'); process.stdin.once('data', () => process.exit(0))";

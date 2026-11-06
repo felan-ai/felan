@@ -790,11 +790,27 @@ long-context behavior, and troubleshooting.
 ### Background processes
 
 `extensionConfig.backgroundBash.foregroundTimeoutSeconds` controls how long a
-foreground `bash` call waits before promoting the same process to a Background
-process. It defaults to `120`; `0` promotes immediately. `tty: true` starts a PTY,
-and `write_background_bash` sends exact input/control bytes. Detached jobs remain
-restart-discoverable when session storage persists; live PTYs end with the root
-session.
+non-PTY foreground `bash` call waits before promotion. It defaults to `120`
+seconds. Foreground commands run as in-process children through
+`runtime.processes.startShell` without a job record. They return the last 2000
+lines / 50 KB of output. Larger output spills in full to
+`<session-storage>/background-bash/<workspace-key>/output/output-*.log`; the
+newest 20 spill files are kept.
+
+A command that outlives a positive timeout becomes an attached background job
+without restarting. It gets a record with `executionMode: 'attached'`, an
+`output.log`, and completion messages, and appears in `list_background_bash` and
+`/processes`. It stops when the session that started it closes or reloads (a
+subagent's attached jobs end with that subagent), records `killed` when stopped,
+and is never reattached. Cancelling a turn does not stop it. The daemon still tracks the child
+as a `foreground` process, so the TUI footer does not count it. Attached jobs have
+no stdin.
+
+For non-PTY commands, setting `background: true` or a timeout of `0` starts a
+detached job immediately. Detached records remain discoverable after restart
+when session storage persists. `tty: true` starts a PTY with a job record from
+the start, and `write_background_bash` sends exact input/control bytes. Live
+PTYs end with the root session. Use `tty: true` when interactive input is needed.
 
 ### Web access
 

@@ -54,8 +54,8 @@ export async function testBackgroundBashTools(initialRuntime, workspace, reload)
     const largeOutput = "process.stdout.write('old line\\n'.repeat(40000) + 'tail-one\\ntail-two 🌍\\n'); process.exitCode = 7;";
     for (const params of [{}, { background: true }, { background: true, tty: true }]) {
       const result = await call('bash', { command: `node -e ${JSON.stringify(largeOutput)}`, timeout: 10, ...params });
-      remember(result.details);
       if (params.background) {
+        remember(result.details);
         const job = (await call('wait_background_bash', { id: result.details.id, timeout: 5 })).details.job;
         remember(job);
         assert.equal(job.status.exitCode, 7);
@@ -64,6 +64,7 @@ export async function testBackgroundBashTools(initialRuntime, workspace, reload)
         assert.doesNotMatch(tail.content[0].text, /old line/);
       } else {
         assert.equal(result.details.background, false);
+        assert.equal(result.details.id, undefined);
         assert.match(result.content[0].text, /tail-one\ntail-two 🌍/u);
       }
     }

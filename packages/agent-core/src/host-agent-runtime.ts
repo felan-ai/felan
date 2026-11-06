@@ -590,15 +590,36 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
 
 class HostRuntimeProcess extends HostBufferedProcess {
   readonly #child: ChildProcess;
+  #drainTimer: NodeJS.Timeout | undefined;
+  #terminating = false;
 
   constructor(child: ChildProcess) {
     super();
     this.#child = child;
-    child.stdout?.on('data', (chunk: Uint8Array) => this.appendOutput(chunk));
-    child.stderr?.on('data', (chunk: Uint8Array) => this.appendOutput(chunk));
+    let exitCode: number | undefined;
+    const complete = (code: number): void => {
+      clearTimeout(this.#drainTimer);
+      if (this.running) this.complete(code);
+    };
+    const append = (chunk: Uint8Array): void => {
+      if (this.running) this.appendOutput(chunk);
+    };
+    child.stdout?.on('data', append);
+    child.stderr?.on('data', append);
     child.once('error', (error) => this.appendOutput(Buffer.from(`${error.message}\n`)));
+    child.once('exit', (code, signal) => {
+      const result = code ?? signalExitCode(signal);
+      exitCode = result;
+      if (this.#terminating) return;
+      // Background descendants can hold the pipes open after the shell exits.
+      // Let ready pipe data reach the poll phase even after an event-loop stall.
+      this.#drainTimer = setTimeout(() => {
+        setImmediate(() => { if (!this.#terminating) complete(result); });
+      }, 500);
+      this.#drainTimer.unref();
+    });
     child.once('close', (code, signal) => {
-      this.complete(code ?? signalExitCode(signal));
+      complete(exitCode ?? code ?? signalExitCode(signal));
     });
   }
 
@@ -618,6 +639,10 @@ class HostRuntimeProcess extends HostBufferedProcess {
   }
 
   protected sendSignal(signal: NodeJS.Signals): void {
+    if (signal !== 'SIGINT') {
+      this.#terminating = true;
+      clearTimeout(this.#drainTimer);
+    }
     if (signal === 'SIGINT' && process.platform === 'win32') {
       killChild(this.#child, 'SIGTERM');
       return;
@@ -780,6 +805,7 @@ class HostProcessOutput {
   #buffer = Buffer.alloc(0);
   #bufferStartOffset = 0;
   #running = true;
+  #disposed = false;
   #exitCode: number | undefined;
 
   get running(): boolean {
@@ -809,6 +835,7 @@ class HostProcessOutput {
   }
 
   append(chunk: Uint8Array): void {
+    if (this.#disposed) return;
     this.#buffer = Buffer.concat([this.#buffer, chunk]);
     if (this.#buffer.length > MAX_PROCESS_OUTPUT_BYTES) {
       const removed = this.#buffer.length - MAX_PROCESS_OUTPUT_BYTES;
@@ -826,6 +853,9 @@ class HostProcessOutput {
   }
 
   dispose(): void {
+    this.#disposed = true;
+    this.#bufferStartOffset += this.#buffer.length;
+    this.#buffer = Buffer.alloc(0);
     this.#listeners.clear();
   }
 

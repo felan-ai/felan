@@ -10,7 +10,7 @@ and first-party extensions.
 | --- | --- |
 | `/cwd [directory]` | Start a fresh session in another directory |
 | `/restart` | Restart the daemon and Felan Code, then resume the current session |
-| `/reload` | Reload the session configuration; background processes keep running |
+| `/reload` | Reload the session configuration; detached jobs keep running, promoted foreground jobs stop |
 | `/reconnect` | Reconnect to the daemon now, starting it if none is running |
 | `/dependencies` | Inspect, install, enable, or disable external runtime dependencies |
 | `/memory` | Show project-memory status and inspect retained runs |
@@ -39,7 +39,8 @@ session, so rebuilt daemon and client code both take effect. The TUI shows
 client process with the same launch options. `/daemon restart [force]`
 restarts only the daemon and reattaches the current session in place without
 restarting the client. In both cases detached background processes keep
-running and are rediscovered; interactive (PTY) processes end.
+running and are rediscovered. Interactive PTY processes and foreground
+processes end, including promoted foreground jobs.
 
 When the daemon connection drops, the TUI shows `Daemon disconnected ·
 reconnecting in Ns · /reconnect to retry now` and retries automatically with
@@ -111,6 +112,21 @@ scan progress and keeps the next action available. `Enter` reads output,
 `r` refreshes the current page, `a` opens all actions, and `q` / `Esc` closes.
 In output, `s` stops, `k` kills, and `[` / `]` moves through bounded log chunks.
 The same history, search, and paging actions are available to generic UI clients.
+
+Ordinary non-PTY `bash` commands run without job records. After the foreground
+timeout, which defaults to 120 seconds, the same child becomes an attached
+background job without restarting. It appears in `list_background_bash` and
+`/processes`, has an `output.log`, and delivers a completion message. Attached
+jobs stop when the session that started them closes or reloads (a subagent's
+attached jobs end with that subagent), record `killed` when stopped, and are
+never reattached. Pressing `Esc` to cancel a turn does not stop them. They have
+no stdin; use `tty: true` for interactive input.
+PTY jobs keep their record from the start. Non-PTY commands with
+`background: true` or `timeout: 0` use durable detached records instead.
+
+The TUI footer counts running detached and PTY jobs. It excludes foreground
+processes, including promoted commands, because the daemon keeps their original
+`foreground` registration for shutdown tracking.
 
 Prompt history starts with the current session. Press `Ctrl+R`, `Cmd+R`, or
 `Ctrl+S` inside the picker to cycle through the current project and all

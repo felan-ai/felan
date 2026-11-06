@@ -43,7 +43,7 @@ export class BackgroundBashRetention {
             || !terminal.has(String(info.status)) || info.status !== completion.status
             || !timestamp(info.startedAt) || !timestamp(completion.completedAt)
             || info.completedAt !== completion.completedAt
-            || completion.completedAt < info.startedAt || completion.completedAt > Date.now()) return;
+            || completion.completedAt < Math.floor(info.startedAt / 1000) * 1000 || completion.completedAt > Date.now()) return;
           state.retained++;
           if (state.retained <= RETAINED_TERMINAL_JOBS && Date.now() - completion.completedAt <= TERMINAL_MAX_AGE_MS) return;
           if (Date.now() - completion.completedAt < TERMINAL_RETENTION_GRACE_MS) return;

@@ -13,6 +13,7 @@ export type BackgroundBashRuntimeStatus = {
 export async function inspectBackgroundBashRuntime(
   runtime: AgentRuntime,
 ): Promise<BackgroundBashRuntimeStatus> {
+  if (!runtime.processes) return { available: false, reason: 'Runtime does not support in-process shell processes' };
   const script = [
     'missing=',
     `for name in ${REQUIRED_POSIX_COMMANDS.join(' ')}; do`,

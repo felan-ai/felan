@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import {
   StringEnum,
   associateExtensionConfig,
@@ -9,7 +10,9 @@ import {
 } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
 import { normalizeBackgroundCommand } from './command-normalizer.js';
+import { FOREGROUND_MAX_BYTES, FOREGROUND_MAX_LINES, runForegroundCommand } from './foreground.js';
 import {
+  getBackgroundBashRoot,
   isTerminalStatus,
   type BackgroundBashJob,
 } from './job-store.js';
@@ -120,6 +123,7 @@ export function createBackgroundBashExtension(): FelanExtension {
     foregroundTimeoutSeconds: Number(pi.config?.foregroundTimeoutSeconds ?? 120),
   };
   const commonPresentation = createCommonProcessPresentation(pi.ui);
+  const storage = pi.runtime.storage('session');
   const manager = new BackgroundBashManager(pi.runtime);
   const foregroundBash = createRuntimeCodingTools(pi.runtime, { shellFlavor: 'posix' })
     .find((tool) => tool.name === 'bash')!;
@@ -259,55 +263,75 @@ export function createBackgroundBashExtension(): FelanExtension {
         if (signal?.aborted) throw new Error('Command cancelled');
         const timeoutSeconds = params.timeout ?? config.foregroundTimeoutSeconds;
         const interactive = params.tty === true;
-        const normalized = interactive
+        const foreground = !interactive && params.background !== true && timeoutSeconds > 0;
+        const normalized = interactive || foreground
           ? { command: params.command, rtkRewriteRemoved: false }
           : normalizeBackgroundCommand(params.command);
-        const started = interactive
-          ? await manager.startInteractive(normalized.command)
-          : { job: await manager.start(normalized.command) };
-        const job = started.job;
+        let job: BackgroundBashJob;
+        if (foreground) {
+          const result = await runForegroundCommand(pi.runtime, params.command, {
+            timeoutMs: timeoutSeconds * 1_000,
+            storage,
+            spillDir: join(getBackgroundBashRoot(storage.root, pi.runtime.cwd), 'output'),
+            ...(signal === undefined ? {} : { signal }),
+          });
+          if (result.kind === 'exited') {
+            const notice = result.truncated
+              ? `\n\n[Output truncated to the last ${FOREGROUND_MAX_LINES} lines / ${FOREGROUND_MAX_BYTES / 1024} KB${result.fullOutputPath ? `. Full output: ${result.fullOutputPath}` : ''}]`
+              : '';
+            return {
+              content: [{ type: 'text', text: `Exit: ${result.exitCode ?? result.signal ?? '-'}\n\n${result.output || '(no output)'}${notice}` }],
+              details: {
+                background: false,
+                ...(result.exitCode === undefined ? {} : { exitCode: result.exitCode }),
+                ...(result.signal === undefined ? {} : { signal: result.signal }),
+                truncated: result.truncated,
+                ...(result.fullOutputPath === undefined ? {} : { fullOutputPath: result.fullOutputPath }),
+              },
+            };
+          }
+          try {
+            job = await manager.promote(params.command, result.process, result.startedAt);
+          } catch (error) {
+            await result.process.terminate('SIGTERM').catch(() => {});
+            await result.process.dispose().catch(() => {});
+            throw error;
+          }
+        } else {
+          job = interactive
+            ? (await manager.startInteractive(normalized.command)).job
+            : await manager.start(normalized.command);
+        }
         if (signal?.aborted) {
           if (interactive) await manager.stopInteractive(job.meta.id).catch(() => {});
           else await manager.stop(job.meta.id).catch(() => {});
           throw new Error('Command cancelled');
         }
-        if (!params.background && timeoutSeconds > 0) {
+        if (interactive && params.background !== true && timeoutSeconds > 0) {
           try {
-            if (interactive) {
-              const deadline = Date.now() + timeoutSeconds * 1_000;
-              let result = await manager.readInteractive(job.meta.id, Math.max(0, deadline - Date.now()), signal);
+            const deadline = Date.now() + timeoutSeconds * 1_000;
+            let result = await manager.readInteractive(job.meta.id, Math.max(0, deadline - Date.now()), signal);
+            if (signal?.aborted) throw new Error('Command cancelled');
+            while (result.running && Date.now() < deadline) {
+              result = await manager.readInteractive(job.meta.id, Math.max(0, deadline - Date.now()), signal);
               if (signal?.aborted) throw new Error('Command cancelled');
-              while (result.running && Date.now() < deadline) {
-                result = await manager.readInteractive(job.meta.id, Math.max(0, deadline - Date.now()), signal);
-                if (signal?.aborted) throw new Error('Command cancelled');
-              }
-              if (!result.running) {
-                const completed = await manager.get(job.meta.id);
-                return {
-                  content: [{ type: 'text', text: formatForegroundOutput(completed, result.output) }],
-                  details: { background: false, id: job.meta.id, status: completed.status.status, output: result.output },
-                };
-              }
-            } else {
-              const result = await manager.wait(job.meta.id, timeoutSeconds, signal);
-              if (!result.timedOut) {
-                const output = await manager.tail(job.meta.id);
-                return {
-                  content: [{ type: 'text', text: formatForegroundOutput(result.job, output) }],
-                  details: { background: false, id: job.meta.id, status: result.job.status.status, output },
-                };
-              }
+            }
+            if (!result.running) {
+              const completed = await manager.get(job.meta.id);
+              return {
+                content: [{ type: 'text', text: formatForegroundOutput(completed, result.output) }],
+                details: { background: false, id: job.meta.id, status: completed.status.status, output: result.output },
+              };
             }
           } catch (error) {
             if (signal?.aborted) {
-              if (interactive) await manager.stopInteractive(job.meta.id, 'SIGTERM').catch(() => {});
-              else await manager.stop(job.meta.id, 'SIGTERM').catch(() => {});
+              await manager.stopInteractive(job.meta.id, 'SIGTERM').catch(() => {});
               throw new Error('Command cancelled', { cause: error });
             }
             throw error;
           }
         }
-        if (!params.background) await manager.markPromoted(job.meta.id, interactive ? 'pty' : 'detached');
+        if (!foreground && params.background !== true) await manager.markPromoted(job.meta.id, interactive ? 'pty' : 'detached');
         watchCompletion(job.meta.id);
         const notice = normalized.rtkRewriteRemoved
           ? '\n\nRTK rewrite was removed for this background process so output streams directly to the log file.'
@@ -509,7 +533,10 @@ export function createBackgroundBashExtension(): FelanExtension {
     viewLifetime.abort();
     clearCompletionWatches();
     try { await commonPresentation.dispose(); }
-    finally { if (event.reason !== 'reload') await manager.shutdownInteractive(); }
+    finally {
+      if (event.reason === 'reload') await manager.shutdownAttached();
+      else await manager.shutdownInteractive();
+    }
   });
   };
   associateExtensionConfig(extension, BACKGROUND_BASH_CONFIG);

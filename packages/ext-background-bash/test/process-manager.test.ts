@@ -95,6 +95,113 @@ describe('BackgroundBashManager', () => {
     expect(result.job.status).toMatchObject({ status: 'failed', exitCode: 7 });
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
+  it('appends promoted output once per poll and releases completed ownership', async () => {
+    const { runtime } = await createManager();
+    const storage = runtime.storage('session');
+    vi.spyOn(runtime, 'storage').mockReturnValue(storage);
+    const write = vi.spyOn(storage, 'writeFile');
+    const append = vi.spyOn(storage, 'appendFile');
+    const manager = new BackgroundBashManager(runtime);
+    const other = new BackgroundBashManager(runtime);
+    let output = 'first';
+    let running = true;
+    const process = {
+      pid: 1234,
+      read: vi.fn(async (offset: number) => {
+        const bytes = new TextEncoder().encode(output);
+        return { output: bytes.slice(offset), nextOffset: bytes.length, running, ...(!running ? { exitCode: 7 } : {}) };
+      }),
+      write: vi.fn(async () => {}),
+      terminate: vi.fn(async () => { running = false; }),
+      dispose: vi.fn(async () => {}),
+    } satisfies AgentRuntimeProcess;
+    const job = await manager.promote('command', process, Date.now() - 1_000);
+    trackJob(manager, job.meta.id);
+    expect(job.meta).toMatchObject({ pid: 1234, processGroupId: 1234 });
+    output += '\nsecond';
+    await other.get(job.meta.id);
+    await other.get(job.meta.id);
+    output += '\nthird';
+    running = false;
+    const completed = await other.get(job.meta.id);
+
+    expect(completed.status).toMatchObject({ status: 'failed', exitCode: 7 });
+    expect(new TextDecoder().decode(await storage.readFile(job.meta.logPath))).toBe('first\nsecond\nthird');
+    expect(write.mock.calls.filter(([path]) => path === job.meta.logPath)).toHaveLength(1);
+    expect(append.mock.calls.filter(([path]) => path === job.meta.logPath)
+      .map(([, content]) => new TextDecoder().decode(content))).toEqual(['first', '\nsecond', '\nthird']);
+    expect(process.dispose).toHaveBeenCalledOnce();
+    await expect(manager.readInteractive(job.meta.id)).rejects.toThrow('not found');
+
+    const ownerGet = vi.spyOn(manager, 'get');
+    const readCount = process.read.mock.calls.length;
+    await expect(other.get(job.meta.id)).resolves.toEqual(completed);
+    await expect(other.stop(job.meta.id)).resolves.toEqual(completed);
+    await expect(manager.get(job.meta.id)).resolves.toEqual(completed);
+    expect(ownerGet).toHaveBeenCalledTimes(1);
+    expect(process.read).toHaveBeenCalledTimes(readCount);
+  });
+
+  it.each(['append', 'status'])('retries a failed terminal %s without losing or duplicating output', async (failure) => {
+    const { runtime } = await createManager();
+    const storage = runtime.storage('session');
+    vi.spyOn(runtime, 'storage').mockReturnValue(storage);
+    const manager = new BackgroundBashManager(runtime);
+    let output = 'before';
+    let running = true;
+    const process = {
+      pid: 1234,
+      read: vi.fn(async (offset: number) => {
+        const bytes = new TextEncoder().encode(output);
+        return { output: bytes.slice(offset), nextOffset: bytes.length, running, ...(!running ? { exitCode: 0 } : {}) };
+      }),
+      write: vi.fn(async () => {}),
+      terminate: vi.fn(async () => { running = false; }),
+      dispose: vi.fn(async () => {}),
+    } satisfies AgentRuntimeProcess;
+    const job = await manager.promote('command', process, Date.now());
+    trackJob(manager, job.meta.id);
+    if (failure === 'append') {
+      vi.spyOn(storage, 'appendFile').mockRejectedValueOnce(new Error('append failed'));
+    } else {
+      vi.spyOn(storage, 'writeFile').mockRejectedValueOnce(new Error('status failed'));
+    }
+    output += 'after';
+    running = false;
+    await expect(manager.get(job.meta.id)).rejects.toThrow(`${failure} failed`);
+    expect(process.dispose).not.toHaveBeenCalled();
+    await expect(manager.get(job.meta.id)).resolves.toMatchObject({ status: { status: 'completed', exitCode: 0 } });
+    expect(new TextDecoder().decode(await storage.readFile(job.meta.logPath))).toBe('beforeafter');
+    expect(process.read).toHaveBeenCalledTimes(2);
+    expect(process.dispose).toHaveBeenCalledOnce();
+  });
+
+  it.each(['shutdownInteractive', 'shutdownAttached'] as const)('%s releases ownership even when stopping fails', async (shutdown) => {
+    const { runtime } = await createManager();
+    const manager = new BackgroundBashManager(runtime);
+    const other = new BackgroundBashManager(runtime);
+    const process = {
+      pid: 1234,
+      read: vi.fn(async () => ({ output: new Uint8Array(), nextOffset: 0, running: true })),
+      write: vi.fn(async () => {}),
+      terminate: vi.fn(async () => { throw new Error('stop failed'); }),
+      dispose: vi.fn(async () => {}),
+    } satisfies AgentRuntimeProcess;
+    const job = await manager.promote('command', process, Date.now());
+    await expect(manager[shutdown]()).rejects.toThrow('Failed to');
+    expect(process.terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(process.dispose).toHaveBeenCalledOnce();
+    vi.spyOn(Date, 'now').mockReturnValue(job.meta.promotedAt! + 6_000);
+    const ownerGet = vi.spyOn(manager, 'get');
+    const readCount = process.read.mock.calls.length;
+
+    await expect(other.get(job.meta.id)).resolves.toMatchObject({
+      status: { status: 'unknown', error: 'Process is not attached to a live root session; its exit status is unavailable.' },
+    });
+    expect(ownerGet).not.toHaveBeenCalled();
+    expect(process.read).toHaveBeenCalledTimes(readCount);
+  });
+
   it('stops a running process and rejects ids outside the process registry', async () => {
     const { manager, runtime } = await createManager();
     const started = await manager.start("sleep 30 & echo $! > child.pid; wait");

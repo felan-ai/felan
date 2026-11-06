@@ -28,7 +28,7 @@ describe('BackgroundBashJobStore metadata compatibility', () => {
     expect(job?.info.executionMode).toBe('detached');
   });
 
-  it('normalizes and preserves promoted output metadata', async () => {
+  it.each(['pty', 'attached'] as const)('normalizes and preserves promoted %s metadata', async (executionMode) => {
     const storage = new MemoryStorage();
     const cwd = '/workspace/project';
     const jobsDir = getBackgroundBashJobsDir(storage.root, cwd);
@@ -41,15 +41,29 @@ describe('BackgroundBashJobStore metadata compatibility', () => {
       startedAt: 1,
       updatedAt: 2,
       status: 'running',
-      executionMode: 'pty',
+      executionMode,
       promotedAt: 3,
       outputTruncated: true,
     })));
 
     const job = await new BackgroundBashJobStore(runtime(cwd), storage).readJob(id);
 
-    expect(job?.meta).toMatchObject({ executionMode: 'pty', promotedAt: 3, outputTruncated: true });
-    expect(job?.status).toMatchObject({ executionMode: 'pty', promotedAt: 3, outputTruncated: true });
+    expect(job?.meta).toMatchObject({ executionMode, promotedAt: 3, outputTruncated: true });
+    expect(job?.status).toMatchObject({ executionMode, promotedAt: 3, outputTruncated: true });
+  });
+
+  it('creates an attached record with its original start and no runner identity', async () => {
+    const storage = new MemoryStorage();
+    const store = new BackgroundBashJobStore(runtime('/workspace/project'), storage);
+    const job = await store.createJob('sleep 30', 'attached', { startedAt: 0, pid: 1234, processGroupId: 1234, promotedAt: 50 });
+
+    expect(job.info).toMatchObject({ executionMode: 'attached', startedAt: 0, pid: 1234, processGroupId: 1234, promotedAt: 50 });
+    expect(job.meta.processToken).toBeUndefined();
+    expect(job.info).not.toHaveProperty('processToken');
+    expect(job.meta.commandPath).toBe(`${job.meta.jobDir}/command.sh`);
+    expect(job.meta.runnerPath).toBe(`${job.meta.jobDir}/runner.sh`);
+    expect([...storage.files.keys()]).toEqual([job.meta.infoPath]);
+    await expect(store.readJob(job.meta.id)).resolves.toEqual(job);
   });
 
   it('does not rewrite a terminal outcome or its timestamps on repeated observations', async () => {
