@@ -146,12 +146,14 @@ describe('registered Background Bash tools with live host processes', () => {
     { mode: 'zero timeout', params: { timeout: 0 }, promoted: true },
   ])('keeps $mode commands detached', async ({ params, promoted }) => {
     await withLiveTools(async ({ runtime, owner }) => {
-      const result = await call(owner, 'bash', { command: "printf 'detached\\n'", ...params });
+      const command = "while [ ! -f continue ]; do sleep 0.02; done; printf 'detached\\n'";
+      const result = await call(owner, 'bash', { command, ...params });
       const details = result.details as BackgroundBashDetails;
       expect(details).toMatchObject({ background: true, id: expect.any(String) });
       const info = JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo;
       expect(info.executionMode).toBe('detached');
       expect(info.promotedAt !== undefined).toBe(promoted);
+      await runtime.writeFile('continue', new Uint8Array());
       expect((await waitForJob(owner, details.id)).job.status).toMatchObject({ status: 'completed', exitCode: 0 });
       expect(text(await call(owner, 'read_background_bash', { id: details.id }))).toContain('detached');
     });
