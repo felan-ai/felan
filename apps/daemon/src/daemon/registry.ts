@@ -25,6 +25,8 @@ import { shutdownStep } from './shutdown-error.js';
 import { HostWorkers } from './host-workers.js';
 import { assertStagedWorker } from './worker.js';
 
+export const PROJECTION_CLEANUP_LIMIT_MS = 30_000;
+
 export interface RegistryOpenRequest extends Omit<SessionOpenRequest, 'resources' | 'ownership' | 'services' | 'policy' | 'execution'> {
   cwd: string;
   sessionDir?: string;
@@ -96,6 +98,7 @@ export class SessionRegistry {
   private readonly copyClaims = new Set<string>();
   private readonly reservations = new Map<string, { token: symbol; id: string }>();
   private readonly lifecycleWriters = new Set<Promise<unknown>>();
+  private readonly lateWriters = new Map<string, Promise<void>>();
   private readonly reloadAttachments = new Map<string, Entry['attachments']>();
   private readonly invalidationListeners = new Set<(revisions: Readonly<Record<string, number>>) => void>();
   private readonly observers = new Map<(event: ProjectionOutput) => void, ((session: string) => void) | undefined>();
@@ -166,7 +169,7 @@ export class SessionRegistry {
     this.assertAdmission();
     const session = this.options.store.sessionMetadata(id);
     if (session.deletedAt !== undefined) throw registryError('not_found', 'Session was deleted.');
-    if (this.entries.get(id)?.projectionFailed) throw registryError('unavailable', 'Session projection failed; further work is disabled.');
+    if (this.entries.get(id)?.projectionFailed) throw registryError('unavailable', 'Session projection failed; it reopens once cleanup finishes, try again shortly.');
     if (this.reservations.has(session.piPath) && !activatingBinding) throw registryError('busy', 'Session has a lifecycle operation in progress.');
     if (session.state !== 'open' || this.entries.get(id)?.disposing || this.entries.get(id)?.cancelling || this.closing.has(id) || this.closing.has(session.root) || this.copyClaims.has(session.piPath)) throw new Error('Session is closing, cancelling or has a pinned copy in progress.');
   }
@@ -225,9 +228,9 @@ export class SessionRegistry {
   async activeWork(): Promise<number> {
     this.options.owner.assertCurrent();
     const interruptible = await this.processes.interruptibleCount();
-    const busy = [...this.entries.values()].filter(entry => !entry.binding.runtime.session.isIdle || entry.dispatches.size || entry.writers.size
+    const busy = [...this.entries].filter(([id, entry]) => this.lateWriters.has(id) || !entry.binding.runtime.session.isIdle || entry.dispatches.size || entry.writers.size
       || entry.host?.hasPendingWork() || entry.host?.hasActiveJobs() || [...entry.services].some(service => service.busy())).length;
-    return busy + interruptible;
+    return busy + [...this.lateWriters.keys()].filter(id => !this.entries.has(id)).length + interruptible;
   }
 
   create(request: RegistryOpenRequest): Promise<SessionBinding> {
@@ -308,6 +311,7 @@ export class SessionRegistry {
     const stored = this.options.store.findSessionMetadata(id);
     if (!stored) throw registryError('not_found', 'Session is not registered.');
     if (stored.deletedAt !== undefined) throw registryError('not_found', 'Session was deleted.');
+    if (this.lateWriters.has(id)) throw registryError('busy', 'Session transcript already has a writer.');
     if (this.reloadAttachments.has(id) && this.opening.has(id)) return this.opening.get(id)!;
     if (this.closing.has(id)) throw new Error('Session is closing.');
     const entry = this.entries.get(id);
@@ -315,6 +319,7 @@ export class SessionRegistry {
     if (entry) return Promise.resolve(entry.binding);
     const pending = this.opening.get(id);
     if (pending) return pending;
+    if (this.pathClaims.has(stored.piPath)) throw registryError('busy', 'Session transcript already has a writer.');
     const reopening = stored.state === 'closed';
     if (reopening) this.options.store.updateSession(id, { state: 'open' });
     const operation = this.open({ cwd: stored.cwd, sessionDir: directoryOf(stored.piPath), target: { kind: 'resume', sessionFile: stored.piPath },
@@ -425,7 +430,7 @@ export class SessionRegistry {
   async attach(id: string, metadata: { principal: string; kind: 'tui' | 'acp' | 'headless' }): Promise<{ attachment: string; snapshot: SessionSnapshot }> {
     await this.restore(id); this.assertAdmission();
     const entry = this.require(id); const attachment = randomUUID();
-    if (entry.projectionFailed) throw registryError('unavailable', 'Session projection failed; close and reopen the session before attaching.');
+    if (entry.projectionFailed) throw registryError('unavailable', 'Session projection failed; cleanup is still in progress.');
     const snapshot = entry.projection.snapshot();
     entry.attachments.set(attachment, { ...metadata });
     return { attachment, snapshot };
@@ -697,6 +702,7 @@ export class SessionRegistry {
     if (stored.parent) throw registryError('unavailable', 'Only root sessions can reload.');
     if (!['idle', 'interrupted'].includes(stored.run.state) || entry && this.running(id)) throw registryError('busy', 'Wait for the current run to finish before reloading.');
     if (this.opening.has(id) || entry?.disposing || entry?.cancelling || entry?.writers.size) throw registryError('busy', 'Session has a lifecycle operation in progress.');
+    if (!entry && this.pathClaims.has(stored.piPath)) throw registryError('busy', 'Session transcript already has a writer.');
     const token = Symbol('reload'); this.reservations.set(stored.piPath, { token, id });
     const attachments = entry?.attachments ?? new Map(); this.reloadAttachments.set(id, attachments);
     const work = (async () => {
@@ -924,19 +930,20 @@ export class SessionRegistry {
     // Host shutdown cancels its full descendant tree and waits beyond terminal status records.
     const entry = this.entries.get(id);
     this.settleInteractions(id, 'close');
-    if (entry) await this.cancelViews(id);
-    await entry?.host?.shutdown();
+    if (entry && !entry.projectionFailed) await this.cancelViews(id);
+    if (!entry?.projectionFailed) await entry?.host?.shutdown();
     for (const child of descendants) await this.close(child.id);
     if (entry) {
-      entry.runAbort?.abort();
-      await entry.cancelling;
+      if (!entry.projectionFailed) { entry.runAbort?.abort(); await entry.cancelling; }
       await entry.projectionCancellation;
-      await entry.binding.runtime.session.abort();
-      await this.processes.cancelForeground(id);
-      await Promise.all(entry.writers);
-      if (!entry.projectionFailed) entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id);
-      await this.processes.settle(stored.root, false, id === stored.root ? undefined : new Set([id]));
-      for (const service of entry.services) await this.processes.withCleanup(id, () => service.settle());
+      if (!entry.projectionFailed) {
+        await entry.binding.runtime.session.abort();
+        await this.processes.cancelForeground(id);
+        await Promise.all(entry.writers);
+        entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id);
+        await this.processes.settle(stored.root, false, id === stored.root ? undefined : new Set([id]));
+        for (const service of entry.services) await this.processes.withCleanup(id, () => service.settle());
+      }
       await this.disposeEntry(id, true);
     } else {
       this.options.store.transitionSessionForSafety(id, 'closed');
@@ -968,7 +975,7 @@ export class SessionRegistry {
       // Failed closes retain their intent; force retries them after in-flight closes finish.
       if (!options.interrupt || this.failure) throw error;
     });
-    await this.join([hostWorkers, ...cancellations, shutdownStep('registry-pending', () => this.join([...this.opening.values(), closing, ...this.lifecycleWriters], undefined, true))]);
+    await this.join([hostWorkers, ...cancellations, shutdownStep('registry-pending', () => this.join([...this.opening.values(), closing, ...this.lifecycleWriters, ...this.lateWriters.values()], undefined, true))]);
     if (this.failure) await shutdownStep('registry-fenced', async () => { await this.failureSettlement; throw this.failure; });
     if (options.interrupt) {
       const retry = [...this.closes.keys()]; this.closes.clear();
@@ -1011,6 +1018,7 @@ export class SessionRegistry {
       await shutdownStep('session-run', () => { if (this.options.store.sessionMetadata(id).state === 'open') this.options.store.interruptSessionRun(id, run); }, id);
       this.shutdownInterruptions.delete(id);
     }
+    await shutdownStep('registry-pending', () => this.join([...this.lateWriters.values()]));
     this.retainedServices.clear(); this.lossUnsubscribe(); this.listeners.clear();
     // The caller closes the store/profile and releases ownership only after this resolves.
   }
@@ -1339,29 +1347,45 @@ export class SessionRegistry {
       this.options.owner.assertCurrent();
       const stored = this.options.store.sessionMetadata(id);
       const closed = close || this.closes.has(id);
-      if (entry.projectionFailed) this.options.store.transitionSessionForSafety(id, closed ? 'closed' : 'evicted');
+      if (entry.projectionFailed) {
+        this.interruptRun(id);
+        const commit = this.options.store.transitionSessionForSafety(id, closed ? 'closed' : 'evicted');
+        if (commit.revisions[id] !== undefined) this.publish({ v: 1, session: id, rev: commit.value.revision,
+          change: { type: 'metadata.updated', title: commit.value.title, state: commit.value.state, residency: commit.value.residency } });
+      }
       else entry.projection.transitionForSafety(closed ? 'closed' : 'evicted');
-      entry.projection.dispose(); this.entries.delete(id); if (!preserveView) this.listeners.delete(id); this.pathClaims.delete(stored.piPath);
+      entry.projection.dispose(); this.entries.delete(id); if (!preserveView) this.listeners.delete(id);
+      if (!this.lateWriters.has(id)) this.pathClaims.delete(stored.piPath);
       if (!close && entry.services.size) this.retainedServices.set(id, entry.services);
     })();
     try { await entry.disposing; } catch (error) { delete entry.disposing; this.fence(error); throw error; }
+  }
+  private interruptRun(id: string): void {
+    const run = this.options.store.sessionMetadata(id).run;
+    if (!run.id || !['running', 'waiting', 'cancelling'].includes(run.state)) return;
+    const commit = this.options.store.interruptSessionRun(id, run.id);
+    if (commit.revisions[id] !== undefined) this.publish({ v: 1, session: id, rev: commit.value.revision, change: { type: 'run.updated', run: commit.value.run } });
   }
   private projectionFailed(session: string, error: unknown): void {
     this.diagnostic({ scope: 'projection', session, error });
     if (!this.projectionIntegrityIntact(error)) return;
     const entry = this.entries.get(session);
     if (!entry || entry.projectionFailed) return;
+    const path = this.options.store.sessionMetadata(session).piPath;
     entry.projectionFailed = true;
     this.processes.seal(session);
-    const attempt = async (operation: () => unknown): Promise<void> => {
-      try { await operation(); }
-      catch (cleanup) {
-        this.diagnostic({ scope: 'registry', session, error: cleanup });
-        this.cancellationFailures.add(cleanup);
-        this.projectionIntegrityIntact(cleanup);
-      }
+    let expired = false;
+    const failed = (cleanup: unknown) => {
+      this.diagnostic({ scope: 'registry', session, error: cleanup });
+      this.cancellationFailures.add(cleanup);
+      this.projectionIntegrityIntact(cleanup);
     };
-    entry.projectionCancellation = Promise.resolve().then(async () => {
+    const attempt = async (operation: () => unknown): Promise<void> => {
+      if (expired || this.entries.get(session) !== entry) return;
+      try { await operation(); }
+      catch (cleanup) { try { failed(cleanup); } catch {} }
+    };
+    const cancellation = Promise.resolve().then(async () => {
       await attempt(() => entry.projection.dispose());
       await attempt(() => entry.runAbort?.abort());
       for (const controller of entry.viewActions ?? []) await attempt(() => controller.abort());
@@ -1386,7 +1410,33 @@ export class SessionRegistry {
         if (!entry.binding.runtime.session.isIdle) throw new Error('Projection-failed session has not settled.');
         transitionRun('idle');
       });
-    }).finally(() => { delete entry.projectionCancellation; });
+    }).catch(cleanup => { try { failed(cleanup); } catch {} });
+    let timer: ReturnType<typeof setTimeout>;
+    const timeout = new Error(`Projection-failure cleanup timed out after ${PROJECTION_CLEANUP_LIMIT_MS} milliseconds.`);
+    const deadline = new Promise<void>(resolve => {
+      timer = setTimeout(() => {
+        expired = true;
+        const failures: unknown[] = [];
+        const late = this.join([cancellation, ...(entry.cancelling ? [entry.cancelling] : [])], failures).then(async () => {
+          do { await this.join([...entry.writers], failures); } while (entry.writers.size);
+          await this.join([eviction, ...(this.closes.has(session) ? [this.closes.get(session)!] : []), ...(entry.disposing ? [entry.disposing] : [])], failures);
+          for (const failure of failures) { try { failed(failure); } catch {} }
+        }).finally(() => {
+          this.lateWriters.delete(session); this.cancellationFailures.delete(timeout);
+          if (!this.entries.has(session)) this.pathClaims.delete(path);
+        });
+        this.lateWriters.set(session, late);
+        try { failed(timeout); } catch {} finally { resolve(); }
+      }, PROJECTION_CLEANUP_LIMIT_MS);
+    });
+    entry.projectionCancellation = Promise.race([cancellation, deadline]).then(() => {
+      if (!this.failure) try { this.interruptRun(session); } catch (cleanup) { this.fence(cleanup); throw cleanup; }
+    }).finally(() => { clearTimeout(timer); delete entry.projectionCancellation; });
+    const eviction = entry.projectionCancellation.then(async () => {
+      if (!this.failure && !this.stopping && !this.closing.has(session) && this.entries.get(session) === entry) await this.disposeEntry(session, false);
+    });
+    this.lifecycleWriters.add(eviction);
+    void eviction.catch(cleanup => this.diagnostic({ scope: 'registry', session, error: cleanup })).finally(() => this.lifecycleWriters.delete(eviction));
   }
   private projectionIntegrityIntact(error: unknown): boolean {
     if (error instanceof AggregateError) {
@@ -1442,11 +1492,11 @@ export class SessionRegistry {
   }
 
   private pendingWriters(): Promise<unknown>[] {
-    return [...this.opening.values(), ...this.lifecycleWriters, ...[...this.entries.values()].flatMap(entry => [...entry.writers, ...(entry.cancelling ? [entry.cancelling] : []), ...(entry.projectionCancellation ? [entry.projectionCancellation] : [])])];
+    return [...this.opening.values(), ...this.lifecycleWriters, ...this.lateWriters.values(), ...[...this.entries.values()].flatMap(entry => [...entry.writers, ...(entry.cancelling ? [entry.cancelling] : []), ...(entry.projectionCancellation ? [entry.projectionCancellation] : [])])];
   }
 
   private hasPendingWriters(): boolean {
-    return this.opening.size > 0 || this.lifecycleWriters.size > 0 || [...this.entries.values()].some(entry => entry.writers.size > 0 || entry.cancelling !== undefined || entry.projectionCancellation !== undefined);
+    return this.opening.size > 0 || this.lifecycleWriters.size > 0 || this.lateWriters.size > 0 || [...this.entries.values()].some(entry => entry.writers.size > 0 || entry.cancelling !== undefined || entry.projectionCancellation !== undefined);
   }
 
   private async join(operations: readonly Promise<unknown>[], failures?: unknown[], allowCancelled = false): Promise<void> {

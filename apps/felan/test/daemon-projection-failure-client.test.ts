@@ -6,7 +6,7 @@ import { acpDaemonFixture } from './acp-daemon-fixture.js';
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-it.each([false, true])('settles attached waits after projection failure, including a missed revision (%s)', async missedRevision => {
+it.each([false, true])('recovers an attached session after projection failure, including a missed revision (%s)', async missedRevision => {
   const stream = gate(); const started = gate();
   const f = await acpDaemonFixture({ onStream: async () => { started.resolve(); await stream.promise; } });
   cleanups.push(() => f.dispose()); cleanups.push(async () => stream.resolve());
@@ -36,29 +36,22 @@ it.each([false, true])('settles attached waits after projection failure, includi
   await f.registry.settleWriters();
   await vi.waitFor(() => expect(finished).toHaveBeenCalledTimes(1));
   await waiting;
+  expect(finished).toHaveBeenCalledWith({ state: 'idle' });
   expect(f.store.session(id).run.state).toBe('idle');
   expect(f.registry.fenced).toBe(false);
   if (missedRevision) {
-    expect(finished).toHaveBeenCalledWith({ error: expect.objectContaining({ message: 'Session connection is unavailable; daemon execution may still be running' }) });
     expect(unpublishedRevision).toBeDefined();
     expect(published).not.toContain(unpublishedRevision);
     expect(published).toContain(unpublishedRevision! + 1);
     expect(clientDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ event: 'connection.lost' }));
-    expect(clientDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ event: 'attachment.attached', session: id, trigger: 'reconnect', outcome: 'rejected' }));
-    expect(client.getAttachment(id)).toMatchObject({ state: { status: 'blocked' },
-      blocked: { kind: 'attach_failed', code: 'unavailable', message: 'Session projection failed; close and reopen the session before attaching.' } });
-  } else {
-    expect(finished).toHaveBeenCalledWith({ state: 'idle' });
-    expect(client.getAttachment(id)?.state.status).toBe('live');
+    expect(clientDiagnostic).toHaveBeenCalledWith(expect.objectContaining({ event: 'attachment.attached', session: id, trigger: 'reconnect', outcome: 'accepted' }));
   }
   await vi.waitFor(() => expect(client.status).toBe('ready'));
+  expect(client.getAttachment(id)?.state.status).toBe('live');
   expect(client.getAttachment(other.sessionId)?.state.status).toBe('live');
   const next = accepted(await client.request('prompt', { text: 'unrelated session still works' }, { session: other.sessionId }));
   expect((await waitForDaemonRun(client, other.sessionId, next.runId)).run.state).toBe('idle');
   broken.mockRestore();
-  if (missedRevision) {
-    await f.registry.close(id); await f.registry.restore(id);
-    accepted(await client.retryAttach(id));
-    expect(client.getAttachment(id)?.state.status).toBe('live');
-  }
+  const recovered = accepted(await client.request('prompt', { text: 'the failed session reopens without a manual close' }, { session: id }));
+  expect((await waitForDaemonRun(client, id, recovered.runId)).run.state).toBe('idle');
 });
