@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { mkdir } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -91,8 +92,10 @@ export async function startDaemonService(target: DaemonTarget, options: {
       ...(sessionRuntime.processAdapter ? { processAdapter: sessionRuntime.processAdapter } : {}) });
     const liveRegistry = registry; const liveStore = store; const liveSessionLifecycle = sessionLifecycle; const liveSink = sink;
     const broker = createRegistryInteractionBroker(registry, hostConfig.config.policy ?? {});
+    const setupStorageRoot = join(owner.target.agentDir, 'storage', 'setup');
+    await mkdir(setupStorageRoot, { recursive: true, mode: 0o700 });
     const setupRuntime = loadedProviders.services.get(HOST_RUNTIME_SERVICE)!.create(owner.target.agentDir, { pathAccess: 'host', agentDir: owner.target.agentDir,
-      agentStorageRoot: join(owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: join(owner.target.agentDir, 'storage', 'setup') });
+      agentStorageRoot: join(owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: setupStorageRoot });
     const host = await sessionRuntime.createHostServices({ agentDir: owner.target.agentDir, homeDir: homeDir ?? homedir(),
       runtime: setupRuntime, models, interactions: { request: broker.request.bind(broker) },
       definitions: await sessionRuntime.configuration(hostConfig.config.extensions.map(row => row.package)),

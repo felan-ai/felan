@@ -74,6 +74,19 @@ it('assembles owned service state and executes a real offline session before exp
   const next = await acquireDaemonOwnership(input); await next.release();
 });
 
+it('creates a private setup runtime storage root before host dependency setup', async () => {
+  const { target: input, hostConfigPath } = await target();
+  const setupStorageRoot = join(resolveDaemonTarget(input).agentDir, 'storage', 'setup');
+  await expect(stat(setupStorageRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+
+  const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: models });
+  cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
+
+  const setupStorage = await stat(setupStorageRoot);
+  expect(setupStorage.isDirectory()).toBe(true);
+  expect(setupStorage.mode & 0o777).toBe(0o700);
+});
+
 it('starts forced cancellation before joining a broker continuation that needs it', async () => {
   let release!: () => void; const joined = new Promise<void>(resolve => { release = resolve; });
   const shutdown = vi.fn(async () => { release(); });
