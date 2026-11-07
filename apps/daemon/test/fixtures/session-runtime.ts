@@ -19,6 +19,7 @@ export function createTestSessionRuntime(options: {
     toolPolicy,
     secretStorage: { read: async () => undefined, write: async () => {}, remove: async () => {} },
     async createHostServices(request) {
+      await request.runtime.storage('session').mkdir('.', { recursive: true });
       return createTestHostServices(new TestHostConfiguration({ definitions: request.definitions, assertCurrent: request.assertCurrent }));
     },
     createModelRuntime: async () => ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false }),
