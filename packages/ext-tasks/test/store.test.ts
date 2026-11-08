@@ -2,7 +2,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HostAgentRuntime } from '@felan-ai/agent-core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TaskStore } from '../src/store.js';
 
 const temporaryPaths: string[] = [];
@@ -56,6 +56,26 @@ describe('TaskStore', () => {
     unsubscribe();
     first.close();
     second.close();
+  });
+
+  it('publishes only the public task snapshot after a successful mutation', async () => {
+    const harness = await runtimeHarness();
+    const changed = vi.fn();
+    const source = harness.runtime();
+    const runtime = new Proxy(source, { get: (target, property) => {
+      if (property === 'tasks') return { changed };
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    } });
+    const store = new TaskStore(runtime);
+    await expect(store.snapshot()).resolves.toMatchObject({ revision: 0, tasks: [] });
+    expect(changed).toHaveBeenNthCalledWith(1, []);
+    const created = await store.create({ title: 'Public fields', description: 'private' });
+    expect(changed).toHaveBeenNthCalledWith(2, [{ id: created.task.id, title: 'Public fields', status: 'pending', blockedBy: [] }]);
+    await store.update({ taskId: created.task.id, status: 'in_progress' }, 'root');
+    expect(changed).toHaveBeenNthCalledWith(3, [{ id: created.task.id, title: 'Public fields', status: 'in_progress', blockedBy: [] }]);
+    expect(JSON.stringify(changed.mock.calls)).not.toContain('private');
+    store.close();
   });
 
   it('does not report a persisted mutation as failed when a listener throws', async () => {

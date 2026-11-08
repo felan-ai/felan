@@ -253,13 +253,17 @@ export function createTasksExtension(): FelanExtension {
       unsubscribe?.();
       statusContext = ctx.hasUI ? ctx : undefined;
       unsubscribe = store.subscribe(setStatus);
-      setStatus(await store.snapshot());
+      const state = await store.snapshot();
+      pi.runtime.tasks?.changed?.(state.tasks.map(({ id, title, status, blockedBy }) => ({ id, title, status, blockedBy: [...blockedBy] })));
+      setStatus(state);
       registerControls();
     });
 
     pi.on('session_tree', async (_event, ctx) => {
       statusContext = ctx.hasUI ? ctx : undefined;
-      setStatus(await store.snapshot());
+      const state = await store.snapshot();
+      pi.runtime.tasks?.changed?.(state.tasks.map(({ id, title, status, blockedBy }) => ({ id, title, status, blockedBy: [...blockedBy] })));
+      setStatus(state);
     });
 
     pi.on('before_agent_start', async (event) => {

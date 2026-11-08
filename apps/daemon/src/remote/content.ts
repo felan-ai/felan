@@ -5,7 +5,7 @@ import { Value } from 'typebox/value';
 import {
   KnownSessionChangeSchema, LIMITS, PUBLISHED_CHANGE_TYPES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS, PublishedSessionSchema, ROW_SCHEMA_VERSION,
   isPublishedChangeType, parsePublishedEvent, parsePublishedSession,
-  type KnownSessionChange, type Process, type PublishedEvent, type PublishedProcess, type PublishedSession, type PublishedSkill, type SessionSnapshot,
+  type KnownSessionChange, type Process, type PublishedEvent, type PublishedProcess, type PublishedSession, type PublishedSkill, type PublishedTask, type SessionSnapshot,
 } from '@felan-ai/session-protocol';
 import type { LoadedSkill } from '../daemon/projection.js';
 import { redact } from '../logger.js';
@@ -14,6 +14,7 @@ export type PublishedChange = Extract<KnownSessionChange, { type: typeof PUBLISH
 export interface PublicationEntry { seq: number; rev: number; occurredAt: number; change: PublishedChange }
 export type PublishedSessionInput = Pick<SessionSnapshot, 'session' | 'parent' | 'cwd' | 'title' | 'state' | 'run'> & {
   shared: boolean; lastActivity?: number; home?: string; skills?: readonly LoadedSkill[]; processes?: readonly Process[];
+  tasks?: readonly { id: string; title: string; status: PublishedTask['status']; blockedBy: readonly string[] }[];
 };
 
 type Schema = TSchema & {
@@ -61,7 +62,7 @@ function sanitize(schema: Schema, value: unknown, key = '', free = false): unkno
     if (!free && node['x-maxBytes'] === 128 && identityKeys.has(key)) return boundedPrefix(text, node['x-maxBytes']);
     const secret = /^(?:[\w-]*(?:api[_-]?key|token|secret|password|authorization|credential)[\w-]*)$/iu.test(key);
     const redacted = secret ? '[redacted]' : redact(text);
-    return boundedPrefix(redacted, node['x-maxBytes'] ?? Number.MAX_SAFE_INTEGER);
+    return prefix(boundedPrefix(redacted, node['x-maxBytes'] ?? Number.MAX_SAFE_INTEGER), node.maxLength ?? Number.MAX_SAFE_INTEGER);
   }
   if (Array.isArray(value)) return value.map(item => sanitize(node.items ?? node, item, key, free));
   if (value !== null && typeof value === 'object') {
@@ -162,5 +163,8 @@ export function publishedSession(input: PublishedSessionInput): PublishedSession
     ...(input.lastActivity !== undefined ? { lastActivity: input.lastActivity } : {}),
     ...(input.skills ? { skills: publishedSkills(input.skills, input.cwd, input.home ?? homedir()) } : {}),
     ...(input.processes ? { processes: publishedProcesses(input.session, input.processes) } : {}),
+    ...(input.shared && input.tasks ? { tasks: input.tasks.slice(0, LIMITS.pageEntries).map(task => ({
+      id: task.id, title: task.title, status: task.status, blockedBy: task.blockedBy.slice(0, 32),
+    })) } : {}),
   }));
 }

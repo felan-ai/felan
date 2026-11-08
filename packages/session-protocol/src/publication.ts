@@ -39,7 +39,12 @@ export const PublishedProcessSchema = Type.Object({
   id: IdSchema, command: text(1024), kind: enumOf(['foreground', 'detached', 'pty'] as const),
   state: enumOf(['running', 'exited', 'missing', 'interrupted'] as const), startedAt: CounterSchema, exitCode: Type.Optional(Type.Integer()),
 });
-// An absent `skills` or `processes` means the host does not know the current value; the stored value stays.
+export const PublishedTaskSchema = Type.Object({
+  id: IdSchema, title: Type.String({ ...text(800, 1), maxLength: 200 }),
+  status: enumOf(['pending', 'in_progress', 'blocked', 'completed', 'cancelled'] as const),
+  blockedBy: Type.Array(IdSchema, { maxItems: 32 }),
+});
+// An absent resource array means the host does not know the current value; the stored value stays.
 export const PublishedSessionSchema = Type.Object({
   schemaVersion: Type.Literal(ROW_SCHEMA_VERSION), session: UuidSchema, parent: Type.Optional(UuidSchema),
   directory: text(256), shared: Type.Boolean(), title: text(1024),
@@ -47,6 +52,7 @@ export const PublishedSessionSchema = Type.Object({
   lastActivity: Type.Optional(CounterSchema),
   skills: Type.Optional(Type.Array(PublishedSkillSchema, { maxItems: LIMITS.pageEntries })),
   processes: Type.Optional(Type.Array(PublishedProcessSchema, { maxItems: LIMITS.pageEntries })),
+  tasks: Type.Optional(Type.Array(PublishedTaskSchema, { maxItems: LIMITS.pageEntries })),
 });
 export const HostProjectSchema = Type.Object({ id: IdSchema, name: text(256, 1), path: text(LIMITS.pathBytes, 1) });
 export const HostCapabilitiesSchema = Type.Object({
@@ -111,6 +117,7 @@ export type PublishedEvent = Static<typeof PublishedEventSchema>;
 export type PublishedSession = Static<typeof PublishedSessionSchema>;
 export type PublishedSkill = Static<typeof PublishedSkillSchema>;
 export type PublishedProcess = Static<typeof PublishedProcessSchema>;
+export type PublishedTask = Static<typeof PublishedTaskSchema>;
 export type HostProject = Static<typeof HostProjectSchema>;
 export type HostCapabilities = Static<typeof HostCapabilitiesSchema>;
 export type HostRegistration = Static<typeof HostRegistrationSchema>;

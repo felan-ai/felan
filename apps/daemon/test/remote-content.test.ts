@@ -187,6 +187,17 @@ describe('remote publication content', () => {
     expect(publishedSession({ ...base, processes: [] }).processes).toEqual([]);
     expect(publishedSession(base)).not.toHaveProperty('processes');
   });
+  it('publishes only bounded task fields and keeps private task data out of the row', () => {
+    const task = { id: 'T-ABC123', title: 'a'.repeat(194) + '?key=x', status: 'pending' as const, blockedBy: [], description: 'private', ownerSessionId: session };
+    const base = { session, cwd: '/w', title: 'T', state: 'open' as const, run: { state: 'idle' as const }, shared: true };
+    const value = publishedSession({ ...base, tasks: [task] });
+    expect(value.tasks).toEqual([{ id: task.id, title: 'a'.repeat(194) + '?key=[', status: 'pending', blockedBy: [] }]);
+    expect(JSON.stringify(value.tasks)).not.toContain('private');
+    expect(publishedSession({ ...base, tasks: [] }).tasks).toEqual([]);
+    expect(publishedSession({ ...base, shared: false, tasks: [task] })).not.toHaveProperty('tasks');
+    expect(publishedSession(base)).not.toHaveProperty('tasks');
+    expect(publishableChange({ type: 'tasks.updated' })).toBeUndefined();
+  });
   it('publishes channel origins with their provider and identities intact', () => {
     const origin = { kind: 'channel' as const, provider: 'slack', user: session, command: session };
     const change: KnownSessionChange = { type: 'run.updated', run: { state: 'running', id: 'run', origin } };

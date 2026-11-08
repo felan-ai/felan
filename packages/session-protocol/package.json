@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/session-protocol",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Browser-compatible Felan session protocol v1 contracts and validation",
   "license": "MIT",
   "type": "module",

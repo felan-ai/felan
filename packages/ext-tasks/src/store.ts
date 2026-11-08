@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
-import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import type { AgentRuntime, AgentRuntimeStorage, AgentRuntimeTask } from '@felan-ai/agent-core';
 import type {
   CreateTaskInput,
   Task,
@@ -38,11 +38,13 @@ export class TaskStore {
   readonly statePath: string;
   readonly #key: string;
   readonly #storage: AgentRuntimeStorage;
+  readonly #runtime: AgentRuntime;
   readonly #shared: SharedTaskStore;
   readonly #listeners = new Set<(state: TaskState) => void>();
   #closed = false;
 
   constructor(runtime: AgentRuntime) {
+    this.#runtime = runtime;
     const storage = runtime.storage('session');
     this.#storage = storage;
     this.#key = `${runtime.kind}\0${storage.root}`;
@@ -63,7 +65,9 @@ export class TaskStore {
   async snapshot(): Promise<TaskState> {
     return this.#run(async () => {
       const state = await readState(this.#storage, this.#shared);
+      const changed = this.#shared.state?.revision !== state.revision;
       this.#replaceState(state);
+      if (changed) this.#publish(state);
       return cloneTaskState(state);
     });
   }
@@ -76,6 +80,7 @@ export class TaskStore {
       const result = createTask(current, input, id, new Date().toISOString());
       await writeState(this.#storage, this.#shared, result.state);
       this.#replaceState(result.state, true);
+      this.#publish(result.state);
       return cloneMutation(result);
     });
   }
@@ -86,6 +91,7 @@ export class TaskStore {
       const result = updateTask(current, input, actorSessionId, new Date().toISOString());
       await writeState(this.#storage, this.#shared, result.state);
       this.#replaceState(result.state, true);
+      this.#publish(result.state);
       return cloneMutation(result);
     });
   }
@@ -141,6 +147,15 @@ export class TaskStore {
     this.#shared.state = cloneTaskState(state);
     if (!alwaysNotify && !changed) return;
     for (const listener of this.#shared.listeners) notify(listener, state);
+  }
+
+  #publish(state: TaskState): void {
+    try {
+      const tasks: AgentRuntimeTask[] = state.tasks.map(({ id, title, status, blockedBy }) => ({ id, title, status, blockedBy: [...blockedBy] }));
+      this.#runtime.tasks?.changed?.(tasks);
+    } catch {
+      // A publication listener cannot roll back a persisted task mutation.
+    }
   }
 
   #assertOpen(): void {

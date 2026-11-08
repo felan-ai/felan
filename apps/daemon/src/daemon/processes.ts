@@ -45,7 +45,7 @@ export class RegistryProcesses {
   private readonly now: () => number;
   constructor(private readonly options: ProcessTrackerOptions) { this.now = options.now ?? Date.now; }
 
-  wrap(runtime: AgentRuntime, scope: Scope): AgentRuntime {
+  wrap(runtime: AgentRuntime, scope: Scope, tasks?: AgentRuntime['tasks']): AgentRuntime {
     const storage = new Map<string, AgentRuntimeStorage>();
     const lifetime: Lifetime = { scope, runtime, draining: false, revoked: false };
     const current = () => this.assertLifetime(lifetime);
@@ -54,6 +54,7 @@ export class RegistryProcesses {
     })(), scope);
     const wrapped: AgentRuntime = {
       kind: runtime.kind, cwd: runtime.cwd, logger: runtime.logger, ...(runtime.classifier ? { classifier: runtime.classifier } : {}),
+      ...(tasks ? { tasks } : {}),
       storage: (kind = 'session') => {
         let result = storage.get(kind);
         if (!result) {
