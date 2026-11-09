@@ -74,17 +74,42 @@ it('assembles owned service state and executes a real offline session before exp
   const next = await acquireDaemonOwnership(input); await next.release();
 });
 
-it('creates a private setup runtime storage root before host dependency setup', async () => {
+it('reports the provider setup need unless the host lists models or a model dependency is ready', async () => {
   const { target: input, hostConfigPath } = await target();
-  const setupStorageRoot = join(resolveDaemonTarget(input).agentDir, 'storage', 'setup');
-  await expect(stat(setupStorageRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+  const empty = async () => {
+    const runtime = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
+    vi.spyOn(runtime, 'getAvailableSnapshot').mockReturnValue([]);
+    return runtime;
+  };
+  const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: empty });
+  cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
+  const client = new SessionClient({ target: input, clientVersion: 'fixture', kind: 'tui' }); cleanups.push(async () => client.close()); await client.connect();
+  const provider = [{ code: 'provider', message: expect.stringContaining('model provider') }];
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { setupNeeds: provider } });
+  const setup = (Reflect.get(service.server, 'options') as { setup: { modelProviderReady?(): Promise<boolean> } }).setup;
+  setup.modelProviderReady = async () => true;
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { setupNeeds: [] } });
+  expect(await client.request('sessions.create', { cwd: input.directory })).toMatchObject({ outcome: 'accepted' });
+  setup.modelProviderReady = async () => { throw new Error('Detection failed.'); };
+  expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { setupNeeds: provider } });
+  expect(await client.request('sessions.create', { cwd: input.directory })).toMatchObject({ outcome: 'rejected', error: { code: 'authentication_required' } });
+  delete setup.modelProviderReady;
+  expect(await client.request('sessions.create', { cwd: input.directory })).toMatchObject({ outcome: 'rejected', error: { code: 'authentication_required' } });
+});
+
+it('creates private setup and agent storage roots before host dependency setup', async () => {
+  const { target: input, hostConfigPath } = await target();
+  const roots = ['setup', 'agent'].map(name => join(resolveDaemonTarget(input).agentDir, 'storage', name));
+  for (const root of roots) await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' });
 
   const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: models });
   cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
 
-  const setupStorage = await stat(setupStorageRoot);
-  expect(setupStorage.isDirectory()).toBe(true);
-  expect(setupStorage.mode & 0o777).toBe(0o700);
+  for (const root of roots) {
+    const storage = await stat(root);
+    expect(storage.isDirectory()).toBe(true);
+    expect(storage.mode & 0o777).toBe(0o700);
+  }
 });
 
 it('starts forced cancellation before joining a broker continuation that needs it', async () => {

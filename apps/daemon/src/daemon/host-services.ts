@@ -14,6 +14,7 @@ export interface HostSetup {
   dependency(id: string): { readonly label: string; readonly description: string } | undefined;
   installApprovedDependency(id: string, signal?: AbortSignal): Promise<RuntimeDependencyInstallResult>;
   catalog(): Promise<SetupCatalog>;
+  modelProviderReady?(): Promise<boolean>;
   validateStart(value: SetupStart): void;
   start(request: SetupStart, client: string): SetupJob;
   read(id: string, client: string): SetupJob;

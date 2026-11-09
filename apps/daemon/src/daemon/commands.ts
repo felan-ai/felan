@@ -180,7 +180,8 @@ export class SessionCommands {
         if (context.remote?.sessionId && registry.options.store.findSessionMetadata(context.remote.sessionId)) throw commandError('request_conflict', 'Session identity is already registered.');
         const overrides = request.params.config && Object.keys(request.params.config).length ? configuration.sessionOverrides(request.params.config) : [];
         const model = request.params.model && await this.model(request.params.model);
-        if (!request.params.model && !(await this.options.models.getAvailable()).length) throw commandError('authentication_required', 'No model is available. Log in with /login or configure a provider API key.');
+        if (!request.params.model && !(await this.options.models.getAvailable()).length
+          && !(await this.options.setup?.modelProviderReady?.().catch(() => false))) throw commandError('authentication_required', 'No model is available. Log in with /login or configure a provider API key.');
         const resources = await registry.options.lifecycle.resolveResources({ cwd: request.params.cwd, ...(request.params.sessionDir ? { sessionDir: request.params.sessionDir } : {}) });
         if (context.rootPreparation && context.rootPreparation.cwd !== resources.cwd) throw commandError('target_mismatch');
         registry.assertClientSessionDirectory(resources);

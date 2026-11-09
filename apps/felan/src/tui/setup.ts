@@ -161,6 +161,7 @@ export class TerminalSetup {
     const actionFor = (value: SetupCatalog['dependencies'][number]): 'install' | 'enable' | 'disable' | 'skip' =>
       !value.available && value.installable ? 'install' : value.available && !value.enabled ? 'enable' : value.enabled ? 'disable' : 'skip';
     const selected = await this.ui.checklist(dependencies.map(value => ({ id: value.id,
+      ...(automatic && ['install', 'enable'].includes(actionFor(value)) ? { checked: true } : {}),
       label: `${actionFor(value)}: ${value.label}${value.version ? ` (${value.version})` : ''}`,
       description: `${actionFor(value) === 'install' ? value.description : actionFor(value) === 'disable'
         ? `Disable ${value.label}; installed software is kept.` : actionFor(value) === 'enable'
@@ -196,7 +197,7 @@ export class TerminalSetup {
         if (terminal(job)) {
           this.controller.setNotice(job.kind === 'logout' ? job.message : job.kind === 'login'
             ? `${job.state === 'completed' ? 'Logged in to' : job.state === 'cancelled' ? 'Login cancelled for' : 'Failed to login to'} ${flow.provider}. ${job.message}`
-            : `Dependency setup ${job.state}. ${job.message}`);
+            : `Dependency setup ${job.state}.\n${job.message}`);
           return job.state === 'completed';
         }
         if (job.kind === 'login') {

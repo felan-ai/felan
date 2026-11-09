@@ -52,6 +52,11 @@ Use `/login` to add a provider and `/logout` to remove a stored provider
 credential. Provider credentials stay with the local host; a felan.ai account
 is not required for the terminal application.
 
+On first start, Felan Code shows the [dependency checklist](#first-start-dependency-choices)
+before it asks you to log in. If you already use Claude Code, keep Claude Code
+checked: after it installs, Felan Code starts a session with your Claude Code
+login and `/login` is not needed.
+
 ## Run the first task
 
 Enter a prompt in the editor, or supply the initial message on the command
@@ -92,11 +97,13 @@ same project when continuing project work.
 
 ## First-start dependency choices
 
-Some built-ins need an external executable. In interactive startup Felan Code
-shows one initially unchecked checklist for missing managed dependencies. Check
-an extension to authorize its reviewed dependency installation, or leave it
-unchecked to use its safe fallback:
+Some built-ins need an external executable. In interactive startup, before the
+login prompt, Felan Code shows one checklist for dependencies that have no
+recorded choice. Recommended install and enable choices start checked. Keep an
+item checked to authorize its reviewed installation, or uncheck it to use its
+safe fallback:
 
+- Claude Code for Claude models through your existing Claude Code login;
 - MarkItDown for office-document conversion;
 - RTK for command rewriting (output compaction still works without it);
 - `agent-browser` for browser automation; and

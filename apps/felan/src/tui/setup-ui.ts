@@ -94,11 +94,14 @@ export function createSetupUi(tui: TUI, dialogs: TuiDialogs, theme: () => Theme,
       const { DependencyInstallProgressLoader } = await import('../dependency-onboarding.js');
       if (signal.aborted) return undefined;
       return dialogs.custom<'links' | undefined>(done => {
-        const loader = new DependencyInstallProgressLoader(tui, theme(), stripTerminalSequences(job.message || 'Waiting for daemon setup…'));
+        const lines = stripTerminalSequences(job.message || 'Waiting for daemon setup…').split('\n');
+        const items = job.kind === 'dependencies' && lines.length > 1 ? lines : [];
+        const loader = new DependencyInstallProgressLoader(tui, theme(), items.length ? 'Setting up extensions…' : lines.join(' '));
+        const list = new Text(items.map(line => theme().fg('muted', line)).join('\n'), 2, 0);
         const hint = new Text(`${job.links?.length ? 'L opens setup links · ' : ''}Escape cancels this setup job`, 1, 1);
         return {
-          render: width => [...loader.render(width), ...hint.render(width)],
-          invalidate: () => { loader.invalidate(); hint.invalidate(); },
+          render: width => [...loader.render(width), ...(items.length ? list.render(width) : []), ...hint.render(width)],
+          invalidate: () => { loader.invalidate(); list.invalidate(); hint.invalidate(); },
           handleInput: data => {
             if (keys.matches(data, 'tui.select.cancel') || matchesKey(data, Key.escape)) done(undefined);
             else if (job.links?.length && data.toLowerCase() === 'l') done('links');

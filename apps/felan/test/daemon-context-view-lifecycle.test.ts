@@ -150,11 +150,12 @@ it('stops the real daemon on the first force command with an attached context vi
   const running = runDaemonTerminal(controller, { openBrowser: vi.fn(async () => undefined), cwd: root, sessionId: session, terminal, createTui: () => tui,
     clientConfigDir: join(root, 'client'), signal: lifetime.signal });
   cleanups.push(async () => { lifetime.abort(); await running; await controller.dispose(); });
-  await vi.waitFor(() => expect(controller.sessionId).toBe(session));
   const screen = () => { tui.renderNow(true); return tui.getScreenLines().join('\n'); };
   await vi.waitFor(() => expect(screen()).toContain('Manage optional extensions'), { timeout: 5000 });
+  expect(controller.sessionId).toBeUndefined();
   input('\x1b');
   await vi.waitFor(() => expect(screen()).not.toContain('Manage optional extensions'), { timeout: 5000 });
+  await vi.waitFor(() => expect(controller.sessionId).toBe(session));
   const document = () => client.getAttachment(session)?.state.snapshot?.presentation.find(element => element.kind === 'document') as UiDocument | undefined;
   for (let index = 0; index < 3; index++) {
     expect(await client.request('command.invoke', { name: 'context', arguments: '' }, { session })).toMatchObject({ outcome: 'accepted' });

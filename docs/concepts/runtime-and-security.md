@@ -140,9 +140,9 @@ be reset to `ask`. A managed CLI install does not install Chrome.
 ## Dependency installation
 
 Binary-backed extensions degrade safely when dependencies are absent. The local
-TUI offers one initially unchecked installation checklist; checking an item is
-the explicit authorization for that reviewed installation, while unchecked items
-use their safe fallback. It never installs during non-interactive runs or model
+TUI offers one installation checklist at startup with recommended items
+preselected; submitting a checked item is the explicit authorization for that
+reviewed installation, while unchecked items use their safe fallback. It never installs during non-interactive runs or model
 tool calls. Managed installers use reviewed versions, verify download/binary
 integrity, avoid package lifecycle scripts, and stage candidates in agent storage.
 

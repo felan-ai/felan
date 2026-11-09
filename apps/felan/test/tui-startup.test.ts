@@ -21,7 +21,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', request: { kind: 'input', title: 'Model question must wait' } };
 
-async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; compositionMismatch?: boolean; buildMismatch?: 'version' | 'composition'; remote?: boolean; pairing?: boolean; remoteNeed?: string } = {}) {
+async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; dependencyModels?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; compositionMismatch?: boolean; buildMismatch?: 'version' | 'composition'; remote?: boolean; pairing?: boolean; remoteNeed?: string } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
   await mkdir(join(directory, 'tui'));
   await writeFile(join(directory, 'tui/settings.json'), JSON.stringify({ showImages: false, ...options.preferences }));
@@ -37,7 +37,7 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
       ...(options.buildMismatch === 'composition' ? { managerVersion: 'installed' } : {}) } });
   let daemonVersion = 'fixture'; let identity = identityFor(client.target, 'instance'); const controller = new TuiSessionController(client);
   const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal); const abort = new AbortController();
-  let loggedIn = options.provider ?? false; let cancelled = false;
+  let loggedIn = options.provider ?? false; let cancelled = false; let decided = false;
   const openBrowser = vi.fn(async (_url: string) => undefined);
   const waiting: SetupJob = { id: 'login-job', kind: 'login', state: 'waiting', message: 'Waiting for credentials',
     prompt: { id: 'key', kind: 'input', message: 'Secret API key', secret: true } };
@@ -58,8 +58,11 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
         if (options.askBeforeAttach) fake.frame({ v: 1, interaction: question }, connection);
         fake.reply(request, { attachmentId: 'binding', snapshot: snapshot() }, connection); break;
       case 'host.setup.catalog': fake.reply(request, { providers: [{ id: 'provider', label: 'Fixture provider', configured: loggedIn, subscription: false, apiKeyLogin: true, methods: ['api_key'] }],
-        credentials: [], dependencies: options.dependencies ? [{ id: 'dependency', label: 'Optional dependency', description: 'Reviewed install', enabled: true, available: false, installable: true, needsSetup: true }] : [] }, connection); break;
-      case 'host.setup.start': fake.reply(request, waiting, connection); break;
+        credentials: [], dependencies: options.dependencies ? [{ id: 'dependency', label: 'Optional dependency', description: 'Reviewed install', enabled: true, available: decided, installable: true, needsSetup: !decided }] : [] }, connection); break;
+      case 'host.setup.start':
+        if ((request.params as { kind?: string }).kind !== 'dependencies') { fake.reply(request, waiting, connection); break; }
+        decided = true; if (options.dependencyModels) loggedIn = true;
+        fake.reply(request, { id: 'dependency-job', kind: 'dependencies', state: 'completed', message: 'Dependencies updated.' }, connection); break;
       case 'host.setup.cancel': cancelled = true; fake.reply(request, {}, connection); break;
       case 'host.setup.read': fake.reply(request, cancelled ? { id: 'login-job', kind: 'login', state: 'cancelled', message: 'Cancelled' } : loggedIn ? { id: 'login-job', kind: 'login', state: 'completed', message: 'Done' } : waiting, connection); break;
       case 'host.setup.answer': loggedIn = true; fake.reply(request, {}, connection); break;
@@ -216,11 +219,72 @@ it.each(['complete', 'cancel'] as const)('queues an arriving model question unti
   expect(JSON.stringify(f.fake.requests.filter(request => request.op === 'interaction.answer'))).not.toContain('private-credential');
 });
 
-it('does not start attachment onboarding while a model question is being presented', async () => {
+async function acceptOnboarding(f: Awaited<ReturnType<typeof fixture>>) {
+  await vi.waitFor(() => expect(f.text()).toContain('Manage optional extensions'));
+  expect(f.text()).toContain('[✓] install: Optional dependency');
+  f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.text()).toContain('Apply extension changes?'));
+  f.terminal.input('\x1b[B'); f.terminal.input('\r');
+}
+
+it('offers dependency onboarding before attaching and does not reopen it after it is deferred', async () => {
   const f = await fixture({ provider: true, askBeforeAttach: true, dependencies: true }); f.start();
+  await vi.waitFor(() => expect(f.text()).toContain('Manage optional extensions'));
+  expect(f.fake.requests.some(request => request.op === 'sessions.create')).toBe(false);
+  f.terminal.input('\x1b');
   await vi.waitFor(() => expect(f.text()).toContain('Model question must wait'));
-  expect(f.text()).not.toContain('Install optional extensions');
+  expect(f.controller.sessionId).toBe('session');
+  expect(f.text()).not.toContain('Manage optional extensions');
   expect(f.fake.requests.some(request => request.op === 'host.setup.start')).toBe(false);
+});
+
+it('starts a first-run session without login when onboarding installs a model provider', async () => {
+  const f = await fixture({ dependencies: true, dependencyModels: true }); f.start({ initialMessage: 'first request' });
+  await acceptOnboarding(f);
+  await vi.waitFor(() => expect(f.fake.requests.some(request => request.op === 'prompt')).toBe(true));
+  expect(f.controller.sessionId).toBe('session');
+  expect(f.controller.notice ?? '').not.toContain('No model is available');
+  expect(f.fake.requests.find(request => request.op === 'host.setup.start')?.params).toEqual({ kind: 'dependencies', choices: [{ id: 'dependency', action: 'install' }] });
+  expect(f.fake.requests.filter(request => request.op === 'host.status')).toHaveLength(2);
+  expect(f.fake.requests.filter(request => request.op === 'sessions.create')).toHaveLength(1);
+});
+
+it('asks first-run users to log in after onboarding when no model provider becomes available', async () => {
+  const f = await fixture({ dependencies: true }); f.start({ initialMessage: 'first request' });
+  await vi.waitFor(() => expect(f.text()).toContain('Manage optional extensions'));
+  expect(f.controller.notice ?? '').not.toContain('No model is available');
+  await acceptOnboarding(f);
+  await vi.waitFor(() => expect(f.controller.notice).toContain('No model is available'));
+  expect(f.fake.requests.some(request => request.op === 'sessions.create' || request.op === 'prompt')).toBe(false);
+  await openLogin(f); f.terminal.input('test-api-key'); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.controller.notice).toContain('Login completed. Use /new'), { timeout: 3_000 });
+  f.terminal.input('\x03'); f.terminal.input('/new'); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(f.fake.requests.filter(request => request.op === 'host.setup.start' && (request.params as { kind?: string }).kind === 'dependencies')).toHaveLength(1);
+});
+
+it('shows the login notice when first-run onboarding is deferred and does not reopen it on /new', async () => {
+  const f = await fixture({ dependencies: true }); f.start();
+  await vi.waitFor(() => expect(f.text()).toContain('Manage optional extensions'));
+  f.terminal.input('\x1b');
+  await vi.waitFor(() => expect(f.controller.notice).toContain('No model is available'));
+  expect(f.fake.requests.some(request => request.op === 'host.setup.start' || request.op === 'sessions.create')).toBe(false);
+  await openLogin(f); f.terminal.input('test-api-key'); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.controller.notice).toContain('Login completed. Use /new'), { timeout: 3_000 });
+  f.terminal.input('\x03'); f.terminal.input('/new'); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(f.text()).not.toContain('Manage optional extensions');
+  expect(f.fake.requests.some(request => request.op === 'host.setup.start' && (request.params as { kind?: string }).kind === 'dependencies')).toBe(false);
+});
+
+it('shows pending dependency onboarding once before creating a session for a logged-in user', async () => {
+  const f = await fixture({ provider: true, dependencies: true }); f.start();
+  await vi.waitFor(() => expect(f.text()).toContain('Manage optional extensions'));
+  expect(f.fake.requests.some(request => request.op === 'sessions.create')).toBe(false);
+  await acceptOnboarding(f);
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(f.fake.requests.filter(request => request.op === 'sessions.create')).toHaveLength(1);
+  expect(f.fake.requests.filter(request => request.op === 'host.setup.start' && (request.params as { kind?: string }).kind === 'dependencies')).toHaveLength(1);
 });
 
 it.each([

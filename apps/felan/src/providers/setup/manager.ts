@@ -91,6 +91,18 @@ export class HostSetupManager {
     this.check(); return parseSchema(SetupCatalogSchema, { providers, credentials, dependencies });
   }
 
+  async modelProviderReady(): Promise<boolean> {
+    this.check();
+    const candidates = this.dependencies.filter(dependency => dependency.providesModels);
+    if (!candidates.length) return false;
+    const settings = await readDaemonGlobalSettings(this.options.agentDir, this.options.assertCurrent);
+    for (const dependency of candidates) {
+      if (!isBuiltinExtensionEnabled(settings, dependency.extension)) continue;
+      if (await dependency.check(this.options.runtime).then(status => status.available, () => false)) return true;
+    }
+    return false;
+  }
+
   validateStart(value: SetupStart): void {
     this.check(); const request = parseSchema(SetupStartSchema, value);
     if ([...this.jobs.values()].filter(job => !terminal(job.view)).length >= 8) throw commandError('request_capacity');
@@ -119,7 +131,7 @@ export class HostSetupManager {
     }).catch(error => {
       if (error instanceof AuthCleanupError) this.failure = error;
       job.view = { id: job.view.id, kind: job.view.kind, state: job.control.signal.aborted ? 'cancelled' : 'failed',
-        message: job.control.signal.aborted ? 'Setup cancelled.' : 'Setup failed. No automatic retry was attempted.' };
+        message: job.control.signal.aborted ? 'Setup cancelled.' : error instanceof DependencySetupError ? error.message : 'Setup failed. No automatic retry was attempted.' };
     }).finally(() => {
       delete job.answer;
       for (const [id, older] of this.jobs) {
@@ -198,25 +210,47 @@ export class HostSetupManager {
     return message;
   }
 
-  private async install(job: Job, request: Extract<SetupStart, { kind: 'dependencies' }>): Promise<void> {
+  private async install(job: Job, request: Extract<SetupStart, { kind: 'dependencies' }>): Promise<string> {
     const runtime = cancellableRuntime(this.options.runtime, job.control.signal);
-    for (const choice of request.choices) {
+    const lines = new Map<string, string>();
+    const render = () => [...lines.values()].join('\n') || 'Saving extension choices…';
+    const report = (label: string, status: string) => {
+      if (job.control.signal.aborted) return;
+      lines.set(label, `${label}: ${clean(status)}`); job.view.message = render();
+    };
+    const results = await Promise.allSettled(request.choices.map(async choice => {
       job.control.signal.throwIfAborted(); this.options.assertCurrent();
       const dependency = this.dependencies.find(dependency => dependency.id === choice.id)!;
       let enabled = choice.action === 'install' || choice.action === 'enable';
       if (choice.action === 'install') {
-        job.view.message = `Installing ${dependency.label}…`;
-        await dependency.install!(runtime, value => { if (!job.control.signal.aborted) job.view.message = clean(value); });
-        if (!(await dependency.check(runtime)).available) throw new Error('Installed dependency is unavailable.');
+        report(dependency.label, 'Installing…');
+        let result: unknown;
+        try { result = await dependency.install!(runtime, value => report(dependency.label, value)); }
+        catch (error) { report(dependency.label, `failed: ${error instanceof Error ? error.message : String(error)}`); throw error; }
+        if (!(await dependency.check(runtime)).available) {
+          report(dependency.label, `failed: ${installFailureReason(result)}`);
+          throw new Error('Installed dependency is unavailable.');
+        }
       } else if (choice.action === 'skip') {
         const current = await readDaemonGlobalSettings(this.options.agentDir, this.options.assertCurrent);
         enabled = isBuiltinExtensionEnabled(current, dependency.extension);
       }
       job.control.signal.throwIfAborted();
       await mergeDaemonGlobalSettings(this.options.agentDir, { extensions: [], dependencyDecisions: [{ extension: dependency.extension, revision: dependency.revision, enabled }] }, this.options.assertCurrent);
-    }
+      if (choice.action !== 'skip') report(dependency.label, choice.action === 'install' ? 'installed' : `${choice.action}d`);
+    }));
+    job.control.signal.throwIfAborted();
+    if (results.some(result => result.status === 'rejected')) throw new DependencySetupError(`${render()}\nFailed items remain pending. Retry them with /dependencies.`);
     job.committed = true;
+    return lines.size ? `${render()}\nNew sessions or an explicit reload pick up changes.` : 'Dependencies updated. New sessions or an explicit reload pick up changes.';
   }
+}
+
+class DependencySetupError extends Error {}
+
+function installFailureReason(result: unknown): string {
+  const reason = typeof result === 'object' && result !== null && 'reason' in result ? result.reason : undefined;
+  return typeof reason === 'string' && reason ? reason : 'the installed dependency is unavailable.';
 }
 
 function terminal(job: SetupJob): boolean { return ['completed', 'cancelled', 'failed'].includes(job.state); }

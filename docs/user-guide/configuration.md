@@ -309,9 +309,10 @@ is included.
 
 The dependency manager stores its revisioned onboarding manifest under
 `felanTui.onboarding`. It is internal state; prefer `/dependencies` over editing
-it directly. During interactive startup, missing managed installers appear in
-one initially unchecked checklist; checking an item authorizes installation and
-unchecked items use their safe fallback. Escape leaves the current pass pending.
+it directly. During interactive startup, before the login prompt, missing managed
+installers appear in one checklist with recommended items preselected; submitting
+a checked item authorizes installation and unchecked items use their safe
+fallback. Escape leaves the current pass pending.
 Available and non-installable dependencies resolve without another prompt. A
 complete manifest prevents the onboarding manager from probing external
 dependencies during normal startup. The full resource view reports extensions as

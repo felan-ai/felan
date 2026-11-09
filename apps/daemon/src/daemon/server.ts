@@ -45,7 +45,7 @@ export interface SessionServerOptions {
   prepareOpenInteraction?(id: string, client: string, signal: AbortSignal): () => Promise<void>;
   broker?: BrokerDispatchPort;
   management?: { lifecycle: HostLifecycle; logs(params: OperationParams<'host.logs'>): OperationResult<'host.logs'> };
-  setupNeeds?(): OperationResult<'host.status'>['setupNeeds'];
+  setupNeeds?(): OperationResult<'host.status'>['setupNeeds'] | Promise<OperationResult<'host.status'>['setupNeeds']>;
   providersBusy?(): boolean;
   currentComposition?(): Promise<HostCompositionInfo>;
   prepareRoot?(request: { cwd: string; extensions?: readonly string[] }, caller: { recipient?: string; signal: AbortSignal }): Promise<RootPreparation>;
@@ -433,7 +433,7 @@ export class SessionServer {
       ...(this.options.management?.lifecycle.blocked ? { blocked: this.options.management.lifecycle.blocked } : {}),
       ...(composition ? { composition } : {}),
       active: { sessions: rows.filter(row => row.state === 'open').length, runs: rows.filter(row => ['running', 'waiting', 'cancelling'].includes(row.run.state)).length,
-        work: await this.activeWork(), attachments: [...this.connections].reduce((sum, connection) => sum + connection.attachments.size, 0) }, setupNeeds: this.options.setupNeeds?.() ?? [] });
+        work: await this.activeWork(), attachments: [...this.connections].reduce((sum, connection) => sum + connection.attachments.size, 0) }, setupNeeds: await this.options.setupNeeds?.() ?? [] });
   }
 
   /** Everything a restart would interrupt: busy sessions and providers, child executions, processes and unanswered host questions. */

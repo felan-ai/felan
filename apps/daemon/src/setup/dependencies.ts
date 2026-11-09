@@ -6,6 +6,7 @@ export interface SetupDependency {
   revision: number;
   label: string;
   description: string;
+  providesModels?: boolean;
   check(runtime: AgentRuntime): Promise<{ available: boolean; version?: string; reason?: string }>;
   install?(runtime: AgentRuntime, progress: (message: string) => void): Promise<unknown>;
 }

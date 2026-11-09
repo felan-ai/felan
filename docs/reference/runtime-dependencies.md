@@ -15,16 +15,22 @@ portable detection, optional installation, and safe unavailable behavior;
    unrelated extension behavior.
 3. The local TUI's source-controlled registry in
    `apps/felan/src/providers/dependencies.ts` probes dependency-backed extensions
-   without a current onboarding record, then shows one initially unchecked checklist for
-   unavailable dependencies with managed installers. Checking an item is the
-   explicit authorization to install it; unchecked items use their safe fallback.
+   without a current onboarding record, then shows one checklist before the
+   login prompt and before the first session. Install and enable choices start
+   checked as recommendations. Submitting a checked item is the explicit
+   authorization to install it; unchecked items use their safe fallback. A
+   dependency marked `providesModels` (Claude Code) that is enabled and
+   available satisfies the daemon's provider setup need, so startup continues
+   without `/login`.
    Available dependencies and unavailable dependencies without managed installers
    are resolved without another prompt.
 4. A completed enable, disable, install, or supported degraded-mode choice is
    stored atomically with the corresponding `builtinExtensions` intent in
    `$FELAN_AGENT_DIR/settings.json`. Escape/cancellation leaves the entire pass
-   pending. A failed installation remains pending while other submitted items
-   continue independently.
+   pending. Submitted installations run in parallel, and the progress view shows
+   one status line per item, including the reason for any failure. A failed
+   installation remains pending while other submitted items continue
+   independently.
 5. Once all current records exist, normal startup does not run the TUI
    dependency manager's probes. The startup resource view reports enabled,
    disabled, and setup-required Felan extensions from settings only. Use

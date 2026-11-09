@@ -45,6 +45,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
   let stopped = false; let exit!: () => void; const finished = new Promise<void>(resolve => { exit = () => { stopped = true; resolve(); }; });
   let setup: TerminalSetup | undefined;
   let startupDeferred = false;
+  let onboardingOffered = false;
   const updateCheck = new AbortController();
   const setupAction = async (action: 'login' | 'logout' | 'dependencies', provider?: string): Promise<boolean> => {
     if (setup) {
@@ -127,7 +128,7 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
     unsubscribeSetup = controller.subscribe(() => {
       if (!controller.sessionId || controller.state?.status !== 'live' || setupSession === controller.sessionId) return;
       setupSession = controller.sessionId;
-      if (!stopped && !setup!.busy && !tui.hasOverlay()) void setup!.dependencies(true);
+      if (!stopped && !onboardingOffered && !setup!.busy && !tui.hasOverlay()) void setup!.dependencies(true);
     });
     const ui = createPresentationUi(tui, screen.dialogs, () => theme, keybindings, message => controller.setNotice(message));
     builtins = createTerminalPresenters(controller, ui, { settings, presentationPreferences: () => preferences.presentation, toolPresentation: terminalToolPresentation,
@@ -162,17 +163,28 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       await loadingPreferences;
       if (stopped) return false;
       if (!controller.client.capabilities?.operations.includes('host.status')) return;
-      const response = await controller.perform('host.status', {});
-      if (response.outcome !== 'accepted') throw new Error(controller.notice);
-      for (const need of response.result.setupNeeds) if (need.code === 'remote') controller.announce(need.message, 'warning');
-      const blocked = response.result.state === 'blocked';
-      if (!blocked && !response.result.setupNeeds.some(need => need.code === 'provider')) return;
+      const hostStatus = async () => {
+        const response = await controller.perform('host.status', {});
+        if (response.outcome !== 'accepted') throw new Error(controller.notice);
+        return response.result;
+      };
+      let status = await hostStatus();
+      for (const need of status.setupNeeds) if (need.code === 'remote') controller.announce(need.message, 'warning');
+      const needsProvider = () => status.setupNeeds.some(need => need.code === 'provider');
+      if (status.state !== 'blocked') {
+        onboardingOffered = true;
+        await setup!.dependencies(true);
+        if (stopped) return false;
+        if (needsProvider()) status = await hostStatus();
+      }
+      const blocked = status.state === 'blocked';
+      if (!blocked && !needsProvider()) return;
       startupDeferred = true;
       const draft = screen.editor.getExpandedText();
       if (draft) screen.editor.addToHistory(remoteHistoryInput(draft));
       if (options.initialMessage && options.initialMessage !== draft) screen.editor.addToHistory(remoteHistoryInput(options.initialMessage));
       if (!draft && options.initialMessage) screen.editor.setText(options.initialMessage);
-      controller.setNotice(blocked ? formatHostBlocked(response.result.blocked, { client: 'tui' })
+      controller.setNotice(blocked ? formatHostBlocked(status.blocked, { client: 'tui' })
         : 'No model is available. Use /login, then /new. Your input is retained in the editor/history and was not sent.', blocked);
       return false;
     }).then(async () => {

@@ -121,6 +121,42 @@ it('never installs on catalog reads or without an explicit selected action', asy
   expect(install).toHaveBeenCalledOnce();
 });
 
+it('installs selected dependencies concurrently with a status line each and keeps failures pending', async () => {
+  const release = gate(); const started: string[] = []; let installed = false;
+  const good: SetupDependency = { id: 'good', extension: 'browser', revision: 2, label: 'Good', description: 'Good dependency',
+    check: async () => ({ available: installed }),
+    install: async (_runtime, progress) => { started.push('good'); progress('Downloading…'); await release.promise; installed = true; } };
+  const bad: SetupDependency = { id: 'bad', extension: 'markitdown', revision: 1, label: 'Bad', description: 'Bad dependency',
+    check: async () => ({ available: false }),
+    install: async () => { started.push('bad'); await release.promise; return { available: false, reason: 'Download refused.' }; } };
+  const f = await fixture(undefined, [good, bad]);
+  const job = f.manager.start({ kind: 'dependencies', choices: [{ id: 'good', action: 'install' }, { id: 'bad', action: 'install' }] }, 'owner');
+  await vi.waitFor(() => expect(started).toEqual(['good', 'bad']));
+  expect(f.manager.read(job.id, 'owner').message).toBe('Good: Downloading…\nBad: Installing…');
+  release.resolve();
+  await vi.waitFor(() => expect(f.manager.read(job.id, 'owner').state).toBe('failed'));
+  expect(f.manager.read(job.id, 'owner').message).toBe('Good: installed\nBad: failed: Download refused.\nFailed items remain pending. Retry them with /dependencies.');
+  expect((await f.manager.catalog()).dependencies).toMatchObject([{ id: 'good', available: true, needsSetup: false }, { id: 'bad', needsSetup: true }]);
+});
+
+it('reports a model provider only for an enabled, available model dependency', async () => {
+  let available = true; let failing = false;
+  const check = vi.fn(async () => { if (failing) throw new Error('private-detection-error'); return { available }; });
+  const models: SetupDependency = { id: 'models', extension: 'claudeCode', revision: 1, label: 'Models', description: 'Model dependency', providesModels: true, check };
+  const tool: SetupDependency = { id: 'tool', extension: 'browser', revision: 2, label: 'Tool', description: 'Tool dependency', check: async () => ({ available: true }) };
+  const toolsOnly = await fixture(undefined, [tool]);
+  expect(await toolsOnly.manager.modelProviderReady()).toBe(false);
+  const f = await fixture(undefined, [tool, models]);
+  expect(await f.manager.modelProviderReady()).toBe(true);
+  available = false; expect(await f.manager.modelProviderReady()).toBe(false);
+  available = true; failing = true; expect(await f.manager.modelProviderReady()).toBe(false);
+  failing = false;
+  const disabled = f.manager.start({ kind: 'dependencies', choices: [{ id: 'models', action: 'disable' }] }, 'owner');
+  await vi.waitFor(() => expect(f.manager.read(disabled.id, 'owner').state).toBe('completed'));
+  check.mockClear();
+  expect(await f.manager.modelProviderReady()).toBe(false); expect(check).not.toHaveBeenCalled();
+});
+
 it('blocks further work and shutdown completion when an auth child cannot be cleaned up', async () => {
   const f = await serverFixture({ now: Date.now }); cleanup.push(() => f.dispose());
   const models = f.root.runtime.session.modelRuntime;

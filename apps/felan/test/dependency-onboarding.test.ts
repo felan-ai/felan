@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   DependencyInstallationChecklist,
   DependencyOnboardingView,
+  type DependencyInstallOption,
 } from '../src/dependency-onboarding.js';
 
 const theme = {
@@ -17,14 +18,14 @@ const options = [
   { id: 'markitdown', label: 'MarkItDown', description: 'Install document tools.' },
 ];
 
-function createChecklist() {
+function createChecklist(rows: readonly DependencyInstallOption[] = options) {
   let result: readonly string[] | undefined = undefined;
   const done = vi.fn((value: readonly string[] | undefined) => { result = value; });
   const checklist = new DependencyInstallationChecklist(
     { requestRender: vi.fn() },
     theme,
     { matches: () => false } as never,
-    options,
+    rows,
     done,
   );
   return { checklist, done, get result() { return result; } };
@@ -39,6 +40,25 @@ describe('DependencyInstallationChecklist', () => {
     expect(lines).toContain('Manage optional extensions');
     expect(lines).toContain('Unchecked extensions remain unchanged.');
     expect(lines).not.toContain('[✓]');
+    expect(lines).not.toContain('Recommended extensions are preselected');
+  });
+
+  it('starts recommended options checked and lets the user uncheck them', () => {
+    const { checklist, done } = createChecklist(options.map((option) => ({ ...option, checked: option.id !== 'memory' })));
+    const lines = checklist.render(120).join('\n');
+    expect(lines).toContain('[✓] Browser');
+    expect(lines).toContain('[ ] Codebase Memory');
+    expect(lines).toContain('[✓] MarkItDown');
+    expect(lines).toContain('Recommended extensions are preselected.');
+    checklist.handleInput(' ');
+    checklist.handleInput('\r');
+    expect(done).toHaveBeenCalledExactlyOnceWith(['markitdown']);
+  });
+
+  it('submits preselected options unchanged on Enter', () => {
+    const { checklist, done } = createChecklist(options.map((option) => ({ ...option, checked: true })));
+    checklist.handleInput('\r');
+    expect(done).toHaveBeenCalledExactlyOnceWith(['browser', 'memory', 'markitdown']);
   });
 
   it('returns selected IDs in option order', () => {

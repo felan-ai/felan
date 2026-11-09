@@ -93,9 +93,11 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const liveRegistry = registry; const liveStore = store; const liveSessionLifecycle = sessionLifecycle; const liveSink = sink;
     const broker = createRegistryInteractionBroker(registry, hostConfig.config.policy ?? {});
     const setupStorageRoot = join(owner.target.agentDir, 'storage', 'setup');
+    const agentStorageRoot = join(owner.target.agentDir, 'storage', 'agent');
     await mkdir(setupStorageRoot, { recursive: true, mode: 0o700 });
+    await mkdir(agentStorageRoot, { recursive: true, mode: 0o700 });
     const setupRuntime = loadedProviders.services.get(HOST_RUNTIME_SERVICE)!.create(owner.target.agentDir, { pathAccess: 'host', agentDir: owner.target.agentDir,
-      agentStorageRoot: join(owner.target.agentDir, 'storage', 'agent'), sessionStorageRoot: setupStorageRoot });
+      agentStorageRoot, sessionStorageRoot: setupStorageRoot });
     const host = await sessionRuntime.createHostServices({ agentDir: owner.target.agentDir, homeDir: homeDir ?? homedir(),
       runtime: setupRuntime, models, interactions: { request: broker.request.bind(broker) },
       definitions: await sessionRuntime.configuration(hostConfig.config.extensions.map(row => row.package)),
@@ -157,7 +159,12 @@ export async function startDaemonService(target: DaemonTarget, options: {
         } }, id, client, signal),
       ...(host.prepareRoot ? { prepareRoot: host.prepareRoot } : {}),
       management: { lifecycle, logs: params => log.page(params) },
-      setupNeeds: () => [...(models.getAvailableSnapshot().length ? [] : [{ code: 'provider', message: 'Configure a local model provider. A Felan account is not required.' }]), ...(connector?.setupNeeds() ?? [])] });
+      setupNeeds: async () => {
+        const ready = models.getAvailableSnapshot().length > 0 || await (async () => {
+          try { return await liveSetup.modelProviderReady?.() ?? false; } catch { return false; }
+        })();
+        return [...(ready ? [] : [{ code: 'provider', message: 'Configure a local model provider. A Felan account is not required.' }]), ...(connector?.setupNeeds() ?? [])];
+      } });
     const liveServer = server;
     try {
       connector = new RemoteConnector({ database: liveStore.database, registry: liveRegistry, server: liveServer, secretStorage: sessionRuntime.secretStorage, owner,

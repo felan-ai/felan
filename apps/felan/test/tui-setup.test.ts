@@ -152,6 +152,7 @@ it('requires explicit unchecked checklist submission and maps unchecked choices 
   const work = f.setup.dependencies(); await vi.advanceTimersByTimeAsync(0);
   expect(f.calls.some(call => call.op === 'host.setup.start')).toBe(false);
   submit(['install', 'enable', 'disable']); expect(await work).toBe(true);
+  expect(f.ui.checklist.mock.calls[0]![0].some(row => row.checked)).toBe(false);
   expect(f.ui.checklist.mock.calls[0]?.[0].map(row => row.description)).toEqual(expect.arrayContaining([expect.stringContaining('Unchecked: leave unchanged.')]));
   const rows = f.ui.checklist.mock.calls[0]![0];
   expect(rows.find(row => row.id === 'disable')?.description).toBe('Disable Enabled; installed software is kept. Checked: disable. Unchecked: leave unchanged.');
@@ -179,6 +180,21 @@ it('offers only needsSetup dependencies automatically and treats dismissal as no
   ] }) });
   expect(await f.setup.dependencies(true)).toBe(false);
   expect(f.ui.checklist.mock.calls[0]?.[0].map(row => row.id)).toEqual(['needs']);
+  expect(f.calls.some(call => call.op === 'host.setup.start')).toBe(false);
+});
+
+it('preselects recommended install and enable rows only during automatic onboarding', async () => {
+  const dependencies: SetupCatalog['dependencies'] = [
+    { id: 'install', label: 'Installable', description: '', enabled: true, available: false, installable: true, needsSetup: true },
+    { id: 'enable', label: 'Installed', description: '', enabled: false, available: true, installable: true, needsSetup: true },
+    { id: 'disable', label: 'Enabled', description: '', enabled: true, available: true, installable: true, needsSetup: true },
+    { id: 'skip', label: 'Fallback', description: '', enabled: false, available: false, installable: false, needsSetup: true },
+  ];
+  const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, dependencies }) });
+  expect(await f.setup.dependencies(true)).toBe(false);
+  expect(f.ui.checklist.mock.calls[0]![0].map(row => [row.id, row.checked === true])).toEqual([
+    ['install', true], ['enable', true], ['disable', false], ['skip', false],
+  ]);
   expect(f.calls.some(call => call.op === 'host.setup.start')).toBe(false);
 });
 

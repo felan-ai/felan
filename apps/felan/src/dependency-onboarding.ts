@@ -21,6 +21,7 @@ export interface DependencyInstallOption {
   readonly id: string;
   readonly label: string;
   readonly description: string;
+  readonly checked?: boolean;
 }
 
 export interface DependencyInstallProgress {
@@ -136,7 +137,8 @@ export class DependencyOnboardingView implements Component {
 }
 
 export class DependencyInstallationChecklist implements Component {
-  readonly #checked = new Set<string>();
+  readonly #checked: Set<string>;
+  readonly #recommended: boolean;
   #selectedIndex = 0;
   #closed = false;
 
@@ -146,7 +148,10 @@ export class DependencyInstallationChecklist implements Component {
     private readonly keybindings: KeybindingsManager,
     private readonly options: readonly DependencyInstallOption[],
     private readonly done: (selection: readonly string[] | undefined) => void,
-  ) {}
+  ) {
+    this.#checked = new Set(options.filter((option) => option.checked).map((option) => option.id));
+    this.#recommended = this.#checked.size > 0;
+  }
 
   invalidate(): void {}
 
@@ -155,6 +160,7 @@ export class DependencyInstallationChecklist implements Component {
     const lines = [
       this.theme.fg('accent', this.theme.bold('Manage optional extensions')),
       this.theme.fg('text', 'Check an extension to apply its listed operation: install, enable, or disable.'),
+      ...(this.#recommended ? [this.theme.fg('text', 'Recommended extensions are preselected. Space unchecks any you do not want.')] : []),
       this.theme.fg('muted', 'Unchecked extensions remain unchanged. Escape decides later.'),
       '',
     ];
