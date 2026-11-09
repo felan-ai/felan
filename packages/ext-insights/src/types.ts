@@ -2,12 +2,13 @@ export interface SessionEvent {
   type: string;
   timestamp?: string;
   id?: string;
-  parentId?: string;
+  parentId?: string | null;
   [key: string]: unknown;
 }
 
 export interface ContentItem {
   type: string;
+  id?: string;
   text?: string;
   name?: string;
   isError?: boolean;
@@ -32,7 +33,7 @@ export interface TokenUsage {
 }
 
 export interface SessionMessage {
-  role: "user" | "assistant" | "tool";
+  role: "user" | "assistant" | "tool" | "toolResult";
   content?: ContentItem[];
   usage?: TokenUsage;
   model?: string;
@@ -42,6 +43,9 @@ export interface SessionMessage {
   toolCalls?: Array<{ name?: string; input?: unknown; args?: unknown; arguments?: unknown }>;
   toolResults?: Array<{ name?: string; isError?: boolean }>;
   stopReason?: string;
+  toolCallId?: string;
+  toolName?: string;
+  isError?: boolean;
 }
 
 export interface RageHit {
@@ -52,8 +56,18 @@ export interface RageHit {
   msgIndex: number;
 }
 
+/** Assistant messages, their tokens and cost, and errors from the tool calls this model made. */
+export interface ModelUsage {
+  count: number;
+  tokens: number;
+  cost: number;
+  toolErrors?: number;
+}
+
 export interface SessionActivity {
   timestamp: Date;
+  /** Transcript entry identity; forks and clones copy entries with the same key. */
+  entryKey?: string;
   userMessageCount?: number;
   assistantMessageCount?: number;
   toolCallCount?: number;
@@ -71,7 +85,7 @@ export interface SessionActivity {
     cacheWrite: number;
     total: number;
   };
-  models?: Record<string, { count: number; tokens: number; cost: number }>;
+  models?: Record<string, ModelUsage>;
   providers?: Record<string, number>;
   thinkingLevels?: Record<string, number>;
   toolUsage?: Record<string, number>;
@@ -106,7 +120,7 @@ export interface ParsedSession {
     cacheWrite: number;
     total: number;
   };
-  models: Record<string, { count: number; tokens: number; cost: number }>;
+  models: Record<string, ModelUsage>;
   providers: Record<string, number>;
   thinkingLevels: Record<string, number>;
   toolUsage: Record<string, number>;

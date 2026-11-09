@@ -33,11 +33,11 @@ export function computeAnalytics(sessions: ParsedSession[]): Analytics {
       tokenUsage: sess.tokenUsage,
       cost: sess.cost,
     }];
-    const firstDate = activity[0]!.timestamp.toISOString().split("T")[0];
+    const activeDates = new Set<string>();
     for (const item of activity) {
       const date = item.timestamp.toISOString().split("T")[0];
       const existing = dailyMap.get(date) ?? { date, sessions: 0, messages: 0, tokens: 0, cost: 0 };
-      if (date === firstDate) existing.sessions++;
+      if (!activeDates.has(date)) { activeDates.add(date); existing.sessions++; }
       existing.messages += (item.userMessageCount ?? 0) + (item.assistantMessageCount ?? 0);
       existing.tokens += item.tokenUsage?.total ?? 0;
       existing.cost += item.cost?.total ?? 0;
@@ -87,7 +87,7 @@ export function computeAnalytics(sessions: ParsedSession[]): Analytics {
       }
     }
   }
-  // Only include models that actually generated tokens (filters model_change-only entries)
+  // Only include models that actually generated tokens
   const modelStats = Array.from(modelMap.values())
     .filter(m => m.tokens > 0)
     .sort((a, b) => b.tokens - a.tokens);
@@ -250,7 +250,7 @@ function computeModelEfficiency(sorted: ParsedSession[]): ModelEfficiencySummary
       existing.messages += stats.count;
       existing.sessions += 1;
       existing.duration += sess.duration;
-      existing.toolErrors += sess.toolCallErrors;
+      existing.toolErrors += stats.toolErrors ?? 0;
       modelMap.set(model, existing);
     }
   }

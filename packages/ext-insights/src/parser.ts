@@ -18,6 +18,17 @@ const LANGUAGE_BY_EXTENSION: Record<string, string> = {
 };
 
 export function parseSessionTranscript(content: string, sourceId: string): ParsedSession | null {
+  return parseSessionEvents(transcriptEvents(content), sourceId);
+}
+
+function* transcriptEvents(content: string): Iterable<SessionEvent> {
+  for (const line of content.split(/\r?\n/u)) {
+    if (!line.trim()) continue;
+    try { yield JSON.parse(line) as SessionEvent; } catch {}
+  }
+}
+
+export function parseSessionEvents(events: Iterable<SessionEvent>, sourceId: string): ParsedSession | null {
   try {
     let sessionId = "";
     let cwd = "";
@@ -37,12 +48,14 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
     let costOutput = 0;
     let costCacheRead = 0;
     let costCacheWrite = 0;
-    const models: Record<string, { count: number; tokens: number; cost: number }> = {};
+    const models: ParsedSession["models"] = {};
     const providers: Record<string, number> = {};
     const thinkingLevels: Record<string, number> = {};
     const toolUsage: Record<string, number> = {};
     const stopReasons: Record<string, number> = {};
     let currentModel = "unknown";
+    let lastAssistantModel: string | undefined;
+    const modelByToolCall = new Map<string, string>();
     const rageHits: ParsedSession["rageHits"] = [];
     const responseTimesMs: number[] = [];
     const activityByHour: Record<string, number> = {};
@@ -54,11 +67,8 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
     let userInterruptions = 0;
     const activity: SessionActivity[] = [];
 
-    for (const line of content.split(/\r?\n/u)) {
-      if (!line.trim()) continue;
+    for (const event of events) {
       try {
-        const event = JSON.parse(line) as SessionEvent;
-
         if (!startTime && event.timestamp) startTime = new Date(event.timestamp);
         if (event.timestamp) endTime = new Date(event.timestamp);
 
@@ -78,28 +88,37 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
           if (data.cwd) cwd = data.cwd;
         }
 
+        const entryKey = event.id && event.timestamp ? `${event.id}@${event.timestamp}` : undefined;
+
         if (event.type === "model_change") {
-          const data = event as unknown as { modelId?: string; provider?: string };
-          if (data.modelId) {
-            models[data.modelId] = models[data.modelId] ?? { count: 0, tokens: 0, cost: 0 };
-            models[data.modelId].count++;
-            currentModel = data.modelId;
-          }
-          if (data.provider) {
-            providers[data.provider] = (providers[data.provider] ?? 0) + 1;
-          }
+          const data = event as unknown as { modelId?: string };
+          if (data.modelId) currentModel = data.modelId;
         }
 
         if (event.type === "thinking_level_change") {
           const data = event as unknown as { thinkingLevel?: string };
           if (data.thinkingLevel) {
             thinkingLevels[data.thinkingLevel] = (thinkingLevels[data.thinkingLevel] ?? 0) + 1;
+            if (eventTime) activity.push({ timestamp: eventTime, thinkingLevels: { [data.thinkingLevel]: 1 }, ...(entryKey ? { entryKey } : {}) });
           }
         }
 
         if (event.type === "message") {
           const msg = (event as unknown as { message: SessionMessage }).message;
-          const messageActivity: SessionActivity = eventTime ? { timestamp: eventTime } : { timestamp: new Date(0) };
+          const messageActivity: SessionActivity = { timestamp: eventTime ?? new Date(0), ...(entryKey ? { entryKey } : {}) };
+          const recordModelError = (model: string) => {
+            const record = models[model] ??= { count: 0, tokens: 0, cost: 0 };
+            record.toolErrors = (record.toolErrors ?? 0) + 1;
+            messageActivity.models ??= {};
+            const item = messageActivity.models[model] ??= { count: 0, tokens: 0, cost: 0 };
+            item.toolErrors = (item.toolErrors ?? 0) + 1;
+          };
+          const recordError = (toolName: string | undefined, model: string) => {
+            toolCallErrors++;
+            messageActivity.toolCallErrors = (messageActivity.toolCallErrors ?? 0) + 1;
+            recordToolError(toolErrorsByName, toolName);
+            recordModelError(model);
+          };
 
           if (msg.role === "user") {
             userMessages++;
@@ -115,13 +134,22 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
             const text = textParts.join(" ");
             if (text) {
               const hour = event.timestamp ? new Date(event.timestamp).getHours() : -1;
-              for (const hit of detectRage(text)) {
-                rageHits.push({ ...hit, hour, model: currentModel, msgIndex: userMessages });
-              }
+              const hits = detectRage(text).map(hit => ({ ...hit, hour, model: currentModel, msgIndex: userMessages }));
+              rageHits.push(...hits);
+              if (hits.length) messageActivity.rageHits = hits;
             }
           } else if (msg.role === "assistant") {
             assistantMessages++;
             messageActivity.assistantMessageCount = 1;
+            if (msg.model) {
+              lastAssistantModel = msg.model;
+              (models[msg.model] ??= { count: 0, tokens: 0, cost: 0 }).count++;
+              messageActivity.models = { [msg.model]: { count: 1, tokens: 0, cost: 0 } };
+            }
+            if (msg.provider) {
+              providers[msg.provider] = (providers[msg.provider] ?? 0) + 1;
+              messageActivity.providers = { [msg.provider]: 1 };
+            }
 
             if (eventTime && lastUserMessageAt) {
               responseTimesMs.push(Math.max(0, eventTime.getTime() - lastUserMessageAt.getTime()));
@@ -133,7 +161,7 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
               const output = msg.usage.output ?? 0;
               const cacheRead = msg.usage.cacheRead ?? 0;
               const cacheWrite = msg.usage.cacheWrite ?? 0;
-              const tokens = msg.usage.totalTokens ?? (input + output + cacheRead);
+              const tokens = msg.usage.totalTokens ?? (input + output + cacheRead + cacheWrite);
               const cost = msg.usage.cost?.total ?? 0;
 
               totalInput += input;
@@ -157,12 +185,10 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
               };
 
               if (msg.model) {
-                models[msg.model] = models[msg.model] ?? { count: 0, tokens: 0, cost: 0 };
-                models[msg.model].tokens += tokens;
-                models[msg.model].cost += cost;
+                models[msg.model]!.tokens += tokens;
+                models[msg.model]!.cost += cost;
                 messageActivity.models = { [msg.model]: { count: 1, tokens, cost } };
               }
-              if (msg.provider) messageActivity.providers = { [msg.provider]: 1 };
             }
 
             if (msg.stopReason) {
@@ -172,9 +198,10 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
             }
           }
 
-          if (msg.content) {
+          // Legacy transcripts embed results in the calling message; Pi records them as toolResult messages linked by call ID.
+          const callerModel = (msg.role === "assistant" ? msg.model : undefined) ?? lastAssistantModel ?? currentModel;
+          if (Array.isArray(msg.content)) {
             let messageToolCallCount = 0;
-            let messageToolCallErrors = 0;
             const messageToolUsage: Record<string, number> = {};
             for (const item of msg.content) {
               if (item.type === "toolCall" && item.name) {
@@ -182,19 +209,19 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
                 messageToolUsage[item.name] = (messageToolUsage[item.name] ?? 0) + 1;
                 toolCallCount++;
                 toolUsage[item.name] = (toolUsage[item.name] ?? 0) + 1;
+                if (item.id && msg.role === "assistant" && msg.model) modelByToolCall.set(item.id, msg.model);
                 collectToolSignals(item.name, [item.input, item.args, item.arguments], filesMentioned, languageCounts, gitActivity);
               }
-              if (item.type === "toolResult" && item.isError) {
-                messageToolCallErrors++;
-                toolCallErrors++;
-                recordToolError(toolErrorsByName, item.name);
-              }
+              if (item.type === "toolResult" && item.isError) recordError(item.name, callerModel);
             }
             if (messageToolCallCount) {
               messageActivity.toolCallCount = messageToolCallCount;
               messageActivity.toolUsage = messageToolUsage;
             }
-            if (messageToolCallErrors) messageActivity.toolCallErrors = messageToolCallErrors;
+          }
+
+          if (msg.role === "toolResult" && msg.isError) {
+            recordError(msg.toolName, (msg.toolCallId ? modelByToolCall.get(msg.toolCallId) : undefined) ?? callerModel);
           }
 
           if (msg.toolCalls) {
@@ -214,19 +241,11 @@ export function parseSessionTranscript(content: string, sourceId: string): Parse
           }
 
           if (msg.toolResults) {
-            for (const tr of msg.toolResults) {
-              if (tr.isError) {
-                toolCallErrors++;
-                messageActivity.toolCallErrors = (messageActivity.toolCallErrors ?? 0) + 1;
-                recordToolError(toolErrorsByName, tr.name);
-              }
-            }
+            for (const tr of msg.toolResults) if (tr.isError) recordError(tr.name, callerModel);
           }
           activity.push(messageActivity);
         }
-      } catch {
-        // Skip malformed lines
-      }
+      } catch {}
     }
 
     if (!startTime) return null;
@@ -353,13 +372,14 @@ function addNumbers(target: Record<string, number>, source: Record<string, numbe
   for (const [key, value] of Object.entries(source ?? {})) target[key] = (target[key] ?? 0) + value;
 }
 
-function addModelRecords(target: Record<string, { count: number; tokens: number; cost: number }>, source: Record<string, { count: number; tokens: number; cost: number }> | undefined): void {
+function addModelRecords(target: ParsedSession["models"], source: ParsedSession["models"] | undefined): void {
   for (const [key, value] of Object.entries(source ?? {})) {
-    const existing = target[key] as { count: number; tokens: number; cost: number } | undefined;
+    const existing = target[key];
     if (existing) {
       existing.count += value.count;
       existing.tokens += value.tokens;
       existing.cost += value.cost;
+      if (value.toolErrors) existing.toolErrors = (existing.toolErrors ?? 0) + value.toolErrors;
     } else target[key] = { ...value };
   }
 }

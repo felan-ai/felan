@@ -6,7 +6,7 @@ import os from 'node:os';
 import { ROOT, HERE } from './lib.mjs';
 import { createIsolation, cleanupIsolation, processesUsing } from './isolation.mjs';
 
-const available = ['protocol', 'daemon', 'transport', 'fanout', 'e2e', 'tui', 'idle'];
+const available = ['protocol', 'daemon', 'history', 'transport', 'fanout', 'e2e', 'tui', 'idle'];
 const args = process.argv.slice(2);
 if (args.includes('--help')) {
   console.log(`Usage: node perf/run.mjs [${available.join('|')}] [--quick] [--profile]\nDefault: all suites. Results: perf/results/. --profile instruments the e2e daemon.`);

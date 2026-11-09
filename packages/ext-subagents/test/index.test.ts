@@ -212,6 +212,23 @@ describe('@felan-ai/ext-subagents', () => {
     expect(resultText(denied)).toBe('Subagent error: not_child — not yours');
   });
 
+  it.each([
+    { tool: 'Agent', method: 'create', params: { prompt: 'Review', description: 'review', subagent_type: 'reviewer' } },
+    { tool: 'list_subagents', method: 'executions', params: {} },
+    { tool: 'get_subagent_result', method: 'execution', params: { agent_id: 'child' } },
+    { tool: 'steer_subagent', method: 'steer', params: { agent_id: 'child', message: 'focus' } },
+    { tool: 'cancel_subagent', method: 'cancel', params: { agent_id: 'child' } },
+  ] as const)('reports parent_unavailable when $tool cannot use session services', async ({ tool, method, params }) => {
+    const harness = createHarness();
+    harness.host[method].mockRejectedValueOnce(new SessionsServiceError('unavailable', 'parent is closing'));
+
+    const result = await execute(harness, tool, params);
+
+    expect(result.details).toEqual({ error: { code: 'parent_unavailable', message: 'parent is closing' } });
+    expect(resultText(result)).toContain('parent_unavailable');
+    expect(resultText(result)).toContain('parent is closing');
+  });
+
   it('accepts inheritance and exact provider/model selectors', async () => {
     const harness = createHarness();
 

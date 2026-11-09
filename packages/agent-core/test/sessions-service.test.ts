@@ -72,11 +72,22 @@ describe('Sessions service contract', () => {
     expect(() => access.get(SESSIONS_SERVICE)).toThrow('revoked');
   });
 
-  it.each(['invalid', 'inaccessible', 'stale', 'oversize', 'unsupported'] as const)('uses constant, context-free %s errors', code => {
+  it.each(['invalid', 'inaccessible', 'unavailable', 'stale', 'oversize', 'unsupported'] as const)('uses constant, context-free %s errors', code => {
     const error = new SessionsServiceError(code);
     expect(error).toMatchObject({ name: 'SessionsServiceError', code });
     expect(error).not.toHaveProperty('cause');
     expect(Object.keys(error).sort()).toEqual(['code', 'name']);
+  });
+
+  it('distinguishes caller unavailability from target inaccessibility', () => {
+    expect(new SessionsServiceError('unavailable')).toMatchObject({
+      code: 'unavailable',
+      message: 'The calling session cannot use session services right now.',
+    });
+    expect(new SessionsServiceError('inaccessible')).toMatchObject({
+      code: 'inaccessible',
+      message: 'Session operation is inaccessible.',
+    });
   });
 
   it('preserves a provider-supplied safe diagnostic', () => {
@@ -86,7 +97,7 @@ describe('Sessions service contract', () => {
   it('does not echo arbitrary error constructor input', () => {
     const privateText = 'private-history-path-and-content';
     const error = new SessionsServiceError(privateText as never);
-    expect(error.code).toBe('invalid');
+    expect(error).toMatchObject({ code: 'invalid', message: 'Session request or data is invalid.' });
     expect(`${error.stack} ${JSON.stringify(error)}`).not.toContain(privateText);
   });
 });

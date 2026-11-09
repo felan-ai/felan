@@ -24,6 +24,8 @@ export interface SessionHistorySource {
   readonly title: string;
   readonly updatedAt: number;
   readonly state: 'open' | 'closed';
+  /** The transcript may grow without a generation() change, so cached inventories re-check it through refresh. */
+  readonly growing?: boolean;
   readonly bytes?: number;
   readonly fingerprint?: string;
   readonly diagnostic?: SessionHistoryInfo['diagnostic'];
@@ -34,6 +36,10 @@ export interface CreateSessionHistoryBackendOptions {
   readonly project: string;
   /** Must include only sources visible to this session under current host policy. */
   readonly inventory: (options: SessionsRequestOptions) => Promise<readonly SessionHistorySource[]>;
+  /** Cheap token that changes whenever the visible source set, its metadata or the set of growing sources may have changed. Must not stat or read files. */
+  readonly generation: () => string;
+  /** Current inventory row for one source key, or undefined when it is no longer visible. Must apply the same policy as `inventory`. */
+  readonly refresh: (source: SessionHistorySource, options: SessionsRequestOptions) => Promise<SessionHistorySource | undefined>;
   /** Must verify source ownership/identity and return one consistent, bounded byte snapshot. */
   readonly read: (source: SessionHistorySource, options: { readonly maxBytes: number; readonly signal?: AbortSignal }) => Promise<Uint8Array>;
 }
@@ -42,6 +48,25 @@ interface InventoryRow {
   readonly source: SessionHistorySource;
   readonly info: SessionHistoryInfo;
   readonly identity: string;
+}
+
+interface Snapshot {
+  readonly rows: readonly InventoryRow[];
+  readonly revision: string;
+}
+
+interface Loaded {
+  readonly identity: string;
+  readonly entries: readonly SessionEntry[];
+  readonly startedAt?: string;
+  readonly revision: string;
+  readonly branch: string | null;
+  readonly byteLength: number;
+}
+
+interface CachedTranscript {
+  readonly loaded: Loaded;
+  lastUsed: number;
 }
 
 interface Cursor {
@@ -60,13 +85,21 @@ interface PageRequest {
 
 const identifier = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/u;
 const digestPattern = /^[a-f0-9]{64}$/u;
+const maxCachedTranscripts = 32;
+const maxCachedTranscriptBytes = 64 * 1024 * 1024;
+const maxCachedTranscriptIdleMs = 30_000;
 
 export function createSessionHistoryBackend(options: CreateSessionHistoryBackendOptions): SessionsHistory {
   if (!options || !validRef(options.current) || typeof options.project !== 'string'
-    || typeof options.inventory !== 'function' || typeof options.read !== 'function') fail('invalid');
+    || typeof options.inventory !== 'function' || typeof options.read !== 'function'
+    || typeof options.generation !== 'function' || typeof options.refresh !== 'function') fail('invalid');
   const current = Object.freeze(copyRef(options.current));
-  const { inventory, read, project } = options;
+  const { inventory, read, generation, refresh, project } = options;
   const cursorKey = randomBytes(32);
+  let inventoryCache: { readonly generation: string; readonly state: Snapshot } | undefined;
+  const parsedCache = new Map<string, CachedTranscript>();
+  let parsedCacheBytes = 0;
+  let parsedCacheTimer: ReturnType<typeof setTimeout> | undefined;
 
   function encodeCursor(cursor: Cursor): string {
     const body = Buffer.from(JSON.stringify(cursor)).toString('base64url');
@@ -89,57 +122,133 @@ export function createSessionHistoryBackend(options: CreateSessionHistoryBackend
     return decoded as unknown as Cursor;
   }
 
-  async function snapshot(signal?: AbortSignal): Promise<{ rows: InventoryRow[]; revision: string }> {
+  async function snapshot(signal?: AbortSignal, listRevision?: string): Promise<Snapshot> {
     checkAbort(signal);
+    const token = generation();
+    if (typeof token !== 'string') fail('inaccessible');
+    if (inventoryCache?.generation === token) {
+      const state = inventoryCache.state;
+      if (listRevision === state.revision) return state;
+      const rows: InventoryRow[] = [];
+      let changed = false;
+      for (const row of state.rows) {
+        const next = row.source.growing === true ? await refreshed(row.source, signal) : row;
+        if (next?.identity !== row.identity) changed = true;
+        if (next) rows.push(next);
+      }
+      if (!changed) return state;
+      const updated = buildSnapshot(rows);
+      inventoryCache = { generation: token, state: updated };
+      return updated;
+    }
     const sources = await inventory(signal ? { signal } : {});
     checkAbort(signal);
     if (!Array.isArray(sources)) fail('inaccessible');
     if (sources.length > 65_536) fail('oversize');
     const copied = sources.map(sourceCopy);
-    const keys = new Set<string>();
-    const ids = new Set<string>();
     const rows: InventoryRow[] = [];
     for (const [index, source] of copied.entries()) {
-      if (keys.has(source.key)) fail('inaccessible');
-      keys.add(source.key);
-      const id = source.id ?? `history-${hash(JSON.stringify([source.key, source.sessionId]))}`;
-      if (ids.has(id)) fail('inaccessible');
-      ids.add(id);
-      const info: SessionHistoryInfo = {
-        id, root: source.root ?? id, ...(source.parent === undefined ? {} : { parent: source.parent }),
-        cwd: source.cwd, title: source.title, updatedAt: source.updatedAt, state: source.state,
-        ...(source.diagnostic === undefined ? {} : { diagnostic: source.diagnostic }),
-      };
-      rows.push({ source, info, identity: hash(canonicalJson(source)) });
+      rows.push(inventoryRow(source));
       if (index % 128 === 127) await yieldTurn(undefined, signal ? { signal } : {});
     }
-    rows.sort((a, b) => b.info.updatedAt - a.info.updatedAt || compare(a.info.id, b.info.id));
     checkAbort(signal);
-    return { rows, revision: hash(JSON.stringify(rows.map(row => row.identity))) };
+    const state = buildSnapshot(rows);
+    inventoryCache = { generation: token, state };
+    return state;
   }
 
-  async function load(id: string, signal?: AbortSignal) {
+  async function refreshed(source: SessionHistorySource, signal?: AbortSignal): Promise<InventoryRow | undefined> {
+    checkAbort(signal);
+    const value = await refresh(source, signal ? { signal } : {});
+    checkAbort(signal);
+    return value === undefined ? undefined : inventoryRow(sourceCopy(value));
+  }
+
+  function stale(): never {
+    inventoryCache = undefined;
+    for (const identity of parsedCache.keys()) dropParsed(identity);
+    fail('stale');
+  }
+
+  function staleSource(row: InventoryRow, listed: InventoryRow): never {
+    dropParsed(row.identity);
+    if (!listed.source.growing) inventoryCache = undefined;
+    fail('stale');
+  }
+
+  function dropParsed(identity: string): void {
+    const cached = parsedCache.get(identity);
+    if (!cached) return;
+    parsedCache.delete(identity);
+    parsedCacheBytes -= cached.loaded.byteLength;
+    if (parsedCache.size === 0 && parsedCacheTimer) {
+      clearTimeout(parsedCacheTimer);
+      parsedCacheTimer = undefined;
+    }
+  }
+
+  function scheduleParsedEviction(): void {
+    if (parsedCacheTimer) return;
+    const oldest = parsedCache.values().next().value;
+    if (!oldest) return;
+    parsedCacheTimer = setTimeout(() => {
+      parsedCacheTimer = undefined;
+      const cutoff = Date.now() - maxCachedTranscriptIdleMs;
+      for (const [identity, cached] of parsedCache) {
+        if (cached.lastUsed <= cutoff) dropParsed(identity);
+      }
+      scheduleParsedEviction();
+    }, Math.max(0, oldest.lastUsed + maxCachedTranscriptIdleMs - Date.now()));
+    parsedCacheTimer.unref();
+  }
+
+  // A cached inventory only maps an ID to its source; the refreshed row is authoritative for every read.
+  async function load(id: string, signal?: AbortSignal): Promise<Loaded> {
     if (!validId(id)) fail('invalid');
-    const before = await snapshot(signal);
-    const row = before.rows.find(value => value.info.id === id);
+    checkAbort(signal);
+    const find = (state?: Snapshot) => state?.rows.find(value => value.info.id === id);
+    const listed = find(inventoryCache?.state) ?? find(await snapshot(signal));
+    if (!listed) fail('inaccessible');
+    const row = await refreshed(listed.source, signal);
+    if (row?.identity !== listed.identity && !listed.source.growing) inventoryCache = undefined;
     if (!row) fail('inaccessible');
+    if (row.info.id !== id) stale();
     if (row.source.diagnostic) fail(row.source.diagnostic);
     if (row.source.bytes !== undefined && row.source.bytes > SESSION_HISTORY_LIMITS.fileBytes) fail('oversize');
+    const cached = row.source.bytes === undefined ? undefined : parsedCache.get(row.identity);
+    if (cached) {
+      if (Date.now() - cached.lastUsed < maxCachedTranscriptIdleMs) {
+        cached.lastUsed = Date.now();
+        parsedCache.delete(row.identity);
+        parsedCache.set(row.identity, cached);
+        return cached.loaded;
+      }
+      dropParsed(row.identity);
+    }
     const value = await read(row.source, { maxBytes: SESSION_HISTORY_LIMITS.fileBytes, ...(signal ? { signal } : {}) });
     checkAbort(signal);
     if (!(value instanceof Uint8Array)) fail('inaccessible');
     if (value.byteLength > SESSION_HISTORY_LIMITS.fileBytes) fail('oversize');
     const bytes = new Uint8Array(value);
     const revision = hash(bytes);
-    if (row.source.fingerprint !== undefined && row.source.fingerprint !== revision) fail('stale');
-    if (row.source.bytes !== undefined && row.source.bytes !== bytes.byteLength) fail('stale');
+    if (row.source.fingerprint !== undefined && row.source.fingerprint !== revision) staleSource(row, listed);
+    if (row.source.bytes !== undefined && row.source.bytes !== bytes.byteLength) staleSource(row, listed);
     const parsed = await parseTranscript(bytes, row.source.sessionId, signal);
-    const { entries } = parsed;
     // Pi resumes a transcript at its last entry, so that entry is the active leaf.
-    const branch = entries.at(-1)?.id ?? null;
-    const after = await snapshot(signal);
-    if (after.rows.find(item => item.info.id === id)?.identity !== row.identity) fail('stale');
-    return { ...parsed, revision, branch, byteLength: bytes.byteLength };
+    const branch = parsed.entries.at(-1)?.id ?? null;
+    if ((await refreshed(row.source, signal))?.identity !== row.identity) staleSource(row, listed);
+    const loaded = { ...parsed, identity: row.identity, revision, branch, byteLength: bytes.byteLength };
+    // Without a byte count, the source identity cannot distinguish rewritten content.
+    if (row.source.bytes !== undefined) {
+      dropParsed(row.identity);
+      parsedCache.set(row.identity, { loaded, lastUsed: Date.now() });
+      parsedCacheBytes += loaded.byteLength;
+      while (parsedCache.size > maxCachedTranscripts || parsedCacheBytes > maxCachedTranscriptBytes) {
+        dropParsed(parsedCache.keys().next().value!);
+      }
+      scheduleParsedEviction();
+    }
+    return loaded;
   }
 
   return Object.freeze({
@@ -148,7 +257,7 @@ export function createSessionHistoryBackend(options: CreateSessionHistoryBackend
       const request = pageRequest(options);
       if (!filter || !['root', 'project', 'visible'].includes(filter.scope)) fail('invalid');
       const scope = filter.scope;
-      const state = await snapshot(request.signal);
+      const state = await snapshot(request.signal, request.cursor ? decodeCursor(request.cursor).revision : undefined);
       const rows = state.rows.filter(row => scope === 'visible' || (scope === 'root' ? row.info.root === current.root : row.info.cwd === project));
       const offset = pageOffset(request, { kind: 'list', target: scope, revision: state.revision, branch: null });
       return packPage(rows.map(row => row.info), 'items', {}, request, offset,
@@ -160,9 +269,11 @@ export function createSessionHistoryBackend(options: CreateSessionHistoryBackend
       const loaded = await load(id, request.signal);
       if (at && (at.sessionId !== id || !sameRevision(at, loaded))) fail('stale');
       const offset = pageOffset(request, { kind: 'history', target: id, ...loaded });
-      return packPage(loaded.entries, 'entries', { sessionId: id, revision: loaded.revision, branch: loaded.branch,
+      const page = packPage(loaded.entries, 'entries', { sessionId: id, revision: loaded.revision, branch: loaded.branch,
         ...(loaded.startedAt === undefined ? {} : { startedAt: loaded.startedAt }) }, request, offset,
         next => encodeCursor({ kind: 'history', target: id, revision: loaded.revision, branch: loaded.branch, offset: next }));
+      if (!page.nextCursor) dropParsed(loaded.identity);
+      return page;
     }),
     checkpoint: (id, options) => safely(options?.signal, async () => {
       const request = requestOptions(options);
@@ -196,13 +307,13 @@ function packPage<T, K extends 'items' | 'entries', M extends object>(
 ): M & Record<K, readonly T[]> & { readonly nextCursor?: string } {
   if (offset > values.length) fail('stale');
   const items: T[] = [];
+  const next = offset + 1 < values.length ? cursor(values.length) : undefined;
+  const overhead = Buffer.byteLength(JSON.stringify({ ...metadata, [key]: [], ...(next ? { nextCursor: next } : {}) }));
   let bytes = 0;
   for (let index = offset; index < values.length && items.length < request.limit; index += 1) {
     checkAbort(request.signal);
     const value = values[index]!;
     const itemBytes = Buffer.byteLength(JSON.stringify(value));
-    const next = index + 1 < values.length ? cursor(index + 1) : undefined;
-    const overhead = Buffer.byteLength(JSON.stringify({ ...metadata, [key]: [], ...(next ? { nextCursor: next } : {}) }));
     if (overhead + bytes + itemBytes + items.length > SESSION_HISTORY_LIMITS.pageBytes) {
       if (items.length === 0) fail('oversize');
       break;
@@ -221,6 +332,7 @@ function sourceCopy(value: SessionHistorySource): SessionHistorySource {
     || value.parent !== undefined && !validId(value.parent)
     || typeof value.cwd !== 'string' || value.cwd.length > 4096 || typeof value.title !== 'string' || value.title.length > 4096
     || !Number.isSafeInteger(value.updatedAt) || value.updatedAt < 0 || !['open', 'closed'].includes(value.state)
+    || value.growing !== undefined && typeof value.growing !== 'boolean'
     || value.bytes !== undefined && (!Number.isSafeInteger(value.bytes) || value.bytes < 0)
     || value.fingerprint !== undefined && !validDigest(value.fingerprint)
     || value.diagnostic !== undefined && !['inaccessible', 'oversize', 'unsupported'].includes(value.diagnostic)) fail('inaccessible');
@@ -228,10 +340,33 @@ function sourceCopy(value: SessionHistorySource): SessionHistorySource {
     updatedAt: value.updatedAt, state: value.state,
     ...(value.id === undefined ? {} : { id: value.id }), ...(value.root === undefined ? {} : { root: value.root }),
     ...(value.parent === undefined ? {} : { parent: value.parent }),
+    ...(value.growing === undefined ? {} : { growing: value.growing }),
     ...(value.bytes === undefined ? {} : { bytes: value.bytes }),
     ...(value.fingerprint === undefined ? {} : { fingerprint: value.fingerprint }),
     ...(value.diagnostic === undefined ? {} : { diagnostic: value.diagnostic }),
   });
+}
+
+function inventoryRow(source: SessionHistorySource): InventoryRow {
+  const id = source.id ?? `history-${hash(JSON.stringify([source.key, source.sessionId]))}`;
+  const info: SessionHistoryInfo = Object.freeze({
+    id, root: source.root ?? id, ...(source.parent === undefined ? {} : { parent: source.parent }),
+    cwd: source.cwd, title: source.title, updatedAt: source.updatedAt, state: source.state,
+    ...(source.diagnostic === undefined ? {} : { diagnostic: source.diagnostic }),
+  });
+  return { source, info, identity: hash(canonicalJson(source)) };
+}
+
+function buildSnapshot(rows: InventoryRow[]): Snapshot {
+  const keys = new Set<string>();
+  const ids = new Set<string>();
+  for (const row of rows) {
+    if (keys.has(row.source.key) || ids.has(row.info.id)) fail('inaccessible');
+    keys.add(row.source.key);
+    ids.add(row.info.id);
+  }
+  rows.sort((a, b) => b.info.updatedAt - a.info.updatedAt || compare(a.info.id, b.info.id));
+  return { rows, revision: hash(JSON.stringify(rows.map(row => row.identity))) };
 }
 
 async function parseTranscript(bytes: Uint8Array, sessionId: string, signal?: AbortSignal): Promise<{ entries: SessionEntry[]; startedAt?: string }> {
@@ -267,9 +402,16 @@ async function parseTranscript(bytes: Uint8Array, sessionId: string, signal?: Ab
   // Pi's v1 migration creates random IDs; only its stable v2-to-v3 migration is safe for paging.
   if (header.version === 2) migrateSessionEntries([header, ...entries] as unknown as FileEntry[]);
   checkAbort(signal);
+  deepFreeze(entries);
   const startedAt = typeof header.timestamp === 'string' && header.timestamp.length <= 128
     && /^\d{4}-\d{2}-\d{2}T/u.test(header.timestamp) && Number.isFinite(Date.parse(header.timestamp)) ? header.timestamp : undefined;
   return { entries, ...(startedAt === undefined ? {} : { startedAt }) };
+}
+
+function deepFreeze(value: unknown): void {
+  if (value === null || typeof value !== 'object') return;
+  for (const child of Object.values(value)) deepFreeze(child);
+  Object.freeze(value);
 }
 
 function validateEntry(value: Record<string, unknown>): asserts value is Record<string, unknown> & { id: string; parentId: string | null } {

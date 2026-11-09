@@ -1,10 +1,11 @@
-import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { HostSessionsSelector } from '@felan-ai/agent-core';
+import { SessionsServiceError, type HostSessionsSelector } from '@felan-ai/agent-core';
 import type { SessionRegistry } from '../src/daemon/registry.js';
 import { createHostSessionsHistory, createRegistrySessionsService } from '../src/daemon/session-services.js';
+import { deferred, fixture as registryFixture, fixtures, requestId, supported } from './fixtures/registry.js';
 
 function fixture() {
   let title = '';
@@ -52,7 +53,17 @@ describe('canonical Sessions binding', () => {
     const f = fixture();
     f.stored.root = 'different';
     await expect(f.service.setTitleIfMissing('title', 'request')).rejects.toMatchObject({ code: 'inaccessible' });
+    await expect(f.service.list({ scope: 'visible' })).rejects.toMatchObject({ code: 'inaccessible' });
+    await expect(f.service.history('current')).rejects.toMatchObject({ code: 'inaccessible' });
     expect(f.session.setSessionName).not.toHaveBeenCalled();
+  });
+
+  it('does not remap caller access failures for titles or executions', async () => {
+    const f = fixture();
+    const failure = new Error('Session is closing.');
+    vi.mocked(f.registry.assertServiceAccess).mockImplementation(() => { throw failure; });
+    await expect(f.service.setTitleIfMissing('title', 'request')).rejects.toBe(failure);
+    expect(() => f.service.executions()).toThrow(failure);
   });
 });
 
@@ -76,10 +87,16 @@ describe('host sessions history', () => {
       { type: 'session', version: 3, id: row.id, cwd: row.cwd, timestamp }, entries.get(row.id),
     ].map(value => JSON.stringify(value)).join('\n'))));
     const owner = { assertOwnsPath: vi.fn((path: string) => path), assertCurrent: vi.fn(), target: { uid: process.getuid!() } };
+    const loaded = new Set<string>();
     const registry = { assertAdmission: vi.fn(), assertServiceAccess: vi.fn(), listed: vi.fn(() => rows),
-      options: { owner, store: { sessionMetadata: vi.fn(() => rows[0]!) } } };
+      binding: vi.fn((id: string) => loaded.has(id) ? {} : undefined),
+      options: { owner, store: { sessionMetadata: vi.fn((id: string) => {
+        const row = rows.find(item => item.id === id);
+        if (!row) throw new Error('Session is missing.');
+        return row;
+      }) } } };
     const service = createHostSessionsHistory(registry as unknown as SessionRegistry, selector);
-    return { service, registry, rows, entries };
+    return { service, registry, rows, entries, loaded };
   }
 
   it('binds a frozen history-only facade without accessing a current session or storage', async () => {
@@ -143,14 +160,51 @@ describe('host sessions history', () => {
     await expect(f.service.checkpoint('alpha')).rejects.toMatchObject({ code: 'inaccessible' });
   });
 
+  it('rereads a transcript changed on disk without a registry change', async () => {
+    const f = await historyFixture();
+    const first = await f.service.history('alpha', { limit: 1 });
+    expect(first.entries).toEqual([f.entries.get('alpha')]);
+    const at = { sessionId: 'alpha', revision: first.revision, branch: first.branch };
+    const appended = { type: 'message', id: 'alpha-next', parentId: 'alpha-message', timestamp: '2026-08-24T10:00:01.000Z',
+      message: { role: 'user', content: 'next', timestamp: 0 } };
+    await appendFile(f.rows[0]!.piPath, `\n${JSON.stringify(appended)}`);
+    await expect(f.service.history('alpha', { at })).rejects.toMatchObject({ code: 'stale' });
+    expect((await f.service.history('alpha')).entries).toEqual([f.entries.get('alpha'), appended]);
+    expect(await f.service.checkpoint('alpha')).toMatchObject({ branch: 'alpha-next' });
+  });
+
   it('checks admission on every operation without requiring a live session', async () => {
     const f = await historyFixture();
     f.registry.assertAdmission.mockImplementation(() => { throw new Error('Admission closed'); });
-    await expect(f.service.list({ scope: 'project' })).rejects.toMatchObject({ code: 'inaccessible' });
-    await expect(f.service.history('alpha')).rejects.toMatchObject({ code: 'inaccessible' });
-    await expect(f.service.checkpoint('alpha')).rejects.toMatchObject({ code: 'inaccessible' });
+    await expect(f.service.list({ scope: 'project' })).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(f.service.history('alpha')).rejects.toMatchObject({ code: 'unavailable' });
+    await expect(f.service.checkpoint('alpha')).rejects.toMatchObject({ code: 'unavailable' });
     expect(f.registry.listed).not.toHaveBeenCalled();
     expect(f.registry.assertServiceAccess).not.toHaveBeenCalled();
+  });
+
+  it.each(['inaccessible', 'unavailable'] as const)('preserves typed %s access failures', async code => {
+    const f = await historyFixture();
+    const failure = new SessionsServiceError(code);
+    f.registry.assertAdmission.mockImplementation(() => { throw failure; });
+    await expect(f.service.list({ scope: 'project' })).rejects.toMatchObject({ code });
+    await expect(f.service.history('alpha')).rejects.toMatchObject({ code });
+  });
+
+  it('invalidates the inventory when a binding opens or is evicted without a metadata change', async () => {
+    const f = await historyFixture();
+    const beta = f.rows.find(row => row.id === 'beta')!;
+    let updatedAt = (await f.service.list({ scope: 'project' })).items.find(row => row.id === 'beta')!.updatedAt;
+    for (const live of [true, false]) {
+      updatedAt = Math.ceil(updatedAt / 1000) * 1000 + 1000;
+      const modified = new Date(updatedAt);
+      await utimes(beta.piPath, modified, modified);
+      if (live) f.loaded.add('alpha'); else f.loaded.delete('alpha');
+      expect((await f.service.list({ scope: 'project' })).items.find(row => row.id === 'beta')!.updatedAt).toBe(updatedAt);
+      f.registry.options.owner.assertOwnsPath.mockClear();
+      await f.service.list({ scope: 'project' });
+      expect(f.registry.options.owner.assertOwnsPath.mock.calls.map(([path]) => path)).toEqual(live ? [f.rows[0]!.piPath] : []);
+    }
   });
 
   it('preserves invalid request and abort handling', async () => {
@@ -171,5 +225,59 @@ describe('host sessions history', () => {
     expect((await service.history('child')).entries).toEqual([f.entries.get('child')]);
     expect(f.registry.assertServiceAccess).toHaveBeenCalledWith('alpha');
     expect(f.registry.assertAdmission).not.toHaveBeenCalled();
+  });
+});
+
+describe.skipIf(!supported)('registry sessions history', () => {
+  afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
+
+  it('refreshes loaded root and child transcripts without a registry commit', async () => {
+    const f = await registryFixture();
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: root.sessionId, rootSessionId: root.sessionId });
+    for (const binding of [root, child]) {
+      await binding.runtime.session.prompt('first');
+      f.registry.projection(binding.sessionId).refresh();
+      expect(f.registry.binding(binding.sessionId)).toBe(binding);
+    }
+    const service = createHostSessionsHistory(f.registry, { kind: 'all' });
+    const first = await service.list({ scope: 'visible' });
+    for (const binding of [root, child]) {
+      const stored = f.store.sessionMetadata(binding.sessionId);
+      const previous = first.items.find(row => row.id === binding.sessionId)!;
+      // Projection refreshes commit message entries; custom entries grow the transcript without a registry commit.
+      binding.runtime.session.sessionManager.appendCustomEntry('history-test', { next: true });
+      const modified = new Date(previous.updatedAt + 1000);
+      await utimes(stored.piPath, modified, modified);
+      expect(f.store.sessionMetadata(binding.sessionId).revision).toBe(stored.revision);
+      const next = await service.list({ scope: 'visible' });
+      expect(next.items.find(row => row.id === binding.sessionId)!.updatedAt).toBe(previous.updatedAt + 1000);
+    }
+  });
+
+  it('reports unavailable history while the calling session is cancelling', async () => {
+    const f = await registryFixture();
+    const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const id = binding.sessionId;
+    await binding.runtime.session.prompt('first');
+    f.registry.projection(id).refresh();
+    const service = createRegistrySessionsService(f.registry, { id, root: id }, f.cwd);
+    await service.list({ scope: 'visible' });
+    await service.history(id);
+    const request = requestId();
+    f.store.admit({ v: 1, id: request, op: 'prompt', session: id, params: { text: 'work' } }, 'owner');
+    const gate = deferred(); f.releases.add(gate.resolve);
+    const work = f.registry.runAdmitted(request, id, { kind: 'tui', attachment: 'a' }, () => gate.promise);
+    const cancelling = f.registry.cancel(id);
+    try {
+      await vi.waitFor(() => expect(f.instances.get(id)!.abort).toHaveBeenCalled());
+      expect(f.store.sessionMetadata(id).run.state).toBe('cancelling');
+      for (const operation of [() => service.list({ scope: 'visible' }), () => service.history(id), () => service.checkpoint(id)]) {
+        const result = operation();
+        await expect(result).rejects.toBeInstanceOf(SessionsServiceError);
+        await expect(result).rejects.toMatchObject({ code: 'unavailable' });
+      }
+    } finally { gate.resolve(); await Promise.all([work, cancelling]); }
+    await expect(service.history(id)).resolves.toBeDefined();
   });
 });

@@ -315,7 +315,9 @@ async function executeSessions<T>(operation: () => Promise<T>, render: (value: T
     return { content: [{ type: 'text' as const, text: render(value) }], details: value };
   } catch (cause) {
     return toolError(error(cause instanceof SessionsServiceError
-      ? cause.code === 'inaccessible' ? 'not_child' : cause.code === 'stale' ? 'not_steerable' : 'invalid_request'
+      ? cause.code === 'inaccessible' ? 'not_child'
+        : cause.code === 'stale' ? 'not_steerable'
+          : cause.code === 'unavailable' ? 'parent_unavailable' : 'invalid_request'
       : 'internal_error', cause instanceof Error ? cause.message : 'Session execution failed.'));
   }
 }

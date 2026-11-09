@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { context, isolatedRuntime, ROOT } from './lib.mjs';
 
-const modules = { protocol: './bench-protocol.mjs', daemon: './bench-daemon.mjs', transport: './bench-transport.mjs', fanout: './fanout-burst.mjs', e2e: './probe-e2e.mjs', tui: './bench-tui.mjs', idle: './bench-idle.mjs' };
+const modules = { protocol: './bench-protocol.mjs', daemon: './bench-daemon.mjs', history: './bench-history.mjs', transport: './bench-transport.mjs', fanout: './fanout-burst.mjs', e2e: './probe-e2e.mjs', tui: './bench-tui.mjs', idle: './bench-idle.mjs' };
 const suite = process.argv[2];
 isolatedRuntime();
 const results = [];

@@ -3,6 +3,7 @@ import type { TuiSessionController } from '../src/tui/controller.js';
 import type { InteractionPresenterUi } from '../src/client/presenters.js';
 import { createTerminalPresenters } from '../src/tui/presenters.js';
 import { TERMINAL_INTERACTION_KINDS } from '../src/tui/interactions.js';
+import { SAVINGS_DASHBOARD_HINT } from '../src/savings/data.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanups.splice(0).reverse()) await close(); });
@@ -17,6 +18,12 @@ function fixture(available = true) {
   cleanups.push(() => terminal.dispose());
   return { controller, confirm, select, terminal };
 }
+
+it('renders savings dashboards with the dedicated full-screen presenter', () => {
+  const f = fixture();
+  expect(f.terminal.presenters.hints.get(SAVINGS_DASHBOARD_HINT)?.presentation).toBeTypeOf('function');
+  expect(f.terminal.presenters.hints.get({ ...SAVINGS_DASHBOARD_HINT, version: '2' })).toBeUndefined();
+});
 
 it('does not advertise removed special-purpose interaction kinds', () => {
   const f = fixture();

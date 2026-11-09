@@ -83,13 +83,16 @@ it('supplies required services to package-owned execution entries', async () => 
   expect(commands).toEqual(expect.arrayContaining(['insights', 'prewalk', 'prompt-history', 'savings']));
 });
 
-it('assigns project scope at the known skill source and exposes portable savings output', async () => {
+it('assigns project scope at the known skill source and presents the savings dashboard', async () => {
   const f = await fixture(['subagents', 'askUser'], true);
   expect(f.root.runtime.session.resourceLoader.getSkills().skills.find(skill => skill.name === 'shared-test-skill')?.sourceInfo.scope).toBe('project');
   await f.root.runtime.session.prompt('/savings');
-  expect(f.registry.projection(f.root.sessionId).snapshot().presentation).toEqual(expect.arrayContaining([
-    expect.objectContaining({ kind: 'notification', text: expect.stringContaining('Felan Code estimated savings') }),
+  const presentation = () => f.registry.projection(f.root.sessionId).snapshot().presentation;
+  expect(presentation()).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: 'document', title: 'Estimated savings', markdown: expect.stringContaining('# Estimated savings — Last 30 days'),
+      hint: { id: 'felan.savings-dashboard', version: '1' }, data: { dashboard: expect.any(String) } }),
   ]));
+  expect(presentation().some(item => item.kind === 'notification')).toBe(false);
 });
 
 it('scopes execution controls to each child session', async () => {

@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import { writeFile, mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSessionTranscript, sliceParsedSession } from "../src/parser.js";
+import { parseSessionEvents, parseSessionTranscript, sliceParsedSession } from "../src/parser.js";
+import { sliceParsedSession as sliceRange } from "../src/slicing.js";
+import type { SessionEvent } from "../src/types.js";
 
 async function parseSessionFile(filePath: string) {
   try {
@@ -17,6 +19,12 @@ async function writeTempJsonl(lines: object[]): Promise<string> {
   const filePath = join(dir, "test-session.jsonl");
   await writeFile(filePath, lines.map(l => JSON.stringify(l)).join("\n") + "\n", "utf-8");
   return filePath;
+}
+
+function deepFreeze(value: unknown): void {
+  if (!value || typeof value !== "object") return;
+  for (const child of Object.values(value)) deepFreeze(child);
+  Object.freeze(value);
 }
 
 describe("parseSessionFile", () => {
@@ -111,8 +119,9 @@ describe("parseSessionFile", () => {
     const filePath = await writeTempJsonl([
       { type: "session", id: "s1", cwd: "/a", timestamp: "2025-03-15T10:00:00.000Z" },
       { type: "model_change", modelId: "gpt-4", provider: "openai", timestamp: "2025-03-15T10:00:01.000Z" },
+      { type: "model_change", modelId: "gpt-4", provider: "openai", timestamp: "2025-03-15T10:00:02.000Z" },
       { type: "message", timestamp: "2025-03-15T10:01:00.000Z", message: { role: "user", content: [] } },
-      { type: "message", timestamp: "2025-03-15T10:02:00.000Z", message: { role: "assistant", model: "gpt-4", content: [], usage: { input: 100, output: 50, totalTokens: 150, cost: { total: 0.001 } } } },
+      { type: "message", timestamp: "2025-03-15T10:02:00.000Z", message: { role: "assistant", model: "gpt-4", provider: "openai", content: [], usage: { input: 100, output: 50, totalTokens: 150, cost: { total: 0.001 } } } },
     ]);
     const result = await parseSessionFile(filePath);
     expect(result!.models["gpt-4"]).toBeDefined();
@@ -258,5 +267,67 @@ describe("parseSessionFile", () => {
     expect(result!.metadata?.toolErrorsByName).toEqual({ Write: 1 });
     expect(result!.metadata?.userInterruptions).toBe(2);
     expect(JSON.stringify(result)).not.toContain("secret transcript text");
+    const events = (await readFile(filePath, "utf8")).trim().split("\n").map(line => JSON.parse(line) as SessionEvent);
+    expect(parseSessionEvents(events, filePath)).toEqual(result);
+    deepFreeze(events);
+    expect(parseSessionEvents(events, filePath)).toEqual(result);
+  });
+});
+
+describe("range metrics", () => {
+  const RANGE_START = new Date("2025-03-15T00:00:00.000Z");
+  const RANGE_END = new Date("2025-03-16T00:00:00.000Z");
+  const parse = (lines: object[]) => parseSessionTranscript(lines.map(line => JSON.stringify(line)).join("\n"), "s1")!;
+
+  it("keeps rage hits and thinking-level changes when a range slices the session", () => {
+    const session = parse([
+      { type: "session", id: "s1", cwd: "/a", timestamp: "2025-03-15T10:00:00.000Z" },
+      { type: "thinking_level_change", id: "t1", thinkingLevel: "high", timestamp: "2025-03-15T10:00:01.000Z" },
+      { type: "message", id: "u1", timestamp: "2025-03-15T10:01:00.000Z", message: { role: "user", content: [{ type: "text", text: "what the fuck is going on" }] } },
+    ]);
+    const sliced = sliceRange(session, RANGE_START, RANGE_END)!;
+    expect(sliced.rageHits.length).toBeGreaterThan(0);
+    expect(sliced.rageHits).toEqual(session.rageHits);
+    expect(sliced.thinkingLevels).toEqual({ high: 1 });
+    expect(sliceRange(session, RANGE_END)).toBeNull();
+  });
+
+  it("includes cache writes in token totals when totalTokens is absent", () => {
+    const session = parse([
+      { type: "session", id: "s1", cwd: "/a", timestamp: "2025-03-15T10:00:00.000Z" },
+      { type: "message", timestamp: "2025-03-15T10:01:00.000Z", message: { role: "assistant", model: "m", content: [], usage: { input: 1, output: 2, cacheRead: 4, cacheWrite: 8 } } },
+    ]);
+    expect(session.tokenUsage.total).toBe(15);
+    expect(session.models.m!.tokens).toBe(15);
+    expect(sliceRange(session, RANGE_START, RANGE_END)!.tokenUsage.total).toBe(15);
+  });
+
+  it("counts assistant messages per model, not model_change events, before and after slicing", () => {
+    const session = parse([
+      { type: "session", id: "s1", cwd: "/a", timestamp: "2025-03-15T10:00:00.000Z" },
+      { type: "model_change", modelId: "a", timestamp: "2025-03-15T10:00:01.000Z" },
+      { type: "model_change", modelId: "b", timestamp: "2025-03-15T10:00:02.000Z" },
+      { type: "message", timestamp: "2025-03-15T10:01:00.000Z", message: { role: "assistant", model: "b", content: [] } },
+      { type: "message", timestamp: "2025-03-15T10:02:00.000Z", message: { role: "assistant", model: "b", content: [], usage: { input: 1, output: 1 } } },
+    ]);
+    expect(session.models).toEqual({ b: { count: 2, tokens: 2, cost: 0 } });
+    expect(sliceRange(session, RANGE_START, RANGE_END)!.models).toEqual(session.models);
+  });
+
+  it("charges tool errors to the model that made the call", () => {
+    const session = parse([
+      { type: "session", id: "s1", cwd: "/a", timestamp: "2025-03-15T10:00:00.000Z" },
+      { type: "message", timestamp: "2025-03-15T10:01:00.000Z", message: { role: "assistant", model: "a", content: [{ type: "toolCall", id: "call-a", name: "bash", arguments: {} }], usage: { input: 1, output: 1 } } },
+      { type: "message", timestamp: "2025-03-15T10:02:00.000Z", message: { role: "assistant", model: "b", content: [{ type: "toolCall", id: "call-b", name: "read", arguments: {} }], usage: { input: 1, output: 1 } } },
+      { type: "message", timestamp: "2025-03-15T10:03:00.000Z", message: { role: "toolResult", toolCallId: "call-b", toolName: "read", content: [], isError: false } },
+      { type: "message", timestamp: "2025-03-15T10:04:00.000Z", message: { role: "toolResult", toolCallId: "call-a", toolName: "bash", content: [], isError: true } },
+    ]);
+    expect(session.toolCallErrors).toBe(1);
+    expect(session.metadata?.toolErrorsByName).toEqual({ bash: 1 });
+    expect(session.models.a!.toolErrors).toBe(1);
+    expect(session.models.b!.toolErrors).toBeUndefined();
+    const sliced = sliceRange(session, RANGE_START, RANGE_END)!;
+    expect(sliced.toolCallErrors).toBe(1);
+    expect(sliced.models).toEqual({ a: { count: 1, tokens: 2, cost: 0, toolErrors: 1 }, b: { count: 1, tokens: 2, cost: 0 } });
   });
 });

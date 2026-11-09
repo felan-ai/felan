@@ -48,7 +48,7 @@ export function createDaemonExecutionServices(registry: SessionRegistry, broker:
       const ui = createSessionExtensionUi({ port: port.ui });
       let release: (() => void) | undefined;
       try {
-        const binding = await composition.bindExtensions?.(context, port);
+        const binding = await composition.bindExtensions?.({ ...context, createExtensionUi: ui.vocabulary.createExtensionUi }, port);
         return { ...binding, importExtension: binding?.importExtension ?? context.importExtension,
           uiContext: ui.context, createExtensionUi: ui.vocabulary.createExtensionUi,
           inlineExtensions: [broker.approvalExtension(registry), ...(binding?.inlineExtensions ?? [])],

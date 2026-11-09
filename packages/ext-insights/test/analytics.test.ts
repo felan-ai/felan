@@ -92,7 +92,20 @@ describe("computeAnalytics", () => {
       const result = computeAnalytics([sess]);
       expect(result.dailyStats).toEqual([
         { date: "2025-03-14", sessions: 1, messages: 1, tokens: 2, cost: 10 },
-        { date: "2025-03-15", sessions: 0, messages: 1, tokens: 4, cost: 20 },
+        { date: "2025-03-15", sessions: 1, messages: 1, tokens: 4, cost: 20 },
+      ]);
+    });
+
+    it("counts each session once per active day rather than once per message", () => {
+      const message = (timestamp: string) => ({ timestamp: new Date(timestamp), userMessageCount: 1 });
+      const sessions = [
+        makeSession({ id: "a", activity: [message("2025-03-15T10:00:00Z"), message("2025-03-15T11:00:00Z"), message("2025-03-15T12:00:00Z")] }),
+        makeSession({ id: "b", activity: [message("2025-03-15T13:00:00Z"), message("2025-03-16T09:00:00Z"), message("2025-03-16T10:00:00Z")] }),
+      ];
+      const result = computeAnalytics(sessions);
+      expect(result.dailyStats.map(({ date, sessions, messages }) => ({ date, sessions, messages }))).toEqual([
+        { date: "2025-03-15", sessions: 2, messages: 4 },
+        { date: "2025-03-16", sessions: 1, messages: 2 },
       ]);
     });
 
@@ -337,7 +350,13 @@ describe("computeAnalytics", () => {
           id: "s1",
           duration: 20,
           toolCallErrors: 1,
-          models: { opus: { count: 2, tokens: 100, cost: 1 } },
+          models: { opus: { count: 2, tokens: 100, cost: 1, toolErrors: 1 } },
+        }),
+        makeSession({
+          id: "s3",
+          duration: 20,
+          toolCallErrors: 3,
+          models: { opus: { count: 1, tokens: 10, cost: 0.1 }, sonnet: { count: 1, tokens: 10, cost: 0.01, toolErrors: 3 } },
         }),
         makeSession({
           id: "s2",
@@ -350,9 +369,10 @@ describe("computeAnalytics", () => {
       const opus = result.modelEfficiency?.models.find(model => model.model === "opus");
 
       expect(opus?.costPerToken).toBeCloseTo(0.01);
-      expect(opus?.costPerMessage).toBeCloseTo(0.5);
+      expect(opus?.costPerMessage).toBeCloseTo(1.1 / 3);
       expect(opus?.avgSessionDuration).toBe(20);
-      expect(opus?.toolErrorRate).toBe(1);
+      expect(opus?.toolErrorRate).toBe(0.5);
+      expect(result.modelEfficiency?.models.find(model => model.model === "sonnet")?.toolErrorRate).toBe(1.5);
       expect(result.modelEfficiency).not.toHaveProperty("recommendations");
     });
   });

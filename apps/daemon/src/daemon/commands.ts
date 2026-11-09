@@ -578,6 +578,6 @@ async function executionRequest<T>(operation: () => Promise<T>): Promise<T> {
   catch (error) {
     if (!(error instanceof SessionsServiceError)) throw error;
     throw commandError(error.code === 'stale' ? 'resync_required' : error.code === 'inaccessible' ? 'forbidden'
-      : error.code === 'unsupported' ? 'unavailable' : 'invalid_request');
+      : error.code === 'unsupported' || error.code === 'unavailable' ? 'unavailable' : 'invalid_request');
   }
 }

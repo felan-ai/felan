@@ -150,6 +150,7 @@ const WRITER_PATTERN = /^(?:savings\/v1\/)?writers\/([a-f0-9-]{36})\/(\d+)\.json
 const MAX_BUCKETS = 2_000;
 const MAX_SNAPSHOT_BYTES = 2 * 1024 * 1024;
 const MAX_GENERATIONS = 4;
+const MAX_SNAPSHOT_FILES = 10_000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -169,6 +170,9 @@ export class SavingsService implements SavingsReporterProvider {
     this.#writerId = options.writerId ?? randomUUID();
     if (!/^[a-f0-9-]{36}$/u.test(this.#writerId)) throw new Error('writerId must be a UUID');
   }
+
+  get rootSessionId(): string { return this.#options.rootSessionId; }
+  get projectKey(): string { return this.#options.projectKey; }
 
   createReporter(producerId: string): SavingsReporter {
     if (!isProducerId(producerId)) throw new Error('producerId must be a bounded identifier');
@@ -416,10 +420,12 @@ function isProducerId(value: string): boolean { return value.length > 0 && value
 
 async function readSnapshots(storage: AgentRuntimeStorage): Promise<Array<{ snapshot: Snapshot; error?: string }>> {
   let files: string[];
-  try { files = await storage.listFiles(ROOT, { recursive: true, pattern: '**/*.json', limit: 10_000 }); } catch (error) {
+  try { files = await storage.listFiles(ROOT, { recursive: true, pattern: '**/*.json', limit: MAX_SNAPSHOT_FILES + 1 }); } catch (error) {
     if ((error as { code?: string }).code === 'ENOENT') return [];
     return [{ snapshot: emptySnapshot(), error: `Unable to read savings storage: ${errorMessage(error)}` }];
   }
+  const truncated = files.length > MAX_SNAPSHOT_FILES;
+  if (truncated) files = files.slice(0, MAX_SNAPSHOT_FILES);
   const generations = new Map<string, Array<{ path: string; sequence: number }>>();
   for (const path of files) {
     const match = WRITER_PATTERN.exec(path.replaceAll('\\', '/'));
@@ -448,6 +454,7 @@ async function readSnapshots(storage: AgentRuntimeStorage): Promise<Array<{ snap
       if (!results.some(({ snapshot }) => snapshot.writerId === writerId)) results.push({ snapshot: emptySnapshot(), error: 'All savings snapshot generations were invalid' });
     }
   }
+  if (truncated) results.push({ snapshot: emptySnapshot(), error: `Savings storage holds more than ${MAX_SNAPSHOT_FILES} snapshot files; totals may be incomplete` });
   return results;
 }
 

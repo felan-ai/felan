@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { open, stat } from 'node:fs/promises';
+import { availableParallelism } from 'node:os';
 import { SessionsServiceError, type HostSessionsSelector, type SessionRef, type SessionsHistory, type SessionsService } from '@felan-ai/agent-core';
 import { createSessionHistoryBackend, type SessionHistorySource } from '../session-history.js';
+import type { ControlSessionMetadata } from './control-state.js';
 import { guardOwnedPaths } from './persistence.js';
 import type { SessionRegistry } from './registry.js';
 import { createSessionExecutions, type SessionExecutionOperations } from './session-executions.js';
@@ -88,35 +90,56 @@ export function createHostSessionsHistory(registry: SessionRegistry, selector: H
 
 function createRegistrySessionsHistory(registry: SessionRegistry, current: SessionRef, project: string, assertAccess: () => void,
   selector?: HostSessionsSelector): SessionsHistory {
+  const assertHistoryAccess = () => {
+    try { assertAccess(); }
+    catch (error) {
+      if (error instanceof SessionsServiceError) throw error;
+      throw new SessionsServiceError('unavailable');
+    }
+  };
+  const visible = (stored: ControlSessionMetadata) => selector?.kind !== 'project' || stored.cwd === selector.cwd;
+  const sourceOf = async (stored: ControlSessionMetadata, signal?: AbortSignal): Promise<SessionHistorySource> => {
+    signal?.throwIfAborted();
+    let bytes: number | undefined;
+    let diagnostic: 'inaccessible' | 'oversize' | undefined;
+    let updatedAt = stored.updatedAt;
+    try {
+      const info = await stat(registry.options.owner.assertOwnsPath(stored.piPath));
+      if (!info.isFile()) diagnostic = 'inaccessible';
+      else {
+        bytes = info.size; updatedAt = Math.max(updatedAt, Math.floor(info.mtimeMs));
+        if (bytes > 64 * 1024 * 1024) diagnostic = 'oversize';
+      }
+    } catch { diagnostic = 'inaccessible'; }
+    return { key: stored.piPath, sessionId: stored.id, id: stored.id, root: stored.root,
+      ...(stored.parent ? { parent: stored.parent } : {}), cwd: stored.cwd, title: stored.title,
+      updatedAt, state: stored.state,
+      // Only this daemon appends to transcripts, and only while the session is loaded.
+      ...(registry.binding(stored.id) !== undefined ? { growing: true } : {}),
+      ...(bytes === undefined ? {} : { bytes }), ...(diagnostic ? { diagnostic } : {}) };
+  };
   return createSessionHistoryBackend({
     current,
     project,
+    // The backend calls this before each inventory, so it owns the access check.
+    generation: () => {
+      assertHistoryAccess();
+      return JSON.stringify(registry.listed().filter(visible).map(stored => [stored.id, stored.revision, stored.piPath, registry.binding(stored.id) !== undefined]));
+    },
     inventory: async ({ signal }) => {
-      assertAccess(); signal?.throwIfAborted();
-      const rows: SessionHistorySource[] = [];
-      for (const stored of registry.listed()) {
-        signal?.throwIfAborted();
-        if (selector?.kind === 'project' && stored.cwd !== selector.cwd) continue;
-        let bytes: number | undefined;
-        let diagnostic: 'inaccessible' | 'oversize' | undefined;
-        let updatedAt = stored.updatedAt;
-        try {
-          const info = await stat(registry.options.owner.assertOwnsPath(stored.piPath));
-          if (!info.isFile()) diagnostic = 'inaccessible';
-          else {
-            bytes = info.size; updatedAt = Math.max(updatedAt, Math.floor(info.mtimeMs));
-            if (bytes > 64 * 1024 * 1024) diagnostic = 'oversize';
-          }
-        } catch { diagnostic = 'inaccessible'; }
-        rows.push({ key: stored.piPath, sessionId: stored.id, id: stored.id, root: stored.root,
-          ...(stored.parent ? { parent: stored.parent } : {}), cwd: stored.cwd, title: stored.title,
-          updatedAt, state: stored.state,
-          ...(bytes === undefined ? {} : { bytes }), ...(diagnostic ? { diagnostic } : {}) });
-      }
-      return rows;
+      signal?.throwIfAborted();
+      return mapConcurrent(registry.listed().filter(visible), stored => sourceOf(stored, signal));
+    },
+    // A single lookup avoids cloning every listed row; the filters mirror `registry.listed()`.
+    refresh: async ({ key, sessionId }, { signal }) => {
+      assertHistoryAccess(); signal?.throwIfAborted();
+      let stored: ControlSessionMetadata;
+      try { stored = registry.options.store.sessionMetadata(sessionId); } catch { return undefined; }
+      return stored.deletedAt === undefined && !stored.draft && stored.piPath === key && visible(stored)
+        ? sourceOf(stored, signal) : undefined;
     },
     read: async (source, { maxBytes, signal }) => {
-      assertAccess(); signal?.throwIfAborted();
+      assertHistoryAccess(); signal?.throwIfAborted();
       const path = registry.options.owner.assertOwnsPath(source.key);
       const check = guardOwnedPaths(registry.options.owner, [path]);
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -135,9 +158,17 @@ function createRegistrySessionsHistory(registry: SessionRegistry, current: Sessi
         const after = await file.stat({ bigint: true });
         if (offset !== Number(before.size) || before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
           || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs) throw new SessionsServiceError('stale');
-        check(); assertAccess(); signal?.throwIfAborted();
+        check(); assertHistoryAccess(); signal?.throwIfAborted();
         return buffer.subarray(0, offset);
       } finally { await file.close(); }
     },
   });
+}
+
+async function mapConcurrent<T, R>(items: readonly T[], work: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0;
+  const worker = async () => { while (next < items.length) { const index = next++; results[index] = await work(items[index]!); } };
+  await Promise.all(Array.from({ length: Math.min(availableParallelism(), items.length) }, worker));
+  return results;
 }

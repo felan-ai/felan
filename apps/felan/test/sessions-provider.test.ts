@@ -28,7 +28,7 @@ describe('configured Sessions provider', () => {
     expect(f.service).not.toHaveProperty('registerLifecycle');
     expect(f.instance.implementations.some(row => row.contract.key === HOST_WORKERS_SERVICE.key)).toBe(false);
     expect(f.service.current).toEqual({ id: 'child', root: 'root', parent: 'root' });
-    await expect(f.service.list({ scope: 'visible' })).rejects.toMatchObject({ code: 'inaccessible' });
+    await expect(f.service.list({ scope: 'visible' })).rejects.toMatchObject({ code: 'unavailable' });
     expect(f.sessions.list).not.toHaveBeenCalled();
     await f.instance.activate!();
     await f.service.list({ scope: 'root' }, { limit: 7 });
@@ -36,7 +36,7 @@ describe('configured Sessions provider', () => {
     await f.service.setTitleIfMissing('title', 'request');
     expect(f.sessions.setTitleIfMissing).toHaveBeenCalledWith('title', 'request', { signal: expect.any(AbortSignal) });
     await f.instance.dispose();
-    await expect(f.service.executions()).rejects.toMatchObject({ code: 'inaccessible' });
+    await expect(f.service.executions()).rejects.toMatchObject({ code: 'unavailable' });
   });
 
   it('owns extension lifetimes independently of portable Sessions', async () => {
@@ -48,10 +48,24 @@ describe('configured Sessions provider', () => {
     await f.instance.activate!();
     await f.instance.settle!('drain');
     expect(lifecycle.settle).toHaveBeenCalledWith('drain');
+    await expect(f.service.list({ scope: 'visible' })).rejects.toMatchObject({ code: 'unavailable' });
+    expect(() => lifetime.register(lifecycle)).toThrow(expect.objectContaining({ code: 'unavailable' }));
     await f.instance.dispose();
     expect(lifecycle.dispose).toHaveBeenCalledOnce();
     release();
-    expect(() => lifetime.register(lifecycle)).toThrow();
+    expect(() => lifetime.register(lifecycle)).toThrow(expect.objectContaining({ code: 'unavailable' }));
+  });
+
+  it('reports an aborted caller context as unavailable', async () => {
+    const f = await fixture();
+    const lifetime = f.instance.implementations.find(row => row.contract.key === RUNTIME_LIFETIME_SERVICE.key)!.value as RuntimeLifetime;
+    await f.instance.activate!();
+    f.signal.abort();
+    await expect(f.service.list({ scope: 'visible' })).rejects.toMatchObject({ code: 'unavailable' });
+    expect(f.sessions.list).not.toHaveBeenCalled();
+    expect(() => lifetime.register({ busy: () => false, settle: async () => {}, dispose: async () => {} }))
+      .toThrow(expect.objectContaining({ code: 'unavailable' }));
+    await f.instance.dispose();
   });
 
   it('publishes a distinct frozen history facade without execution methods', async () => {
@@ -60,7 +74,7 @@ describe('configured Sessions provider', () => {
     expect(history).not.toBe(f.service);
     expect(Object.isFrozen(history)).toBe(true);
     expect(Object.keys(history).sort()).toEqual(['checkpoint', 'current', 'history', 'list']);
-    await expect(history.list({ scope: 'root' })).rejects.toMatchObject({ code: 'inaccessible' });
+    await expect(history.list({ scope: 'root' })).rejects.toMatchObject({ code: 'unavailable' });
     await f.instance.activate!();
     await history.list({ scope: 'visible' });
     expect(f.sessions.list).toHaveBeenCalledOnce();

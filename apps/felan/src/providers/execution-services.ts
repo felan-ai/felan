@@ -50,7 +50,7 @@ export async function createLocalExecutionSession(session: SessionExtensionConte
   const root = await roots.open(session, port);
   const isRoot = port.current.id === port.current.root;
   const state = { context: session, port, root, isRoot } satisfies LocalExecutionSession;
-  return { session: state, inlineExtensions: [createSavingsCommandExtension(root.savings)],
+  return { session: state, inlineExtensions: [createSavingsCommandExtension(root.savings, session)],
     async dispose() { if (isRoot) await root.close(); },
   };
 }

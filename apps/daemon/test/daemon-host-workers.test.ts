@@ -395,7 +395,7 @@ describe('daemon host workers', () => {
     expect(() => f.open(request)).toThrow(expect.objectContaining({ name: 'AbortError' }));
     expect(() => f.maintenance.service.sessions({ kind: 'all' })).toThrow(expect.objectContaining({ name: 'AbortError' }));
     await expect(f.maintenance.service.allowedModels()).rejects.toMatchObject({ name: 'AbortError' });
-    await expect(history.list({ scope: 'visible' })).rejects.toMatchObject({ code: 'inaccessible' });
+    await expect(history.list({ scope: 'visible' })).rejects.toMatchObject({ code: 'unavailable' });
   });
 
   it('cancels model scope resolution when maintenance closes', async () => {

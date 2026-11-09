@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import {
-  SESSION_HISTORY_LIMITS, SessionsServiceError, type AgentRuntime, type ExtensionUi, type SessionsHistory, type UiDocument, type UiElementHandle,
+  SessionsServiceError, type AgentRuntime, type ExtensionUi, type SessionsHistory, type UiDocument, type UiElementHandle,
 } from '@felan-ai/agent-core';
 import { createSessionsInsights } from '../src/sessions.js';
 import type { InsightsReport } from '../src/contracts.js';
@@ -35,19 +35,21 @@ function fixture() {
   return { lifetime, info, entry, sessions, storage, runtime, ui, exec, host, documents, update, close };
 }
 
-it('pins full-journal versions and exact byte lengths, without treating a forked root as a child', async () => {
+it('lists without checkpoints and pins later pages to the first page revision, without treating a forked root as a child', async () => {
   const h = fixture();
   const [reference] = await h.host.listSessions(h.runtime);
-  expect(reference).toMatchObject({ id: 'root', contentVersion: 'journal-v1', size: 1000 });
-  expect(reference).not.toHaveProperty('isAgent');
+  expect(reference).toEqual({ id: 'root', path: 'root', modifiedAtMs: 1 });
+  h.sessions.history.mockImplementation(async (_id, options) => ({ sessionId: 'root', revision: 'journal-v1', branch: 'entry',
+    entries: [options?.cursor ? { ...h.entry, id: 'second' } : h.entry] as never, ...(options?.cursor ? {} : { nextCursor: 'next' }),
+  }));
   const text = await h.host.readSession(h.runtime, reference!);
   expect(text).toContain('first');
+  expect(h.sessions.checkpoint).not.toHaveBeenCalled();
   expect(h.sessions).not.toHaveProperty('create');
   expect(h.sessions).not.toHaveProperty('steer');
-  expect(h.sessions.history.mock.calls[0]![1]?.at).toEqual({ sessionId: 'root', revision: 'journal-v1', branch: 'entry' });
+  expect(h.sessions.history.mock.calls[0]![1]).not.toHaveProperty('at');
+  expect(h.sessions.history.mock.calls[1]![1]).toMatchObject({ cursor: 'next', at: { sessionId: 'root', revision: 'journal-v1', branch: 'entry' } });
   await expect(h.host.readSession(h.runtime, { ...reference! })).rejects.toThrow('Insights');
-  h.sessions.checkpoint.mockResolvedValue({ sessionId: 'root', revision: 'journal-v2', branch: 'entry', byteLength: 1000, transcriptDigest: 'same-active-digest' });
-  expect((await h.host.listSessions(h.runtime))[0]!.contentVersion).toBe('journal-v2');
   await h.host.dispose();
 });
 
@@ -81,9 +83,11 @@ it('reads paginated entries once and rejects revision drift and duplicate entrie
     entries: [options?.cursor ? { ...h.entry, id: 'second' } : h.entry] as never, ...(options?.cursor ? {} : { nextCursor: 'next' }),
   }));
   expect((await h.host.readSession(h.runtime, reference!))?.split('\n')).toHaveLength(3);
-  h.sessions.history.mockResolvedValue({ sessionId: 'root', revision: 'wrong', branch: 'entry', entries: [] });
+  h.sessions.history.mockImplementation(async (_id, options) => ({ sessionId: 'root', revision: options?.cursor ? 'wrong' : 'journal-v1', branch: 'entry',
+    entries: [options?.cursor ? { ...h.entry, id: 'second' } : h.entry] as never, ...(options?.cursor ? {} : { nextCursor: 'next' }),
+  }));
   await expect(h.host.readSession(h.runtime, reference!)).rejects.toThrow('Insights');
-  h.sessions.history.mockResolvedValue({ sessionId: 'root', revision: 'journal-v1', branch: 'entry', entries: [h.entry, h.entry] as never });
+  h.sessions.history.mockReset().mockResolvedValue({ sessionId: 'root', revision: 'journal-v1', branch: 'entry', entries: [h.entry, h.entry] as never });
   await expect(h.host.readSession(h.runtime, reference!)).rejects.toThrow('Insights');
   await h.host.dispose();
 });
@@ -93,37 +97,54 @@ it('rejects bad catalogue pagination but marks individual unreadable sessions in
   h.sessions.list.mockResolvedValue({ items: [], nextCursor: 'repeat' });
   await expect(h.host.listSessions(h.runtime)).rejects.toThrow('Insights');
   expect(h.sessions.list).toHaveBeenCalledTimes(2);
-  const ok = { ...h.info, id: 'ok', root: 'ok' };
   h.sessions.list.mockResolvedValue({ items: [
-    { ...h.info, id: 'missing', diagnostic: 'inaccessible' }, { ...h.info, id: 'large' }, { ...h.info, id: 'busy' }, { ...h.info, id: 'child', root: 'ok' }, ok,
+    { ...h.info, id: 'missing', diagnostic: 'inaccessible' }, { ...h.info, id: 'large', diagnostic: 'oversize' }, { ...h.info, id: 'child', root: 'ok' }, { ...h.info, id: 'ok', root: 'ok' },
   ] });
-  h.sessions.checkpoint.mockImplementation(async id => {
-    if (id === 'large') return { sessionId: id, revision: 'large', branch: null, byteLength: SESSION_HISTORY_LIMITS.fileBytes + 1, transcriptDigest: 'digest' };
-    if (id === 'busy' || id === 'child') throw new SessionsServiceError(id === 'busy' ? 'stale' : 'unsupported');
-    return { sessionId: id, revision: 'journal-v1', branch: 'entry', byteLength: 1000, transcriptDigest: 'digest' };
-  });
   const references = await h.host.listSessions(h.runtime);
   expect(references.map(reference => [reference.id, reference.unavailable])).toEqual([
-    ['missing', 'inaccessible'], ['large', 'oversize'], ['busy', 'stale'], ['child', 'unsupported'], ['ok', undefined],
+    ['missing', 'inaccessible'], ['large', 'oversize'], ['child', undefined], ['ok', undefined],
   ]);
-  expect(references[3]).toMatchObject({ rootSessionId: 'ok', isAgent: true });
-  expect(h.sessions.checkpoint.mock.calls.filter(([id]) => id === 'busy')).toHaveLength(3);
-  expect(h.sessions.checkpoint.mock.calls.filter(([id]) => id === 'child')).toHaveLength(1);
-  await expect(h.host.readSession(h.runtime, references[2]!)).rejects.toThrow('Insights');
+  expect(references[2]).toMatchObject({ rootSessionId: 'ok', isAgent: true });
+  expect(h.sessions.checkpoint).not.toHaveBeenCalled();
+  await expect(h.host.readSession(h.runtime, references[0]!)).rejects.toThrow('Insights');
   await h.host.dispose();
 });
 
-it('retries a listing and checkpoint that went stale while active sessions were written', async () => {
+it('retries a listing and a history read that went stale while active sessions were written', async () => {
   const h = fixture();
   h.sessions.list.mockRejectedValueOnce(new SessionsServiceError('stale'));
-  h.sessions.checkpoint.mockRejectedValueOnce(new SessionsServiceError('stale'));
   const [reference] = await h.host.listSessions(h.runtime);
-  expect(reference).toMatchObject({ id: 'root', contentVersion: 'journal-v1' });
-  expect(reference).not.toHaveProperty('unavailable');
   expect(h.sessions.list).toHaveBeenCalledTimes(2);
-  expect(h.sessions.checkpoint).toHaveBeenCalledTimes(2);
+  h.sessions.history.mockResolvedValueOnce({ sessionId: 'root', revision: 'journal-v1', branch: 'entry', entries: [h.entry] as never, nextCursor: 'next' })
+    .mockRejectedValueOnce(new SessionsServiceError('stale'))
+    .mockResolvedValueOnce({ sessionId: 'root', revision: 'journal-v2', branch: 'entry', entries: [h.entry] as never });
+  expect((await h.host.readSession(h.runtime, reference!))?.split('\n')).toHaveLength(2);
+  expect(h.sessions.history.mock.calls[2]![1]).not.toHaveProperty('at');
+  h.sessions.history.mockRejectedValue(new SessionsServiceError('stale'));
+  await expect(h.host.readSession(h.runtime, reference!)).rejects.toMatchObject({ code: 'stale' });
+  expect(h.sessions.history).toHaveBeenCalledTimes(6);
   h.sessions.list.mockRejectedValue(new SessionsServiceError('stale'));
   await expect(h.host.listSessions(h.runtime)).rejects.toMatchObject({ code: 'stale' });
+  await h.host.dispose();
+});
+
+it('returns structured entries without copying them and keeps text reads identical after a stale retry', async () => {
+  const h = fixture();
+  const [reference] = await h.host.listSessions(h.runtime);
+  const startedAt = '2025-12-31T22:30:00.000Z';
+  h.sessions.history.mockResolvedValueOnce({ sessionId: 'root', revision: 'journal-v1', branch: 'entry', startedAt: '2025-01-01T00:00:00Z', entries: [h.entry] as never, nextCursor: 'next' })
+    .mockRejectedValueOnce(new SessionsServiceError('stale'))
+    .mockResolvedValue({ sessionId: 'root', revision: 'journal-v2', branch: 'entry', startedAt, entries: [h.entry] as never });
+  const events = await h.host.readSessionEntries!(h.runtime, reference!);
+  expect(events).toEqual([{ type: 'session', id: 'root', cwd: '/project', timestamp: startedAt }, h.entry]);
+  expect(events[1]).toBe(h.entry);
+  expect(h.sessions.history).toHaveBeenCalledTimes(3);
+  expect(h.sessions.history.mock.calls[1]![1]).toMatchObject({ cursor: 'next', at: { sessionId: 'root', revision: 'journal-v1', branch: 'entry' } });
+  expect(h.sessions.history.mock.calls[2]![1]).not.toHaveProperty('at');
+  const lines: string[] = [];
+  for await (const line of h.host.readSessionLines!(h.runtime, reference!)) lines.push(line);
+  expect(lines).toEqual(events.map(event => JSON.stringify(event)));
+  expect(await h.host.readSession(h.runtime, reference!)).toBe(lines.join('\n'));
   await h.host.dispose();
 });
 

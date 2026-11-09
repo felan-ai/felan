@@ -36,6 +36,10 @@ execution handles are scoped to the parent. History IDs, revisions and cursors
 are opaque; a project filter is not an authorization grant. Reads never adopt,
 restore or execute old sessions. Pin pagination to the returned session,
 revision and branch, and handle stale or unavailable data explicitly.
+`SessionsServiceError` code `inaccessible` describes the target session, while
+`unavailable` means the calling session is cancelling, closing or otherwise
+cannot use the service right now. Stop a multi-session scan on `unavailable`
+instead of skipping every remaining session.
 
 `MODELS_SERVICE` exposes allowed model metadata and inference, not credentials
 or arbitrary endpoint configuration. `SECRETS_SERVICE` is only for trusted

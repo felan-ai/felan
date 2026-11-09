@@ -18,7 +18,7 @@ and first-party extensions.
 | `/memory open` | Open canonical project memory in the local TUI |
 | `/agents` | Open the subagent navigator |
 | `/tools` | Open the inline inspector for complete root-session tool arguments and results |
-| `/savings` | Show estimated API-equivalent savings for the current root session (`project`, `all`, or `details` also supported) |
+| `/savings` | Open the full-screen savings dashboard (Overview, Extensions, Sessions, Projects). Optional arguments choose the starting range (`today`, `7d`, `30d`, `90d`, `all`) and tab (`project`, `details`) |
 | `/daemon status` | Show daemon state and active counts |
 | `/daemon logs` | Show the first daemon log page |
 | `/daemon stop` / `/daemon restart` | Stop/restart the daemon; when runs, subagents, interactive PTY or foreground processes, or pending questions would be interrupted, asks once and then interrupts them. Detached background processes survive a restart |
@@ -81,6 +81,17 @@ report. Opening that file later does not read live data; run `/insights` again
 to regenerate it. `--refresh` only forces unchanged files to be reparsed. Date
 ranges use event timestamps, including the start and excluding the end, and
 group retained subagent activity under its root session. The dashboard's initial range is 30 days unless `--since` is given; its range keys recompute from the loaded transcripts. `--no-open` skips the dashboard, and the HTML report is still written.
+Unchanged sessions load from the parser cache without reading their transcripts, a status line shows scanning
+progress, and history copied into forked or cloned sessions is counted once. Esc during a scan stops it
+without writing a report.
+
+`/savings` opens on the last 30 days and shows estimated API-equivalent savings by category,
+extension, session and project, with a daily or monthly sparkline on the Overview tab. `r` cycles
+the range on the client, so switching ranges needs no new query. Tab or `1`-`4` switch tabs. On the Sessions tab, the arrow keys select a
+session and Enter shows its savings per extension. `R` reloads the measurements and Esc closes the
+dashboard. Ranges use UTC days because measurements are stored per UTC day. Decisions without a
+model price are listed separately and excluded from USD totals. Clients without the dashboard
+renderer receive the same summary as Markdown.
 
 ## Common Pi commands
 

@@ -1,6 +1,6 @@
 import {
   SESSION_HISTORY_LIMITS, SessionsServiceError,
-  type SessionsServiceErrorCode, type ExtensionUi, type SessionsHistory, type SessionCheckpointRef, type SessionHistoryInfo,
+  type ExtensionUi, type HistoryRevision, type SessionsHistory, type SessionHistoryInfo,
   type UiAction, type UiActionContext, type UiActionRequest, type UiDocument, type UiElementHandle,
 } from '@felan-ai/agent-core';
 import { buildInsightsDashboard, insightsRangeOptions, type InsightsView } from './dashboard.js';
@@ -11,12 +11,13 @@ import {
 } from './data.js';
 import { generateDashboardMarkdown } from './markdown.js';
 import { openReportOnHost, type OpenReportOutcome } from './open-report.js';
+import type { SessionEvent } from './types.js';
 
-/** Active sessions change between snapshot reads, so a stale answer is retried before the session is skipped. */
+/** Active sessions change between page reads, so a stale answer is retried before the session is skipped. */
 const STALE_ATTEMPTS = 3;
 
 export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionUi, lifetime: AbortSignal): InsightsHost & { dispose(): Promise<void> } {
-  const references = new WeakMap<InsightsSessionReference, { info: SessionHistoryInfo; checkpoint: SessionCheckpointRef }>();
+  const references = new WeakMap<InsightsSessionReference, SessionHistoryInfo>();
   const pending = new Set<Promise<unknown>>();
   const controller = new AbortController();
   const scope = AbortSignal.any([lifetime, controller.signal]);
@@ -72,55 +73,53 @@ export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionU
     return items;
   }, signal);
 
-  const checkpointOf = async (id: string, signal: AbortSignal): Promise<SessionCheckpointRef | SessionsServiceErrorCode> => {
-    let checkpoint: SessionCheckpointRef;
-    try { checkpoint = await retryStale(() => sessions.checkpoint(id, { signal }), signal); } catch (error) {
-      ensure(signal);
-      return error instanceof SessionsServiceError ? error.code : 'inaccessible';
-    }
-    ensure(signal);
-    if (checkpoint.sessionId !== id || typeof checkpoint.revision !== 'string' || !checkpoint.revision
-      || checkpoint.branch !== null && (typeof checkpoint.branch !== 'string' || !checkpoint.branch)
-      || !Number.isSafeInteger(checkpoint.byteLength) || checkpoint.byteLength < 0) return 'invalid';
-    return checkpoint.byteLength > SESSION_HISTORY_LIMITS.fileBytes ? 'oversize' : { ...checkpoint };
-  };
-
-  async function* readLines(reference: InsightsSessionReference, signal?: AbortSignal): AsyncIterable<string> {
-    const active = signal ? AbortSignal.any([scope, signal]) : scope;
-    ensure(active);
-    const selected = references.get(reference);
-    if (!selected) throw new Error('Insights history reference is not visible.');
-    let bytes = 0;
-    let headerPending = true;
+  // The first page pins the revision for the remaining pages, so no separate checkpoint read is needed.
+  const readPages = async (info: SessionHistoryInfo, active: AbortSignal): Promise<SessionEvent[]> => {
+    const events: SessionEvent[] = [];
     const cursors = new Set<string>();
     const ids = new Set<string>();
     let cursor: string | undefined;
-    const at = { sessionId: selected.info.id, revision: selected.checkpoint.revision, branch: selected.checkpoint.branch };
+    let at: HistoryRevision | undefined;
     do {
       ensure(active);
-      const page = await run(requestSignal => sessions.history(selected.info.id, {
-        signal: requestSignal, limit: SESSION_HISTORY_LIMITS.pageEntries, at, ...(cursor === undefined ? {} : { cursor }),
+      const page = await run(requestSignal => sessions.history(info.id, {
+        signal: requestSignal, limit: SESSION_HISTORY_LIMITS.pageEntries, ...(at === undefined ? {} : { at }), ...(cursor === undefined ? {} : { cursor }),
       }), active);
-      if (page.sessionId !== at.sessionId || page.revision !== at.revision || page.branch !== at.branch || !Array.isArray(page.entries)
+      if (page.sessionId !== info.id || typeof page.revision !== 'string' || !page.revision
+        || page.branch !== null && (typeof page.branch !== 'string' || !page.branch)
+        || at && (page.revision !== at.revision || page.branch !== at.branch) || !Array.isArray(page.entries)
         || page.entries.length > SESSION_HISTORY_LIMITS.pageEntries) throw new Error('Insights history snapshot changed.');
-      if (headerPending) {
-        const header = JSON.stringify({ type: 'session', id: selected.info.id, cwd: selected.info.cwd,
-          ...(page.startedAt === undefined ? {} : { timestamp: page.startedAt }) });
-        bytes += new TextEncoder().encode(header).byteLength;
-        headerPending = false;
-        yield header;
+      if (!at) {
+        at = { sessionId: info.id, revision: page.revision, branch: page.branch };
+        events.push({ type: 'session', id: info.id, cwd: info.cwd, ...(page.startedAt === undefined ? {} : { timestamp: page.startedAt }) });
       }
       for (const entry of page.entries) {
         ensure(active);
         if (!entry || !entry.id || ids.has(entry.id)) throw new Error('Insights history contains invalid entries.');
         ids.add(entry.id);
-        const line = JSON.stringify(entry);
-        bytes += new TextEncoder().encode(line).byteLength + 1;
-        if (bytes > SESSION_HISTORY_LIMITS.fileBytes) throw new Error('Session transcript exceeds the supported size.');
-        yield line;
+        events.push(entry);
       }
       cursor = nextCursor(page.nextCursor, cursors);
     } while (cursor !== undefined);
+    return events;
+  };
+
+  const readEntries = (reference: InsightsSessionReference, signal?: AbortSignal) => run(active => {
+    const info = references.get(reference);
+    if (!info) throw new Error('Insights history reference is not visible.');
+    return retryStale(() => readPages(info, active), active);
+  }, signal);
+
+  async function* readLines(reference: InsightsSessionReference, signal?: AbortSignal): AsyncIterable<string> {
+    const lines: string[] = [];
+    let bytes = 0;
+    for (const event of await readEntries(reference, signal)) {
+      const line = JSON.stringify(event);
+      bytes += new TextEncoder().encode(line).byteLength + (lines.length ? 1 : 0);
+      if (bytes > SESSION_HISTORY_LIMITS.fileBytes) throw new SessionsServiceError('oversize', 'Session transcript exceeds the supported size.');
+      lines.push(line);
+    }
+    yield* lines;
   }
 
   const write = (runtime: Parameters<InsightsHost['writeReport']>[0], name: string, content: string) => run(async () => {
@@ -146,20 +145,16 @@ export function createSessionsInsights(sessions: SessionsHistory, ui: ExtensionU
       // One session that is missing, unsupported or changing must not hide the rest of the history.
       const result: InsightsSessionReference[] = [];
       for (const info of await listVisible(active)) {
-        const checkpoint = info.diagnostic ?? await checkpointOf(info.id, active);
         const lineage = info.id !== info.root ? { rootSessionId: info.root, isAgent: true } : {};
-        if (typeof checkpoint === 'string') {
-          result.push({ id: info.id, path: info.id, modifiedAtMs: info.updatedAt, unavailable: checkpoint, ...lineage });
-          continue;
-        }
         const reference: InsightsSessionReference = {
-          id: info.id, path: info.id, modifiedAtMs: info.updatedAt, contentVersion: checkpoint.revision, size: checkpoint.byteLength, ...lineage,
+          id: info.id, path: info.id, modifiedAtMs: info.updatedAt, ...lineage, ...(info.diagnostic ? { unavailable: info.diagnostic } : {}),
         };
-        references.set(reference, { info, checkpoint });
+        if (!info.diagnostic) references.set(reference, info);
         result.push(reference);
       }
       return result;
     }, signal),
+    readSessionEntries: (_runtime, reference, signal) => readEntries(reference, signal),
     readSessionLines: (_runtime, reference, signal) => readLines(reference, signal),
     readSession: (_runtime, reference, signal) => run(async active => {
       const lines: string[] = [];

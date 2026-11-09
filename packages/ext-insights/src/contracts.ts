@@ -1,5 +1,5 @@
 import type { AgentRuntime } from '@felan-ai/agent-core';
-import type { InsightsSavingsReport, InsightsSessionReference, ParsedSession, Analytics } from './types.js';
+import type { InsightsSavingsReport, InsightsSessionReference, ParsedSession, Analytics, SessionEvent } from './types.js';
 
 export type { InsightsSessionReference } from './types.js';
 
@@ -19,6 +19,7 @@ export interface InsightsHost {
   readonly listSessions: (runtime: AgentRuntime, signal?: AbortSignal) => Promise<readonly InsightsSessionReference[]>;
   readonly readSession: (runtime: AgentRuntime, reference: InsightsSessionReference, signal?: AbortSignal) => Promise<string | undefined>;
   readonly readSessionLines?: (runtime: AgentRuntime, reference: InsightsSessionReference, signal?: AbortSignal) => AsyncIterable<string>;
+  readonly readSessionEntries?: (runtime: AgentRuntime, reference: InsightsSessionReference, signal?: AbortSignal) => Promise<readonly SessionEvent[]>;
   readonly writeReport: (runtime: AgentRuntime, fileName: string, content: string) => Promise<string>;
   readonly presentReport?: (runtime: AgentRuntime, report: InsightsReport, signal?: AbortSignal) => Promise<void>;
   readonly writeMarkdown?: (runtime: AgentRuntime, fileName: string, content: string) => Promise<string>;

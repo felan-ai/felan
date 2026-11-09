@@ -1,4 +1,4 @@
-import type { ParsedSession, SessionActivity } from './types.js';
+import type { ModelUsage, ParsedSession, SessionActivity } from './types.js';
 
 export function sliceParsedSession(session: ParsedSession, start?: Date, end?: Date): ParsedSession | null {
   if (!start && !end) return session;
@@ -39,11 +39,13 @@ function addNumbers(target: Record<string, number>, source: Record<string, numbe
   for (const [key, value] of Object.entries(source ?? {})) target[key] = (target[key] ?? 0) + value;
 }
 
-function addModels(target: Record<string, { count: number; tokens: number; cost: number }>, source: Record<string, { count: number; tokens: number; cost: number }> | undefined): void {
+function addModels(target: Record<string, ModelUsage>, source: Record<string, ModelUsage> | undefined): void {
   for (const [key, value] of Object.entries(source ?? {})) {
     const current = target[key];
-    if (current) { current.count += value.count; current.tokens += value.tokens; current.cost += value.cost; }
-    else target[key] = { ...value };
+    if (current) {
+      current.count += value.count; current.tokens += value.tokens; current.cost += value.cost;
+      if (value.toolErrors) current.toolErrors = (current.toolErrors ?? 0) + value.toolErrors;
+    } else target[key] = { ...value };
   }
 }
 

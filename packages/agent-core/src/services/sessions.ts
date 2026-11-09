@@ -136,11 +136,13 @@ export interface SessionsService extends SessionsHistory {
   subscribe(listener: (event: SessionsEvent) => void): () => void;
 }
 
-export type SessionsServiceErrorCode = 'invalid' | 'inaccessible' | 'stale' | 'oversize' | 'unsupported';
+/** 'inaccessible' concerns the target session; 'unavailable' concerns the calling session. */
+export type SessionsServiceErrorCode = 'invalid' | 'inaccessible' | 'unavailable' | 'stale' | 'oversize' | 'unsupported';
 
 const messages: Record<SessionsServiceErrorCode, string> = {
   invalid: 'Session request or data is invalid.',
   inaccessible: 'Session operation is inaccessible.',
+  unavailable: 'The calling session cannot use session services right now.',
   stale: 'Session state or snapshot is stale.',
   oversize: 'Session data exceeds its size limit.',
   unsupported: 'Session operation or format is unsupported.',
@@ -150,7 +152,7 @@ export class SessionsServiceError extends Error {
   readonly code: SessionsServiceErrorCode;
 
   constructor(code: SessionsServiceErrorCode, message?: string) {
-    const safeCode = code === 'inaccessible' || code === 'stale' || code === 'oversize' || code === 'unsupported' ? code : 'invalid';
+    const safeCode = code === 'inaccessible' || code === 'unavailable' || code === 'stale' || code === 'oversize' || code === 'unsupported' ? code : 'invalid';
     super(message ?? messages[safeCode]);
     this.name = 'SessionsServiceError';
     this.code = safeCode;

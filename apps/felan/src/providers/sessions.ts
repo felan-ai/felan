@@ -15,7 +15,7 @@ export default defineServiceProvider({
     const subscriptions = new Set<() => void>();
     const lifecycles = new Set<RuntimeLifecycle>();
     const check = () => {
-      if (state !== 'active' || context.signal.aborted) throw new SessionsServiceError('inaccessible');
+      if (state !== 'active' || context.signal.aborted) throw new SessionsServiceError('unavailable');
     };
     const call = <T>(operation: () => Promise<T>): Promise<T> => {
       let result: Promise<T>;
@@ -50,7 +50,7 @@ export default defineServiceProvider({
     });
     const runtimeLifetime: import('@felan-ai/agent-core').RuntimeLifetime = {
       register(lifecycle) {
-        if (state === 'settling' || state === 'disposed' || context.signal.aborted) throw new SessionsServiceError('inaccessible');
+        if (state === 'settling' || state === 'disposed' || context.signal.aborted) throw new SessionsServiceError('unavailable');
         lifecycles.add(lifecycle);
         return () => { lifecycles.delete(lifecycle); };
       },

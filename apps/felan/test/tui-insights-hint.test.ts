@@ -7,6 +7,7 @@ import {
   type InsightsLoadedSession,
 } from '@felan-ai/ext-insights';
 import { presentInsightsDocument } from '../src/tui/renderers/insights.js';
+import { InsightsPanel } from '../src/tui/renderers/insights/panel.js';
 
 function session(id: string, project: string, timestamp: string, user = 'hello'): InsightsLoadedSession {
   const transcript = [
@@ -122,6 +123,27 @@ describe('insights dashboard hint', () => {
     h.component().handleInput?.('3');
     expect(text(h)).toContain('beta');
     expect(text(h)).not.toContain('\u001b[31m');
+  });
+
+  it('reuses rendered tab bodies while scrolling and rebuilds them for a new width, tab or metric', () => {
+    const overview = vi.spyOn(InsightsPanel.prototype as unknown as { overview: () => string[] }, 'overview');
+    const h = harness(12);
+    void presentInsightsDocument(documentFor({ id: 'insights-memo' }), h.ui, new AbortController().signal);
+    const first = text(h);
+    for (let step = 0; step < 5; step++) { h.component().handleInput?.('\x1b[B'); text(h); }
+    expect(text(h)).not.toBe(first);
+    expect(overview).toHaveBeenCalledOnce();
+    text(h, 100);
+    expect(overview).toHaveBeenCalledTimes(2);
+    h.component().handleInput?.('m');
+    text(h, 100);
+    expect(overview).toHaveBeenCalledTimes(3);
+    h.component().handleInput?.('2'); text(h, 100); h.component().handleInput?.('1'); text(h, 100);
+    expect(overview).toHaveBeenCalledTimes(3);
+    h.component().invalidate();
+    text(h, 100);
+    expect(overview).toHaveBeenCalledTimes(4);
+    overview.mockRestore();
   });
 
   it('falls back to the Markdown view when the payload is invalid', () => {

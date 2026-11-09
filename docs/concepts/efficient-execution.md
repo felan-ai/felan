@@ -58,13 +58,13 @@ contribute.
 
 ## Reading a savings report
 
-Use the interactive command or the standalone CLI:
+Use the interactive dashboard or the standalone CLI:
 
 ```text
 /savings
-/savings project
-/savings all
-/savings details
+/savings 7d
+/savings all project
+/savings 90d details
 ```
 
 ```sh
@@ -76,11 +76,15 @@ felan savings --monthly
 felan savings --format json
 ```
 
-The local `/insights` report includes a Savings tab when persisted measurements
-are available. Its date range follows the report's global range, and Producer,
-Category, and Project selectors provide additional breakdowns. The tab shows
-baseline, actual, and estimated avoided cost, optimization calls, daily and
-dimension breakdowns, and the underlying measurement basis.
+`/savings` opens a full-screen dashboard. It reads every persisted measurement
+once and switches between today, the last 7, 30 or 90 days, and all time without
+another query. The Overview tab shows saved, baseline and actual cost, decisions,
+token impact, this session, this project, categories, extensions and a daily
+or monthly sparkline. The Extensions tab lists each operation with its method
+and whether it is an observed comparison or an estimated baseline. The Sessions
+tab ranks sessions, and Enter shows one session's savings per extension. The
+Projects tab groups the same measurements by project folder.
+Measurements are stored per UTC day, so ranges use UTC days.
 
 Savings are **estimated API-equivalent cost avoided**. A measurement compares
 a baseline outcome without an optimization with the actual optimized outcome.

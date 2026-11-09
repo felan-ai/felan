@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SESSIONS_HISTORY_SERVICE, SessionsServiceError, createExtensionServiceAccess, createFelanServiceRegistry, type FelanExtensionAPI, type SessionsHistory } from '@felan-ai/agent-core';
+import { availableParallelism } from 'node:os';
+import { SESSIONS_HISTORY_SERVICE, SessionsServiceError, createExtensionServiceAccess, createFelanServiceRegistry, type FelanExtensionAPI, type SessionsHistory, type UiStatus } from '@felan-ai/agent-core';
 import insightsExtension, { createInsightsExtension, type InsightsHost } from '../src/extension.js';
 
 describe('service-backed insights extension', () => {
@@ -53,7 +54,7 @@ describe('service-backed insights extension', () => {
     expect(fileName).toBe('felan-insights.html');
   });
 
-  it('forwards runtime and cancellation to the provider and prefers streaming transcripts', async () => {
+  it.each(['entries', 'lines'] as const)('forwards runtime and cancellation to the provider and prefers %s', async method => {
     let command: { handler: (args: string, ctx: unknown) => Promise<void> } | undefined;
     const transcript = [
       JSON.stringify({ type: 'session', id: 'root', cwd: '/workspace', timestamp: '2026-08-29T07:00:00Z' }),
@@ -67,6 +68,7 @@ describe('service-backed insights extension', () => {
       listSessions: vi.fn(async () => [reference]),
       readSession: vi.fn(),
       readSessionLines: vi.fn(async function* () { yield* transcript; }),
+      ...(method === 'entries' ? { readSessionEntries: vi.fn(async () => transcript.map(line => JSON.parse(line))) } : {}),
       writeReport: vi.fn(async () => '/reports/insights.html'),
       writeMarkdown: vi.fn(async () => '/reports/insights.md'),
       presentReport: vi.fn(async () => {}),
@@ -75,7 +77,10 @@ describe('service-backed insights extension', () => {
     const signal = new AbortController().signal;
     await command!.handler('--md', { ui: { notify: vi.fn() }, signal });
     expect(host.listSessions).toHaveBeenCalledExactlyOnceWith(runtime, signal);
-    expect(host.readSessionLines).toHaveBeenCalledExactlyOnceWith(runtime, reference, signal);
+    if (method === 'entries') {
+      expect(host.readSessionEntries).toHaveBeenCalledExactlyOnceWith(runtime, reference, signal);
+      expect(host.readSessionLines).not.toHaveBeenCalled();
+    } else expect(host.readSessionLines).toHaveBeenCalledExactlyOnceWith(runtime, reference, signal);
     expect(host.readSession).not.toHaveBeenCalled();
     expect(host.writeReport).toHaveBeenCalledWith(runtime, 'felan-insights.html', expect.any(String));
     expect(host.writeMarkdown).toHaveBeenCalledWith(runtime, 'felan-insights.md', expect.any(String));
@@ -139,7 +144,7 @@ describe('service-backed insights extension', () => {
     expect(data.totalSessions).toBe(1);
     expect(data.totalCost).toBe(50);
     expect(data.sessions[0].agentSessionCount).toBe(2);
-    expect(data.cache.versions).toEqual({ schema: '2', parser: '2' });
+    expect(data.cache.versions).toEqual({ schema: '2', parser: '3' });
     expect(cache).toContain('"activity"');
     expect(data.export.outputFormats).toEqual(['html']);
   });
@@ -152,7 +157,8 @@ describe('shared Sessions default', () => {
     h.sessions.list.mockResolvedValue({ items: [{ id: 'root', root: 'root', cwd: '/project', title: 'Root', updatedAt: 1, state: 'open' }] });
     h.sessions.history.mockResolvedValue({ sessionId: 'root', revision: 'journal', branch: 'user', entries: [entry] as never });
     await h.command()('--no-open', h.context);
-    expect(h.sessions.history).toHaveBeenCalledWith('root', expect.objectContaining({ at: { sessionId: 'root', revision: 'journal', branch: 'user' } }));
+    expect(h.sessions.history).toHaveBeenCalledExactlyOnceWith('root', expect.objectContaining({ limit: expect.any(Number) }));
+    expect(h.sessions.checkpoint).not.toHaveBeenCalled();
     expect(h.notify).toHaveBeenCalledWith(expect.objectContaining({ level: 'info', text: expect.stringContaining('Insights report ready:') }));
     expect(h.writeFile).toHaveBeenCalledWith('insights-reports/felan-insights.html', expect.any(Uint8Array));
     await h.shutdown();
@@ -176,11 +182,21 @@ describe('shared Sessions default', () => {
     await h.shutdown();
   });
 
-  it('names the service failure when the session listing itself cannot be read', async () => {
+  it.each(['inaccessible', 'oversize'] as const)('names %s when the session listing itself cannot be read', async code => {
     const h = defaultFixture();
-    h.sessions.list.mockRejectedValue(new SessionsServiceError('inaccessible'));
+    h.sessions.list.mockRejectedValue(new SessionsServiceError(code));
     await h.command()('', h.context);
-    expect(h.notify).toHaveBeenLastCalledWith({ level: 'error', text: 'Could not list sessions (inaccessible).' });
+    expect(h.notify).toHaveBeenLastCalledWith({ level: 'error', text: `Could not list sessions (${code}).` });
+    expect(h.writeFile).not.toHaveBeenCalled();
+    await h.shutdown();
+  });
+
+  it('stops with one warning when the calling session becomes unavailable while listing', async () => {
+    const h = defaultFixture();
+    h.sessions.list.mockRejectedValue(new SessionsServiceError('unavailable'));
+    await h.command()('', h.context);
+    expect(h.notify).toHaveBeenLastCalledWith({ level: 'warning', text: 'Insights stopped because this session is cancelling or closing.' });
+    expect(h.notify).not.toHaveBeenCalledWith(expect.objectContaining({ level: 'error' }));
     expect(h.writeFile).not.toHaveBeenCalled();
     await h.shutdown();
   });
@@ -264,3 +280,156 @@ function defaultFixture() {
     async shutdown() { for (const handler of handlers) await handler(); },
   };
 }
+
+describe('session scan', () => {
+  function storedFixture(count: number) {
+    const registry = createFelanServiceRegistry();
+    const files = new Map<string, Uint8Array>();
+    const ids = Array.from({ length: count }, (_, index) => `s${index}`);
+    const entry = { type: 'message', id: 'user', parentId: null, timestamp: '2026-01-01T00:00:00Z', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } };
+    const sessions = {
+      current: { id: 'root', root: 'root' },
+      list: vi.fn<SessionsHistory['list']>(async () => ({ items: ids.map(id => ({ id, root: id, cwd: '/project', title: id, updatedAt: 1, state: 'closed' as const })) })),
+      checkpoint: vi.fn<SessionsHistory['checkpoint']>(),
+      history: vi.fn<SessionsHistory['history']>(async id => ({ sessionId: id, revision: 'journal', branch: 'user', entries: [entry] as never })),
+    } satisfies SessionsHistory;
+    registry.set(SESSIONS_HISTORY_SERVICE, sessions);
+    const storage = {
+      root: '/agent',
+      mkdir: async () => {},
+      readFile: async (path: string) => { const file = files.get(path); if (!file) throw new Error('missing'); return file; },
+      writeFile: async (path: string, content: Uint8Array) => { files.set(path, content); },
+      listFiles: async (path: string) => [...files.keys()].filter(key => key.startsWith(`${path}/`)).map(key => key.slice(path.length + 1)).filter(name => !name.includes('/')),
+      remove: vi.fn(async (path: string) => { files.delete(path); }),
+    };
+    const ui = { notify: vi.fn(async (_message: { level: string; text: string }) => {}), status: vi.fn(async (_item: UiStatus) => {}), removeStatus: vi.fn(async (_id: string) => {}) };
+    let command!: (args: string, ctx: unknown) => Promise<void>;
+    const handlers: Array<() => Promise<void>> = [];
+    insightsExtension({
+      services: createExtensionServiceAccess(registry, insightsExtension.serviceRequirements!),
+      runtime: { storage: () => storage }, ui,
+      registerCommand: (_name: string, definition: { handler: typeof command }) => { command = definition.handler; },
+      on: (_name: string, handler: () => Promise<void>) => { handlers.push(handler); },
+    } as unknown as FelanExtensionAPI);
+    return { sessions, files, ids, storage, ui, run: (args = '--no-open', signal?: AbortSignal) => command(args, signal ? { signal } : {}),
+      cacheFiles: () => [...files.keys()].filter(key => key.startsWith('insights/session-meta/')),
+      async shutdown() { for (const handler of handlers) await handler(); } };
+  }
+
+  it('reads cold sessions through history only and serves a warm scan entirely from the cache', async () => {
+    const h = storedFixture(5);
+    await h.run();
+    expect(h.sessions.checkpoint).not.toHaveBeenCalled();
+    expect(h.sessions.history).toHaveBeenCalledTimes(5);
+    expect(h.cacheFiles()).toHaveLength(5);
+    h.sessions.history.mockClear();
+    await h.run();
+    expect(h.sessions.checkpoint).not.toHaveBeenCalled();
+    expect(h.sessions.history).not.toHaveBeenCalled();
+    const report = new TextDecoder().decode(h.files.get('insights-reports/felan-insights.html'));
+    expect(report).toContain('"sessionMeta":{"hits":5,"misses":0,"writes":0,"errors":0}');
+    await h.shutdown();
+  });
+
+  it('shows scanning progress while sessions load and removes it at the end', async () => {
+    const h = storedFixture(3);
+    await h.run();
+    const texts = h.ui.status.mock.calls.map(([item]) => item.value.kind === 'text' ? item.value.text : '');
+    expect(texts).toEqual(['Insights: scanning sessions 0/3', 'Insights: scanning sessions 1/3', 'Insights: scanning sessions 2/3', 'Insights: scanning sessions 3/3']);
+    expect(h.ui.status.mock.calls[0]![0]).toMatchObject({ id: 'insights', kind: 'status', key: 'insights' });
+    expect(h.ui.removeStatus).toHaveBeenCalledExactlyOnceWith('insights');
+    expect(h.ui.removeStatus.mock.invocationCallOrder[0]).toBeGreaterThan(h.ui.status.mock.invocationCallOrder.at(-1)!);
+    await h.shutdown();
+  });
+
+  it('prunes cache files that no listed session references after a complete scan', async () => {
+    const h = storedFixture(3);
+    await h.run();
+    const orphan = `insights/session-meta/${'a'.repeat(64)}.json`;
+    h.files.set(orphan, new Uint8Array());
+    h.files.set('insights/session-meta/notes.txt', new Uint8Array());
+    h.files.set('insights-reports/other.json', new Uint8Array());
+    h.ids.pop();
+    await h.run();
+    expect(h.files.has(orphan)).toBe(false);
+    expect(h.files.has('insights/session-meta/notes.txt')).toBe(true);
+    expect(h.files.has('insights-reports/other.json')).toBe(true);
+    expect(h.cacheFiles().filter(name => name.endsWith('.json'))).toHaveLength(2);
+    expect(h.storage.remove.mock.calls.every(([path]) => path.startsWith('insights/session-meta/'))).toBe(true);
+    await h.shutdown();
+  });
+
+  it('removes the progress status and keeps the cache when a scan is cancelled', async () => {
+    const h = storedFixture(2);
+    await h.run();
+    const orphan = `insights/session-meta/${'b'.repeat(64)}.json`;
+    h.files.set(orphan, new Uint8Array());
+    h.ui.removeStatus.mockClear();
+    const controller = new AbortController();
+    h.sessions.history.mockImplementation(async () => { controller.abort(); throw new SessionsServiceError('inaccessible'); });
+    await expect(h.run('--no-open --refresh', controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
+    expect(h.ui.removeStatus).toHaveBeenCalledExactlyOnceWith('insights');
+    expect(h.files.has(orphan)).toBe(true);
+    await h.shutdown();
+  });
+
+  it.each([false, true])('stops after an unavailable read, including when its warning fails: %s', async failWarning => {
+    const concurrency = availableParallelism();
+    const h = storedFixture(concurrency + 3);
+    let release!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    h.sessions.history.mockImplementation(async id => {
+      if (id === 's0') throw new SessionsServiceError('unavailable');
+      await pending;
+      return { sessionId: id, revision: 'journal', branch: null, entries: [] };
+    });
+    if (failWarning) h.ui.notify.mockImplementation(async message => {
+      if (message.level === 'warning') throw new Error('Notification unavailable.');
+    });
+    const orphan = `insights/session-meta/${'c'.repeat(64)}.json`;
+    h.files.set(orphan, new Uint8Array());
+    const running = h.run();
+    await vi.waitFor(() => expect(h.sessions.history).toHaveBeenCalledTimes(concurrency));
+    release();
+    await expect(running).resolves.toBeUndefined();
+    expect(h.sessions.history.mock.calls.map(([id]) => id)).toEqual(h.ids.slice(0, concurrency));
+    expect(h.ui.notify.mock.calls.filter(([message]) => message.level === 'warning')).toEqual([
+      [{ level: 'warning', text: 'Insights stopped because this session is cancelling or closing.' }],
+    ]);
+    expect(h.files.has('insights-reports/felan-insights.html')).toBe(false);
+    expect(h.files.has(orphan)).toBe(true);
+    expect(h.ui.removeStatus).toHaveBeenCalledExactlyOnceWith('insights');
+    await h.shutdown();
+  });
+
+  it('counts unparseable transcripts in the skipped notice', async () => {
+    const h = storedFixture(2);
+    h.sessions.history.mockImplementation(async id => ({ sessionId: id, revision: 'journal', branch: 'user',
+      entries: [id === 's1' ? { type: 'message', id: 'user', parentId: null, message: { role: 'user', content: [] } } : {
+        type: 'message', id: 'user', parentId: null, timestamp: '2026-01-01T00:00:00Z', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } }] as never }));
+    await h.run();
+    expect(h.ui.notify).toHaveBeenCalledWith({ level: 'warning', text: 'Skipped 1 of 2 sessions that could not be read (unparseable 1).' });
+    await h.shutdown();
+  });
+
+  it('counts entries that a fork or clone copied from its parent once', async () => {
+    const h = storedFixture(2);
+    const message = (id: string, timestamp: string, role: 'user' | 'assistant') => ({ type: 'message', id, parentId: null, timestamp,
+      message: role === 'user' ? { role, content: [{ type: 'text', text: 'hello' }] } : { role, model: 'm', content: [], usage: { input: 1, output: 1, cost: { total: 1 } } } });
+    const parent = [message('u1', '2026-01-01T10:00:00Z', 'user'), message('a1', '2026-01-01T10:01:00Z', 'assistant')];
+    h.sessions.history.mockImplementation(async id => id === 's0'
+      ? { sessionId: id, revision: 'journal', branch: 'a1', startedAt: '2026-01-01T09:59:00Z', entries: parent as never }
+      : { sessionId: id, revision: 'journal', branch: 'a2', startedAt: '2026-01-02T08:00:00Z',
+        entries: [...parent, message('u2', '2026-01-02T08:01:00Z', 'user'), message('a2', '2026-01-02T08:02:00Z', 'assistant')] as never });
+    await h.run();
+    const report = new TextDecoder().decode(h.files.get('insights-reports/felan-insights.html'));
+    const marker = 'window.__FELAN_INSIGHTS_DATA__=';
+    const start = report.indexOf(marker) + marker.length;
+    const data = JSON.parse(report.slice(start, report.indexOf(';</script>', start)));
+    expect(data.totalSessions).toBe(2);
+    expect(data.totalMessages).toBe(4);
+    expect(data.totalCost).toBe(2);
+    expect(data.modelStats).toEqual([expect.objectContaining({ name: 'm', count: 2 })]);
+    await h.shutdown();
+  });
+});

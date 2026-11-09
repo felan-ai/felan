@@ -47,6 +47,7 @@ export class InsightsPanel implements Component {
   private closed = false;
   private maximum = 0;
   private readonly markdown: Markdown;
+  private readonly bodies = new Map<string, string[]>();
 
   constructor(
     private readonly element: UiDocument,
@@ -60,13 +61,13 @@ export class InsightsPanel implements Component {
     this.markdown = new Markdown(clean(decodeUiMarkdown(element.markdown)), 1, 0, markdownThemeFor(theme));
   }
 
-  invalidate(): void { this.markdown.invalidate(); }
+  invalidate(): void { this.markdown.invalidate(); this.bodies.clear(); }
 
   render(width: number): string[] {
     const w = Math.max(1, Math.floor(width));
     const dashboard = this.dashboard;
     const header = dashboard ? this.header(dashboard) : [this.theme.fg('accent', this.theme.bold(clean(this.element.title))), ''];
-    const body = dashboard ? this.tabBody(dashboard, w) : this.markdown.render(w);
+    const body = dashboard ? this.cachedBody(dashboard, w) : this.markdown.render(w);
     const footer = [this.theme.fg('dim', this.hints())];
     const viewport = Math.max(1, this.terminalRows() - header.length - footer.length - 1);
     this.maximum = Math.max(0, body.length - viewport);
@@ -183,6 +184,14 @@ export class InsightsPanel implements Component {
 
   private muted(text: string): string {
     return this.theme.fg('muted', text);
+  }
+
+  private cachedBody(d: InsightsDashboard, width: number): string[] {
+    const { tab, metric, sort } = this.state;
+    const key = `${tab}|${width}|${this.element.revision}|${metric}|${sort}`;
+    let body = this.bodies.get(key);
+    if (!body) { body = this.tabBody(d, width); this.bodies.set(key, body); }
+    return body;
   }
 
   private tabBody(d: InsightsDashboard, width: number): string[] {

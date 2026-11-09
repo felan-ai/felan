@@ -22,6 +22,27 @@ export function insightsRangeOptions(initialRange: string): string[] {
   return ids.sort((left, right) => (insightsRangeDays(left) ?? Infinity) - (insightsRangeDays(right) ?? Infinity));
 }
 
+/** Forks and clones copy their parent's entries, so each entry counts once, for the earliest-started session that has it. */
+export function withoutSharedEntries(loaded: readonly InsightsLoadedSession[]): InsightsLoadedSession[] {
+  const seen = new Set<string>();
+  const result: Array<InsightsLoadedSession | undefined> = [...loaded];
+  const order = loaded.map((_, index) => index).sort((left, right) => loaded[left]!.session.startTime.getTime() - loaded[right]!.session.startTime.getTime());
+  for (const index of order) {
+    const entry = loaded[index]!;
+    const activity = entry.session.activity;
+    if (!activity) continue;
+    const kept = activity.filter(item => {
+      if (item.entryKey === undefined) return true;
+      if (seen.has(item.entryKey)) return false;
+      seen.add(item.entryKey);
+      return true;
+    });
+    if (kept.length === activity.length) continue;
+    result[index] = kept.length ? { rootId: entry.rootId, session: { ...entry.session, activity: kept } } : undefined;
+  }
+  return result.filter((entry): entry is InsightsLoadedSession => entry !== undefined);
+}
+
 /** Root sessions for a range. Every part is a fresh slice because merging mutates its inputs. */
 export function sessionsForRange(loaded: readonly InsightsLoadedSession[], range: string, generatedAt: Date): ParsedSession[] {
   const days = insightsRangeDays(range);

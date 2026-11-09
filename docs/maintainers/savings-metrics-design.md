@@ -587,36 +587,33 @@ status so `/savings` can disclose that the report may be incomplete.
 
 ### Interactive command
 
-Proposed commands:
+`/savings [today|7d|30d|90d|all] [project|details]` opens a full-screen
+dashboard. The command is a host-owned Felan extension that the local provider
+binds with the session's generic UI (`SessionExtensionContext.createExtensionUi`),
+so it can present a hinted document from inside the daemon.
 
-```text
-/savings                 current root session
-/savings project         current project across sessions
-/savings all             all retained local metrics
-/savings details         detailed category/operation breakdown
-```
+The command settles the root session's pending writes, queries every bucket
+once, and labels sessions and projects from the read-only session history. A
+project label comes from the folder of a listed session whose cwd hashes to the
+bucket's project key, so the store keeps only hashed keys. Without history the
+dashboard falls back to short IDs. `apps/felan/src/savings/dashboard.ts`
+aggregates the buckets for every range (today, 7, 30 and 90 UTC days, and all
+time), so the client switches ranges without another query. Each range carries
+totals, the current session and project, categories, extensions with their
+operations, methods and evidence basis, sessions, projects, and a daily or
+monthly trend. Each session also carries its all-time breakdown per extension.
 
-The default report should use product categories rather than internal mechanism
-names:
+The document data is versioned as `felan.savings-dashboard` version `1`
+(`apps/felan/src/savings/data.ts`) and uses the insights document budget of
+512 KiB. A larger dashboard drops its lowest-savings session rows first and
+reports how many it left out. Clients without the renderer show the Markdown
+fallback, and hosts without generic UI print the text report.
 
-```text
-Felan estimated savings — current session
-
-Output optimization          ~$0.42   138K fewer tokens
-Model routing                ~$1.85    24K more tokens
-Context management           ~$0.11     9K fewer tokens
-──────────────────────────────────────────────────
-Estimated API-equivalent cost avoided  ~$2.38
-
-Measured optimization decisions: 47
-Price basis: model catalog, API-equivalent USD
-```
-
-Only categories with measurements are shown. The detailed view expands producing
-extension, category, operation, baseline/actual model and usage, tool, technique,
-price source, and method data. Measurements whose cost cannot be resolved appear
-in a separate token-only section and are excluded from the headline USD total.
-Negative values are shown as added cost rather than hidden or clamped to zero.
+USD figures include only measurements whose baseline and actual cost both
+resolve. Unpriced measurements appear in a separate token-only total. Negative
+values are shown as added cost rather than hidden or clamped to zero. The store
+listing stays bounded at 10,000 snapshot files and reports a diagnostic when it
+reaches that bound instead of silently undercounting.
 
 ### Local CLI
 

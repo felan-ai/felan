@@ -10,6 +10,7 @@ import { PROMPT_HISTORY_HINT, presentPromptHistoryElement } from './renderers/pr
 import { type AgentViewTranscript } from '../subagents/types.js';
 import { INSIGHTS_DOCUMENT_HINT } from '@felan-ai/ext-insights/data';
 import { presentInsightsDocument } from './renderers/insights.js';
+import { SAVINGS_DASHBOARD_HINT, presentSavingsDocument } from './renderers/savings.js';
 import { type Execution, type UiPresentation } from '@felan-ai/session-protocol';
 import { presentUiElement } from '../client/ui.js';
 import { createGenericTuiDriver } from './generic-ui.js';
@@ -48,6 +49,7 @@ export function createTerminalPresenters(controller: TuiSessionController, ui: I
     presenters.hints.register(CONTEXT_DOCUMENT_HINT, { presentation: (element, signal) => presentContextDocument(element, ui, signal, presentationSettings().contextView.displayMode) }),
     presenters.hints.register(MEMORY_HISTORY_HINT, { presentation: (element, signal) => presentMemoryHistory(element, ui, signal) }),
     presenters.hints.register(INSIGHTS_DOCUMENT_HINT, { presentation: (element, signal) => presentInsightsDocument(element, ui, signal) }),
+    presenters.hints.register(SAVINGS_DASHBOARD_HINT, { presentation: (element, signal) => presentSavingsDocument(element, ui, signal) }),
     presenters.hints.register(FUSION_PICKER_HINT, { presentation: (element, signal) => presentFusionPickerView(element, ui, signal) }),
     presenters.hints.register(FUSION_REVIEW_HINT, { presentation: (element, signal) => presentFusionReviewDocument(element, ui, signal) }),
     presenters.hints.register(TASKS_HINT, { presentation: async (element, signal) => presentTasksElement(element, ui, signal, genericActions,

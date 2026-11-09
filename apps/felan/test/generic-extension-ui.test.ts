@@ -213,11 +213,14 @@ describe.each(['tui', 'acp'] as const)('migrated extension defaults through no-h
     await action(kind, detail, { actionId: 'close' });
   });
 
-  it('generates default Insights from pinned read-only Sessions and displays the actual report', async () => {
+  it('generates default Insights from read-only Sessions without checkpoints and displays the actual report', async () => {
     const h = fixture(); const history = historyFixture(); h.services.set(SESSIONS_HISTORY_SERVICE, history);
     expect(insights.serviceRequirements).toEqual({ required: [SESSIONS_HISTORY_SERVICE] });
     await h.install(insights); await h.command('insights');
-    expect(history.history.mock.calls[0]?.[1]?.at).toEqual({ sessionId: 'archived', revision: 'history-1', branch: 'entry' });
+    expect(history.checkpoint).not.toHaveBeenCalled();
+    expect(history.history).toHaveBeenCalledOnce();
+    expect(history.history.mock.calls[0]?.[0]).toBe('archived');
+    expect(history.history.mock.calls[0]?.[1]).not.toHaveProperty('at');
     expect(h.elements).toHaveLength(1);
     const source = h.elements[0]!.value;
     expect(source).toMatchObject({ kind: 'document', markdown: expect.any(String) });

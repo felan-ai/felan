@@ -34,6 +34,8 @@ export interface SessionExtensionContext {
   readonly dynamicThinking: boolean;
   readonly services: FelanServiceRegistry;
   readonly importExtension: ExtensionPackageImporter;
+  /** Generic UI for extensions the provider binds itself; packaged extensions receive it through the session. */
+  readonly createExtensionUi?: CreateAgentCoreSessionOptions['createExtensionUi'];
 }
 
 export interface SessionExtensionBindings {
