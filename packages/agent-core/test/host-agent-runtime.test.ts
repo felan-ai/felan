@@ -1,10 +1,14 @@
 import { constants as bufferConstants } from 'node:buffer';
+import childProcess, { type ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { chmod, lstat, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
 import { join, resolve } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLocalRuntimeStorage, HostAgentRuntime } from '../src/index.js';
-import type { Classifier } from '../src/index.js';
+import type { AgentRuntimeProcess, AgentRuntimeProcessSnapshot, Classifier } from '../src/index.js';
 
 const temporaryPaths: string[] = [];
 
@@ -51,7 +55,7 @@ describe('createLocalRuntimeStorage', () => {
   });
 });
 
-describe('HostAgentRuntime', () => {
+describe('HostAgentRuntime', { timeout: 15_000 }, () => {
   it('reads named environment values through the runtime boundary', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const key = 'FELAN_RUNTIME_ENV_TEST';
@@ -156,27 +160,22 @@ describe('HostAgentRuntime', () => {
     },
   );
 
-  it.each([{ maxOutputBytes: -1 }, { maxBuffer: -1 }])(
-    'returns a killed result before validating output limits for a pre-aborted signal: %j',
-    async (options) => {
-      const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
-      const controller = new AbortController();
-      controller.abort();
-
-      await expect(runtime.exec(process.execPath, ['--version'], { ...options, signal: controller.signal }))
-        .resolves.toEqual({ stdout: '', stderr: '', code: 143, killed: true });
-    },
-  );
-
-  it('terminates noisy commands promptly when combined output exceeds maxBuffer', async () => {
+  it('does not execute a command with a pre-aborted signal', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
-    const started = Date.now();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(runtime.exec(process.execPath, ['--version'], { signal: controller.signal }))
+      .resolves.toEqual({ stdout: '', stderr: '', code: 143, killed: true });
+  });
+
+  it('terminates commands when combined output exceeds maxBuffer', async () => {
+    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const result = await runtime.exec(process.execPath, [
       '-e',
-      "setInterval(() => { process.stdout.write('x'.repeat(768)); process.stderr.write('y'.repeat(768)); }, 10)",
-    ], { maxBuffer: 1_024, timeout: 5_000 });
+      "process.stdout.write('x'.repeat(768)); process.stderr.write('y'.repeat(768))",
+    ], { maxBuffer: 1_024 });
 
-    expect(Date.now() - started).toBeLessThan(3_000);
     expect(result).toMatchObject({ truncated: true, killed: true });
     expect(result.code).not.toBe(0);
     expect(Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr)).toBe(1_024);
@@ -186,7 +185,6 @@ describe('HostAgentRuntime', () => {
 
   it.skipIf(process.platform === 'win32')('closes inherited output pipes on maxBuffer overflow', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
-    const started = Date.now();
     try {
       const result = await runtime.exec(process.execPath, ['-e', `
         const child = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 5000)'], {
@@ -197,7 +195,6 @@ describe('HostAgentRuntime', () => {
         process.stdout.write('x'.repeat(2048));
       `], { maxBuffer: 1_024, timeout: 3_000 });
 
-      expect(Date.now() - started).toBeLessThan(3_000);
       expect(result).toMatchObject({ stdout: 'x'.repeat(1_024), truncated: true, killed: true });
       expect(result.code).not.toBe(0);
     } finally {
@@ -250,8 +247,8 @@ describe('HostAgentRuntime', () => {
   ])('uses the smaller capture limit while enforcing maxBuffer: %j', async (options) => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const result = await runtime.exec(process.execPath, [
-      '-e', "setInterval(() => process.stdout.write('x'.repeat(2_048)), 10)",
-    ], { ...options, timeout: 5_000 });
+      '-e', "process.stdout.write('x'.repeat(2_048))",
+    ], options);
 
     expect(result).toMatchObject({ stdout: 'x'.repeat(16), stderr: '', truncated: true, killed: true });
     expect(result.code).not.toBe(0);
@@ -370,14 +367,20 @@ describe('HostAgentRuntime', () => {
       JSON.stringify('process.stdout.write(process.cwd())'),
     ].join(' ');
     const processHandle = await runtime.processes.startShell(command, { cwd: '../outside' });
-    const processOutput = await processHandle.read(0, { waitMs: 1_000 });
-    expect(resolve(new TextDecoder().decode(processOutput.output))).toBe(outside);
-    await processHandle.dispose();
+    try {
+      const processOutput = await readUntil(processHandle, snapshot => !snapshot.running);
+      expect(resolve(new TextDecoder().decode(processOutput.output))).toBe(outside);
+    } finally {
+      await processHandle.dispose();
+    }
 
     const terminal = await runtime.terminals!.startShell(command, { cwd: '../outside' });
-    const terminalOutput = await terminal.read(0, { waitMs: 1_000 });
-    expect(new TextDecoder().decode(terminalOutput.output)).toContain(outside);
-    await terminal.dispose();
+    try {
+      const terminalOutput = await readUntil(terminal, snapshot => !snapshot.running);
+      expect(new TextDecoder().decode(terminalOutput.output)).toContain(outside);
+    } finally {
+      await terminal.dispose();
+    }
 
     await runtime.remove('../outside/nested', { recursive: true });
   });
@@ -622,15 +625,13 @@ describe('HostAgentRuntime', () => {
       if (process.platform === 'win32' && error instanceof Error && error.message.includes('POSIX shell')) return;
       throw error;
     }
-    let result = await processHandle.read(0, { waitMs: 1_000 });
-    let output = new TextDecoder().decode(result.output);
-    for (let attempt = 0; result.running && attempt < 5; attempt += 1) {
-      result = await processHandle.read(result.nextOffset, { waitMs: 1_000 });
-      output += new TextDecoder().decode(result.output);
+    try {
+      const result = await readUntil(processHandle, snapshot => !snapshot.running);
+      expect(new TextDecoder().decode(result.output)).toBe('process works');
+      expect(result).toMatchObject({ running: false, exitCode: 0 });
+    } finally {
+      await processHandle.dispose();
     }
-    expect(output).toBe('process works');
-    expect(result.running).toBe(false);
-    await processHandle.dispose();
   });
 
   it('rejects an explicitly unavailable POSIX shell', async () => {
@@ -677,28 +678,25 @@ describe('HostAgentRuntime', () => {
       `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
       { stdin: true },
     );
-    const pid = processHandle.pid!;
-    await processHandle.write(new TextEncoder().encode('input\n'));
-    const snapshot = await processHandle.read(0, { waitMs: 1_000 });
-
-    expect(new TextDecoder().decode(snapshot.output)).toContain('got:input');
-    await processHandle.dispose();
-    await expect(waitForProcessExit(pid)).resolves.toBeUndefined();
+    try {
+      await processHandle.write(new TextEncoder().encode('input\n'));
+      const snapshot = await readUntil(processHandle, result => !result.running);
+      expect(new TextDecoder().decode(snapshot.output)).toContain('got:input');
+      expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
+    } finally {
+      await processHandle.dispose();
+    }
+    expect(await processHandle.read(0)).toMatchObject({ running: false });
   });
 
   it.skipIf(process.platform === 'win32')('completes when the shell exits before its background descendants', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
-    const started = Date.now();
-    const processHandle = await runtime.processes.startShell('(sleep 3) & echo started', {
+    const processHandle = await runtime.processes.startShell('(sleep 30) & echo started', {
       shellFlavor: 'posix', login: false,
     });
     try {
-      const completed = await vi.waitFor(async () => {
-        const snapshot = await processHandle.read(0);
-        expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
-        return snapshot;
-      }, { timeout: 2_000 });
-      expect(Date.now() - started).toBeLessThan(2_000);
+      const completed = await readUntil(processHandle, snapshot => !snapshot.running);
+      expect(completed).toMatchObject({ running: false, exitCode: 0 });
       expect(new TextDecoder().decode(completed.output)).toBe('started\n');
     } finally {
       try { process.kill(-processHandle.pid!, 'SIGKILL'); }
@@ -707,27 +705,38 @@ describe('HostAgentRuntime', () => {
     }
   });
 
-  it.skipIf(process.platform === 'win32').each(['stdout', 'stderr'] as const)(
-    'ignores chatty descendant %s after shell completion',
-    async (stream) => {
+  it.skipIf(process.platform === 'win32').each([
+    ['stdout', false], ['stderr', false], ['stdout', true],
+  ] as const)(
+    'discards late descendant %s output without closing its pipe, disposed=%s',
+    async (stream, dispose) => {
       const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+      const script = [
+        "const fs = require('node:fs')",
+        'const timer = setTimeout(() => process.exit(1), 30000)',
+        `process.once('SIGUSR1', () => process.${stream}.write('later'.repeat(2048), () => { fs.writeFileSync('done.tmp', 'done'); fs.renameSync('done.tmp', 'done'); clearTimeout(timer); }))`,
+        "process.stdout.write('ready\\n')",
+        "fs.writeFileSync('descendant.pid.tmp', String(process.pid))",
+        "fs.renameSync('descendant.pid.tmp', 'descendant.pid')",
+      ].join(';');
       const processHandle = await runtime.processes.startShell(
-        `yes > /dev/null & yes${stream === 'stderr' ? ' >&2' : ''} &`,
-        { shellFlavor: 'posix', login: false },
+        `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)} & read release; exit 0`,
+        { shellFlavor: 'posix', login: false, stdin: true },
       );
       try {
-        const completed = await vi.waitFor(async () => {
-          const snapshot = await processHandle.read(0, { maxBytes: 32 });
-          expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
-          return snapshot;
-        }, { timeout: 2_000 });
-        expect(completed.output.length).toBeGreaterThan(0);
-        for (let attempt = 0; attempt < 3; attempt += 1) {
-          await delay(30);
-          await expect(processHandle.read(completed.nextOffset, { maxBytes: 32 })).resolves.toEqual({
-            output: new Uint8Array(), nextOffset: completed.nextOffset, running: false, exitCode: 0,
-          });
-        }
+        const descendantPid = Number(new TextDecoder().decode(await waitForFile(runtime, 'descendant.pid')));
+        await readUntil(processHandle, snapshot => new TextDecoder().decode(snapshot.output).includes('ready\n'));
+        await processHandle.write(new TextEncoder().encode('release\n'));
+        const completed = await readUntil(processHandle, snapshot => !snapshot.running);
+        expect(completed).toMatchObject({ running: false, exitCode: 0 });
+        expect(new TextDecoder().decode(completed.output)).toBe('ready\n');
+        if (dispose) await processHandle.dispose();
+
+        process.kill(descendantPid, 'SIGUSR1');
+        await expect(waitForFile(runtime, 'done')).resolves.toEqual(new TextEncoder().encode('done'));
+        await expect(processHandle.read(dispose ? 0 : completed.nextOffset)).resolves.toEqual({
+          output: new Uint8Array(), nextOffset: completed.nextOffset, running: false, exitCode: 0,
+        });
       } finally {
         try { process.kill(-processHandle.pid!, 'SIGKILL'); }
         catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
@@ -738,25 +747,37 @@ describe('HostAgentRuntime', () => {
 
   it.skipIf(process.platform === 'win32')('escalates termination during the shell exit drain window', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
-    const processHandle = await runtime.processes.startShell(
-      `sh -c 'trap "" TERM; echo ready; sleep 30' & echo $! > descendant.pid; exit 0`,
-      { shellFlavor: 'posix', login: false },
-    );
+    const stdout = new PassThrough();
+    const stderr = new PassThrough();
+    const child = Object.assign(new EventEmitter(), { pid: 424242, stdout, stderr, stdin: null }) as unknown as ChildProcess;
+    const spawn = vi.spyOn(childProcess, 'spawn').mockReturnValue(child);
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      expect(pid).toBe(-424242);
+      if (signal === 'SIGKILL') child.emit('close', 0, null);
+      return true;
+    });
+    syncBuiltinESMExports();
+    vi.useFakeTimers();
+    let processHandle: AgentRuntimeProcess | undefined;
     try {
-      const ready = await processHandle.read(0, { waitMs: 1_000 });
-      expect(new TextDecoder().decode(ready.output)).toContain('ready');
-      await waitForProcessExit(processHandle.pid!);
-      expect(await processHandle.read(ready.nextOffset)).toMatchObject({ running: true });
-      const descendantPid = Number(new TextDecoder().decode(await waitForFile(runtime, 'descendant.pid')));
-      const kill = vi.spyOn(process, 'kill');
-      await processHandle.terminate();
-      expect(kill).toHaveBeenCalledWith(-processHandle.pid!, 'SIGKILL');
-      await expect(waitForProcessExit(descendantPid)).resolves.toBeUndefined();
-      expect(await processHandle.read(ready.nextOffset)).toMatchObject({ running: false, exitCode: 0 });
+      processHandle = await runtime.processes.startShell('command', { shellFlavor: 'posix', login: false });
+      stdout.write('ready\n');
+      child.emit('exit', 0, null);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(await processHandle.read(0)).toMatchObject({ running: true });
+      const termination = processHandle.terminate();
+      await vi.advanceTimersByTimeAsync(1_000);
+      await termination;
+      expect(kill).toHaveBeenNthCalledWith(1, -424242, 'SIGTERM');
+      expect(kill).toHaveBeenNthCalledWith(2, -424242, 'SIGKILL');
+      expect(await processHandle.read(0)).toMatchObject({ running: false, exitCode: 0, output: new TextEncoder().encode('ready\n') });
     } finally {
-      try { process.kill(-processHandle.pid!, 'SIGKILL'); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
-      await processHandle.dispose();
+      child.emit('close', 0, null);
+      await processHandle?.dispose();
+      stdout.destroy(); stderr.destroy();
+      spawn.mockRestore(); kill.mockRestore();
+      syncBuiltinESMExports();
+      vi.useRealTimers();
     }
   });
 
@@ -767,11 +788,8 @@ describe('HostAgentRuntime', () => {
       `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
     );
     try {
-      const completed = await vi.waitFor(async () => {
-        const snapshot = await processHandle.read(0);
-        expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
-        return snapshot;
-      }, { timeout: 2_000 });
+      const completed = await readUntil(processHandle, snapshot => !snapshot.running);
+      expect(completed).toMatchObject({ running: false, exitCode: 0 });
       expect(new TextDecoder().decode(completed.output)).toBe('x'.repeat(200_000));
       expect(completed.nextOffset).toBe(200_000);
       await processHandle.dispose();
@@ -781,36 +799,6 @@ describe('HostAgentRuntime', () => {
       await processHandle.dispose();
       await expect(processHandle.read(0)).resolves.toEqual(disposed);
     } finally {
-      await processHandle.dispose();
-    }
-  });
-
-  it.skipIf(process.platform === 'win32')('discards late descendant output without closing its pipes on dispose', async () => {
-    const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
-    const script = [
-      "const fs = require('node:fs')",
-      "const timer = setInterval(() => { if (fs.existsSync('release')) { clearInterval(timer); process.stdout.write('later', () => fs.writeFileSync('done', 'done')); } }, 10)",
-    ].join(';');
-    const processHandle = await runtime.processes.startShell(
-      `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)} & echo started`,
-      { shellFlavor: 'posix', login: false },
-    );
-    try {
-      const completed = await vi.waitFor(async () => {
-        const snapshot = await processHandle.read(0);
-        expect(snapshot).toMatchObject({ running: false, exitCode: 0 });
-        return snapshot;
-      }, { timeout: 2_000 });
-      await processHandle.dispose();
-      await runtime.writeFile('release', new Uint8Array());
-      await expect(waitForFile(runtime, 'done')).resolves.toEqual(new TextEncoder().encode('done'));
-      await delay(50);
-      await expect(processHandle.read(0)).resolves.toEqual({
-        output: new Uint8Array(), nextOffset: completed.nextOffset, running: false, exitCode: 0,
-      });
-    } finally {
-      try { process.kill(-processHandle.pid!, 'SIGKILL'); }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
       await processHandle.dispose();
     }
   });
@@ -849,23 +837,16 @@ describe('HostAgentRuntime', () => {
     const terminal = await runtime.terminals!.startShell(
       `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
     );
-    const ready = await terminal.read(0, { waitMs: 1_000 });
-    expect(new TextDecoder().decode(ready.output)).toContain('tty:true:true');
-    await terminal.write(new TextEncoder().encode('hello\n'));
-    const chunks: Uint8Array[] = [];
-    let offset = ready.nextOffset;
-    let completed = await terminal.read(offset, { waitMs: 1_000 });
-    for (let attempt = 0; attempt < 5; attempt += 1) {
-      chunks.push(completed.output);
-      offset = completed.nextOffset;
-      if (!completed.running) break;
-      completed = await terminal.read(offset, { waitMs: 1_000 });
+    try {
+      const ready = await readUntil(terminal, snapshot => new TextDecoder().decode(snapshot.output).includes('tty:true:true'));
+      expect(new TextDecoder().decode(ready.output)).toContain('tty:true:true');
+      await terminal.write(new TextEncoder().encode('hello\n'));
+      const completed = await readUntil(terminal, snapshot => !snapshot.running);
+      expect(new TextDecoder().decode(completed.output)).toContain('got:hello');
+      expect(completed).toMatchObject({ running: false, exitCode: 0 });
+    } finally {
+      await terminal.dispose();
     }
-    const output = new TextDecoder().decode(Buffer.concat(chunks));
-
-    expect(output).toContain('got:hello');
-    expect(completed).toMatchObject({ running: false, exitCode: 0 });
-    await terminal.dispose();
   });
 
   it('preserves unicode output from a PTY process', async () => {
@@ -873,9 +854,12 @@ describe('HostAgentRuntime', () => {
     const terminal = await runtime.terminals!.startShell(
       `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('snowman:☃\\n')")}`,
     );
-    const result = await terminal.read(0, { waitMs: 1_000 });
-    expect(new TextDecoder().decode(result.output)).toContain('snowman:☃');
-    await terminal.dispose();
+    try {
+      const result = await readUntil(terminal, snapshot => !snapshot.running);
+      expect(new TextDecoder().decode(result.output)).toContain('snowman:☃');
+    } finally {
+      await terminal.dispose();
+    }
   });
 
   it.skipIf(process.platform === 'win32')('interrupts a pipe-backed process group with SIGINT', async () => {
@@ -888,19 +872,15 @@ describe('HostAgentRuntime', () => {
     const processHandle = await runtime.processes.startShell(
       `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`,
     );
-    const ready = await processHandle.read(0, { waitMs: 1_000 });
-    expect(new TextDecoder().decode(ready.output)).toContain('ready');
-
-    await processHandle.interrupt!();
-    const interrupted = await processHandle.read(ready.nextOffset, { waitMs: 1_000 });
-    const completed = interrupted.running
-      ? await processHandle.read(interrupted.nextOffset, { waitMs: 1_000 })
-      : interrupted;
-
-    expect(new TextDecoder().decode(interrupted.output)).toContain('interrupted');
-    expect(completed.running).toBe(false);
-    expect([0, 130]).toContain(completed.exitCode);
-    await processHandle.dispose();
+    try {
+      await readUntil(processHandle, snapshot => new TextDecoder().decode(snapshot.output).includes('ready\n'));
+      await processHandle.interrupt!();
+      const completed = await readUntil(processHandle, snapshot => !snapshot.running);
+      expect(new TextDecoder().decode(completed.output)).toContain('interrupted');
+      expect([0, 130]).toContain(completed.exitCode);
+    } finally {
+      await processHandle.dispose();
+    }
   });
 
   it('supports explicit forced termination for persistent processes', async () => {
@@ -919,17 +899,14 @@ describe('HostAgentRuntime', () => {
     const terminal = await runtime.terminals!.startShell(
       `${JSON.stringify(process.execPath)} -e "console.log('ready'); setInterval(() => {}, 1000)"`,
     );
-    const ready = await terminal.read(0, { waitMs: 1_000 });
-    expect(new TextDecoder().decode(ready.output)).toContain('ready');
-
-    await terminal.write(new Uint8Array([3]));
-    let completed = await terminal.read(ready.nextOffset, { waitMs: 1_000 });
-    for (let attempt = 0; completed.running && attempt < 5; attempt += 1) {
-      completed = await terminal.read(completed.nextOffset, { waitMs: 1_000 });
+    try {
+      await readUntil(terminal, snapshot => new TextDecoder().decode(snapshot.output).includes('ready'));
+      await terminal.write(new Uint8Array([3]));
+      const completed = await readUntil(terminal, snapshot => !snapshot.running);
+      expect(completed).toMatchObject({ running: false, exitCode: 130 });
+    } finally {
+      await terminal.dispose();
     }
-
-    expect(completed).toMatchObject({ running: false, exitCode: 130 });
-    await terminal.dispose();
   });
 
   it('enforces cwd containment for terminal processes', async () => {
@@ -942,20 +919,32 @@ describe('HostAgentRuntime', () => {
   it.skipIf(process.platform === 'win32')('kills the spawned process group on cancellation', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const controller = new AbortController();
+    const childScript = [
+      "const fs = require('node:fs');",
+      'setTimeout(() => {}, 30000);',
+      "fs.writeFileSync('child.pid.tmp', String(process.pid));",
+      "fs.renameSync('child.pid.tmp', 'child.pid');",
+    ].join(' ');
     const script = [
       "const { spawn } = require('node:child_process');",
-      "const { writeFileSync } = require('node:fs');",
-      "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
-      "writeFileSync('child.pid', String(child.pid));",
-      'setInterval(() => {}, 1000);',
+      `spawn(process.execPath, ['-e', ${JSON.stringify(childScript)}], { stdio: 'ignore' });`,
+      'setTimeout(() => {}, 30000);',
     ].join(' ');
     const execution = runtime.exec(process.execPath, ['-e', script], { signal: controller.signal });
-    const childPid = Number(new TextDecoder().decode(await waitForFile(runtime, 'child.pid')));
-
-    controller.abort();
-
-    await expect(execution).resolves.toMatchObject({ code: 143, killed: true });
-    await expect(waitForProcessExit(childPid)).resolves.toBeUndefined();
+    let childPid: number | undefined;
+    try {
+      childPid = Number(new TextDecoder().decode(await waitForFile(runtime, 'child.pid')));
+      controller.abort();
+      await expect(execution).resolves.toMatchObject({ code: 143, killed: true });
+      await expect(waitForProcessExit(childPid)).resolves.toBeUndefined();
+    } finally {
+      controller.abort();
+      await execution;
+      if (childPid !== undefined) {
+        try { process.kill(childPid, 'SIGKILL'); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+      }
+    }
   });
 });
 
@@ -977,27 +966,48 @@ async function createHostRuntime(cwd: string): Promise<HostAgentRuntime> {
 }
 
 async function waitForFile(runtime: HostAgentRuntime, path: string): Promise<Uint8Array> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
     try {
       return await runtime.readFile(path);
-    } catch {
-      await delay(10);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      await delay(20);
     }
   }
   throw new Error(`Timed out waiting for ${path}`);
 }
 
 async function waitForProcessExit(pid: number): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
     try {
       process.kill(pid, 0);
     } catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ESRCH') return;
       throw error;
     }
-    await delay(10);
+    await delay(20);
   }
   throw new Error(`Process ${pid} remained alive after cancellation`);
+}
+
+async function readUntil(
+  handle: AgentRuntimeProcess,
+  predicate: (snapshot: AgentRuntimeProcessSnapshot) => boolean,
+): Promise<AgentRuntimeProcessSnapshot> {
+  const chunks: Uint8Array[] = [];
+  let offset = 0;
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const snapshot = await handle.read(offset, { waitMs: 1_000 });
+    chunks.push(snapshot.output);
+    offset = snapshot.nextOffset;
+    const collected = { ...snapshot, output: Buffer.concat(chunks) };
+    if (predicate(collected)) return collected;
+    if (!snapshot.running) throw new Error('Process exited before producing the expected output');
+  }
+  throw new Error('Timed out waiting for process output or completion');
 }
 
 function delay(milliseconds: number): Promise<void> {

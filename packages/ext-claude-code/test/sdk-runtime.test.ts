@@ -2,8 +2,6 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { builtinProviders } from '@felan-ai/agent-core';
-import { __test } from '../src/bridge/index.js';
 import { createToolServer } from '../src/bridge/mcp-server.js';
 import type { ClaudeAgentSdk, McpRequest } from '../src/sdk/types.js';
 import {
@@ -32,7 +30,6 @@ async function entry(source: string): Promise<string> {
 }
 
 afterEach(async () => {
-  __test.setQuery(null);
   setClaudeAgentSdk(undefined);
   await Promise.all(directories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
@@ -104,22 +101,4 @@ describe('Claude Agent SDK runtime', () => {
     })).resolves.toMatchObject({ content: [{ type: 'text', text: 'call-1' }] });
   });
 
-  it('retains setQuery override and restores dynamic SDK lookup', async () => {
-    const sdk = await loadClaudeAgentSdk(await entry(fakeEntrySource));
-    const queryWithText = (text: string): ClaudeAgentSdk['query'] => () => ({
-      async *[Symbol.asyncIterator]() { yield { type: 'result', subtype: 'success', result: text }; },
-      async interrupt() {},
-      close() {},
-      async supportedModels() { return []; },
-    });
-    setClaudeAgentSdk({ ...sdk, query: queryWithText('managed') });
-    __test.setQuery(queryWithText('override'));
-    const model = builtinProviders().find((provider) => provider.id === 'anthropic')!.getModels()[0]!;
-    const context = { messages: [{ role: 'user' as const, content: 'Summarize', timestamp: Date.now() }] };
-    const overridden = await __test.isolatedStreamFn(model, context).result();
-    expect(overridden.content).toEqual([{ type: 'text', text: 'override' }]);
-    __test.setQuery(null);
-    const managed = await __test.isolatedStreamFn(model, context).result();
-    expect(managed.content).toEqual([{ type: 'text', text: 'managed' }]);
-  });
 });

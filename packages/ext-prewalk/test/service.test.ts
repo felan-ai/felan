@@ -1,3 +1,4 @@
+import { setImmediate as checkpoint } from 'node:timers/promises';
 import {
   SESSIONS_SERVICE,
   getExtensionConfigDefinition,
@@ -174,16 +175,18 @@ describe('common-UI Prewalk root', () => {
 
   it('aborts pending review on shutdown, drains it, and rejects late approval', async () => {
     let finish!: (result: UiRequestResult) => void;
-    const request = vi.fn<ExtensionUi['request']>(() => new Promise(resolve => { finish = resolve; }));
+    const entered = deferred();
+    const request = vi.fn<ExtensionUi['request']>(() => new Promise(resolve => { finish = resolve; entered.resolve(); }));
     const h = harness(request);
     await h.execute('enter_prewalk', {});
     const work = h.execute('exit_plan_mode', { plan: 'Plan' });
     const outcome = expect(work).rejects.toMatchObject({ name: 'AbortError' });
+    await entered.promise;
     let stopped = false;
     const shutdown = h.shutdown().then(() => { stopped = true; });
     try {
+      await checkpoint();
       expect(request.mock.calls[0]?.[1]?.signal?.aborted).toBe(true);
-      await Promise.resolve();
       expect(stopped).toBe(false);
     } finally {
       finish(answer('approve'));
@@ -243,4 +246,10 @@ function harness(request = vi.fn<ExtensionUi['request']>().mockResolvedValue(ans
     execute: (name: string, args: unknown, signal?: AbortSignal) => tools.get(name)!.execute('call', args, signal, undefined, context),
     shutdown: async () => { for (const handler of handlers.get('session_shutdown') ?? []) await handler({}, context); },
   };
+}
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>(next => { resolve = next; });
+  return { promise, resolve };
 }

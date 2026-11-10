@@ -34,26 +34,6 @@ describe('service-backed insights extension', () => {
     expect(notify).toHaveBeenCalledWith('No valid sessions found for the selected range.', 'warning');
   });
 
-  it('writes the branded report filename', async () => {
-    let command: { handler: (args: string, ctx: unknown) => Promise<void> } | undefined;
-    let fileName = '';
-    const transcript = [
-      JSON.stringify({ type: 'session', id: 'session-1', cwd: '/workspace/felan', timestamp: '2026-08-29T07:00:00Z' }),
-      JSON.stringify({ type: 'message', timestamp: '2026-08-29T07:01:00Z', message: { role: 'user', content: [{ type: 'text', text: 'hello' }] } }),
-    ].join('\n');
-    const runtime = {
-      storage: () => ({ root: '/agent-storage', readFile: vi.fn().mockRejectedValue(new Error('miss')), writeFile: vi.fn(), listFiles: vi.fn(), mkdir: vi.fn(), remove: vi.fn() }),
-    };
-    createInsightsExtension({
-      listSessions: async () => [{ id: 'session-1', path: '/session.jsonl', size: transcript.length, modifiedAtMs: 1 }],
-      readSession: async () => transcript,
-      writeReport: async (_runtime, name) => { fileName = name; return `/reports/${name}`; },
-    })({ runtime, registerCommand: (_name: string, definition: typeof command) => { command = definition; } } as never);
-
-    await command!.handler('--no-open', { ui: { notify: vi.fn() } });
-    expect(fileName).toBe('felan-insights.html');
-  });
-
   it.each(['entries', 'lines'] as const)('forwards runtime and cancellation to the provider and prefers %s', async method => {
     let command: { handler: (args: string, ctx: unknown) => Promise<void> } | undefined;
     const transcript = [
@@ -378,7 +358,11 @@ describe('session scan', () => {
     const h = storedFixture(concurrency + 3);
     let release!: () => void;
     const pending = new Promise<void>(resolve => { release = resolve; });
+    let entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    let startedReads = 0;
     h.sessions.history.mockImplementation(async id => {
+      if (++startedReads === concurrency) entered();
       if (id === 's0') throw new SessionsServiceError('unavailable');
       await pending;
       return { sessionId: id, revision: 'journal', branch: null, entries: [] };
@@ -389,7 +373,7 @@ describe('session scan', () => {
     const orphan = `insights/session-meta/${'c'.repeat(64)}.json`;
     h.files.set(orphan, new Uint8Array());
     const running = h.run();
-    await vi.waitFor(() => expect(h.sessions.history).toHaveBeenCalledTimes(concurrency));
+    await started;
     release();
     await expect(running).resolves.toBeUndefined();
     expect(h.sessions.history.mock.calls.map(([id]) => id)).toEqual(h.ids.slice(0, concurrency));

@@ -68,7 +68,8 @@ describe('Codex image requests', () => {
       Accept: 'text/plain',
       'Content-Type': 'text/plain',
     };
-    const before = Date.now();
+    const timestamp = 1_700_000_000_000;
+    vi.spyOn(Date, 'now').mockReturnValue(timestamp);
     const result = await generate({ input: [
       { type: 'text', text: '  Draw a fox' },
       { type: 'text', text: 'in a forest  ' },
@@ -100,15 +101,13 @@ describe('Codex image requests', () => {
       model: model.id,
       output: [{ type: 'image', data: PNG, mimeType: 'image/png' }],
       stopReason: 'stop',
-      timestamp: expect.any(Number),
+      timestamp,
       responseId: 'request-1',
       usage: {
         input: 12, output: 34, totalTokens: 46, cacheRead: 0, cacheWrite: 0,
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
       },
     });
-    expect(result.timestamp).toBeGreaterThanOrEqual(before);
-    expect(result.timestamp).toBeLessThanOrEqual(Date.now());
     expect(request?.signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -176,24 +175,26 @@ describe('Codex image requests', () => {
   );
 
   it.each([
-    [401, 'The Codex login was rejected. Run /login openai-codex.'],
-    [403, 'The Codex login was rejected. Run /login openai-codex.'],
-    [429, 'Codex usage limit reached.'],
-    [500, 'Codex image request failed (HTTP 500).'],
-  ])('sanitizes HTTP %s failures', async (status, message) => {
+    [401, true, 'The Codex login was rejected. Run /login openai-codex.'],
+    [403, true, 'The Codex login was rejected. Run /login openai-codex.'],
+    [429, true, 'Codex usage limit reached.'],
+    [500, true, 'Codex image request failed (HTTP 500).'],
+    [403, false, 'The Codex login was rejected. Run /login openai-codex.'],
+  ] as const)('sanitizes HTTP %s failures with body=%s', async (status, hasBody, message) => {
     const { generate } = setup();
-    const response = new Response(`private response ${TOKEN} ${ACCOUNT_ID}`, { status: Number(status) });
+    const response = new Response(hasBody ? `private response ${TOKEN} ${ACCOUNT_ID}` : null, { status });
     const readBody = vi.spyOn(response, 'text');
-    const cancelBody = vi.spyOn(response.body!, 'cancel');
+    const cancelBody = response.body ? vi.spyOn(response.body, 'cancel') : undefined;
     const fetch = vi.fn<typeof globalThis.fetch>(async () => response);
     const result = await generate(PROMPT, { apiKey: TOKEN, fetch });
     expect(result.stopReason).toBe('error');
+    expect(result.output).toEqual([]);
     expect(result.errorMessage).toBe(message);
     expect(result.errorMessage).not.toContain(TOKEN);
     expect(result.errorMessage).not.toContain(ACCOUNT_ID);
     expect(result.errorMessage).not.toContain('private response');
     expect(readBody).not.toHaveBeenCalled();
-    expect(cancelBody).toHaveBeenCalledOnce();
+    if (cancelBody) expect(cancelBody).toHaveBeenCalledOnce();
   });
 
   it('preserves the HTTP error when cancelling the response body fails', async () => {
@@ -205,14 +206,6 @@ describe('Codex image requests', () => {
       stopReason: 'error', output: [], errorMessage: 'Codex usage limit reached.',
     });
     expect(cancelBody).toHaveBeenCalledOnce();
-  });
-
-  it('handles HTTP failures without a response body', async () => {
-    const { generate } = setup();
-    const fetch = vi.fn<typeof globalThis.fetch>(async () => new Response(null, { status: 403 }));
-    await expect(generate(PROMPT, { apiKey: TOKEN, fetch })).resolves.toMatchObject({
-      stopReason: 'error', output: [], errorMessage: 'The Codex login was rejected. Run /login openai-codex.',
-    });
   });
 
   it('returns a sanitized error for malformed JSON', async () => {

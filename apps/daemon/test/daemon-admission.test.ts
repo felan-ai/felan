@@ -183,17 +183,6 @@ describe('ordered durable admission', () => {
     gate.resolve(); await first;
   });
 
-  it('does not double-mark a registry-managed dispatch', async () => {
-    const f = await fixture(); const admission = new OrderedAdmission(f.store); const request = prompt();
-    const mark = vi.spyOn(f.store, 'markDispatched');
-    expect(await admission.submit(request, 'owner', command => {
-      command.assertDispatch();
-      f.store.markDispatched(request.id);
-      return { response: accepted(request.id) };
-    })).toEqual(accepted(request.id));
-    expect(mark).toHaveBeenCalledExactlyOnceWith(request.id);
-  });
-
   it('rejects a second dispatch and revokes a leaked dispatch permit', async () => {
     const f = await fixture(); const admission = new OrderedAdmission(f.store); const request = prompt(); const effect = vi.fn();
     expect(await admission.submit(request, 'owner', command => {

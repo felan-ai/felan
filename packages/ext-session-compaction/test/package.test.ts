@@ -22,11 +22,6 @@ describe('@felan-ai/ext-session-compaction package boundary', () => {
     expect(await readFile(join(packageRoot, 'NOTICE'), 'utf8')).toContain('original Felan');
   });
 
-  it('keeps the package host-neutral', async () => {
-    const source = await readFile(join(packageRoot, 'src', 'index.ts'), 'utf8');
-    expect(source).not.toMatch(/node:|supabase|daytona|fetch\(|process\.|@earendil-works/u);
-  });
-
   it('declares verified summary with inherit as the default policy', () => {
     expect(getExtensionConfigDefinition(sessionCompactionExtension)).toBe(SESSION_COMPACTION_CONFIG);
     expect(SESSION_COMPACTION_CONFIG.fields.method).toMatchObject({

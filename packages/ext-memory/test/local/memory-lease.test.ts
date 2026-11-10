@@ -2,16 +2,17 @@ import { beforeEach as beforeMemoryTest } from "vitest";
 import { createMemoryBackend } from './backend.js';
 let { acquireLocalMemoryLease } = createMemoryBackend();
 beforeMemoryTest(() => { ({ acquireLocalMemoryLease } = createMemoryBackend()); });
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 
 
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -46,11 +47,19 @@ describe('local memory writer lease', () => {
 
   it('does not compromise its heartbeat when fencing metadata is written', async () => {
     const root = await temporaryDirectory();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const lease = await acquireLocalMemoryLease(root, { staleMs: 2_000, updateMs: 1_000 });
-    expect(lease).toBeDefined();
-    await new Promise((resolve) => setTimeout(resolve, 1_250));
-    expect(await lease!.verify()).toBe(true);
-    await lease!.release();
+    try {
+      expect(lease).toBeDefined();
+      const lock = join(root, 'writer.lock');
+      const before = (await stat(lock)).mtimeMs;
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(async () => expect((await stat(lock)).mtimeMs).toBeGreaterThan(before), { timeout: 5_000 });
+      expect(await lease!.verify()).toBe(true);
+    } finally {
+      await lease?.release();
+      vi.useRealTimers();
+    }
   });
 
   it('migrates a stale legacy owner record without disturbing fresh legacy locks', async () => {

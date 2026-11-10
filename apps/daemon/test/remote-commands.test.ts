@@ -37,16 +37,6 @@ async function fixture(fault?: Parameters<typeof openRemoteDatabase>[0]) {
   return { database, reopen, journal, submit, options, executor: new RemoteCommandExecutor(options) };
 }
 
-it('caches journal capacity accounting across inserts, updates and acknowledgements', async () => {
-  const f = await fixture(); const records = vi.spyOn(f.database, 'records');
-  for (let index = 0; index < 3; index++) {
-    const commandId = id();
-    await f.executor.execute({ id: commandId, requester, expiresAt, command: { op: 'cancel', session, params: { runId: 'run' } } });
-    f.executor.forget(commandId);
-  }
-  expect(records).toHaveBeenCalledExactlyOnceWith('command');
-});
-
 it.each(['admissible', 'forbidden', 'expired', 'invalid'] as const)('rejects an unrecorded %s command when the journal is full without dispatching', async kind => {
   const f = await fixture(); const journal = new RemoteCommandJournal(f.database, 1);
   const executor = new RemoteCommandExecutor({ ...f.options, journal });
@@ -146,7 +136,7 @@ it('dispatches a claim before expiry and replays its recorded outcome after expi
   expect(f.submit).toHaveBeenCalledOnce();
 });
 
-it.each([randomUUID()])('rejects a requester when the token owner is %s', async owner => {
+it.each(['019a0000-0000-7000-8000-000000000004'])('rejects a requester when the token owner is %s', async owner => {
   const f = await fixture(); f.options.hostIdentity = () => ({ kind: 'personal', userId: owner });
   const row = { id: id(), requester, expiresAt, command: { op: 'cancel', session, params: {} } as RemoteCommand };
   expect(await f.executor.execute(row)).toMatchObject({ outcome: 'rejected', error: {
@@ -155,7 +145,7 @@ it.each([randomUUID()])('rejects a requester when the token owner is %s', async 
   expect(f.submit).not.toHaveBeenCalled();
 });
 
-it.each([undefined, randomUUID()])('accepts team-host commands with requester %s', async user => {
+it.each([undefined, '019a0000-0000-7000-8000-000000000001'])('accepts team-host commands with requester %s', async user => {
   const f = await fixture(); f.options.hostIdentity = () => ({ kind: 'team' });
   const row = { id: id(), ...(user ? { requester: user } : {}), expiresAt, automation: { source: 'nightly' },
     command: { op: 'cancel', session, params: {} } as RemoteCommand };

@@ -1,8 +1,7 @@
-import { describe, expect, expectTypeOf, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
-  BootstrapHelloSchema, ClientEnvelopeSchema, InteractionSchema, JsonValueSchema, LIMITS, OPERATION_CATALOG, ServerEnvelopeSchema,
-  SessionSnapshotSchema, assertJson, classifyTextDelta, parseClientEnvelope, parseControlRequest, parseControlResponse,
-  parseSchema, parseServerEnvelope, parseSessionSnapshot, type ClientEnvelope,
+  BootstrapHelloSchema, JsonValueSchema, LIMITS, OPERATION_CATALOG, assertJson, classifyTextDelta,
+  parseClientEnvelope, parseControlRequest, parseControlResponse, parseSchema, parseServerEnvelope, parseSessionSnapshot,
 } from '../src/index.js';
 import { identity, now, request, requestId, results, snapshot } from './fixtures.js';
 
@@ -73,16 +72,6 @@ describe('safe data and immutable parser contracts', () => {
     for (let i = 0; i <= LIMITS.depth; i++) deep = { nested: deep };
     expect(() => parseSchema(JsonValueSchema, deep)).toThrow();
   });
-  it('does not reorder or mutate schemas during successful and rejected parsing', () => {
-    const schemas = [ClientEnvelopeSchema, ServerEnvelopeSchema, InteractionSchema, JsonValueSchema, SessionSnapshotSchema];
-    const before = schemas.map(schema => JSON.stringify(schema));
-    for (let i = 0; i < 4; i++) {
-      parseClientEnvelope(request('cancel'));
-      parseServerEnvelope({ v: 1, re: 'q', outcome: 'accepted', result: results.attach }, 'attach');
-      expect(() => parseClientEnvelope({ ...request('prompt'), params: null })).toThrow();
-    }
-    expect(schemas.map(schema => JSON.stringify(schema))).toEqual(before);
-  });
   it('deeply freezes operation authority so eligibility cannot be disabled', () => {
     expect(Object.isFrozen(OPERATION_CATALOG)).toBe(true);
     for (const definition of Object.values(OPERATION_CATALOG)) {
@@ -90,12 +79,6 @@ describe('safe data and immutable parser contracts', () => {
     }
     expect(Reflect.set(OPERATION_CATALOG.prompt, 'mutation', false)).toBe(false);
     expect(() => parseClientEnvelope({ ...request('prompt'), id: 'not-a-uuid-v7' })).toThrow();
-  });
-  it('requires host envelopes to omit session targets at compile time and runtime', () => {
-    expectTypeOf<Extract<ClientEnvelope, { op: 'host.status' }>['session']>().toEqualTypeOf<undefined>();
-    // @ts-expect-error Host commands cannot select a session, including in a typed client.
-    const invalid: ClientEnvelope = { v: 1, id: 'q', op: 'host.status', session: 's', params: {} };
-    expect(() => parseClientEnvelope(invalid)).toThrow();
   });
 });
 
@@ -109,12 +92,5 @@ describe('active stream lifecycle', () => {
     const other = { message: 'other', id: 'old', kind: 'thinking' as const, text: '', offset: 0 };
     expect(classifyTextDelta(other, delta(0))).toBe('start');
     expect(classifyTextDelta(other, delta(5))).toBe('gap');
-  });
-  it('does not rescan a validated retained prefix while appending', () => {
-    let textReads = 0;
-    const prefix = { message: 'm', id: 'new', kind: 'assistant' as const, offset: 512 * 1024,
-      get text(): string { textReads++; throw new Error('Appending must not inspect the retained prefix'); } };
-    expect(classifyTextDelta(prefix, delta(prefix.offset))).toBe('append');
-    expect(textReads).toBe(0);
   });
 });

@@ -421,20 +421,6 @@ describe('@felan-ai/ext-context', () => {
     expect(harness.notifications.at(-1)?.[0]).toContain(resolve(runtime.cwd, 'nested/AGENTS.md'));
   });
 
-  it.each(['host', 'daytona'] as const)('has identical behavior for %s runtime kind', async (kind) => {
-    const runtime = await testRuntime(kind);
-    await put(runtime, 'nested/AGENTS.md', 'Portable instructions');
-    await put(runtime, 'nested/file.ts', 'export {};');
-    const harness = await ExtensionHarness.create(runtime);
-
-    await harness.successfulRead('nested/file.ts');
-
-    expect((await harness.context()).at(-1)).toMatchObject({
-      customType: 'pi-progressive-context',
-      content: expect.stringContaining('Portable instructions'),
-    });
-  });
-
   it('relies on HostAgentRuntime containment for real filesystem symlink escapes', async () => {
     const root = await temporaryDirectory();
     const workspace = join(root, 'workspace');

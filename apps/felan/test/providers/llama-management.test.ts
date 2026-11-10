@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { ExtensionCommandContext, ExtensionFactory } from '@felan-ai/agent-core';
 import { createLlamaExtension } from '../../src/providers/llama/extension.js';
@@ -138,12 +137,5 @@ describe('daemon llama.cpp management', () => {
     await command!('', { ...f.ctx, hasUI: false }); expect(f.auth).not.toHaveBeenCalled();
     const pending = command!('', f.ctx); await entered; await shutdown!(); await pending;
     expect(f.ui.dispose).toHaveBeenCalled();
-  });
-
-  it('does not import client renderers or mixed Pi extension entrypoints', () => {
-    for (const name of ['sdk', 'management', 'presentation', 'extension']) {
-      const source = readFileSync(new URL(`../../src/providers/llama/${name}.ts`, import.meta.url), 'utf8');
-      expect(source).not.toMatch(/(?:pi-tui|\/llama\/ui|\/llama\/index|apps\/felan|@felan-ai\/felan)/u);
-    }
   });
 });

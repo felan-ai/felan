@@ -107,14 +107,14 @@ const scenarios: Array<{ name: string; keys: string[] }> = [
 
 describe('tree navigator parity with Pi TreeSelectorComponent', () => {
   for (const { name, keys } of scenarios) {
-    for (const width of [40, 80, 120]) {
-      it(`matches Pi for ${name} at width ${width}`, () => {
-        const session = fixture();
+    it(`matches Pi for ${name} at each width`, () => {
+      const session = fixture();
+      for (const width of [40, 80, 120]) {
         const pi = runPi(session, keys, width); const navigator = runNavigator(session, keys, width);
-        expect(navigator.lines).toEqual(pi.lines);
-        expect(navigator.selected).toBe(pi.selected);
-      });
-    }
+        expect(navigator.lines, `width ${width}`).toEqual(pi.lines);
+        expect(navigator.selected, `width ${width}`).toBe(pi.selected);
+      }
+    });
   }
 
   it('highlights the selected row with the selection background', () => {

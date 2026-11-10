@@ -1,3 +1,4 @@
+import { setImmediate as checkpoint } from 'node:timers/promises';
 import { createUnavailableExtensionUi, type ExtensionUi, type UiActionRequest, type UiInteractiveElement, type UiPresentOptions } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskState } from '../src/contracts.js';
@@ -19,10 +20,12 @@ function harness(initial = graph(), writable = true) {
   let current!: UiInteractiveElement;
   let callbacks!: UiPresentOptions;
   const listeners = new Set<(state: TaskState) => void>();
+  const subscribed = deferred();
+  let updated = deferred();
   const publish = (next: TaskState) => { state = next; for (const listener of listeners) listener(cloneTaskState(state)); };
   const source: TaskDataSource = {
     snapshot: vi.fn(async () => cloneTaskState(state)),
-    subscribe: vi.fn<TaskDataSource['subscribe']>(listener => { listeners.add(listener); return () => { listeners.delete(listener); }; }),
+    subscribe: vi.fn<TaskDataSource['subscribe']>(listener => { listeners.add(listener); subscribed.resolve(); return () => { listeners.delete(listener); }; }),
   };
   const mutations: TaskPresentationMutations = {
     create: vi.fn<TaskPresentationMutations['create']>(async (input, signal) => {
@@ -40,18 +43,18 @@ function harness(initial = graph(), writable = true) {
     current = element; callbacks = options!;
     return { update: async next => {
       expect(next.kind).toBe(element.kind); expect(next.id).toBe(element.id);
-      updates.push(next); current = next;
+      updates.push(next); current = next; updated.resolve(); updated = deferred();
     }, close };
   }) };
   const controller = new AbortController();
   const work = createTasksUi(ui).show(source, controller.signal, writable ? mutations : undefined);
-  const ready = async () => { await vi.waitFor(() => expect(ui.present).toHaveBeenCalledOnce()); await tick(); };
+  const ready = async () => { await subscribed.promise; await act('refresh'); };
   const act = async (actionId: string, values: UiActionRequest['values'] = {}, itemId?: string, overrides: Partial<UiActionRequest> = {}, signal = new AbortController().signal) => {
     const request: UiActionRequest = { elementId: current.id, revision: current.revision, actionId, outcome: actionId === 'close' ? 'cancel' : 'submit', values,
       ...(itemId === undefined ? {} : { itemId }), ...overrides };
     await callbacks.onAction!(request, { requestId: 'test', signal });
   };
-  return { source, mutations, close, updates, controller, work, ready, act, publish, current: () => current, state: () => state, listeners };
+  return { source, mutations, close, updates, controller, work, ready, act, publish, nextUpdate: () => updated.promise, current: () => current, state: () => state, listeners };
 }
 
 describe('portable task view', () => {
@@ -109,12 +112,12 @@ describe('portable task view', () => {
         availability: 'waiting', blockedBy: `${id(0)}, ${id(1)}`, waitingOn: id(0),
       });
       state = updateTask(state, { taskId: id(0), status: 'in_progress' }, 'session', '2026-01-04').state;
+      const updated = h.nextUpdate();
       h.publish(updateTask(state, { taskId: id(0), status: 'completed', result: 'Verified' }, 'session', '2026-01-04').state);
-      await vi.waitFor(() => {
-        const updated = h.current();
-        expect(updated.kind === 'view' && updated.items.find(item => item.id === id(2))?.values)
-          .toMatchObject({ availability: 'ready', waitingOn: '' });
-      });
+      await updated;
+      const viewAfterUpdate = h.current();
+      expect(viewAfterUpdate.kind === 'view' && viewAfterUpdate.items.find(item => item.id === id(2))?.values)
+        .toMatchObject({ availability: 'ready', waitingOn: '' });
     } finally { await h.act('close'); await h.work; }
   });
 
@@ -133,8 +136,10 @@ describe('portable task view', () => {
     const h = harness(graph(25)); await h.ready();
     try {
       const revision = h.current().revision;
+      const updated = h.nextUpdate();
       h.publish(createTask(h.state(), { title: 'New task' }, id(25), '2026-01-03').state);
-      await vi.waitFor(() => expect(h.current().revision).toBeGreaterThan(revision));
+      await updated;
+      expect(h.current().revision).toBeGreaterThan(revision);
       await expect(h.act('create', { title: 'Stale' }, undefined, { revision })).rejects.toThrow('Stale');
       await expect(h.act('detail', {}, id(24))).rejects.toThrow('current page');
       await expect(h.act('create', { title: 'Invalid', force: true })).rejects.toThrow('Unexpected');
@@ -168,21 +173,23 @@ describe('portable task view', () => {
     const h = harness(); await h.ready();
     let finish!: () => void;
     const pending = new Promise<void>(resolve => { finish = resolve; });
+    const entered = deferred();
     vi.mocked(h.mutations.create).mockImplementation(async input => {
+      entered.resolve();
       const result = createTask(h.state(), input, id(3), '2026-01-03');
       await pending;
       h.publish(result.state);
       return result;
     });
     const mutation = h.act('create', { title: 'Committed work' });
-    await vi.waitFor(() => expect(h.mutations.create).toHaveBeenCalledOnce());
+    await entered.promise;
     let stopped = false;
     const shutdown = h.work.then(() => { stopped = true; });
     h.controller.abort();
-    await tick();
-    expect(stopped).toBe(false);
-    finish();
-    await mutation; await shutdown;
+    try {
+      await checkpoint();
+      expect(stopped).toBe(false);
+    } finally { finish(); await mutation; await shutdown; }
     expect(h.state().tasks[3]?.title).toBe('Committed work');
   });
 
@@ -236,4 +243,8 @@ describe('portable task view', () => {
   });
 });
 
-async function tick() { await new Promise<void>(resolve => setTimeout(resolve, 0)); }
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>(next => { resolve = next; });
+  return { promise, resolve };
+}

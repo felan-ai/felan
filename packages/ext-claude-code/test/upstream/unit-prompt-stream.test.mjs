@@ -27,14 +27,15 @@ describe("makePromptStream", () => {
 		const written = [];
 		let releaseWrite;
 		const writeGate = new Promise((r) => { releaseWrite = r; });
-		const pumping = pump(ps.stream, async (msg) => { written.push(text(msg)); await writeGate; });
+		const entered = Promise.withResolvers();
+		const pumping = pump(ps.stream, async (msg) => { written.push(text(msg)); entered.resolve(); await writeGate; });
 
 		let acked = false;
 		const ack = ps.push(userMessage([{ type: "text", text: "steer" }])).then(() => { acked = true; });
 
 		// Write is in flight but not finished — the ack must not have resolved,
 		// or a caller could release a tool result before the steer hits stdin.
-		await new Promise((r) => setTimeout(r, 10));
+		await entered.promise;
 		assert.deepStrictEqual(written, ["steer"]);
 		assert.equal(acked, false, "ack resolved before the write completed");
 
@@ -81,18 +82,21 @@ describe("makePromptStream", () => {
 
 	it("fail settles queued and in-flight acks", async () => {
 		const ps = makePromptStream();
-		// Pump that never finishes its write — models a CLI that died mid-write.
-		const pumping = pump(ps.stream, () => new Promise(() => {}));
+		// Keep the write blocked while failing the stream, as when the CLI dies mid-write.
+		const entered = Promise.withResolvers();
+		const release = Promise.withResolvers();
+		const pumping = assert.rejects(pump(ps.stream, () => { entered.resolve(); return release.promise; }), /query ended/);
 
 		const inflight = ps.push(userMessage([{ type: "text", text: "inflight" }]));
-		await new Promise((r) => setTimeout(r, 10));
+		await entered.promise;
 		const queued = ps.push(userMessage([{ type: "text", text: "queued" }]));
 
 		ps.fail(new Error("query ended"));
 		await assert.rejects(inflight, /query ended/);
 		await assert.rejects(queued, /query ended/);
 		await assert.rejects(ps.push(userMessage([{ type: "text", text: "after" }])), /query ended/);
-		void pumping;
+		release.resolve();
+		await pumping;
 	});
 
 	it("settles the ack when the consumer abandons the stream", async () => {
@@ -105,25 +109,10 @@ describe("makePromptStream", () => {
 
 		await assert.rejects(ps.push(userMessage([{ type: "text", text: "abandoned" }])), /closed/);
 		await pumping;
-	});
-
-	it("rejects a push made after the consumer abandoned the stream", async () => {
-		const ps = makePromptStream();
-		const pumping = (async () => {
-			for await (const _msg of ps.stream) break;
-		})();
-		await assert.rejects(ps.push(userMessage([{ type: "text", text: "abandoned" }])), /closed/);
-		await pumping;
 
 		// Nothing is left to drain the queue, so this has to reject rather than
 		// park — a parked ack wedges tool-result delivery forever.
-		await assert.rejects(
-			Promise.race([
-				ps.push(userMessage([{ type: "text", text: "later" }])),
-				new Promise((_, r) => setTimeout(() => r(new Error("push hung")), 200)),
-			]),
-			/closed/,
-		);
+		await assert.rejects(ps.push(userMessage([{ type: "text", text: "later" }])), /closed/);
 	});
 
 	it("keeps the first failure rather than the last", async () => {

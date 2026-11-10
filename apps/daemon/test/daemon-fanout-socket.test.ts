@@ -1,4 +1,5 @@
 import { setImmediate as nextTurn } from 'node:timers/promises';
+import type { Socket } from 'node:net';
 import { afterEach, expect, it, vi } from 'vitest';
 import { JsonLineDecoder, type TextStreamEvent } from '@felan-ai/session-protocol';
 import type { SessionFanout } from '../src/daemon/fanout.js';
@@ -19,9 +20,10 @@ async function connected() {
   await server.start();
   const socket = await connectLocalIpc(fixture.owner.target);
   cleanups.push(async () => { socket.destroy(); });
-  const connections = (server as unknown as { connections: Set<{ out: SessionFanout }> }).connections;
+  const connections = (server as unknown as { connections: Set<{ out: SessionFanout; socket: Socket }> }).connections;
   await vi.waitFor(() => expect(connections.size).toBe(1));
-  return { socket, fanout: [...connections][0]!.out };
+  const connection = [...connections][0]!;
+  return { socket, fanout: connection.out, serverSocket: connection.socket };
 }
 
 it('delivers 3000 synchronous text deltas over a Unix socket without disconnecting', async () => {
@@ -50,8 +52,14 @@ it('delivers 3000 synchronous text deltas over a Unix socket without disconnecti
 });
 
 it('gracefully completes an in-flight frame before EOF when queued frames overflow', async () => {
-  const { socket, fanout } = await connected();
+  const { socket, fanout, serverSocket } = await connected();
   const close = vi.spyOn(fanout, 'close'); const decoder = new JsonLineDecoder(); const frames: unknown[] = [];
+  let wrote!: () => void; const written = new Promise<void>(resolve => { wrote = resolve; });
+  let complete!: (error?: Error | null) => void;
+  const write = serverSocket.write.bind(serverSocket);
+  serverSocket.write = ((data: Uint8Array, done: (error?: Error | null) => void) => {
+    complete = done; write(data); wrote(); return false;
+  }) as typeof serverSocket.write;
   const finished = new Promise<void>((resolve, reject) => {
     socket.on('error', reject);
     socket.on('data', chunk => {
@@ -61,14 +69,13 @@ it('gracefully completes an in-flight frame before EOF when queued frames overfl
       try { decoder.finish(); resolve(); } catch (error) { reject(error); }
     });
   });
-  socket.pause();
-  const large = { text: 'x'.repeat(4 * 1024 * 1024) }; const afterSend = vi.fn();
-  expect(fanout.send(large, afterSend)).toBe(true); await nextTurn();
+  const frame = { text: 'in-flight frame' }; const afterSend = vi.fn();
+  expect(fanout.send(frame, afterSend)).toBe(true); await written;
   expect(fanout.pendingFrames).toBe(1); expect(afterSend).not.toHaveBeenCalled();
   for (let index = 0; index < 1024 && !fanout.closed; index++) fanout.send({ index });
   expect(close).toHaveBeenCalledWith('resync_required'); expect(fanout.closed).toBe(true);
   expect(afterSend).toHaveBeenCalledOnce(); expect(fanout.pendingBytes).toBe(0);
-  socket.resume(); await finished;
-  expect(frames).toEqual([large]); expect(() => decoder.finish()).not.toThrow();
+  await finished; complete();
+  expect(frames).toEqual([frame]); expect(() => decoder.finish()).not.toThrow();
   expect(afterSend).toHaveBeenCalledOnce();
 });

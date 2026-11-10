@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   checkForFelanUpdate,
   runFelanUpdate,
@@ -18,6 +18,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.useRealTimers();
   if (previousFelanSkipVersionCheck === undefined) delete process.env.FELAN_SKIP_VERSION_CHECK;
   else process.env.FELAN_SKIP_VERSION_CHECK = previousFelanSkipVersionCheck;
   if (previousPiOffline === undefined) delete process.env.PI_OFFLINE;
@@ -73,7 +74,8 @@ describe('Felan Code update availability check', () => {
   });
 
   it('silently stops a request at the configured timeout', async () => {
-    await expect(checkForFelanUpdate({
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const checked = expect(checkForFelanUpdate({
       currentVersion: '0.13.0',
       timeoutMs: 5,
       fetch: async (_input, init) => new Promise<Response>((_resolve, reject) => {
@@ -82,6 +84,8 @@ describe('Felan Code update availability check', () => {
         signal.addEventListener('abort', () => reject(signal.reason), { once: true });
       }),
     })).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(5);
+    await checked;
   });
 
   it('honors caller cancellation', async () => {

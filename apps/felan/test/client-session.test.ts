@@ -363,7 +363,11 @@ describe('shared session client', () => {
   });
   it('fails a stalled hello boundedly and preserves authoritative rejection/indeterminate outcomes', async () => {
     const { client, fake } = await fixture({ requestTimeoutMs: 5, retries: 0 }); fake.onSend = () => {};
-    await expect(client.connect()).rejects.toThrow(); expect(client.status).toBe('blocked');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const rejected = expect(client.connect()).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(5);
+    await rejected; expect(client.status).toBe('blocked');
+    vi.useRealTimers();
     const next = await fixture(); await next.client.connect();
     next.fake.onSend = request => next.fake.frame({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'busy', message: 'Busy', retryable: true } });
     expect(await next.client.request('prompt', { text: 'wait' }, { session: 'session' })).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
@@ -423,7 +427,10 @@ describe('shared session client', () => {
   });
   it('bounds a connector that never resolves', async () => {
     const { client } = await fixture({ requestTimeoutMs: 5, connector: () => new Promise(() => {}) });
-    await expect(client.connect()).rejects.toThrow(/deadline/); expect(client.status).toBe('blocked');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const rejected = expect(client.connect()).rejects.toThrow(/deadline/);
+    await vi.advanceTimersByTimeAsync(5);
+    await rejected; expect(client.status).toBe('blocked');
   });
   it('rejects control identity changes and reports missing control replies as indeterminate', async () => {
     const { client, fake, identity } = await fixture({ requestTimeoutMs: 10 }); await client.connect();

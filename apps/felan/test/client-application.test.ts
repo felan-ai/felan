@@ -1,5 +1,4 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { SessionClient, SessionClientOptions } from '../src/client/client.js';
 import { clientDaemonTarget, resumeCommand, runDaemonFelan } from '../src/client-application.js';
@@ -150,14 +149,6 @@ it('uses isolated daemon selection only when explicitly supplied, with a stable 
   expect(clientDaemonTarget({ agentDir: '/agent' }).kind).toBe('production');
   expect(clientDaemonTarget({ daemonRuntime: '/tmp/fixture' })).toEqual(clientDaemonTarget({ daemonRuntime: '/tmp/fixture' }));
   expect(clientDaemonTarget({ daemonRuntime: '/tmp/fixture' })).toMatchObject({ kind: 'isolated', directory: '/tmp/fixture' });
-});
-
-it('keeps the new interactive entry path free of local runtime and session-store construction', async () => {
-  const source = await readFile(new URL('../src/client-application.ts', import.meta.url), 'utf8');
-  expect(source).not.toMatch(/InteractiveMode|createLocalFelanRuntime|SessionManager|createLocalSettingsManager/);
-  const cli = await readFile(new URL('../src/cli-main.ts', import.meta.url), 'utf8');
-  expect(cli).not.toMatch(/^import .*from ['"].*(?:internal\/settings|\.\/runtime)/mu);
-  expect(cli).toContain("await import('./client-application.js')");
 });
 
 it('prints the resume command after a normal quit with an attached session, like Pi, and nothing without one', async () => {

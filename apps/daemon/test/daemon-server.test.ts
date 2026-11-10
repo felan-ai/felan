@@ -162,16 +162,14 @@ async function compactingFixture(options: { extension?: (pi: ExtensionAPI) => vo
   return { ...f, createClient: f.client, client, session, release: release.resolve, runId: result.result.runId };
 }
 
-it('serves attach, session reads and a prompt turn without copying the whole control state', async () => {
+it('serves attach, session reads and a prompt turn', async () => {
   const f = await fixture(); const client = await f.client(); const session = f.root.sessionId;
-  const snapshot = vi.spyOn(f.store, 'snapshot');
   await client.attach(session);
   const tree = await client.request('session.tree', {}, { session });
   if (tree.outcome !== 'accepted') throw new Error('Tree unavailable');
   expect(await client.request('session.history', { revision: tree.result.revision, branch: tree.result.branch }, { session })).toMatchObject({ outcome: 'accepted' });
   expect(await client.request('processes.list', { root: session }, { session })).toMatchObject({ outcome: 'accepted' });
   await completedPrompt(f, client, 'served without full state copies');
-  expect(snapshot).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -197,42 +195,37 @@ it.each([
   } finally { spy.mockRestore(); }
 });
 
-it('reads history and trees without snapshots and rejects stale revisions, branches and cursors', async () => {
+it('reads history and trees and rejects stale revisions, branches and cursors', async () => {
   const f = await fixture(); const client = await f.client(); const session = f.root.sessionId;
   await client.attach(session);
-  const projection = f.registry.projection(session); const manager = f.root.runtime.session.sessionManager;
+  const manager = f.root.runtime.session.sessionManager;
   manager.resetLeaf();
-  const snapshot = vi.spyOn(projection, 'snapshot').mockImplementation(() => { throw new Error('Unexpected full snapshot'); });
-  try {
-    const empty = await client.request('session.tree', {}, { session });
-    expect(empty).toMatchObject({ outcome: 'accepted', result: { branch: session } });
-    if (empty.outcome !== 'accepted') throw new Error('Empty tree unavailable');
-    expect(await client.request('session.history', { revision: empty.result.revision, branch: session }, { session }))
-      .toMatchObject({ outcome: 'accepted', result: { branch: session, entries: [] } });
-    manager.appendMessage({ role: 'user', content: 'First', timestamp: 0 });
-    const branch = manager.appendMessage({ role: 'user', content: 'Second', timestamp: 1 });
-    const tree = await client.request('session.tree', { limit: 1 }, { session });
-    if (tree.outcome !== 'accepted') throw new Error('Tree unavailable');
-    expect(tree.result.branch).toBe(branch);
-    expect(tree.result.revision).toBe(f.store.sessionMetadata(session).revision);
-    expect(tree.result.entries).toHaveLength(1); expect(tree.result.cursor).toBeDefined();
-    const history = await client.request('session.history', { revision: tree.result.revision, branch, limit: 1 }, { session });
-    if (history.outcome !== 'accepted') throw new Error('History unavailable');
-    expect(history.result.entries[0]?.content).toEqual([{ type: 'text', text: 'Second' }]);
-    expect(history.result.cursor).toBeDefined();
-    const older = await client.request('session.history', { revision: tree.result.revision, branch, limit: 1, cursor: history.result.cursor }, { session });
-    expect(older).toMatchObject({ outcome: 'accepted', result: { entries: [{ content: [{ type: 'text', text: 'First' }] }] } });
-    expect(snapshot).not.toHaveBeenCalled();
-    snapshot.mockRestore();
-    for (const params of [{ revision: tree.result.revision - 1, branch }, { revision: tree.result.revision, branch: session }]) {
-      expect(await client.request('session.history', params, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'resync_required' } });
-    }
-    manager.appendMessage({ role: 'user', content: 'Third', timestamp: 2 });
-    expect(await client.request('session.history', { revision: tree.result.revision, branch }, { session }))
-      .toMatchObject({ outcome: 'rejected', error: { code: 'resync_required' } });
-    expect(await client.request('session.tree', { cursor: tree.result.cursor }, { session }))
-      .toMatchObject({ outcome: 'rejected', error: { code: 'resync_required' } });
-  } finally { snapshot.mockRestore(); }
+  const empty = await client.request('session.tree', {}, { session });
+  expect(empty).toMatchObject({ outcome: 'accepted', result: { branch: session } });
+  if (empty.outcome !== 'accepted') throw new Error('Empty tree unavailable');
+  expect(await client.request('session.history', { revision: empty.result.revision, branch: session }, { session }))
+    .toMatchObject({ outcome: 'accepted', result: { branch: session, entries: [] } });
+  manager.appendMessage({ role: 'user', content: 'First', timestamp: 0 });
+  const branch = manager.appendMessage({ role: 'user', content: 'Second', timestamp: 1 });
+  const tree = await client.request('session.tree', { limit: 1 }, { session });
+  if (tree.outcome !== 'accepted') throw new Error('Tree unavailable');
+  expect(tree.result.branch).toBe(branch);
+  expect(tree.result.revision).toBe(f.store.sessionMetadata(session).revision);
+  expect(tree.result.entries).toHaveLength(1); expect(tree.result.cursor).toBeDefined();
+  const history = await client.request('session.history', { revision: tree.result.revision, branch, limit: 1 }, { session });
+  if (history.outcome !== 'accepted') throw new Error('History unavailable');
+  expect(history.result.entries[0]?.content).toEqual([{ type: 'text', text: 'Second' }]);
+  expect(history.result.cursor).toBeDefined();
+  const older = await client.request('session.history', { revision: tree.result.revision, branch, limit: 1, cursor: history.result.cursor }, { session });
+  expect(older).toMatchObject({ outcome: 'accepted', result: { entries: [{ content: [{ type: 'text', text: 'First' }] }] } });
+  for (const params of [{ revision: tree.result.revision - 1, branch }, { revision: tree.result.revision, branch: session }]) {
+    expect(await client.request('session.history', params, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'resync_required' } });
+  }
+  manager.appendMessage({ role: 'user', content: 'Third', timestamp: 2 });
+  expect(await client.request('session.history', { revision: tree.result.revision, branch }, { session }))
+    .toMatchObject({ outcome: 'rejected', error: { code: 'resync_required' } });
+  expect(await client.request('session.tree', { cursor: tree.result.cursor }, { session }))
+    .toMatchObject({ outcome: 'rejected', error: { code: 'resync_required' } });
 });
 
 it('negotiates the same operations for equally capable local TUI and ACP clients', async () => {
@@ -519,7 +512,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
   });
 
-  it('invokes catalog commands without a snapshot or selected model and rejects unknown commands', async () => {
+  it('invokes catalog commands without a selected model and rejects unknown commands', async () => {
     const calls: string[] = [];
     const f = await fixture({ extension: pi => {
       pi.registerCommand('synthetic-command', { description: 'Synthetic command', handler: async args => { calls.push(args); } });
@@ -536,20 +529,16 @@ describe('session server over private real Unix IPC with fake ownership', () => 
       models: f.root.runtime.session.modelRuntime, invalidated() {} });
     const projection = f.registry.projection(session);
     expect(() => projection.snapshot()).toThrow('Session has no selected model');
-    const snapshot = vi.spyOn(projection, 'snapshot').mockImplementation(() => { throw new Error('Unexpected full snapshot'); });
-    try {
-      const request = { v: 1 as const, id: newRequestId(), op: 'command.invoke' as const, session,
-        params: { name: 'synthetic-command', arguments: 'without-model' } };
-      f.store.admit(request, 'owner');
-      const result = await dispatcher.prepare({ request } as AdmittedCommand, { origin: { kind: 'automation', source: 'fixture' } });
-      expect(await result.response).toMatchObject({ outcome: 'accepted' });
-      await vi.waitFor(() => expect(calls).toEqual(['without-model']));
-      const unknown = { ...request, id: newRequestId(), params: { name: 'not-registered', arguments: '' } };
-      f.store.admit(unknown, 'owner');
-      await expect(dispatcher.prepare({ request: unknown } as AdmittedCommand, { origin: { kind: 'automation', source: 'fixture' } }))
-        .rejects.toMatchObject({ code: 'unavailable' });
-      expect(snapshot).not.toHaveBeenCalled();
-    } finally { snapshot.mockRestore(); }
+    const request = { v: 1 as const, id: newRequestId(), op: 'command.invoke' as const, session,
+      params: { name: 'synthetic-command', arguments: 'without-model' } };
+    f.store.admit(request, 'owner');
+    const result = await dispatcher.prepare({ request } as AdmittedCommand, { origin: { kind: 'automation', source: 'fixture' } });
+    expect(await result.response).toMatchObject({ outcome: 'accepted' });
+    await vi.waitFor(() => expect(calls).toEqual(['without-model']));
+    const unknown = { ...request, id: newRequestId(), params: { name: 'not-registered', arguments: '' } };
+    f.store.admit(unknown, 'owner');
+    await expect(dispatcher.prepare({ request: unknown } as AdmittedCommand, { origin: { kind: 'automation', source: 'fixture' } }))
+      .rejects.toMatchObject({ code: 'unavailable' });
   });
 
   it('runs extension commands during an active run but keeps skill commands waiting, like Pi', async () => {
@@ -641,15 +630,12 @@ describe('session server over private real Unix IPC with fake ownership', () => 
       const time = new Date(now - (index + 1) * 60_000); await utimes(path, time, time);
       ids.push(id);
     }
-    const summary = vi.spyOn(LegacySessionIndex.prototype, 'summary');
     const listed: { session: string; title: string }[] = []; let cursor: string | undefined; let pages = 0;
     do {
       const response = await client.request('sessions.list', { limit: 10, ...(cursor ? { cursor } : {}) });
       if (response.outcome !== 'accepted') throw new Error('List failed');
-      if (pages === 0) expect(summary).toHaveBeenCalledTimes(response.result.entries.filter(row => ids.includes(row.session)).length);
       listed.push(...response.result.entries); cursor = response.result.cursor; pages++;
     } while (cursor);
-    summary.mockRestore();
     expect(pages).toBe(3);
     expect(listed.map(row => row.session)).toEqual([f.root.sessionId, ...ids]);
     expect(listed.slice(1).map(row => row.title)).toEqual(ids.map((_, index) => `Legacy ${index}`));

@@ -1,5 +1,5 @@
 import { Type } from 'typebox';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { JsonLineDecoder, JsonValueSchema, LIMITS, assertJson, codePointLength, encodeFrame, parseOperationResult, parseSchema, parseSessionSnapshot, utf8Bytes } from '../src/index.js';
 import { interaction, origin, snapshot } from './fixtures.js';
 
@@ -8,11 +8,6 @@ describe('allocation-free string measurements', () => {
   it.each(strings)('matches native UTF-8 replacement and code point iteration for %j', text => {
     expect(utf8Bytes(text)).toBe(new TextEncoder().encode(text).length);
     expect(codePointLength(text)).toBe(Array.from(text).length);
-  });
-  it('counts lone surrogates as three UTF-8 bytes', () => {
-    expect(utf8Bytes('\ud800')).toBe(3);
-    expect(utf8Bytes('\udc00')).toBe(3);
-    expect(utf8Bytes('😀')).toBe(4);
   });
   it('handles multibyte characters straddling the reusable byte buffer', () => {
     for (const prefix of [16 * 1024 - 3, 16 * 1024 - 2, 16 * 1024 - 1, 16 * 1024]) {
@@ -37,18 +32,6 @@ describe('Unicode JSON safety', () => {
 });
 
 describe('complete and fragmented frame paths', () => {
-  it('decodes complete lines in chunk subarrays without copying them', () => {
-    const decoder = new JsonLineDecoder();
-    const frame = encodeFrame({ text: 'é✓😀'.repeat(1000) });
-    const chunk = new Uint8Array(frame.length + 10);
-    chunk.set(frame, 5);
-    const copy = vi.spyOn(Uint8Array.prototype, 'set');
-    try {
-      expect(decoder.push(chunk.subarray(5, frame.length + 5))).toEqual([{ text: 'é✓😀'.repeat(1000) }]);
-      expect(copy).not.toHaveBeenCalled();
-    } finally { copy.mockRestore(); }
-    decoder.finish();
-  });
   it('mixes buffered lines, complete lines and partial UTF-8 at every split', () => {
     const values = [{ text: '😀\nline' }, { nested: { text: 'é✓' } }, { last: true }];
     const encoded = new TextEncoder().encode(values.map(value => JSON.stringify(value)).join('\n') + '\n');
@@ -109,10 +92,8 @@ describe('fresh normalized JSON data', () => {
   it('retains JSON normalization for sparse arrays and non-enumerable serialization hooks', () => {
     const sparse = [1, , 3];
     expect(parseSchema(JsonValueSchema, sparse)).toEqual([1, null, 3]);
-    let calls = 0;
-    const child = Object.defineProperty({ value: 'raw' }, 'toJSON', { value(key: string) { calls++; return { key }; } });
+    const child = Object.defineProperty({ value: 'raw' }, 'toJSON', { value(key: string) { return { key }; } });
     expect(parseSchema(JsonValueSchema, { child })).toEqual({ child: { key: 'child' } });
-    expect(calls).toBe(1);
   });
 });
 

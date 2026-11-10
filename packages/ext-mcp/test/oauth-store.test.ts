@@ -39,23 +39,27 @@ describe('local MCP OAuth credential repository', () => {
     const secretStore = memorySecretStore();
     const repository = new McpOAuthCredentialRepository('/agent', secretStore);
     const server = oauthServer('docs', 'https://mcp.example.test/mcp');
-    await Promise.all([
-      repository.update(server, async (current) => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
-        return {
-          version: 1,
-          serverUrl: server.url,
-          oauthProfile: '{}',
-          tokens: { access_token: `${current?.tokens?.access_token ?? ''}a`, token_type: 'bearer' },
-        };
-      }),
-      repository.update(server, (current) => ({
+    const entered = deferred();
+    const release = deferred();
+    const first = repository.update(server, async (current) => {
+      entered.resolve();
+      await release.promise;
+      return {
         version: 1,
         serverUrl: server.url,
         oauthProfile: '{}',
-        tokens: { access_token: `${current?.tokens?.access_token ?? ''}b`, token_type: 'bearer' },
-      })),
-    ]);
+        tokens: { access_token: `${current?.tokens?.access_token ?? ''}a`, token_type: 'bearer' },
+      };
+    });
+    await entered.promise;
+    const second = repository.update(server, (current) => ({
+      version: 1,
+      serverUrl: server.url,
+      oauthProfile: '{}',
+      tokens: { access_token: `${current?.tokens?.access_token ?? ''}b`, token_type: 'bearer' },
+    }));
+    release.resolve();
+    await Promise.all([first, second]);
 
     await expect(repository.read(server)).resolves.toMatchObject({
       tokens: { access_token: 'ab' },
@@ -153,4 +157,10 @@ function memorySecretStore(): SecretsService { return sharedSecrets().service; }
 
 function oauthServer(name: string, url: string): ResolvedMcpServer {
   return { name, url, auth: 'oauth', transport: 'auto' };
+}
+
+function deferred(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>(next => { resolve = next; });
+  return { promise, resolve };
 }

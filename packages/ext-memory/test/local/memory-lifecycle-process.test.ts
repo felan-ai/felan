@@ -5,7 +5,7 @@ import type { LocalMemoryStore } from './backend.js';
 let { LocalMemoryCoordinator, listLocalSessionHistory, readMemoryHistorySnapshot, resolveLocalMemoryProject, LocalMemoryStore } = createMemoryBackend();
 beforeMemoryTest(() => { ({ LocalMemoryCoordinator, listLocalSessionHistory, readMemoryHistorySnapshot, resolveLocalMemoryProject, LocalMemoryStore } = createMemoryBackend()); });
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,7 +149,9 @@ describe('multi-process memory lifecycle', () => {
     await expect(runWorker(crashed)).rejects.toThrow();
     const store = new LocalMemoryStore(agentDir, await resolveLocalMemoryProject(cwd));
     expect((await store.readControl()).activeAttempt).toMatchObject({ runId: expect.any(String) });
-    await new Promise((resolve) => setTimeout(resolve, 2_100));
+    const staleAt = new Date(Date.now() - 10_000);
+    await Promise.all(['writer.lock', 'writer.gate.lock'].map(name =>
+      utimes(join(store.projectDirectory, name), staleAt, staleAt)));
     const recovered = await writeWorkerConfig(root, {
       cwd, agentDir, sessionDir, callLog, checkpoint, action: 'run', outcome: 'success',
       automatic: true, leaseStaleMs: 2_000,

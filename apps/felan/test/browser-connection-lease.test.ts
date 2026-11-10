@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
+import { once } from 'node:events';
 import http, { createServer, type IncomingMessage } from 'node:http';
 import { createConnection, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { BrowserAuthorizationConnection } from '@felan-ai/ext-browser';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createChromeConnectionLease, type ChromeConnectionLease } from '../src/providers/browser/connection-lease.js';
@@ -27,7 +29,6 @@ describe('one-use Chrome connection lease', () => {
     expect(lease.connected).toBe(false);
     expect(lease.signal.aborted).toBe(false);
     const idle = await client(lease.connection);
-    await delay(30);
     expect(peer.connections).toHaveLength(0);
     await lease.close();
     await idle.closed;
@@ -81,6 +82,7 @@ describe('one-use Chrome connection lease', () => {
     competing.socket.write(upgradeRequest(lease.connection));
     const upstream = await nextUpgrade(peer);
     await competing.closed;
+    // Browser approval can outlast a two-second handshake timeout.
     await delay(2_100);
     expect(lease.signal.aborted).toBe(false);
     expect(lease.connected).toBe(false);
@@ -145,16 +147,18 @@ describe('one-use Chrome connection lease', () => {
     const toRemote = Buffer.alloc(2 * 1_024 * 1_024, 0xa7);
     const toLocal = Buffer.alloc(2 * 1_024 * 1_024, 0x9c);
     upstream.stream.socket.pause();
-    local.socket.write(toRemote);
-    await delay(20);
+    expect(local.socket.write(toRemote)).toBe(false);
+    const localDrained = once(local.socket, 'drain');
     upstream.stream.socket.resume();
+    await localDrained;
     const expectedRemote = Buffer.concat([localHead, toRemote]);
     await vi.waitFor(() => expect(upstream.stream.bytes.length).toBe(expectedRemote.length));
     expect(upstream.stream.bytes.equals(expectedRemote)).toBe(true);
     local.socket.pause();
-    upstream.stream.socket.write(toLocal);
-    await delay(20);
+    expect(upstream.stream.socket.write(toLocal)).toBe(false);
+    const upstreamDrained = once(upstream.stream.socket, 'drain');
     local.socket.resume();
+    await upstreamDrained;
     const expectedLocal = Buffer.concat([remoteHead, toLocal]);
     await vi.waitFor(() => expect(body(local.bytes).length).toBe(expectedLocal.length));
     expect(body(local.bytes).equals(expectedLocal)).toBe(true);
@@ -464,8 +468,4 @@ async function expectRefused(connection: BrowserAuthorizationConnection): Promis
 function body(bytes: Buffer): Buffer {
   const end = bytes.indexOf('\r\n\r\n');
   return end < 0 ? Buffer.alloc(0) : bytes.subarray(end + 4);
-}
-
-function delay(milliseconds: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
 }

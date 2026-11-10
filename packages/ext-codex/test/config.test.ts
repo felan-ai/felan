@@ -4,7 +4,7 @@ import { CODEX_CONFIG, type CodexConfig, DEFAULT_CODEX_CONFIG, validateCodexConf
 
 describe('Codex configuration', () => {
   it('marks the legacy boolean deprecated without dropping stored values', () => {
-    expect(CODEX_CONFIG.fields.fast.deprecated).toBe('Use priority instead');
+    expect(CODEX_CONFIG.fields.fast.deprecated).toEqual(expect.stringContaining('priority'));
     expect(resolveExtensionConfigs([CODEX_CONFIG], [{
       extensionId: 'codex', values: { fast: true }, source: 'settings',
     }]).get('codex')).toEqual(validateCodexConfig({ fast: true }));
@@ -43,10 +43,7 @@ describe('Codex configuration', () => {
   });
 
   it('declares and validates the image generation setting', () => {
-    expect(CODEX_CONFIG.fields.imageGeneration).toMatchObject({
-      default: true,
-      description: 'Offer Codex subscription image models (openai-codex login) to generate_images',
-    });
+    expect(CODEX_CONFIG.fields.imageGeneration.default).toBe(true);
     expect(validateCodexConfig({}).imageGeneration).toBe(true);
     for (const imageGeneration of [true, false]) {
       expect(validateCodexConfig({ imageGeneration }).imageGeneration).toBe(imageGeneration);

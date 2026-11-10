@@ -42,7 +42,6 @@ async function startQuery(turnToolCallIds) {
 	return { c, callTool: await connectClient(Object.values(servers)[0]) };
 }
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const result = (toolCallId, text, isError) => ({ toolCallId, content: [{ type: "text", text }], isError });
 const deliver = (c, ...results) => __test.deliverToolResults(c, results, null, 4);
 const replyText = (response) => response.result.content[0].text;
@@ -64,7 +63,6 @@ describe("tool result queue", () => {
 		const { c, callTool } = await startQuery(["toolu_1"]);
 
 		const call = callTool("alpha", "toolu_1");
-		await tick();
 		assert.deepEqual([...c.pendingToolCalls.keys()], ["toolu_1"]);
 		assert.equal(c.pendingToolCalls.get("toolu_1").toolName, "alpha");
 
@@ -85,7 +83,6 @@ describe("tool result queue", () => {
 		const third = callTool("gamma", "toolu_3");
 		const first = callTool("alpha", "toolu_1");
 		const second = callTool("beta", "toolu_2");
-		await tick();
 		assert.equal(c.pendingToolCalls.size, 3);
 
 		await deliver(c, result("toolu_2", "r2"), result("toolu_3", "r3"), result("toolu_1", "r1"));
@@ -105,7 +102,6 @@ describe("tool result queue", () => {
 		};
 
 		const one = callTool("alpha", "toolu_1"); // parks
-		await tick();
 		assertDisjoint();
 		await deliver(c, result("toolu_1", "r1")); // releases it rather than queueing
 		assert.equal(replyText(await one), "r1");
@@ -125,7 +121,6 @@ describe("tool result queue", () => {
 		const { c, callTool } = await startQuery(["toolu_1", "toolu_2"]);
 		const answered = callTool("alpha", "toolu_1");
 		callTool("beta", "toolu_2"); // never gets a result
-		await tick();
 
 		await deliver(c, result("toolu_1", "r1"));
 
@@ -142,7 +137,6 @@ describe("abandoning a query", () => {
 		const { c, callTool } = await startQuery(["toolu_1", "toolu_2", "toolu_3"]);
 		const one = callTool("alpha", "toolu_1");
 		const two = callTool("beta", "toolu_2");
-		await tick();
 		await deliver(c, result("toolu_3", "r3")); // queued, no handler ever came
 
 		c.releasePendingToolCalls("Query ended");
@@ -162,13 +156,11 @@ describe("abandoning a query", () => {
 	it("unwedges a delivery parked on the steer ack, leaving no handler waiting", async () => {
 		const { c, callTool } = await startQuery(["toolu_1"]);
 		const call = callTool("alpha", "toolu_1");
-		await tick();
 
 		// Real stream, no consumer: the push parks exactly as it does when the CLI
 		// stops reading stdin.
 		c.promptStream = makePromptStream();
 		const delivery = __test.deliverToolResults(c, [result("toolu_1", "r1")], [{ type: "text", text: "stop" }], 4);
-		await tick();
 		assert.equal(c.pendingToolCalls.size, 1, "delivery must still be parked on the ack");
 
 		__test.drainForAbort(c, c.promptStream);
@@ -236,7 +228,6 @@ describe("delivering an extracted turn to its handlers", () => {
 		const { c, callTool } = await startQuery(["toolu_1", "toolu_2"]);
 		const beta = callTool("beta", "toolu_2");
 		const alpha = callTool("alpha", "toolu_1");
-		await tick();
 
 		const { results } = extractAllToolResults([
 			{ role: "user", content: "prompt" },

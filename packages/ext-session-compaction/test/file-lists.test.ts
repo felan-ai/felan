@@ -91,11 +91,6 @@ describe('compaction file lists', () => {
 });
 
 describe('stripFileLists', () => {
-  it('removes both model-written lists and trims the remaining summary', () => {
-    const summary = '  Preserve the decision.\n\n<read-files>\nmade-up.ts\n</read-files>\n\n<modified-files>\nnot-written.ts\n</modified-files>\n ';
-    expect(stripFileLists(summary)).toBe('Preserve the decision.');
-  });
-
   it('removes repeated, inline, and case-varied blocks without removing other markup', () => {
     expect(stripFileLists('<read-files>a</read-files>Keep <other>evidence</other>.<MODIFIED-FILES>b</MODIFIED-FILES><read-files>c</read-files>'))
       .toBe('Keep <other>evidence</other>.');

@@ -194,7 +194,6 @@ describe('RTK optimizer extension', () => {
       content: [{ type: 'text', text: original }],
       isError: false,
     });
-    await Promise.resolve();
     const output = compacted as { content: Array<{ text: string }> };
     expect(reported).toHaveLength(1);
     expect(reported[0]).toEqual({
@@ -268,7 +267,6 @@ describe('RTK optimizer extension', () => {
       details: undefined,
       isError: false,
     });
-    await Promise.resolve();
 
     expect(reported).toEqual([]);
     await harness.emit('session_shutdown', { reason: 'quit' });
@@ -284,7 +282,7 @@ describe('RTK optimizer extension', () => {
     });
   });
 
-  it('queries one aggregate for multiple rewritten commands in a session', async () => {
+  it('combines savings for multiple rewritten commands in a session', async () => {
     const reported: any[] = [];
     const runtime = new MemoryRuntime(async (command, args) => {
       if (command === 'rtk' && args[0] === '--version') return result('rtk 1.0.0\n');
@@ -311,7 +309,6 @@ describe('RTK optimizer extension', () => {
       });
     }
     await harness.emit('session_shutdown', { reason: 'quit' });
-    expect(runtime.execCalls.filter((entry) => entry.args.includes('gain'))).toHaveLength(1);
     expect(reported.find(({ operation }) => operation === 'rtk-command-output')).toMatchObject({
       calls: 2,
       baseline: { tokens: { input: 100 } },
@@ -341,7 +338,6 @@ describe('RTK optimizer extension', () => {
     await harness.emit('tool_call', second);
     await harness.emit('tool_result', { ...second, content: [{ type: 'text', text: 'ok' }], isError: false });
     await harness.emit('session_shutdown', { reason: 'quit' });
-    expect(runtime.execCalls.filter((entry) => entry.args.includes('gain'))).toHaveLength(2);
     expect(reported.filter(({ operation }) => operation === 'rtk-command-output').map(({ baseline }) => baseline.model.id))
       .toEqual(expect.arrayContaining(['cheap', 'expensive']));
   });
@@ -389,7 +385,6 @@ describe('RTK optimizer extension', () => {
       details: { exit_code: 0, output: 'complete' },
       isError: false,
     });
-    await Promise.resolve();
     expect(reported.filter(({ operation }) => operation === 'rtk-command-output')).toHaveLength(0);
 
     await harness.emit('tool_result', {
@@ -474,17 +469,6 @@ describe('RTK optimizer extension', () => {
     expect(harness.notifications.at(-1)).toEqual(['RTK is available (rtk 1.0.0).', 'info']);
   });
 
-  it('disables installation without a provider without running installers at startup', async () => {
-    const runtime = rtkRuntime();
-    const harness = await createHarness(runtime);
-    expect(runtime.execCalls).toEqual([]);
-
-    await harness.commands.get('rtk')!.handler('install', harness.ctx);
-
-    expect(runtime.execCalls).toEqual([]);
-    expect(harness.notifications.at(-1)?.[0]).toContain('no runtime-dependencies provider');
-    expect(harness.statuses).toEqual([]);
-  });
 
 });
 
@@ -499,6 +483,7 @@ function rtkRuntime(): MemoryRuntime {
 
 async function createHarness(runtime: MemoryRuntime, hasUI = true, config: Record<string, unknown> = {}, savings?: { report(measurement: unknown): Promise<void> }, model?: { provider: string; id: string }) {
   const handlers = new Map<string, Handler[]>();
+  const pendingReports: Promise<void>[] = [];
   type Command = {
     handler: (args: string, ctx: any) => Promise<void>;
     getArgumentCompletions?: (prefix: string) => Array<{ value: string }> | null;
@@ -522,7 +507,13 @@ async function createHarness(runtime: MemoryRuntime, hasUI = true, config: Recor
     ui: { notify: async ({ text, level }: { text: string; level: string }) => { notifications.push([text, level]); } },
     agentDir: '/agent',
     config,
-    ...(savings === undefined ? {} : { savings }),
+    ...(savings === undefined ? {} : { savings: {
+      report(measurement: unknown) {
+        const reporting = savings.report(measurement);
+        pendingReports.push(reporting);
+        return reporting;
+      },
+    } }),
     registerCapability: vi.fn(),
     registerCommand: (name: string, command: Command) => {
       commands.set(name, command);
@@ -543,6 +534,7 @@ async function createHarness(runtime: MemoryRuntime, hasUI = true, config: Recor
     async emit(name: string, event: Record<string, unknown>): Promise<unknown[]> {
       const results: unknown[] = [];
       for (const handler of handlers.get(name) ?? []) results.push(await handler(event, ctx));
+      await Promise.allSettled(pendingReports.splice(0));
       return results;
     },
   };

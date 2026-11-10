@@ -34,7 +34,13 @@ export class RemoteOutbox {
   private totalPendingBytes: number | undefined;
   private scheduled: NodeJS.Immediate | undefined;
   private errorHandler: ((session: string, error: Error) => void) | undefined;
-  constructor(private readonly database: RemoteDatabase) {}
+  constructor(private readonly database: RemoteDatabase, private readonly limits = {
+    session: REMOTE_OUTBOX_PENDING_BYTES_LIMIT, total: REMOTE_OUTBOX_TOTAL_PENDING_BYTES_LIMIT,
+  }) {
+    if (!Number.isSafeInteger(limits.session) || limits.session < 1 || !Number.isSafeInteger(limits.total) || limits.total < 1) {
+      throw new Error('Invalid remote outbox capacity limits.');
+    }
+  }
   setErrorHandler(handler: (session: string, error: Error) => void): void { this.errorHandler = handler; }
   append(session: string, items: readonly OutboxItem[]): OutboxEntry[] {
     const id = remoteSessionId(session); const cursor = this.scan(id);
@@ -189,13 +195,13 @@ export class RemoteOutbox {
     return { seq: value.seq, rev: value.rev, occurredAt: value.occurredAt, change: value.change as PublishedChange };
   }
   private checkCapacity(id: string, previous: number, bytes: number): void {
-    if (bytes > REMOTE_OUTBOX_PENDING_BYTES_LIMIT) throw new RemoteOutboxCapacityError(id);
+    if (bytes > this.limits.session) throw new RemoteOutboxCapacityError(id);
     if (this.totalPendingBytes === undefined) {
       let total = 0;
       for (const [, cursor] of this.storedCursors()) total += cursor.pendingBytes;
       this.totalPendingBytes = total;
     }
-    if (this.totalPendingBytes + bytes - previous > REMOTE_OUTBOX_TOTAL_PENDING_BYTES_LIMIT) throw new RemoteOutboxCapacityError(id, 'total');
+    if (this.totalPendingBytes + bytes - previous > this.limits.total) throw new RemoteOutboxCapacityError(id, 'total');
   }
   private adjustTotal(bytes: number): void {
     if (this.totalPendingBytes !== undefined) this.totalPendingBytes += bytes;

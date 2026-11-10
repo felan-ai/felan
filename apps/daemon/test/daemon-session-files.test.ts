@@ -1,20 +1,12 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { openSync, readSync } from 'node:fs';
+import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtemp, mkdir, readFile, realpath, rm, symlink, link, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import { prepareExport, prepareTranscriptDeletion, publishExport, readOwnedOutputRange, stageImport } from '../src/daemon/session-files.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
 
-vi.mock('node:fs', async original => {
-  const fs = await original<typeof import('node:fs')>();
-  return { ...fs, openSync: vi.fn(fs.openSync), readSync: vi.fn(fs.readSync) };
-});
-const actualFs = await vi.importActual<typeof import('node:fs')>('node:fs');
-
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
-  vi.mocked(readSync).mockImplementation(actualFs.readSync); vi.mocked(openSync).mockImplementation(actualFs.openSync); vi.clearAllMocks();
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 

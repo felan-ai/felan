@@ -44,19 +44,13 @@ describe("computeAnalytics", () => {
       expect(result.projectStats).toEqual([]);
       expect(result.modelStats).toEqual([]);
       expect(result.sessions).toEqual([]);
-    });
-
-    it("returns 24 hourly buckets all zero for no sessions", () => {
-      const result = computeAnalytics([]);
       expect(result.hourlyDistribution).toHaveLength(24);
       expect(result.hourlyDistribution.every(h => h.count === 0)).toBe(true);
-    });
-
-    it("returns empty rageStats for no sessions", () => {
-      const result = computeAnalytics([]);
       expect(result.rageStats.total).toBe(0);
       expect(result.rageStats.byHour).toHaveLength(24);
     });
+
+
   });
 
   describe("single session", () => {
@@ -328,18 +322,6 @@ describe("computeAnalytics", () => {
       });
       const result = computeAnalytics([sess]);
       expect(result.rageStats.byHour.every(h => h.count === 0)).toBe(true);
-    });
-  });
-
-  describe("dateRange", () => {
-    it("sets start to earliest session and end to latest", () => {
-      const sessions = [
-        makeSession({ id: "s1", startTime: new Date("2025-01-01T00:00:00Z"), endTime: new Date("2025-01-01T01:00:00Z") }),
-        makeSession({ id: "s2", startTime: new Date("2025-06-15T00:00:00Z"), endTime: new Date("2025-06-15T01:00:00Z") }),
-      ];
-      const result = computeAnalytics(sessions);
-      expect(result.dateRange.start).toBe("2025-01-01");
-      expect(result.dateRange.end).toBe("2025-06-15");
     });
   });
 

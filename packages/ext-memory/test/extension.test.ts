@@ -64,7 +64,7 @@ it('shares a coordinator between root extension sessions and releases it through
   const agentDir = join(directory, 'agent');
   let entered = false;
   let signal: AbortSignal | undefined;
-  const shared = acquireSharedLocalMemoryCoordinator({ agentDir, recover: false, dreamRunner: async input => {
+  const shared = acquireSharedLocalMemoryCoordinator({ agentDir, recover: false, debounceMs: 60_000, dreamRunner: async input => {
     signal = input.signal;
     const cancelled = new Promise<void>(resolve => input.signal.addEventListener('abort', () => resolve(), { once: true }));
     input.signal.throwIfAborted();

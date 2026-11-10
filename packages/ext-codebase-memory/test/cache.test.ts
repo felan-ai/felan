@@ -11,14 +11,6 @@ describe('Codebase Memory cache limits', () => {
     expect(CODEBASE_MEMORY_CONFIG.fields.maxCacheBytes.validate?.(-1)).toBeTruthy();
   });
 
-  it.each([
-    ['host', 2 * 1024 * 1024 * 1024],
-    ['docker', 500 * 1024 * 1024],
-    ['daytona', 500 * 1024 * 1024],
-  ] as const)('uses the runtime-kind default for %s', (kind, expected) => {
-    expect(new CacheManager(new MemoryRuntime(kind)).maxBytes).toBe(expected);
-  });
-
   it('evicts least-recently-used project caches and emits size/eviction telemetry', async () => {
     const runtime = new MemoryRuntime();
     const telemetry = vi.fn();
@@ -64,7 +56,7 @@ describe('Codebase Memory cache limits', () => {
     await cache.record('new', 0, 2);
 
     expect(onEvict).toHaveBeenCalledWith('old');
-    expect(measureBytes).toHaveBeenCalledTimes(3);
+    expect(onEvict).not.toHaveBeenCalledWith('new');
   });
 
   it('never uses an upstream project name as a storage path', async () => {

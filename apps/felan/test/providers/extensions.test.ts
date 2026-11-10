@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, createFelanServiceRegistry, loadFelanExtensions } from '@felan-ai/agent-core';
 import { builtinExtensionPackages, importLocalExtension, resolveConfiguredExtensionPackages } from '../../src/providers/extensions.js';
@@ -12,11 +13,13 @@ afterEach(async () => { await Promise.all(installed.splice(0).map(path => rm(pat
 
 async function installFixture(source: string) {
   const name = `felan-extension-fixture-${randomUUID()}`;
-  const directory = fileURLToPath(new URL(`../../node_modules/${name}/`, import.meta.url));
-  await mkdir(directory, { recursive: true }); installed.push(directory);
+  const root = await mkdtemp(join(tmpdir(), 'felan-extension-package-')); installed.push(root);
+  const directory = join(root, 'node_modules', name);
+  await mkdir(directory, { recursive: true });
   await writeFile(`${directory}/package.json`, JSON.stringify({ name, type: 'module', exports: './index.js' }));
   await writeFile(`${directory}/index.js`, source);
-  return name;
+  const resolve = createRequire(join(root, 'host.cjs')).resolve;
+  return { name, importExtension: (specifier: string) => import(pathToFileURL(resolve(specifier)).href) };
 }
 
 async function runtime() {
@@ -57,20 +60,20 @@ it('registers the Claude Code command without installing or registering a provid
 });
 
 it('loads an installed extension named only in host configuration', async () => {
-  const name = await installFixture('export default () => {};');
+  const { name, importExtension } = await installFixture('export default () => {};');
   const packages = resolveConfiguredExtensionPackages([name, builtinExtensionPackages.askUser], { askUser: false });
   expect(packages).toEqual([name]);
-  const loaded = await loadFelanExtensions(packages, importLocalExtension, await runtime());
+  const loaded = await loadFelanExtensions(packages, importExtension, await runtime());
   expect(loaded).toHaveLength(1);
   expect(loaded[0]).toMatchObject({ name });
 });
 
 it('skips and reports an installed extension missing its required contract', async () => {
-  const name = await installFixture(`export default Object.assign(() => {}, {
+  const { name, importExtension } = await installFixture(`export default Object.assign(() => {}, {
     serviceRequirements: { required: [{ id: 'fixture.required', major: 3, key: 'fixture.required@3' }] }
   });`);
   const skipped: Array<[string, string]> = [];
-  const loaded = await loadFelanExtensions([name], importLocalExtension, await runtime(), undefined,
+  const loaded = await loadFelanExtensions([name], importExtension, await runtime(), undefined,
     [], undefined, createFelanServiceRegistry(), (packageName, contract) => skipped.push([packageName, contract]));
   expect(loaded).toEqual([]);
   expect(skipped).toEqual([[name, 'fixture.required@3']]);

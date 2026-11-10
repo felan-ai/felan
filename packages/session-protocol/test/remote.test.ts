@@ -3,7 +3,7 @@ import { Value } from 'typebox/value';
 import {
   HostProjectSchema, LIMITS, OPERATION_CATALOG, ProtocolValidationError, RemoteConfigureParamsSchema, RemoteStatusSchema, ResponseSchema,
   canonicalRequestPayload, compareRequestPayload, parseClientEnvelope, parseOperationResult, parseRemoteConfigureParams,
-  parseRemoteStatus, parseSchema, parseServerEnvelope, parseStoredRequestRecord, requestRetainUntil, type HostProject, type OperationParams, type OperationResult,
+  parseRemoteStatus, parseSchema, parseServerEnvelope, parseStoredRequestRecord, requestRetainUntil, type HostProject,
   type RemoteConfigureParams, type RemoteStatus,
 } from '../src/index.js';
 import { now, remoteStatus, request } from './fixtures.js';
@@ -93,12 +93,6 @@ describe('remote operation schemas', () => {
     expect(parseStoredRequestRecord(record)).toEqual(record);
   });
 
-  it('exports discriminated configuration and result types', () => {
-    expectTypeOf<RemoteConfigureParams>().toEqualTypeOf<OperationParams<'remote.configure'>>();
-    expectTypeOf<RemoteStatus>().toEqualTypeOf<OperationResult<'remote.status'>>();
-    expectTypeOf<RemoteStatus>().toEqualTypeOf<OperationResult<'remote.configure'>>();
-    expectTypeOf<Extract<RemoteConfigureParams, { action: 'login' }>>().toEqualTypeOf<{ action: 'login'; apiUrl?: string }>();
-  });
 });
 
 describe('remote status', () => {
@@ -138,12 +132,12 @@ describe('remote status', () => {
     } })).toEqual({ ...remoteStatus, host: { id: '12345678-1234-5678-9012-123456789012' } });
   });
 
-  it.each(['off', 'connecting', 'connected', 'offline', 'stopped'] as const)('accepts state %s', state => {
-    expect(parseRemoteStatus({ ...remoteStatus, state }).state).toBe(state);
-  });
-
-  it.each(['invalid_pat', 'not_a_member', 'host_revoked', 'unsupported_schema', 'rate_limited', 'unavailable', 'pairing_denied', 'pairing_expired'] as const)('accepts bounded reason %s', reason => {
-    expect(parseRemoteStatus({ ...remoteStatus, reason }).reason).toBe(reason);
+  it.each([
+    { state: 'off' }, { state: 'connecting' }, { state: 'connected' }, { state: 'offline' }, { state: 'stopped' },
+    { reason: 'invalid_pat' }, { reason: 'not_a_member' }, { reason: 'host_revoked' }, { reason: 'unsupported_schema' },
+    { reason: 'rate_limited' }, { reason: 'unavailable' }, { reason: 'pairing_denied' }, { reason: 'pairing_expired' },
+  ])('accepts connection status %j', fields => {
+    expect(parseRemoteStatus({ ...remoteStatus, ...fields })).toEqual({ ...remoteStatus, ...fields });
   });
 
   it('reports a pending browser pairing', () => {

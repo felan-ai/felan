@@ -107,28 +107,20 @@ describe('remote commands', () => {
     expect(parseRemoteCommandOutcome({ v: 1, re: command, outcome: 'expired' }).outcome).toBe('expired');
     expect(parseRemoteCommandOutcome({ v: 1, re: command, outcome: 'rejected', error: { code: 'forbidden', message: 'no', retryable: false } }).outcome).toBe('rejected');
   });
-  it('records web requests as a run origin', () => {
-    expect(parseSchema(OriginSchema, { kind: 'web', user: host, command })).toEqual({ kind: 'web', user: host, command });
-  });
-  it('records channel-started requests on runs, queue items and messages', () => {
-    const origin = { kind: 'channel', provider: 'slack', user: host, command };
-    expect(parseSchema(OriginSchema, origin)).toEqual(origin);
-    for (const change of [{ type: 'run.updated', run: { state: 'running', id: command, origin } },
-      { type: 'queue.updated', queue: [{ id: command, kind: 'steer', prompt: { text: 'Next' }, origin }] },
-      { type: 'message.completed', message: { id: command, entryId: command, role: 'user', content: [], timestamp: 0, origin } }]) {
-      expect(parsePublishedEvent({ ...event, change }).change).toEqual(change);
+  it('records web and channel origins with or without an identified channel user', () => {
+    for (const origin of [{ kind: 'web', user: host, command }, { kind: 'channel', provider: 'slack', user: host, command },
+      { kind: 'channel', provider: 'slack', command }]) {
+      expect(parseSchema(OriginSchema, origin)).toEqual(origin);
+      if (origin.kind !== 'channel') continue;
+      for (const change of [{ type: 'run.updated', run: { state: 'running', id: command, origin } },
+        { type: 'queue.updated', queue: [{ id: command, kind: origin.user ? 'steer' : 'follow_up', prompt: { text: 'Next' }, origin }] },
+        { type: 'message.completed', message: { id: command, entryId: command, role: 'user', content: [], timestamp: 0, origin } }]) {
+        expect(parsePublishedEvent({ ...event, change }).change).toEqual(change);
+      }
     }
+    const origin = { kind: 'channel', provider: 'slack', command };
     for (const provider of ['', 'Slack', 'slack\nadmin', 'a'.repeat(65)]) expect(() => parseSchema(OriginSchema, { ...origin, provider })).toThrow();
     expect(() => parseSchema(OriginSchema, { kind: 'channel', user: host, command })).toThrow();
-  });
-  it('records channel origins without an identified user', () => {
-    const origin = { kind: 'channel', provider: 'slack', command };
-    expect(parseSchema(OriginSchema, origin)).toEqual(origin);
-    for (const change of [{ type: 'run.updated', run: { state: 'running', id: command, origin } },
-      { type: 'queue.updated', queue: [{ id: command, kind: 'follow_up', prompt: { text: 'Next' }, origin }] },
-      { type: 'message.completed', message: { id: command, entryId: command, role: 'user', content: [], timestamp: 0, origin } }]) {
-      expect(parsePublishedEvent({ ...event, change }).change).toEqual(change);
-    }
     expect(() => parseSchema(OriginSchema, { ...origin, user: null })).toThrow();
     expect(() => parseSchema(OriginSchema, { ...origin, command: undefined })).toThrow();
     expect(() => parseSchema(OriginSchema, { kind: 'web', command })).toThrow();
@@ -184,32 +176,26 @@ describe('realtime and tokens', () => {
     expect(parseRealtimeNotification({ event: 'events', payload: { seq: 3 } })).toEqual({ event: 'events', payload: { seq: 3 } });
     expect(() => parseRealtimeNotification({ event: 'text', payload: {} })).toThrow();
   });
-  it('requires the host as token subject and at most 15 minutes of lifetime', () => {
-    const claims = { iss: 'https://felan.ai', aud: 'authenticated', role: 'authenticated', sub: host, iat: 100, exp: 1000,
-      felan: { kind: 'host', host_id: host, team_id: host, user_id: session } };
-    expect(parseHostTokenClaims(claims)).toEqual(claims);
-    expect(() => parseHostTokenClaims({ ...claims, sub: session })).toThrow(/subject/);
-    expect(() => parseHostTokenClaims({ ...claims, exp: 1001 })).toThrow(/lifetime/);
-    expect(() => parseHostTokenClaims({ ...claims, role: 'service_role' })).toThrow();
+  it('requires host token subjects and at most 15 minutes of lifetime with or without a user', () => {
+    for (const felan of [{ kind: 'host' as const, host_id: host, team_id: host, user_id: session }, { kind: 'host' as const, host_id: host, team_id: host }]) {
+      const claims: HostTokenClaims = { iss: 'https://felan.ai', aud: 'authenticated', role: 'authenticated', sub: host, iat: 100, exp: 1000, felan };
+      expect(parseHostTokenClaims(claims)).toEqual(claims);
+      expect(() => parseHostTokenClaims({ ...claims, sub: session })).toThrow(/subject/);
+      expect(() => parseHostTokenClaims({ ...claims, exp: 1001 })).toThrow(/lifetime/);
+      expect(() => parseHostTokenClaims({ ...claims, role: 'service_role' })).toThrow();
+      expect(() => parseHostTokenClaims({ ...claims, felan: { ...claims.felan, user_id: null } })).toThrow();
+    }
   });
-  it('accepts team-host claims and token responses without a user', () => {
-    const claims: HostTokenClaims = { iss: 'https://felan.ai', aud: 'authenticated', role: 'authenticated', sub: host, iat: 100, exp: 1000,
-      felan: { kind: 'host', host_id: host, team_id: host } };
-    expect(parseHostTokenClaims(claims)).toEqual(claims);
-    expect(() => parseHostTokenClaims({ ...claims, sub: session })).toThrow(/subject/);
-    expect(() => parseHostTokenClaims({ ...claims, exp: 1001 })).toThrow(/lifetime/);
-    expect(() => parseHostTokenClaims({ ...claims, felan: { ...claims.felan, user_id: null } })).toThrow();
-    const response: HostTokenResponse = { token: 't', expiresAt: 10, refreshAt: 5, host: { id: host, teamId: host },
-      supabase: { url: 'https://x.supabase.co', publishableKey: 'sb_publishable_x' } };
-    expect(parseHostTokenResponse(response)).toEqual(response);
-    expect(() => parseHostTokenResponse({ ...response, refreshAt: 11 })).toThrow(/refresh/);
-    expect(() => parseHostTokenResponse({ ...response, host: { ...response.host, userId: null } })).toThrow();
+  it('validates personal and team-host token responses and bounds refresh times by expiry', () => {
+    for (const hostRecord of [{ id: host, teamId: host }, { id: host, teamId: host, userId: host }]) {
+      const response: HostTokenResponse = { token: 't', expiresAt: 10, refreshAt: 5, host: hostRecord,
+        supabase: { url: 'https://x.supabase.co', publishableKey: 'sb_publishable_x' } };
+      expect(parseHostTokenResponse(response)).toEqual(response);
+      expect(() => parseHostTokenResponse({ ...response, refreshAt: 11 })).toThrow(/refresh/);
+      expect(() => parseHostTokenResponse({ ...response, host: { ...response.host, userId: null } })).toThrow();
+    }
   });
-  it('rejects a refresh time after expiry', () => {
-    const response = { token: 't', expiresAt: 10, refreshAt: 5, host: { id: host, teamId: host, userId: host }, supabase: { url: 'https://x.supabase.co', publishableKey: 'sb_publishable_x' } };
-    expect(parseHostTokenResponse(response)).toEqual(response);
-    expect(() => parseHostTokenResponse({ ...response, refreshAt: 11 })).toThrow(/refresh/);
-  });});
+});
 
 describe('browser pairing', () => {
   const deviceCode = 'd'.repeat(43);

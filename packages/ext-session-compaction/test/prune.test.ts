@@ -101,34 +101,21 @@ describe('Jev evidence prune', () => {
     expect(result.evidence.items).toEqual(evidence.items);
   });
 
-  it('keeps original evidence when the classifier returns invalid answers', async () => {
+  it.each<{ label: string; answers: Record<string, ClassifierAnswer> }>([
+    { label: 'missing', answers: {} },
+    { label: 'bool', answers: { e1: { type: 'bool', probability: 0.99 } } },
+    { label: 'score', answers: { e1: { type: 'score', score: 1, confidence: 0.99 } } },
+    { label: 'unknown choice', answers: { e1: { type: 'choice', choice: 'unknown', confidence: 0.99 } } },
+  ])('keeps original evidence for $label answers', async ({ answers }) => {
     const evidence = bundle([
       item('obs', { kind: 'observation', status: 'observed', text: bulky('keep-me'), sourceId: 'hist-1', toolCallId: 'call-1' }),
     ]);
     const result = await pruneEvidence(evidence, span(), {
-      classify: async () => ({ answers: {} }),
-    }, { trigger: 'manual' });
-    expect(result.report).toMatchObject({ status: 'ran', kept: 1, asked: 1 });
-    expect(result.evidence.items[0]?.text).toContain('keep-me');
-    expect(result.report.status === 'ran' && result.report.decisions[0]).toMatchObject({
-      id: 'e1', action: 'keep', reason: 'missing',
-    });
-  });
-
-  it.each<ClassifierAnswer>([
-    { type: 'bool', probability: 0.99 },
-    { type: 'score', score: 1, confidence: 0.99 },
-    { type: 'choice', choice: 'unknown', confidence: 0.99 },
-  ])('keeps original evidence for unexpected $type answers', async (answer) => {
-    const evidence = bundle([
-      item('obs', { kind: 'observation', status: 'observed', text: bulky('keep-me'), sourceId: 'hist-1', toolCallId: 'call-1' }),
-    ]);
-    const result = await pruneEvidence(evidence, span(), {
-      classify: async () => ({ answers: { e1: answer } }),
+      classify: async () => ({ answers }),
     }, { trigger: 'manual' });
     expect(result.evidence).toEqual(evidence);
     expect(result.report).toMatchObject({
-      status: 'ran', kept: 1, shortened: 0, dropped: 0,
+      status: 'ran', kept: 1, shortened: 0, dropped: 0, asked: 1,
       decisions: [{ id: 'e1', action: 'keep', reason: 'missing' }],
     });
   });
@@ -163,20 +150,6 @@ describe('Jev evidence prune', () => {
     expect(result.debug.state).toEqual(expect.objectContaining({
       history: expect.any(Array),
       trigger: expect.stringContaining('End-of-turn'),
-    }));
-  });
-
-  it('describes mid-turn overflow using the unfinished current_turn', async () => {
-    const evidence = bundle([
-      item('obs', { kind: 'observation', status: 'observed', text: bulky('old-search'), sourceId: 'hist-1', toolCallId: 'call-1', toolName: 'grep' }),
-      item('prefix', { kind: 'observation', status: 'observed', text: bulky('current-output'), sourceId: 'prefix-1', toolCallId: 'call-2', toolName: 'grep' }),
-    ]);
-    const classify = vi.fn(async (_state: unknown, _questions: Record<string, unknown>) => ({
-      answers: { e1: choice('obsolete', { exact_contents: 0.05, outcome_only: 0.1, obsolete: 0.85 }, 0.8) },
-    }));
-    await pruneEvidence(evidence, span(['prefix-1']), { classify }, { trigger: 'overflow' });
-    expect(classify.mock.calls[0]?.[0]).toEqual(expect.objectContaining({
-      trigger: expect.stringContaining('unfinished task in current_turn'),
     }));
   });
 });

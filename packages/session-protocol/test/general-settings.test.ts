@@ -6,7 +6,8 @@ it('validates execution defaults without accepting client rendering preferences'
     cacheWarming: 'idle', httpIdleTimeoutMs: 0, modelThinkingLevels: { 'offline/model': 'max' } };
   expect(parseSchema(ConfigValuesSchema, defaults)).toEqual(defaults);
   for (const value of [{ autoCompact: 'false' }, { steeringMode: 'none' }, { transport: 'ftp' }, { cacheWarming: 'always' },
-    { httpIdleTimeoutMs: -1 }, { httpIdleTimeoutMs: 1.5 }, { httpIdleTimeoutMs: 2147483648 }, { modelThinkingLevels: { 'p/m': 'unlimited' } }, { mermaid: 'off' }]) {
+    { httpIdleTimeoutMs: -1 }, { httpIdleTimeoutMs: 1.5 }, { httpIdleTimeoutMs: 2147483648 }, { modelThinkingLevels: { 'p/m': 'unlimited' } }, { mermaid: 'off' },
+    { 'codex-fast': true }, { 'powerline-style': 'capsule' }, { hideThinking: true }]) {
     expect(() => parseSchema(ConfigValuesSchema, value)).toThrow();
   }
 });

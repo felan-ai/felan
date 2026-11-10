@@ -1,6 +1,7 @@
 import { uuidv7 } from '@felan-ai/agent-core';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inspect } from 'node:util';
 import { InMemoryCredentialStore, ModelRuntime } from '@felan-ai/agent-core';
@@ -96,7 +97,7 @@ it.each(['drain', 'force'] as const)('%s stop closes the real context command be
 });
 
 it('stops the real daemon on the first force command with an attached context view open', async () => {
-  const root = await mkdtemp(join(process.cwd(), '.context-stop-'));
+  const root = await mkdtemp(join(tmpdir(), 'context-stop-'));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, 'daemon');
   await mkdir(directory, { mode: 0o700 });

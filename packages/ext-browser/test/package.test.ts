@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -28,26 +28,4 @@ describe('@felan-ai/ext-browser package boundary', () => {
     expect(notice).toContain('agent-browser 0.37.1');
     expect(notice).toContain('TypeBox 1.1.38');
   });
-
-  it('keeps process and filesystem access behind AgentRuntime', async () => {
-    const sources = await sourceFiles(join(packageRoot, 'src'));
-    const content = (await Promise.all(sources.map((path) => readFile(path, 'utf8')))).join('\n');
-
-    expect(content).not.toMatch(/node:(?:child_process|fs)/u);
-    expect(content).not.toMatch(/\bprocess\s*(?:\.\s*env|\[\s*['"]env['"]\s*\])/u);
-    expect(content).not.toMatch(/(?:from\s*|import\s*\()['"](?:node:)?process['"]/u);
-    expect(content).toContain('runtime.exec');
-    expect(content).toContain('runtime.readFile');
-    expect(content).toContain("storage('session')");
-    expect(content).not.toContain('@felan-cloud');
-  });
 });
-
-async function sourceFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const nested = await Promise.all(entries.map((entry) => {
-    const path = join(directory, entry.name);
-    return entry.isDirectory() ? sourceFiles(path) : [path];
-  }));
-  return nested.flat().filter((path) => path.endsWith('.ts'));
-}

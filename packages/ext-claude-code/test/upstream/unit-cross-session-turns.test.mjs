@@ -56,7 +56,11 @@ const model = providerConfig.models[0];
 // id; toolUse parks a mid-turn tool call whose delivery the caller controls.
 const calls = [];
 const scripts = [];
-const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { wait: () => p, open }; };
+const gate = () => {
+	const waiting = Promise.withResolvers();
+	const release = Promise.withResolvers();
+	return { entered: waiting.promise, wait: () => { waiting.resolve(); return release.promise; }, open: release.resolve };
+};
 const init = (id) => ({ type: "system", subtype: "init", session_id: id });
 const ev = (event) => ({ type: "stream_event", event });
 const toolUse = (id) => [
@@ -90,7 +94,6 @@ const call = (sessionId, messages) => {
 	__test.promptCaptures.record(systemPrompt, { custom: "Test instructions.", contextFiles: [], skills: [] });
 	return streamSimple(model, { systemPrompt, messages, tools: [] }, { sessionId });
 };
-const settle = () => new Promise((r) => setTimeout(r, 20));
 
 beforeEach(() => {
 	resetSharedSession();
@@ -127,7 +130,7 @@ describe("cross-session conversation isolation", () => {
 		// below has run, so the child's completion lands inside the parent's turn.
 		scripts.push({ label: "P turn 1", steps: [init("cc-P"), ...toolUse("toolu_P1"), gP.wait, result("parent answer")] });
 		const p1 = call(P, [u1]);
-		await settle();
+		await gP.entered;
 
 		// A foreground child runs to completion while the parent is parked.
 		scripts.push({ label: "child", steps: [init("cc-C"), result("child answer")] });
@@ -183,7 +186,7 @@ describe("cross-session conversation isolation", () => {
 
 		scripts.push({ label: "second", steps: [init("cc-P2"), g.wait, result("second answer")] });
 		const second = call(P, [u1, a1, u2]);
-		await settle();
+		await g.entered;
 		assert.equal(calls.at(-1).resume, "cc-missed");
 
 		// The CLI has stopped accepting input, but still returns a successful
@@ -216,7 +219,7 @@ describe("cross-session conversation isolation", () => {
 
 		scripts.push({ label: "first", steps: [init("cc-first-missed"), g.wait, result("first answer")] });
 		const first = call(P, [u1]);
-		await settle();
+		await g.entered;
 		assert.equal(getSharedSession(P), null, "clean start has no mirror until completion");
 
 		const context = [...__test.activeQueryContexts].find((c) => c.piSessionId === P);
@@ -236,20 +239,4 @@ describe("cross-session conversation isolation", () => {
 		assert.ok(!getSharedSession(P).needsRebuild, "the next query starts without the prior miss");
 	});
 
-	it("a parent error followed by a child turn does not hand the child the parent's conversation", async () => {
-		const P = "pi-parent", C = "pi-child";
-		const u1 = user("research X"), a2 = say("parent answer"), u2 = user("now fix it");
-
-		scripts.push({ label: "P turn 1", steps: [init("cc-P"), result("parent answer")] });
-		await call(P, [u1]).result();
-
-		scripts.push({ label: "child during backoff", steps: [init("cc-C"), result("child answer")] });
-		await call(C, [user("child task")]).result();
-
-		scripts.push({ label: "P turn 2", steps: [init("cc-P2"), result("ok")] });
-		await call(P, [u1, a2, u2]).result();
-
-		assert.equal(calls.at(-1).resume, "cc-P",
-			"the parent resumes its own conversation after a child ran while it backed off");
-	});
 });

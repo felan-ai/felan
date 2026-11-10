@@ -8,7 +8,7 @@ import {
   type Model,
   type ToolDefinition,
 } from '@felan-ai/agent-core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   createCodexTools,
 } from '../src/index.js';
@@ -17,7 +17,6 @@ import { ApplyPatchError, applyPatch } from '../src/patch.js';
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
-  vi.restoreAllMocks();
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 

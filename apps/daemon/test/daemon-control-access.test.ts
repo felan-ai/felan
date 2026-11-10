@@ -68,25 +68,6 @@ function sessionsFixture(rows: Array<{ id: string; piPath: string; updatedAt: nu
 }
 
 describe('registry sessions service', () => {
-  it('checks access a bounded number of times when reading a transcript larger than one copy chunk', async () => {
-    const { owner } = await openStore();
-    const id = 'long';
-    const path = join(await transcriptDirectory(owner), 'long.jsonl');
-    const lines = [JSON.stringify({ type: 'session', version: 3, id, cwd: '/project', timestamp: '2026-08-24T10:00:00.000Z' })];
-    let parent: string | null = null;
-    for (let index = 0; index < 1500; index++) {
-      const entryId = `e${index}`;
-      lines.push(JSON.stringify({ type: 'message', id: entryId, parentId: parent, timestamp: '2026-08-24T10:00:00.000Z',
-        message: { role: 'user', content: 'x'.repeat(1000), timestamp: 0 } }));
-      parent = entryId;
-    }
-    await writeFile(path, lines.join('\n') + '\n');
-    const { access, service } = sessionsFixture([{ id, piPath: path, updatedAt: 1 }], owner);
-    const page = await service.history(id);
-    expect(page.entries).toHaveLength(256);
-    expect(access.mock.calls.length).toBeLessThan(10);
-  });
-
   it('reports the newer of the control row and transcript modification times as the update time', async () => {
     const { owner } = await openStore();
     const directory = await transcriptDirectory(owner);

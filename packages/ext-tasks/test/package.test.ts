@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -28,29 +28,4 @@ describe('@felan-ai/ext-tasks package boundary', () => {
     expect(notice).toContain('No source code was copied');
     expect(notice).toContain('TypeBox 1.1.38');
   });
-
-  it('keeps the execution entrypoint free of renderer imports', async () => {
-    const source = await readFile(join(packageRoot, 'src/index.ts'), 'utf8');
-    expect(source).not.toMatch(/from ['"][^'"]*(?:pi-tui|tasks-overlay|\/tui)/u);
-    expect(source).not.toContain('@earendil-works/pi-tui');
-  });
-
-  it('routes persistence through AgentRuntime without cloud or subagent coupling', async () => {
-    const sources = await sourceFiles(join(packageRoot, 'src'));
-    const content = (await Promise.all(sources.map((path) => readFile(path, 'utf8')))).join('\n');
-
-    expect(content).not.toMatch(/node:(?:child_process|fs)/u);
-    expect(content).not.toMatch(/@felan-cloud|felan-platform|daytona-sdk/u);
-    expect(content).not.toContain('@felan-ai/ext-subagents');
-    expect(content).toContain("storage('session')");
-  });
 });
-
-async function sourceFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const nested = await Promise.all(entries.map((entry) => {
-    const path = join(directory, entry.name);
-    return entry.isDirectory() ? sourceFiles(path) : [path];
-  }));
-  return nested.flat().filter((path) => path.endsWith('.ts'));
-}

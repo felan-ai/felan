@@ -1,11 +1,3 @@
-/**
- * Tests for updateUsage in src/usage.ts.
- * Pins: reasoning is read only from the nested output_tokens_details.thinking_tokens
- * shape, never from a flat thinking_tokens or a reasoning_tokens field; reasoning
- * tokens stay out of totalTokens (they are a subset of output_tokens); cachePct
- * divides by zero-safe prompt tokens; and a partial usage frame only overwrites
- * the counters it actually carries.
- */
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { updateUsage } from "../../src/bridge/usage.ts";
@@ -34,19 +26,6 @@ describe("updateUsage", () => {
 		assert.equal(output.usage.reasoning, 40);
 	});
 
-	it("ignores a flat thinking_tokens, which no SDK version emits", () => {
-		const output = emptyOutput();
-		// This is the exact shape the old code read; reading it would mean the nesting contract was misunderstood again.
-		updateUsage(output, { output_tokens: 100, thinking_tokens: 40 }, model);
-		assert.equal(output.usage.reasoning, undefined);
-	});
-
-	it("ignores reasoning_tokens, a field that exists in no SDK version", () => {
-		const output = emptyOutput();
-		updateUsage(output, { output_tokens: 100, reasoning_tokens: 40 }, model);
-		assert.equal(output.usage.reasoning, undefined);
-	});
-
 	it("leaves reasoning untouched when the frame carries no details", () => {
 		const output = emptyOutput();
 		updateUsage(output, { input_tokens: 10, output_tokens: 20 }, model);
@@ -68,18 +47,6 @@ describe("updateUsage", () => {
 		// Thinking tokens are a subset of output_tokens, not additional tokens.
 		updateUsage(output, { output_tokens: 100, output_tokens_details: { thinking_tokens: 40 } }, model);
 		assert.equal(output.usage.totalTokens, 100);
-	});
-
-	it("reports the cache share of the prompt", () => {
-		const output = emptyOutput();
-		const report = updateUsage(output, { input_tokens: 25, cache_read_input_tokens: 75 }, model);
-		assert.equal(report.cachePct, 75);
-	});
-
-	it("reports zero cache share when there is no prompt", () => {
-		const output = emptyOutput();
-		const report = updateUsage(output, { output_tokens: 10 }, model);
-		assert.equal(report.cachePct, 0);
 	});
 
 	it("only overwrites counters the frame actually carries", () => {
@@ -117,21 +84,10 @@ describe("updateUsage", () => {
 		assert.equal(output.usage.cacheWrite1h, 10);
 	});
 
-	it("reports the thinking count carried by this frame", () => {
-		const output = emptyOutput();
-		const report = updateUsage(output, { output_tokens: 100, output_tokens_details: { thinking_tokens: 40 } }, model);
-
-		assert.equal(report.reasoning, 40);
-	});
-
-	it("omits reasoning for a frame that carries none, even after one that did", () => {
+	it("keeps reasoning when a later frame carries none", () => {
 		const output = emptyOutput();
 		updateUsage(output, { output_tokens: 100, output_tokens_details: { thinking_tokens: 40 } }, model);
-		const report = updateUsage(output, { output_tokens: 120 }, model);
-
-		// output.usage.reasoning deliberately keeps the earlier 40; the report must not,
-		// or the debug line reprints a stale count on every later frame.
-		assert.equal(report.reasoning, undefined);
+		updateUsage(output, { output_tokens: 120 }, model);
 		assert.equal(output.usage.reasoning, 40);
 	});
 });

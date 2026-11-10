@@ -3,18 +3,9 @@ import { describe, expect, it } from 'vitest';
 import { inspectBackgroundBashRuntime, supportsBackgroundBashModel } from '../src/index.js';
 
 describe('background bash model policy', () => {
-  it.each([
-    ['openai', true],
-    ['openai-codex', true],
-    ['anthropic', true],
-    ['google', true],
-    ['custom-provider', true],
-  ] as const)('handles %s providers', (provider, expected) => {
-    expect(supportsBackgroundBashModel({ provider } as Model<Api>)).toBe(expected);
-  });
-
-  it('waits for a selected model before activation', () => {
+  it('requires a selected model without restricting its provider', () => {
     expect(supportsBackgroundBashModel(undefined)).toBe(false);
+    expect(supportsBackgroundBashModel({ provider: 'custom-provider' } as Model<Api>)).toBe(true);
   });
 
   it('requires in-process shell support before probing POSIX utilities', async () => {

@@ -1,7 +1,9 @@
 import { createServer } from 'node:http';
 import { OAuthError } from '@modelcontextprotocol/client';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reserveOAuthCallback } from '../src/providers/mcp/callback-server.js';
+
+afterEach(() => { vi.useRealTimers(); });
 
 describe('local MCP OAuth callback server', () => {
   it('binds loopback, validates path and state, and rejects callback replay', async () => {
@@ -41,13 +43,16 @@ describe('local MCP OAuth callback server', () => {
     await expect(aborted.wait()).rejects.toThrow('test abort');
 
     const secondPort = await availablePort();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const timedOut = await reserveOAuthCallback(
       `http://127.0.0.1:${secondPort}/callback`,
       'e'.repeat(43),
       new AbortController().signal,
       10,
     );
-    await expect(timedOut.wait()).rejects.toThrow('timed out');
+    const rejected = expect(timedOut.wait()).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(10);
+    await rejected;
   });
 
   it('rejects non-loopback redirect listeners', async () => {

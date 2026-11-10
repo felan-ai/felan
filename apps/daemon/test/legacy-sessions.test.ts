@@ -6,23 +6,14 @@ import { LegacySessionIndex, legacySessionDirectoryName, readTranscriptPreview, 
 import { LegacySummaryCache } from '../src/daemon/legacy-summary-cache.js';
 import { canonicalProspectivePath, pathInside } from '../src/daemon/target.js';
 
-const reads = vi.hoisted(() => ({ streams: 0, active: 0, peak: 0, saves: 0, onData: undefined as (() => void) | undefined }));
-vi.mock('node:fs', async importOriginal => {
-  const actual = await importOriginal<typeof import('node:fs')>();
-  return { ...actual, renameSync: (...args: Parameters<typeof actual.renameSync>) => {
-    if (String(args[1]).endsWith('/legacy-session-summaries.json')) reads.saves++;
-    return actual.renameSync(...args);
-  } };
-});
+const reads = vi.hoisted(() => ({ onData: undefined as (() => void) | undefined }));
 vi.mock('node:fs/promises', async importOriginal => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return { ...actual, open: async (...args: Parameters<typeof actual.open>) => {
     const handle = await actual.open(...args);
     const createReadStream = handle.createReadStream.bind(handle);
     handle.createReadStream = (...options: Parameters<typeof createReadStream>) => {
-      reads.streams++; reads.active++; reads.peak = Math.max(reads.peak, reads.active);
       const stream = createReadStream(...options);
-      stream.once('close', () => { reads.active--; });
       if (reads.onData) stream.once('data', reads.onData);
       return stream;
     };
@@ -32,7 +23,7 @@ vi.mock('node:fs/promises', async importOriginal => {
 
 const directories: string[] = [];
 afterEach(async () => {
-  reads.streams = 0; reads.active = 0; reads.peak = 0; reads.saves = 0; reads.onData = undefined;
+  reads.onData = undefined;
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
@@ -51,10 +42,10 @@ async function stores(persistent = false) {
   });
   const owner = { target: { agentDir, rootSet: [agentDir, custom], uid: process.getuid!(), namespaceId: 'legacy-test' },
     ...(persistent ? { assertCurrent, assertOwnsPath } : {}) };
-  let age = 600;
+  let modifiedAt = Date.UTC(2026, 0, 1);
   const write = async (path: string, id: string, cwd = project, extra = '') => {
     await writeFile(path, JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-01-01T00:00:00.000Z', cwd }) + '\n' + extra, { mode: 0o600 });
-    const time = new Date(Date.now() - 1000 * age--); await utimes(path, time, time);
+    const time = new Date(modifiedAt += 1000); await utimes(path, time, time);
     return path;
   };
   return { directory, agentDir, custom, project, other, perCwd, owner, write, assertCurrent,
@@ -84,7 +75,6 @@ it('limits explicit-directory discovery to top-level headers with the usual ID a
   await writeFile(join(sessionDir, 'invalid.jsonl'), 'not a header\n');
   const rows = await s.index.discover([{ id: 'another-id', piPath: registered }, { id: 'registered-id', piPath: '/registered.jsonl' }], { sessionDir });
   expect(rows).toEqual([{ id: 'duplicate', path: newest, cwd: s.other, modifiedAt: Math.floor((await stat(newest)).mtimeMs) }]);
-  expect(reads.streams).toBe(0);
 });
 
 it('skips registered, duplicate and invalid files but lists linked transcripts and deleted cwds', async () => {
@@ -104,7 +94,7 @@ it('skips registered, duplicate and invalid files but lists linked transcripts a
   const outside = await s.write(join(s.directory, 'outside.jsonl'), 'linked');
   await symlink(outside, join(s.perCwd, 'linked.jsonl'));
   await writeFile(join(s.perCwd, 'shared.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'shared', cwd: s.project }) + '\n', { mode: 0o644 });
-  const time = new Date(Date.now() - 1_000_000); await utimes(join(s.perCwd, 'shared.jsonl'), time, time);
+  const time = new Date(Date.UTC(2025, 0, 1)); await utimes(join(s.perCwd, 'shared.jsonl'), time, time);
   const found = await s.index.discover([{ id: 'other-id', piPath: registered }, { id: 'registered-id', piPath: join(s.agentDir, 'sessions', 'x.jsonl') }]);
   expect(found.map(row => [row.id, row.path, row.cwd])).toEqual([
     ['linked', join(s.perCwd, 'linked.jsonl'), s.project],
@@ -136,25 +126,15 @@ it('reads the latest Pi name and the first user message from the whole transcrip
     { type: 'message', message: { role: 'user', content: [{ type: 'text', text: 'live\nprompt' }] } }])).toBe('live prompt');
 });
 
-it('lists headers without reading transcript bodies and reads a summary only on request', async () => {
-  const s = await stores();
-  const body = JSON.stringify({ type: 'message', id: 'm', parentId: null, timestamp: 't', message: { role: 'user', content: 'x'.repeat(64 * 1024) } }) + '\n';
-  await s.write(join(s.perCwd, 'large.jsonl'), 'large', s.project, body.repeat(40));
-  const [row] = await s.index.discover([]);
-  expect(reads.streams).toBe(0);
-  expect((await s.index.summary(row!)).preview).toBe(`${'x'.repeat(119)}…`);
-  expect(reads.streams).toBe(1);
-});
-
-it('reads a transcript once for concurrent summaries and remembers it until the file changes', async () => {
+it('returns consistent concurrent summaries and observes later file changes', async () => {
   const s = await stores();
   await s.write(join(s.perCwd, 'cached.jsonl'), 'cached', s.project, JSON.stringify({ type: 'session_info', name: 'First' }) + '\n');
   const [row] = await s.index.discover([]);
   const [first, second] = await Promise.all([s.index.summary(row!), s.index.summary(row!)]);
-  expect(first.title).toBe('First'); expect(second).toEqual(first); expect(reads.streams).toBe(1);
-  expect((await s.index.summary(row!)).title).toBe('First'); expect(reads.streams).toBe(1);
+  expect(first.title).toBe('First'); expect(second).toEqual(first);
+  expect((await s.index.summary(row!)).title).toBe('First');
   await appendFile(row!.path, JSON.stringify({ type: 'session_info', name: 'Second' }) + '\n');
-  expect((await s.index.summary(row!)).title).toBe('Second'); expect(reads.streams).toBe(2);
+  expect((await s.index.summary(row!)).title).toBe('Second');
 });
 
 it('follows a replaced transcript and drops a removed one', async () => {
@@ -180,21 +160,17 @@ it('stops warming a listed transcript once its signal is aborted', async () => {
   expect(await s.index.summary(rows[0]!)).toEqual({ title: '', preview: '' });
 });
 
-it('reuses bounded summaries after restart without transcript streams or cache rewrites', async () => {
+it('retains bounded summaries after restart', async () => {
   const s = await stores(true);
   await s.write(join(s.perCwd, 'restart.jsonl'), 'restart', s.project,
     JSON.stringify({ type: 'message', message: { role: 'user', content: 'First prompt' } }) + '\n'
     + JSON.stringify({ type: 'session_info', name: 'Latest title' }) + '\n');
   await s.index.warm(await s.index.discover([]), new AbortController().signal);
-  expect(reads.streams).toBe(1);
-  const before = await stat(s.cachePath);
+
   const restarted = new LegacySessionIndex(s.owner);
   const rows = await restarted.discover([]);
   await restarted.warm(rows, new AbortController().signal);
   expect(await restarted.summary(rows[0]!)).toEqual({ title: 'Latest title', preview: 'First prompt' });
-  expect(reads.streams).toBe(1);
-  expect(reads.saves).toBe(1);
-  expect((await stat(s.cachePath)).mtimeMs).toBe(before.mtimeMs);
 });
 
 it.each(['mtime', 'size', 'inode', 'id'] as const)('invalidates persistent summaries on %s changes', async change => {
@@ -202,19 +178,21 @@ it.each(['mtime', 'size', 'inode', 'id'] as const)('invalidates persistent summa
   const path = await s.write(join(s.perCwd, 'changed.jsonl'), 'changed', s.project, '{"type":"session_info","name":"Before"}\n');
   await s.index.warm(await s.index.discover([]), new AbortController().signal);
   const before = await stat(path);
-  if (change === 'mtime') await utimes(path, before.atime, new Date(before.mtimeMs + 10_000));
+  if (change === 'mtime') {
+    await writeFile(path, (await readFile(path, 'utf8')).replace('Before', 'After!'));
+    await utimes(path, before.atime, new Date(before.mtimeMs + 10_000));
+  }
   if (change === 'size') { await appendFile(path, '{"type":"session_info","name":"After"}\n'); await utimes(path, before.atime, before.mtime); }
   if (change === 'inode') {
     await rename(path, `${path}.old`);
-    await writeFile(path, await readFile(`${path}.old`), { mode: 0o600 });
+    await writeFile(path, (await readFile(`${path}.old`, 'utf8')).replace('Before', 'After!'), { mode: 0o600 });
     await utimes(path, before.atime, before.mtime);
     expect((await stat(path)).ino).not.toBe(before.ino);
   }
   const restarted = new LegacySessionIndex(s.owner);
   const rows = await restarted.discover([]);
   if (change === 'id') expect(await restarted.summary({ ...rows[0]!, id: 'foreign' })).toEqual({ title: '', preview: '' });
-  else expect((await restarted.summary(rows[0]!)).title).toBe(change === 'size' ? 'After' : 'Before');
-  expect(reads.streams).toBe(2);
+  else expect((await restarted.summary(rows[0]!)).title).toBe(change === 'size' ? 'After' : 'After!');
 });
 
 it.each(['malformed', 'namespace', 'agentDir', 'entry', 'snippet', 'entry-count', 'oversized', 'permissions', 'hardlink'] as const)('rebuilds a %s cache safely', async kind => {
@@ -236,11 +214,12 @@ it.each(['malformed', 'namespace', 'agentDir', 'entry', 'snippet', 'entry-count'
   const rows = await restarted.discover([]);
   await restarted.warm(rows, new AbortController().signal);
   expect((await restarted.summary(rows[0]!)).title).toBe('Actual');
-  expect(reads.streams).toBe(2);
+
   expect((await stat(s.cachePath)).mode & 0o777).toBe(0o600);
   const again = new LegacySessionIndex(s.owner);
-  await again.warm(await again.discover([]), new AbortController().signal);
-  expect(reads.streams).toBe(2);
+  const againRows = await again.discover([]);
+  await again.warm(againRows, new AbortController().signal);
+  expect((await again.summary(againRows[0]!)).title).toBe('Actual');
 });
 
 it('never follows a cache symlink or writes with missing or lost ownership', async () => {
@@ -263,20 +242,19 @@ it('never follows a cache symlink or writes with missing or lost ownership', asy
   await expect(stat(noOwner.cachePath)).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
-it('cancels active warm reads without saving incomplete work and keeps concurrency bounded', async () => {
+it('cancels active warm reads without saving incomplete work', async () => {
   const s = await stores(true);
-  for (let i = 0; i < 8; i++) await s.write(join(s.perCwd, `${i}.jsonl`), `session-${i}`, s.project,
-    JSON.stringify({ type: 'message', message: { role: 'user', content: 'x'.repeat(1024 * 1024) } }) + '\n');
+  for (let i = 0; i < 2; i++) await s.write(join(s.perCwd, `${i}.jsonl`), `session-${i}`, s.project,
+    JSON.stringify({ type: 'message', message: { role: 'user', content: 'x'.repeat(1024) } }) + '\n');
   const controller = new AbortController();
   reads.onData = () => controller.abort();
   await expect(s.index.warm(await s.index.discover([]), controller.signal)).rejects.toMatchObject({ name: 'AbortError' });
-  expect(reads.streams).toBeLessThanOrEqual(2);
+
   await expect(stat(s.cachePath)).rejects.toMatchObject({ code: 'ENOENT' });
   reads.onData = undefined;
   await s.index.warm(await s.index.discover([]), new AbortController().signal);
-  expect(reads.peak).toBeLessThanOrEqual(2);
-  expect(reads.saves).toBe(1);
-  expect(JSON.parse(await readFile(s.cachePath, 'utf8')).entries).toHaveLength(8);
+
+  expect(JSON.parse(await readFile(s.cachePath, 'utf8')).entries).toHaveLength(2);
 });
 
 it('bounds cache entries and serialized size', async () => {

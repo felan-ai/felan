@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import type { SessionEntry } from '@felan-ai/agent-core';
+import type { AgentRuntimeProcess, SessionEntry } from '@felan-ai/agent-core';
 import { convertToLlm } from '@earendil-works/pi-coding-agent';
 import { MESSAGE_DISPLAY_ID, type ClientEnvelope } from '@felan-ai/session-protocol';
 import { SessionCommands } from '../src/daemon/commands.js';
@@ -7,7 +7,7 @@ import type { AdmittedCommand } from '../src/daemon/admission.js';
 import type { HostConfiguration } from '../src/daemon/host-services.js';
 import { projectPiMessage } from '../src/daemon/projection.js';
 import { assistant, fixture, fixtures, requestId, supported } from './fixtures/registry.js';
-import { serverFixture } from './fixtures/server.js';
+import { gate, serverFixture } from './fixtures/server.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
@@ -33,8 +33,22 @@ it.skipIf(!supported)('recovers live metadata after an incomplete initial assist
 });
 
 it.skipIf(!supported).each([false, true])('streams shell output and retains a single result (includeInContext=%s)', async includeInContext => {
-  const f = await serverFixture(); fixtures.push(() => f.dispose());
-  const session = f.root.sessionId; const command = 'printf first; sleep 0.2; printf last; exit 7';
+  const f = await serverFixture();
+  const session = f.root.sessionId; const command = 'synthetic shell';
+  const finished = gate(); let running = true;
+  const finish = () => { running = false; finished.resolve(); };
+  const process: AgentRuntimeProcess = { pid: undefined,
+    read: async (offset, options) => {
+      if (offset >= 5 && running && options?.waitMs) await finished.promise;
+      const data = new TextEncoder().encode(running ? 'first' : 'firstlast');
+      const output = data.slice(offset, offset + (options?.maxBytes ?? data.length));
+      return { output, nextOffset: offset + output.length, running, ...(running ? {} : { exitCode: 7 }) };
+    },
+    write: async () => {}, terminate: async () => finish(), dispose: async () => {},
+  };
+  f.registry.processes.wrap({ ...f.root.agentRuntime, processes: { startShell: async () => process } },
+    { session, root: f.root.rootSessionId });
+  fixtures.push(async () => { finish(); await f.dispose(); });
   const request: ClientEnvelope = { v: 1, id: requestId(), op: 'shell.execute', session, params: { command, includeInContext } };
   f.store.admit(request, 'owner');
   const dispatcher = new SessionCommands({ registry: f.registry, configuration: {} as HostConfiguration,
@@ -45,6 +59,7 @@ it.skipIf(!supported).each([false, true])('streams shell output and retains a si
   await vi.waitFor(() => expect(projection.snapshot().presentation).toContainEqual(expect.objectContaining({ kind: 'document',
     hint: { id: 'shell.execution', version: '1.0.0' }, markdown: `\`\`\`\n$ ${command}\nfirst\n\`\`\``,
     data: { commandLength: command.length, excludeFromContext: !includeInContext } })), { interval: 10 });
+  finish();
   await vi.waitFor(() => expect(projection.snapshot().history.entries.filter(item => item.customType === 'bashExecution')).toHaveLength(1));
   const final = projection.snapshot();
   expect(final.presentation.some(item => item.kind === 'document' && item.hint?.id === 'shell.execution')).toBe(false);

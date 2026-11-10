@@ -82,8 +82,8 @@ describe('shared local memory coordinator', () => {
     expect(changed).toHaveBeenCalledOnce();
     expect(await second.status(f.cwd)).toMatchObject({ pendingCheckpoints: 1, state: 'idle' });
     await f.record(first, 4);
-    await vi.waitFor(() => expect(dreamRunner).toHaveBeenCalledOnce(), { interval: 10 });
     await entered.promise;
+    expect(dreamRunner).toHaveBeenCalledOnce();
     expect(interval).not.toHaveBeenCalled();
     expect(await second.status(f.cwd)).toMatchObject({ pendingCheckpoints: 1, state: 'processing' });
     gate.resolve();
@@ -373,7 +373,7 @@ describe('shared local memory coordinator', () => {
       expect(dreamRunner).toHaveBeenCalledTimes(2);
       expect(attachment.busy()).toBe(false);
       expect(await attachment.status(f.cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
-    }, { interval: 10 });
+    }, { interval: 10, timeout: 10_000 });
 
     failNextLeaseRelease(new Error('Unexpected automatic cleanup failure'));
     await f.record(attachment, 5);
@@ -381,13 +381,13 @@ describe('shared local memory coordinator', () => {
       expect(dreamRunner).toHaveBeenCalledTimes(3);
       expect(attachment.busy()).toBe(false);
       expect(await attachment.status(f.cwd)).toMatchObject({ state: 'error', message: 'Unexpected automatic cleanup failure' });
-    }, { interval: 10 });
+    }, { interval: 10, timeout: 10_000 });
     await f.record(attachment, 5);
     expect(await attachment.status(f.cwd)).toMatchObject({ state: 'error', pendingCheckpoints: 1 });
     expect(dreamRunner).toHaveBeenCalledTimes(3);
     await expect(attachment.runNow(f.cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
     expect(dreamRunner).toHaveBeenCalledTimes(4);
-  });
+  }, 30_000);
 
   it('drains an in-flight run that rejects during lease cleanup', async () => {
     const entered = deferred();
@@ -504,20 +504,18 @@ describe('shared local memory coordinator', () => {
     const lease = await f.backend.acquireLocalMemoryLease(f.store.projectDirectory);
     expect(lease).toBeDefined();
     cleanups.push(async () => { await lease?.release(); });
-    const timers = vi.spyOn(globalThis, 'setTimeout');
     await f.record(attachment, 5);
-    await vi.waitFor(() => expect(timers.mock.calls.some(([, delay]) => delay === 75)).toBe(true), { interval: 10 });
-    expect(await attachment.status(f.cwd)).toMatchObject({ state: 'blocked', pendingCheckpoints: 1,
+    await expect.poll(() => attachment.status(f.cwd), { timeout: 10_000 }).toMatchObject({ state: 'blocked', pendingCheckpoints: 1,
       message: 'Another Felan Code process owns the memory writer' });
     expect(dreamRunner).not.toHaveBeenCalled();
 
     await lease!.release();
-    await vi.waitFor(() => expect(dreamRunner).toHaveBeenCalledOnce(), { interval: 10 });
     await entered.promise;
+    expect(dreamRunner).toHaveBeenCalledOnce();
     gate.resolve();
     await f.coordinator.drain();
     expect(await attachment.status(f.cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0, consecutiveFailures: 0 });
-  });
+  }, 30_000);
 
   it('removes only the detached attachment listeners and keeps surviving attachments usable', async () => {
     const f = await fixture();

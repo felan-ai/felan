@@ -747,7 +747,12 @@ describe('Agent Core session composition', () => {
     const cwd = join(root, 'workspace');
     const agentDir = join(root, 'agent-dir');
     await mkdir(cwd, { recursive: true });
-    const classify = vi.fn<Classifier['classify']>(async () => ({ answers: {} }));
+    let notifyClassificationStarted!: () => void;
+    const classificationStarted = new Promise<void>(resolve => { notifyClassificationStarted = resolve; });
+    const classify = vi.fn<Classifier['classify']>(async () => {
+      notifyClassificationStarted();
+      return { answers: {} };
+    });
     const prepare = vi.fn(() => ({ questions: {
       needed: { type: 'bool' as const, instructions: 'Is work needed?', criteria: { true: 'yes', false: 'no' } },
     } }));
@@ -771,7 +776,8 @@ describe('Agent Core session composition', () => {
       expect(classify).not.toHaveBeenCalled();
 
       await result.session.extensionRunner.emitBeforeAgentStart({ messageType: 'user', prompt: 'Fix the build' }, { cwd });
-      await vi.waitFor(() => expect(classify).toHaveBeenCalledOnce());
+      await classificationStarted;
+      expect(classify).toHaveBeenCalledOnce();
       expect(prepare).toHaveBeenCalledOnce();
       expect(classify.mock.calls[0]?.[0]).toMatchObject({ request: 'Fix the build', image_count: 0 });
     } finally {

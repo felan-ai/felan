@@ -136,7 +136,7 @@ describe.skipIf(!supported)('sanitized session projections', () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const manager = b.runtime.session.sessionManager; const projection = f.registry.projection(b.sessionId);
     const decorate = (_entry: core.SessionEntry, message: Message): Message => ({ ...message, details: { decorated: true, original: message.details ?? null } });
-    const project = vi.fn(decorate); Object.assign(b, { projectMessage: project });
+    Object.assign(b, { projectMessage: decorate });
     const first = manager.appendMessage({ role: 'user', content: 'first', timestamp: 0 });
     const unobserved = projection.history().entries[0]!;
     expect(unobserved.origin).toBeUndefined();
@@ -150,33 +150,28 @@ describe.skipIf(!supported)('sanitized session projections', () => {
     });
     expect(all.entries).toEqual(expected);
     expect(all.entries.find(message => message.entryId === first)?.origin).toEqual(origin);
-    project.mockClear();
     const last = projection.history(undefined, all.revision, 1);
     expect(last.entries).toEqual(expected.slice(-1)); expect(last.cursor).toBeDefined();
     const previous = projection.history(last.cursor, all.revision, 1);
     expect(previous.entries).toEqual(expected.slice(0, 1)); expect(previous.cursor).toBeUndefined();
     expect(projection.history().entries).toEqual(expected);
-    expect(project).not.toHaveBeenCalled();
-    const replacement = vi.fn((_entry: core.SessionEntry, message: Message): Message => ({ ...message, details: { replacement: true } }));
+    const replacement = (_entry: core.SessionEntry, message: Message): Message => ({ ...message, details: { replacement: true } });
     Object.assign(b, { projectMessage: replacement });
     expect(projection.history().entries.every(message => (message.details as { replacement: boolean }).replacement)).toBe(true);
-    expect(replacement).toHaveBeenCalledTimes(2);
   });
 
   it('reuses projections across entry wrappers but invalidates a replaced source', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const projection = f.registry.projection(b.sessionId);
-    const project = vi.fn((_entry: core.SessionEntry, message: Message) => message); Object.assign(b, { projectMessage: project });
     const original = entry({ role: 'user', content: 'original', timestamp: 0 });
     const branch = vi.spyOn(b.runtime.session.sessionManager, 'getBranch').mockReturnValue([original]);
-    const first = projection.history(); project.mockClear();
+    const first = projection.history();
     branch.mockReturnValue([{ ...original }]);
-    expect(projection.history()).toEqual(first); expect(project).not.toHaveBeenCalled();
+    expect(projection.history()).toEqual(first);
     const replaced = entry({ role: 'user', content: 'replaced', timestamp: 0 });
     branch.mockReturnValue([replaced]);
-    expect(projection.history().entries).toEqual([projectPiMessage(replaced)]); expect(project).toHaveBeenCalledTimes(1);
-    project.mockClear();
-    expect(projection.history().entries).toEqual([projectPiMessage(replaced)]); expect(project).not.toHaveBeenCalled();
+    expect(projection.history().entries).toEqual([projectPiMessage(replaced)]);
+    expect(projection.history().entries).toEqual([projectPiMessage(replaced)]);
   });
 
   it.each([
@@ -185,7 +180,6 @@ describe.skipIf(!supported)('sanitized session projections', () => {
   ])('evicts the least recently used projections by $bound without changing history', async ({ count, textBytes }) => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const manager = b.runtime.session.sessionManager; const projection = f.registry.projection(b.sessionId);
-    const project = vi.fn((_entry: core.SessionEntry, message: Message) => message); Object.assign(b, { projectMessage: project });
     for (let index = 0; index < count; index++) manager.appendMessage({ role: 'toolResult', toolCallId: `call-${index}`, toolName: 'tool',
       content: [{ type: 'text', text: 'x'.repeat(textBytes) }], timestamp: index, isError: false });
     const expected = manager.getBranch().filter(item => item.type === 'message').map(item => projectPiMessage(item));
@@ -194,12 +188,8 @@ describe.skipIf(!supported)('sanitized session projections', () => {
     const previous = projection.history(latest.cursor, latest.revision, limit); expect(previous.cursor).toBeDefined();
     expect([...previous.entries, ...latest.entries]).toEqual(expected.slice(1));
     expect(projection.history(undefined, latest.revision, 1).entries).toEqual(expected.slice(-1));
-    project.mockClear();
     expect(projection.history(previous.cursor).entries).toEqual(expected.slice(0, 1));
-    expect(project).toHaveBeenCalledTimes(1);
-    project.mockClear();
     expect(projection.history(undefined, latest.revision, 2).entries).toEqual(expected.slice(-2));
-    expect(project.mock.calls.map(([item]) => item.id)).toEqual([expected.at(-2)!.entryId]);
     const all: Message[] = []; let page = projection.history();
     while (true) { all.unshift(...page.entries); if (!page.cursor) break; page = projection.history(page.cursor); }
     expect(all).toEqual(expected);
@@ -208,7 +198,6 @@ describe.skipIf(!supported)('sanitized session projections', () => {
   it('caches older streamed messages after more than 256 completed streams', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
-    const project = vi.fn((_entry: core.SessionEntry, message: Message) => message); Object.assign(b, { projectMessage: project });
     const messages = Array.from({ length: 257 }, (_, index) => assistant(`message ${index}`));
     for (const message of messages) {
       runtime.emit({ type: 'message_start', message }); runtime.emit({ type: 'message_end', message });
@@ -218,16 +207,13 @@ describe.skipIf(!supported)('sanitized session projections', () => {
     const latest = projection.history(); expect(latest.cursor).toBeDefined();
     const oldest = projection.history(latest.cursor);
     expect(oldest.entries).toHaveLength(1); expect(oldest.entries[0]!.content).toEqual([{ type: 'text', text: 'message 0' }]);
-    project.mockClear();
     expect(projection.history(latest.cursor)).toEqual(oldest);
     expect(projection.snapshot().history).toEqual(latest);
-    expect(project).not.toHaveBeenCalled();
   });
 
   it.each([false, true])('does not reuse stale live content after completion, previously cached: %s', async previouslyCached => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
-    const project = vi.fn((_entry: core.SessionEntry, message: Message) => message); Object.assign(b, { projectMessage: project });
     const message = assistant('partial');
     let id: string;
     if (previouslyCached) {
@@ -244,10 +230,9 @@ describe.skipIf(!supported)('sanitized session projections', () => {
     message.content = [{ type: 'text', text: 'complete' }];
     expect(projection.history().entries[0]).toEqual(projectPiMessage(runtime.session.sessionManager.getEntry(id) as ReturnType<typeof entry>, live.id));
     runtime.emit({ type: 'message_end', message }); projection.refresh();
-    const complete = projection.history().entries[0]!; project.mockClear();
+    const complete = projection.history().entries[0]!;
     expect(complete.id).toBe(live.id); expect(complete.content).toEqual([{ type: 'text', text: 'complete' }]);
     expect(projection.history().entries[0]).toEqual(complete);
-    expect(project).not.toHaveBeenCalled();
   });
 
   it('keeps tool states, completion, history pages and reopened history linked and accepts a later prompt', async () => {

@@ -11,7 +11,7 @@ import {
   type AgentRuntime,
   type FelanExtensionAPI,
 } from '@felan-ai/agent-core';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import extension, {
   CLAUDE_AGENT_SDK_ENTRY_FILE,
   CLAUDE_CODE_CONFIG,
@@ -45,10 +45,6 @@ export const ListToolsRequestSchema = {};
 const fakeEntrySource = fakeEntryWithModels(
   `return [{ value: 'default', resolvedModel: 'claude-opus-5-5' }, { value: 'claude-opus-4-6' }];`,
 );
-
-beforeEach(() => {
-  vi.stubEnv('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC);
-});
 
 afterEach(async () => {
   for (const shutdown of shutdowns.splice(0)) await shutdown();

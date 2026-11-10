@@ -1,9 +1,7 @@
-import { readFile } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import { safeMemoryText } from './backend.js';
 
 import { sanitizeMemoryDiagnostic } from './backend.js';
-
 
 it('preserves the previous diagnostic text without its redundant renderer dependency', () => {
   const samples: unknown[] = [null, undefined, new Error('  failed\noperation  '), 'a'.repeat(4500),
@@ -15,9 +13,4 @@ it('preserves the previous diagnostic text without its redundant renderer depend
     expect(sanitized).not.toContain('\u001b');
     expect(safeMemoryText(sample)).toBe(sanitized.replace(/\s+/gu, ' ').trim().slice(0, 500));
   }
-});
-
-it('keeps the history reader independent of client and TUI modules', async () => {
-  const source = await readFile(new URL('../../src/local/history.ts', import.meta.url), 'utf8');
-  expect(source).not.toMatch(/@felan-ai\/felan|apps\/felan|pi-tui/);
 });

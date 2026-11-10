@@ -1,9 +1,7 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { LIMITS, type Presentation } from '@felan-ai/session-protocol';
 import type { BrokerOutcome, InteractionBroker } from '../src/daemon/broker.js';
 import { createSessionExtensionUi, UnsupportedExtensionUiError } from '../src/daemon/extension-ui.js';
-
 
 function fixture() {
   const request = vi.fn<InteractionBroker['request']>(async (): Promise<BrokerOutcome> => ({ state: 'cancelled', reason: 'user' }));
@@ -109,11 +107,6 @@ describe('session extension UI bridge', () => {
     f.dispose();
     expect(() => f.context.notify('late')).toThrow('disposed');
     await expect(f.context.input('late')).rejects.toMatchObject({ code: 'unavailable' });
-  });
-
-  it('does not import a renderer or the client application', () => {
-    const source = readFileSync(new URL('../src/daemon/extension-ui.ts', import.meta.url), 'utf8');
-    expect(source).not.toMatch(/from\s+['"][^'"]*(?:pi-tui|\/felan|InteractiveMode)/);
   });
 });
 

@@ -240,9 +240,11 @@ describe.skipIf(!supported)('registry sessions history', () => {
       f.registry.projection(binding.sessionId).refresh();
       expect(f.registry.binding(binding.sessionId)).toBe(binding);
     }
+    await f.registry.settleWriters();
     const service = createHostSessionsHistory(f.registry, { kind: 'all' });
     const first = await service.list({ scope: 'visible' });
     for (const binding of [root, child]) {
+      await f.registry.settleWriters();
       const stored = f.store.sessionMetadata(binding.sessionId);
       const previous = first.items.find(row => row.id === binding.sessionId)!;
       // Projection refreshes commit message entries; custom entries grow the transcript without a registry commit.

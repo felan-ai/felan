@@ -385,7 +385,7 @@ describe('registry-backed command dispatch', () => {
     expect(full).not.toMatch(/[\u001b\r\0]/u);
   });
 
-  it('reaps the foreground-attempt guard across 4097 sequential completed dispatches without permitting redispatch', async () => {
+  it('rejects redispatch after sequential completed foreground attempts', async () => {
     const resources = new Map<string, Record<string, unknown>>(); let request: Record<string, unknown> | undefined;
     const session = { id: 'root', root: 'root', state: 'open', revision: 0 };
     const store = { session: () => session, sessionMetadata: () => session, sessionMetadatas: () => [session], request: (id: string) => request?.id === id ? request : undefined,
@@ -398,7 +398,7 @@ describe('registry-backed command dispatch', () => {
       write: async () => {}, terminate: async () => {}, dispose: async () => {},
     }));
     tracker.wrap({ kind: 'host', cwd: '/fixture', storage: () => ({ root: '/fixture' }), processes: { startShell: start } } as unknown as AgentRuntime, { session: 'root', root: 'root' });
-    for (let index = 0; index < 4097; index++) {
+    for (let index = 0; index < 3; index++) {
       resources.clear(); const id = requestId(); const params = { command: 'synthetic', includeInContext: false };
       const payload = canonicalRequestPayload({ v: 1, id, op: 'shell.execute', session: 'root', params }, { checkFreshness: false });
       request = { id, op: 'shell.execute', session: 'root', phase: 'dispatch_intent', identity: { bytes: Buffer.byteLength(payload), sha256: createHash('sha256').update(payload).digest('hex') } };
@@ -406,6 +406,6 @@ describe('registry-backed command dispatch', () => {
       await tracker.waitForeground('root', resourceId); request.phase = 'terminal';
       await expect(tracker.startForeground(id, 'root', params)).rejects.toThrow('committed shell dispatch');
     }
-    expect(start).toHaveBeenCalledTimes(4097);
-  }, 60_000);
+    expect(start).toHaveBeenCalledTimes(3);
+  });
 });

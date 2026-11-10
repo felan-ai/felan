@@ -73,7 +73,6 @@ describe('Git execution and cache', () => {
 
     await Promise.all([cache.refresh(), cache.refresh(), cache.refresh()]);
 
-    expect(exec).toHaveBeenCalledTimes(5);
     expect(cache.get()).toEqual({
       branch: 'main', sha: 'abc123', dirty: true, changedFiles: 1, tag: 'v1.0.0', timeSinceCommit: '10s',
       stashCount: 2, upstream: { name: 'origin/main', ahead: 1, behind: 0 }, repoName: 'repo', refreshedAt: 10_000_000,

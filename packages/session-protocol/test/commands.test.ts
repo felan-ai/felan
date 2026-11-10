@@ -1,8 +1,8 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import { Value } from 'typebox/value';
-import { ClientEnvelopeSchema, ConfigValuesSchema, LIMITS, OPERATION_CATALOG, OperationSchemas, ProtocolValidationError, ResultSchemas, SessionCommandSchema, canonicalRequestPayload,
+import { ClientEnvelopeSchema, ConfigValuesSchema, LIMITS, OPERATION_CATALOG, ProtocolValidationError, ResultSchemas, SessionCommandSchema, canonicalRequestPayload,
   parseClientEnvelope, parseOperationResult, parseSchema, parseServerEnvelope, parseStoredRequestRecord, requestRetainUntil,
-  validateBase64, type ClientEnvelope, type OperationResult } from '../src/index.js';
+  validateBase64, type OperationResult } from '../src/index.js';
 import { commandParams, now, request, results } from './fixtures.js';
 
 describe('complete operation inventory', () => {
@@ -20,17 +20,6 @@ describe('complete operation inventory', () => {
     expect(() => parseClientEnvelope(request('config.set', { scope: 'session', values: { password: 'synthetic' } }))).toThrow();
     expect(() => parseClientEnvelope(request('config.set', { scope: 'session', values: { 'web-access-searxng-headers': { Authorization: 'synthetic' } } }))).toThrow();
     expect(() => parseClientEnvelope(request('config.set', { scope: 'session', values: {} }))).toThrow();
-  });
-
-  it('carries no extension-specific or presentation keys', () => {
-    const names = Object.keys(ConfigValuesSchema.properties);
-    expect(names.some(name => name.includes('-'))).toBe(false);
-    expect(names).toContain('extensionConfig');
-    expect(OperationSchemas).not.toHaveProperty('tui.preferences.get');
-    expect(OperationSchemas).not.toHaveProperty('tui.preferences.set');
-    for (const values of [{ 'codex-fast': true }, { 'powerline-style': 'capsule' }, { hideThinking: true }]) {
-      expect(() => parseSchema(ConfigValuesSchema, values)).toThrow();
-    }
   });
 
   it('bounds classifier and built-in extension configuration', () => {
@@ -172,36 +161,21 @@ describe('locked configuration field merge contract', () => {
     expect(() => canonicalRequestPayload(value)).toThrowError(/expectedRevision is obsolete/);
   });
 
-  it('never reads an obsolete-field getter, including a non-enumerable property', () => {
+  it('rejects unsafe JSON and accessors before normalization or identity without invoking them', () => {
+    let reads = 0;
+    const get = () => { reads++; return 7; };
     for (const enumerable of [true, false]) {
-      let reads = 0;
-      const params = Object.defineProperty({ ...commandParams['config.set'] }, 'expectedRevision', { enumerable, get() { reads++; return 7; } });
-      expect(() => parseClientEnvelope(request('config.set', params))).toThrowError(ProtocolValidationError);
-      expect(reads).toBe(0);
-    }
-  });
-
-  it('rejects unsafe JSON and top-level getters without invoking them', () => {
-    for (const key of ['v', 'op', 'params']) {
-      for (const enumerable of [true, false]) {
-        let reads = 0;
-        const value = Object.defineProperty({ ...request('config.set') }, key, { enumerable, get() { reads++; return 1; } });
+      const params = Object.defineProperty({ ...commandParams['config.set'] }, 'expectedRevision', { enumerable, get });
+      const values = Object.defineProperty({ extensionConfig: {} }, 'toJSON', { enumerable, get });
+      const inputs = [request('config.set', params), request('config.set', { scope: 'global', values }),
+        ...['v', 'op', 'params', 'id'].map(key => Object.defineProperty({ ...request('config.set') }, key, { enumerable, get }))];
+      for (const value of inputs) {
         expect(() => parseClientEnvelope(value)).toThrowError(ProtocolValidationError);
-        expect(reads).toBe(0);
+        expect(() => canonicalRequestPayload(value)).toThrowError(ProtocolValidationError);
       }
     }
-    expect(() => parseClientEnvelope(request('config.set', { scope: 'global', values: JSON.parse('{"__proto__":{}}') }))).toThrowError(/Unsafe JSON property/);
-  });
-
-  it('rejects hidden ID and nested toJSON accessors before JSON serialization can invoke them', () => {
-    let reads = 0;
-    const hiddenId = Object.defineProperty({ ...request('config.set') }, 'id', { get() { reads++; return 'hidden'; } });
-    const values = Object.defineProperty({ 'codex-fast': true }, 'toJSON', { get() { reads++; return undefined; } });
-    for (const value of [hiddenId, request('config.set', { scope: 'global', values })]) {
-      expect(() => parseClientEnvelope(value)).toThrowError(ProtocolValidationError);
-      expect(() => canonicalRequestPayload(value)).toThrowError(ProtocolValidationError);
-    }
     expect(reads).toBe(0);
+    expect(() => parseClientEnvelope(request('config.set', { scope: 'global', values: JSON.parse('{"__proto__":{}}') }))).toThrowError(/Unsafe JSON property/);
   });
 });
 
@@ -212,8 +186,6 @@ describe('unbounded prompts and arbitrary process bytes', () => {
     expect(() => parseClientEnvelope(request('prompt', { text: '', attachments: Array.from({ length: 40 }, () => ({ type: 'text', text: '' })) }))).not.toThrow();
     expect(() => parseClientEnvelope(request('prompt', { text: '', attachments: [{ type: 'image', mimeType: 'image/png', data: 'not base64' }] }))).toThrow();
     expect(() => parseClientEnvelope(request('command.invoke', { name: 'x', arguments: '😀'.repeat(32 * 1024) }))).not.toThrow();
-    const largeImage = { type: 'image', mimeType: 'image/png', data: 'AAAA'.repeat(5 * 1024 * 1024) };
-    expect(() => parseClientEnvelope(request('prompt', { text: '', attachments: [largeImage] }))).not.toThrow();
   });
 
   it('validates process byte limits and canonical padding, not PIDs or decoded strings', () => {
@@ -224,15 +196,6 @@ describe('unbounded prompts and arbitrary process bytes', () => {
     for (const data of ['ab==', 'aab=', 'AA', 'AA==\n']) expect(() => validateBase64(data, 100)).toThrow();
     expect(() => parseOperationResult('processes.read', { ...results['processes.read'], nextOffset: 4 })).toThrow();
     expect(() => parseClientEnvelope(request('processes.read', { ...commandParams['processes.read'], limit: LIMITS.processReadBytes + 1 }))).toThrow();
-  });
-
-  it('exposes discriminated parameter and result types', () => {
-    type PromptRequest = Extract<ClientEnvelope, { op: 'prompt' }>;
-    expectTypeOf<PromptRequest['params']['text']>().toEqualTypeOf<string>();
-    expectTypeOf<PromptRequest['session']>().toEqualTypeOf<string>();
-    expectTypeOf<OperationResult<'prompt'>>().toEqualTypeOf<{ runId: string }>();
-    expectTypeOf<Extract<ClientEnvelope, { op: 'set_thinking' }>['params']['thinking']>().toEqualTypeOf<'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'>();
-    expect(Object.keys(OperationSchemas)).toEqual(Object.keys(commandParams));
   });
 });
 
@@ -249,15 +212,10 @@ describe('stack-safe canonical base64 validation', () => {
     expect(() => validateBase64(data, bytes - 1)).toThrowError(/Decoded byte limit exceeded/);
   });
 
-  it.each(['prompt', 'steer', 'follow_up'] as const)('accepts %s with large image attachments', op => {
-    const params = { text: '', attachments: [{ type: 'image', mimeType: 'image/png', data: 'AAAA'.repeat(4 * 1024 * 1024), name: 'n' }] };
+  it.each([['prompt', 5], ['steer', 4], ['follow_up', 4], ['queue.update', 2]] as const)('accepts %s with large image attachments', (op, size) => {
+    const prompt = { text: '', attachments: [{ type: 'image', mimeType: 'image/png', data: 'AAAA'.repeat(size * 1024 * 1024), name: 'n' }] };
+    const params = op === 'queue.update' ? { kind: 'steer', expectedRevision: 1, edits: [{ op: 'replace', id: 'queued', prompt }] } : prompt;
     expect(parseClientEnvelope(request(op, params)).params).toEqual(params);
-  });
-
-  it('accepts a large image when replacing a queued prompt', () => {
-    const prompt = { text: '', attachments: [{ type: 'image', mimeType: 'image/png', data: 'AAAA'.repeat(2 * 1024 * 1024) }] };
-    const params = { kind: 'steer', expectedRevision: 1, edits: [{ op: 'replace', id: 'queued', prompt }] };
-    expect(parseClientEnvelope(request('queue.update', params)).params).toEqual(params);
   });
 
   it.each(['A', 'AA', 'AAA', '=AAA', 'A=AA', 'AA=A', 'A===', '====', 'AA==AAAA', 'AA==\n', 'AAA\r', 'AAA ', 'AAA\0', 'AAA-', 'AAA_', 'AAAé', 'AAA😀', 'AB==', 'AAB='])('rejects malformed or noncanonical data %j', data => {

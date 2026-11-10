@@ -8,16 +8,14 @@ const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
 it.skipIf(process.platform !== 'linux')('retains complete output and closes slave descriptors across concurrent PTY exits', async () => {
   const before = slaveDescriptors();
-  const results: Awaited<ReturnType<typeof runRuntime>>[] = [];
-  for (let round = 0; round < 3; round++) {
-    const batch = await Promise.allSettled(Array.from({ length: 16 }, () => runRuntime()));
-    const errors = batch.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
-    if (errors.length) throw new AggregateError(errors, 'PTY execution or cleanup failed');
-    results.push(...batch.flatMap(result => result.status === 'fulfilled' ? [result.value] : []));
-  }
+  const sequential = [await runRuntime(), await runRuntime()];
+  const batch = await Promise.allSettled([runRuntime(), runRuntime()]);
+  const errors = batch.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+  if (errors.length) throw new AggregateError(errors, 'PTY execution or cleanup failed');
+  const results = [...sequential, ...batch.flatMap(result => result.status === 'fulfilled' ? [result.value] : [])];
   expect(results.filter(result => result.bytes !== expectedBytes || result.exitCode !== 7 || !result.tail.endsWith('last-two 🌍\r\n'))).toEqual([]);
   expect(slaveDescriptors()).toEqual(before);
-}, 60_000);
+}, 30_000);
 
 it.skipIf(process.platform !== 'linux')('keeps the slave close-on-exec and releases it after cancellation', async () => {
   const before = slaveDescriptors();
@@ -32,7 +30,7 @@ it.skipIf(process.platform !== 'linux')('keeps the slave close-on-exec and relea
   } finally { await handle.dispose(); }
   expect((await handle.read(0)).running).toBe(false);
   expect(slaveDescriptors()).toEqual(before);
-}, 5_000);
+}, 15_000);
 
 async function runRuntime() {
   const runtime = new HostAgentRuntime(process.cwd(), { sessionStorageRoot: process.cwd(), agentStorageRoot: process.cwd() });
@@ -41,15 +39,15 @@ async function runRuntime() {
   let bytes = 0;
   let offset = 0;
   let tail = Buffer.alloc(0);
-  const deadline = Date.now() + 5_000;
+  const signal = AbortSignal.timeout(10_000);
   try {
     while (true) {
-      const snapshot = await handle.read(offset, { waitMs: 100 });
+      signal.throwIfAborted();
+      const snapshot = await handle.read(offset, { waitMs: 1_000, signal });
       offset = snapshot.nextOffset;
       bytes += snapshot.output.length;
       tail = Buffer.concat([tail, snapshot.output]).subarray(-80);
       if (!snapshot.running) return { bytes, exitCode: snapshot.exitCode ?? -1, tail: tail.toString() };
-      if (Date.now() > deadline) throw new Error('Runtime PTY did not exit');
     }
   } finally { await handle.dispose(); }
 }

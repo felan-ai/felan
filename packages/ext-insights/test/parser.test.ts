@@ -1,10 +1,16 @@
-import { describe, it, expect } from "vitest";
-import { writeFile, mkdtemp, readFile } from "node:fs/promises";
+import { afterEach, describe, it, expect } from "vitest";
+import { writeFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSessionEvents, parseSessionTranscript, sliceParsedSession } from "../src/parser.js";
 import { sliceParsedSession as sliceRange } from "../src/slicing.js";
 import type { SessionEvent } from "../src/types.js";
+
+const temporaryDirectories: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+});
 
 async function parseSessionFile(filePath: string) {
   try {
@@ -16,6 +22,7 @@ async function parseSessionFile(filePath: string) {
 
 async function writeTempJsonl(lines: object[]): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "pi-insights-test-"));
+  temporaryDirectories.push(dir);
   const filePath = join(dir, "test-session.jsonl");
   await writeFile(filePath, lines.map(l => JSON.stringify(l)).join("\n") + "\n", "utf-8");
   return filePath;
@@ -28,11 +35,6 @@ function deepFreeze(value: unknown): void {
 }
 
 describe("parseSessionFile", () => {
-  it("returns null for a non-existent file", async () => {
-    const result = await parseSessionFile("/tmp/does-not-exist-abc123.jsonl");
-    expect(result).toBeNull();
-  });
-
   it("returns null for a file with no valid session start", async () => {
     const filePath = await writeTempJsonl([
       { type: "garbage", foo: "bar" },

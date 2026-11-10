@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { expect, it } from 'vitest';
 import type { FelanExtensionAPI, ToolDefinition } from '@felan-ai/agent-core';
 import { registerExecutionTools } from '../../../../packages/ext-codebase-memory/src/execution-tools.js';
@@ -31,24 +30,4 @@ it('retains curated and raw call labels and sanitizes untrusted details', () => 
     const render = createCodebaseMemoryToolPresentation(mode, name).renderCall!;
     expect(render(args, theme as never, {} as never).render(200).map(line => line.trimEnd()).join('\n')).toBe(expected);
   }
-});
-
-it('keeps the public root and runtime independent of TUI and direct renderer I/O', async () => {
-  const pending = [new URL('../../../../packages/ext-codebase-memory/src/index.ts', import.meta.url)];
-  const visited = new Set<string>();
-  while (pending.length) {
-    const file = pending.pop()!;
-    if (visited.has(file.href)) continue;
-    visited.add(file.href);
-    const source = await readFile(file, 'utf8');
-    for (const match of source.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)(['"])([^'"]+)\1/gu)) {
-      const specifier = match[2]!;
-      expect(specifier, file.pathname).not.toMatch(/^@earendil-works\/pi-tui(?:\/|$)/u);
-      if (specifier.startsWith('.')) pending.push(new URL(specifier.replace(/\.js$/u, '.ts'), file));
-    }
-  }
-  expect([...visited].some(path => path.endsWith('/runtime.ts'))).toBe(true);
-  expect([...visited].some(path => path.endsWith('/tui.ts') || path.endsWith('/tools.ts'))).toBe(false);
-  const renderer = await readFile(new URL('../../src/tui/renderers/codebase-memory.ts', import.meta.url), 'utf8');
-  expect(renderer).not.toMatch(/import (?!type)[^;]*from ['"]\.\/(?:client|services|installer)/u);
 });

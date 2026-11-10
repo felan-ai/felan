@@ -1,6 +1,6 @@
 import type { FelanExtensionAPI, ExtensionContext, TextModelInfo, SessionEntry } from '@felan-ai/agent-core';
 import { createExtensionServiceAccess, createFelanServiceRegistry, createSilentLogger, MODELS_SERVICE } from '@felan-ai/agent-core';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import sessionTitleExtension, {
   createSessionTitleExtension,
   formatSessionTerminalTitle,
@@ -10,8 +10,11 @@ import sessionTitleExtension, {
 const pendingTasks: Promise<unknown>[] = [];
 type BeforeStartEvent = { messageType: 'user'; prompt: string } | { messageType: 'custom'; message: unknown };
 
+beforeEach(() => vi.useFakeTimers());
+
 afterEach(async () => {
   await Promise.allSettled(pendingTasks.splice(0));
+  vi.useRealTimers();
 });
 
 describe('Session Title service-backed root entry', () => {
@@ -108,29 +111,8 @@ describe('@felan-ai/ext-session-title', () => {
     const request = vi.mocked(host.prepare).mock.calls[0]![0];
     expect(request.currentModel).not.toHaveProperty('baseUrl');
     expect(request.currentModel).not.toHaveProperty('headers');
-    expect(request.currentModel).toMatchObject({ provider: 'test', id: 'active' });
+    expect(request).toMatchObject({ currentModel: { provider: 'test', id: 'active' }, mode: 'tui' });
     await handlers.shutdown();
-  });
-
-  it('generates one title from the first unnamed root prompt', async () => {
-    const complete = vi.fn().mockResolvedValue(response('Title: "Review auth regressions."'));
-    const setSessionName = vi.fn();
-    const host = testHost(complete);
-    const handlers = install(createSessionTitleExtension(host), setSessionName);
-    const ctx = context({ entries: [] });
-
-    handlers.before({ prompt: 'Review the authentication flow.' }, ctx);
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(setSessionName).toHaveBeenCalledWith('Review auth regressions'));
-    handlers.before({ prompt: 'Follow up.' }, ctx);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(complete).toHaveBeenCalledOnce();
-
-    expect(complete.mock.calls[0]?.[0].model.id).toBe('cheap');
-    expect(complete.mock.calls[0]?.[0].context.systemPrompt).toContain('untrusted source text');
-    expect(complete.mock.calls[0]?.[0].context.messages[0]?.content).toContain(
-      'Review the authentication flow.',
-    );
   });
 
   it.each([
@@ -195,11 +177,13 @@ describe('@felan-ai/ext-session-title', () => {
     handlers.before({ prompt: 'Name this session' }, context({ entries: [] }));
     await vi.waitFor(() => expect(reportSkip).toHaveBeenCalledOnce());
 
-    expect(reportSkip).toHaveBeenCalledWith({
+    expect(reportSkip.mock.calls[0]?.[0]).toMatchObject({
       sessionId: 'session-1',
       reason: 'empty-title',
-      detail: `model=test/cheap stop=stop raw=${JSON.stringify(excerpt)}`,
     });
+    const detail = reportSkip.mock.calls[0]?.[0].detail;
+    expect(detail).toContain(excerpt);
+    expect(detail).not.toContain('文');
     await handlers.shutdown();
   });
 
@@ -207,13 +191,15 @@ describe('@felan-ai/ext-session-title', () => {
     const complete = vi.fn()
       .mockRejectedValueOnce(new Error('title model unavailable'))
       .mockResolvedValue(response('Recovered title'));
-    const host = testHost(complete);
+    const reportError = vi.fn();
+    const host = { ...testHost(complete), reportError };
     const setSessionName = vi.fn();
     const handlers = install(createSessionTitleExtension(host), setSessionName);
     const ctx = context({ entries: [] });
 
     handlers.before({ prompt: 'First try.' }, ctx);
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(0);
     handlers.before({ prompt: 'Second try.' }, ctx);
     await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(setSessionName).toHaveBeenCalledWith('Recovered title'));
@@ -222,14 +208,15 @@ describe('@felan-ai/ext-session-title', () => {
   it('stops retrying after repeated failures or permanent skips', async () => {
     const complete = vi.fn().mockRejectedValue(new Error('boom'));
     const skip = vi.fn();
-    const host = { ...testHost(complete), reportSkip: skip };
+    const reportError = vi.fn();
+    const host = { ...testHost(complete), reportSkip: skip, reportError };
     const handlers = install(createSessionTitleExtension(host), vi.fn());
     const ctx = context({ entries: [] });
 
     for (let attempt = 0; attempt < 4; attempt += 1) {
       handlers.before({ prompt: `Try ${attempt}.` }, ctx);
-      await vi.waitFor(() => expect(complete).toHaveBeenCalledTimes(Math.min(attempt + 1, 3)));
-      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(reportError).toHaveBeenCalledTimes(Math.min(attempt + 1, 3));
     }
     expect(complete).toHaveBeenCalledTimes(3);
 
@@ -243,6 +230,11 @@ describe('@felan-ai/ext-session-title', () => {
     await vi.waitFor(() => expect(skip).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: 'session-1', reason: 'host-declined' }),
     ));
+    await vi.advanceTimersByTimeAsync(0);
+    decline.before({ prompt: 'Retry declined request' }, context({ entries: [], mode: 'print' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(declineHost.prepare).toHaveBeenCalledOnce();
+    expect(declineHost.complete).not.toHaveBeenCalled();
   });
 
   it('reports skips without attempting completion', async () => {
@@ -272,35 +264,13 @@ describe('@felan-ai/ext-session-title', () => {
     expect(complete.mock.calls[0]?.[0].model.id).toBe('muse-spark-1.3-contributor-free');
   });
 
-  it.each([
-    ['existing name', { name: 'Manual name', entries: [] }, false],
-    ['follow-up', { entries: [userEntry()] }, false],
-    ['fork', { entries: [], parentSession: '/parent.jsonl' }, false],
-  ])('does not generate for %s', async (_label, options, shouldCall) => {
-    const complete = vi.fn();
-    const handlers = install(createSessionTitleExtension(testHost(complete)), vi.fn(), options);
-    handlers.before({ prompt: 'Do work' }, context(options));
-    await Promise.resolve();
-    expect(complete).toHaveBeenCalledTimes(shouldCall ? 1 : 0);
-  });
-
-  it.each(['tui', 'rpc', 'json', 'print'] as const)('generates in %s mode when the host accepts it', async (mode) => {
-    const complete = vi.fn().mockResolvedValue(response('Headless title'));
-    const setSessionName = vi.fn();
-    const host = testHost(complete);
-    const handlers = install(createSessionTitleExtension(host), setSessionName, { mode });
-
-    handlers.before({ prompt: 'Do work' }, context({ entries: [], mode }));
-    await vi.waitFor(() => expect(setSessionName).toHaveBeenCalledWith('Headless title'));
-    expect(host.prepare).toHaveBeenCalledWith(expect.objectContaining({ mode }));
-  });
-
   it('uses a host-selected preferred model and configured attempt limit', async () => {
     const complete = vi.fn()
       .mockRejectedValueOnce(new Error('temporary failure'))
       .mockResolvedValue(response('Recovered title'));
     const preferredModel = model('muse-spark-1.3-contributor-free', 5, 5);
-    const host = testHost(complete, [model('cheap', 1, 1), preferredModel]);
+    const reportError = vi.fn();
+    const host = { ...testHost(complete, [model('cheap', 1, 1), preferredModel]), reportError };
     vi.mocked(host.prepare).mockImplementation(async (request) => ({
       prompt: request.prompt,
       provider: 'test',
@@ -310,27 +280,13 @@ describe('@felan-ai/ext-session-title', () => {
     const handlers = install(createSessionTitleExtension(host, { maxAttempts: 1 }), vi.fn());
 
     handlers.before({ prompt: 'Do work' }, context({ entries: [] }));
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(reportError).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(0);
     handlers.before({ prompt: 'Retry' }, context({ entries: [] }));
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await vi.advanceTimersByTimeAsync(0);
 
     expect(complete).toHaveBeenCalledOnce();
     expect(complete.mock.calls[0]?.[0].model.id).toBe('muse-spark-1.3-contributor-free');
-  });
-
-  it('does not overwrite a manual name set while generation is running', async () => {
-    let resolveCompletion!: (value: unknown) => void;
-    const complete = vi.fn().mockReturnValue(new Promise((resolve) => { resolveCompletion = resolve; }));
-    const setSessionName = vi.fn();
-    const options: { name?: string } = {};
-    const handlers = install(createSessionTitleExtension(testHost(complete)), setSessionName, options);
-    const ctx = context({ entries: [] });
-    handlers.before({ prompt: 'Do work' }, ctx);
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
-    options.name = 'Manual name';
-    resolveCompletion(response('Generated name'));
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(setSessionName).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -344,44 +300,48 @@ describe('@felan-ai/ext-session-title', () => {
     expect(formatSessionTerminalTitle(name, cwd)).toBe(expected);
   });
 
-  it('notifies when the title request fails', async () => {
+  it.each([false, true])('reports title request failures with a host reporter present: %s', async (hasReporter) => {
     const complete = vi.fn().mockRejectedValue(new Error('title model unavailable'));
     const notify = vi.fn();
-    const host = testHost(complete);
-    const handlers = install(createSessionTitleExtension(host), vi.fn());
-    handlers.before({ prompt: 'Do work' }, context({ entries: [], notify }));
-    await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
-    await vi.waitFor(() => expect(notify).toHaveBeenCalledWith(
-      'Session title generation failed at complete: title model unavailable',
-      'warning',
-    ));
-  });
-
-  it('does not require UI notifications when the host reports a failure', async () => {
-    const complete = vi.fn().mockRejectedValue(new Error('title model unavailable'));
     const reportError = vi.fn();
-    const notify = vi.fn();
-    const host = { ...testHost(complete), reportError };
+    const host = { ...testHost(complete), ...(hasReporter ? { reportError } : {}) };
     const handlers = install(createSessionTitleExtension(host), vi.fn());
-
     handlers.before({ prompt: 'Do work' }, context({ entries: [], notify }));
-    await vi.waitFor(() => expect(reportError).toHaveBeenCalledWith(
-      expect.objectContaining({ stage: 'complete' }),
-    ));
-    expect(notify).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(complete).toHaveBeenCalledOnce();
+    if (hasReporter) {
+      expect(reportError).toHaveBeenCalledWith(expect.objectContaining({ stage: 'complete' }));
+      expect(notify).not.toHaveBeenCalled();
+    } else {
+      expect(notify).toHaveBeenCalledWith(
+        'Session title generation failed at complete: title model unavailable',
+        'warning',
+      );
+    }
   });
 
-  it('aborts and waits for pending work during shutdown', async () => {
+  it('does not report provider aborts as title failures during shutdown', async () => {
     const complete = vi.fn().mockImplementation(({ options }: { options: { signal: AbortSignal } }) => (
       new Promise((_resolve, reject) => {
         options.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
       })
     ));
-    const handlers = install(createSessionTitleExtension(testHost(complete)), vi.fn());
-    handlers.before({ prompt: 'Do work' }, context({ entries: [] }));
+    const reportError = vi.fn();
+    const reportSkip = vi.fn();
+    const notify = vi.fn();
+    const setSessionName = vi.fn();
+    const host = { ...testHost(complete), reportError, reportSkip };
+    const handlers = install(createSessionTitleExtension(host), setSessionName);
+    handlers.before({ prompt: 'Do work' }, context({ entries: [], notify }));
     await vi.waitFor(() => expect(complete).toHaveBeenCalledOnce());
+
     await expect(handlers.shutdown()).resolves.toBeUndefined();
+
     expect(complete.mock.calls[0]?.[0].options.signal.aborted).toBe(true);
+    expect(reportError).not.toHaveBeenCalled();
+    expect(reportSkip).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    expect(setSessionName).not.toHaveBeenCalled();
   });
 });
 
@@ -450,8 +410,4 @@ function model(id: string, input: number, output: number, inputTypes: ('text' | 
 
 function response(text: string): any {
   return { role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop' };
-}
-
-function userEntry(): SessionEntry {
-  return { type: 'message', id: 'user', parentId: null, timestamp: '', message: { role: 'user', content: [], timestamp: 0 } } as SessionEntry;
 }

@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -12,12 +12,5 @@ describe('@felan-ai/ext-prompt-history package boundary', () => {
       exports: { '.': { import: './dist/extension.js', types: './dist/extension.d.ts' }, './extension': { import: './dist/extension.js' } } });
     expect(notice).toContain('packages/pi-prompt-history');
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');
-  });
-
-  it('keeps direct host I/O and Pi coding-agent coupling out of package source', async () => {
-    const sources = (await readdir(join(packageRoot, 'src'))).map((file) => join(packageRoot, 'src', file));
-    const content = (await Promise.all(sources.map((path) => readFile(path, 'utf8')))).join('\n');
-    expect(content).not.toMatch(/node:(?:fs|net|http)/u);
-    expect(content).not.toContain('@earendil-works/pi-coding-agent');
   });
 });

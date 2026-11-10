@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -126,7 +126,7 @@ afterEach(async () => { const results = await Promise.allSettled(fixtures.splice
   if (errors.length) throw new AggregateError(errors, 'Process fixtures failed to clean up'); });
 
 async function fixture(usage = true): Promise<ProcessFixture> {
-  const f = new ProcessFixture(await realpath(await mkdtemp(join(usage ? tmpdir() : process.cwd(), '.pc-')))); fixtures.push(f);
+  const f = new ProcessFixture(await realpath(await mkdtemp(join(tmpdir(), 'pc-')))); fixtures.push(f);
   const owner = await acquireDaemonOwnership(f.target);
   try { await writeFile(join(owner.target.agentDir, 'settings.json'), JSON.stringify({ defaultProvider: 'offline', defaultModel: 'fixture',
     builtinExtensions: Object.fromEntries(Object.keys(builtinExtensionPackages).map(key => [key, false])) }), { mode: 0o600 }); }
@@ -314,27 +314,24 @@ it('keeps a real foreground process alive after its client is killed and lets an
   await a.worker.call('connect', { identity: daemon.ready.identity }); await b.worker.call('connect', { identity: daemon.ready.identity });
   const { sessionId: session } = await accepted(a.worker, 'sessions.create', { cwd: f.directory, model: { provider: 'offline', id: 'fixture' } });
   await attach(a.worker, session); await attach(b.worker, session);
-  const gate = join(f.directory, 'foreground-gate'); await writeFile(gate, 'hold', { mode: 0o600 });
   const script = `
-    const { readFileSync } = require('node:fs');
-    const gate = process.argv[1];
     const pid = String(process.pid).padStart(10, '0');
     let advanced = false;
-    // Polling, because fs.watch can miss a rename under load.
-    const poll = setInterval(() => {
-      if (advanced || readFileSync(gate, 'utf8') !== 'advance') return;
+    const keepAlive = setInterval(() => {}, 60_000);
+    process.on('SIGUSR2', () => {
+      if (advanced) return;
       advanced = true;
       process.stdout.write('AFTER:' + pid + '\\n');
-    }, 20);
+    });
     process.on('SIGTERM', () => {
-      clearInterval(poll);
+      clearInterval(keepAlive);
       if (!advanced) process.exit(2);
       process.stdout.write('STOPPED:' + pid + '\\n', () => process.exit(0));
     });
     process.stdout.write('READY:' + pid + '\\n');
   `;
   const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
-  const command = `exec ${quote(process.execPath)} -e ${quote(script)} ${quote(gate)}`;
+  const command = `exec ${quote(process.execPath)} -e ${quote(script)}`;
   const run = await accepted(a.worker, 'shell.execute', { command, includeInContext: false }, session);
   const readyBytes = Buffer.byteLength('READY:0000000000\n');
   const readOutput = () => accepted(b.worker, 'processes.read', { root: session, resourceId: run.resourceId, offset: 0, limit: 4096 }, session);
@@ -349,8 +346,7 @@ it('keeps a real foreground process alive after its client is killed and lets an
   expect(before.entries[0]).toMatchObject({ id: run.resourceId, session, root: session, kind: 'foreground', command, state: 'running', controllable: true });
   expect((await a.worker.kill()).signal).toBe('SIGKILL'); expect(daemon.worker.exit).toBeUndefined();
   expect(await readOutput()).toMatchObject({ resourceId: run.resourceId, state: 'running', data: ready.data });
-  const nextGate = join(f.directory, 'foreground-gate-next'); await writeFile(nextGate, 'advance', { mode: 0o600 });
-  await rename(nextGate, gate);
+  process.kill(pid, 'SIGUSR2');
   const afterText = `${readyText}AFTER:${match![1]}\n`;
   const progress = await wait(b.worker, { runId: run.runId, runState: 'running', process: { id: run.resourceId, state: 'running', minimumOutput: Buffer.byteLength(afterText) } });
   expect(progress.identity).toEqual(daemon.ready.identity);

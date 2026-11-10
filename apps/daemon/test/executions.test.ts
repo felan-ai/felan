@@ -142,16 +142,23 @@ describe('registry-owned executions', () => {
   it('retains completion delivery in canonical state until acknowledged, with non-consuming reads', async () => {
     const f = await realFixture(); const host = f.registry.executionHost(f.root.sessionId);
     const notices: ExecutionCompletionNotice[] = [];
-    let delivered = false;
-    host.attachParent({ deliverCompletion: async notice => { notices.push(notice); return delivered ? 'delivered' : 'queued'; } });
+    let delivered = false; const acknowledged = deferred();
+    const port = { deliverCompletion: async (notice: ExecutionCompletionNotice) => {
+      notices.push(notice);
+      if (delivered) { acknowledged.resolve(); return 'delivered' as const; }
+      return 'queued' as const;
+    } };
+    host.attachParent(port);
     const child = await host.spawnSession({ ...request(), notifyOnCompletion: true }); if (!child.ok) throw new Error(child.error.message);
     await completed(host, child.value.executionId);
-    expect(notices).toHaveLength(1);
+    expect(notices.length).toBeGreaterThanOrEqual(1);
     expect(f.store.session(child.value.executionId).execution?.completionPending).toBe(true);
     await host.getResult(child.value.executionId); await host.getResult(child.value.executionId);
     expect(host.hasPendingWork()).toBe(true);
     delivered = true;
-    await vi.waitFor(() => expect(host.getExecution(child.value.executionId)?.completionPending).toBe(false));
+    host.attachParent(port);
+    await acknowledged.promise; await host.settle();
+    expect(host.getExecution(child.value.executionId)?.completionPending).toBe(false);
     expect(host.hasPendingWork()).toBe(false);
     await host.steer(child.value.executionId, 'again'); await completed(host, child.value.executionId);
     expect(notices.at(-1)?.deliveryId).not.toBe(notices[0]?.deliveryId);

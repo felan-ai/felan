@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HostAgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStorage } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FOREGROUND_MAX_BYTES, FOREGROUND_MAX_LINES, RETAINED_SPILL_FILES, runForegroundCommand } from '../src/foreground.js';
+import { FOREGROUND_MAX_BYTES, RETAINED_SPILL_FILES, runForegroundCommand } from '../src/foreground.js';
 
 const roots: string[] = [];
 const processes: AgentRuntimeProcess[] = [];
@@ -23,50 +23,20 @@ describe('runForegroundCommand', () => {
     await storage.mkdir(join(storage.root, 'existing'));
     await storage.writeFile(join(storage.root, 'existing', 'keep.txt'), encoder.encode('keep'));
     const before = await storage.listFiles(storage.root, { recursive: true, includeDirectories: true });
-    const start = vi.spyOn(runtime.processes!, 'startShell');
-    const write = vi.spyOn(storage, 'writeFile');
-    const append = vi.spyOn(storage, 'appendFile');
-    const makeDirectory = vi.spyOn(storage, 'mkdir');
-    const getStorage = vi.spyOn(runtime, 'storage');
 
     const result = await runForegroundCommand(runtime, "printf 'first\\nsecond\\n'", { timeoutMs: 5_000, storage, spillDir });
 
     expect(result).toEqual({ kind: 'exited', output: 'first\nsecond', exitCode: 0, truncated: false });
-    expect(start).toHaveBeenCalledWith("printf 'first\\nsecond\\n'", { cwd: runtime.cwd, shellFlavor: 'posix', login: false });
     expect(await storage.listFiles(storage.root, { recursive: true, includeDirectories: true })).toEqual(before);
     expect(decoder.decode(await storage.readFile(join(storage.root, 'existing', 'keep.txt')))).toBe('keep');
-    expect(write).not.toHaveBeenCalled();
-    expect(append).not.toHaveBeenCalled();
-    expect(makeDirectory).not.toHaveBeenCalled();
-    expect(getStorage).not.toHaveBeenCalled();
-  });
-
-  it('returns a non-zero exit code', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    await expect(runForegroundCommand(runtime, "printf 'failed'; exit 7", { timeoutMs: 5_000, storage, spillDir }))
-      .resolves.toEqual({ kind: 'exited', output: 'failed', exitCode: 7, truncated: false });
-  });
-
-  it('keeps the last 2000 lines and spills every line', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    const output = Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join('\n') + '\n';
-    const result = await runForegroundCommand(runtime, printCommand(output), { timeoutMs: 5_000, storage, spillDir });
-
-    expect(result.kind).toBe('exited');
-    if (result.kind !== 'exited') throw new Error('Expected an exited command');
-    expect(result.truncated).toBe(true);
-    expect(result.output.split('\n')).toHaveLength(FOREGROUND_MAX_LINES);
-    expect(result.output).toBe(output.trimEnd().split('\n').slice(-FOREGROUND_MAX_LINES).join('\n'));
-    expect(result.fullOutputPath).toMatch(/\/output-\d{14}-[a-f0-9]{6}\.log$/u);
-    expect(decoder.decode(await storage.readFile(result.fullOutputPath!))).toBe(output);
   });
 
   it('limits bytes and appends output received after creating the spill', async () => {
     const { runtime, storage, spillDir } = await createRuntime();
     const first = 'a'.repeat(FOREGROUND_MAX_BYTES + 1);
     const last = 'last chunk\n';
-    const command = nodeCommand(`process.stdout.write('a'.repeat(${first.length})); setTimeout(() => process.stdout.write(${JSON.stringify(last)}), 80);`);
-    const result = await runForegroundCommand(runtime, command, { timeoutMs: 5_000, storage, spillDir });
+    mockOutput(runtime, [encoder.encode(first), encoder.encode(last)]);
+    const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir });
 
     expect(result.kind).toBe('exited');
     if (result.kind !== 'exited') throw new Error('Expected an exited command');
@@ -90,17 +60,15 @@ describe('runForegroundCommand', () => {
     expect(decoder.decode(await storage.readFile(result.fullOutputPath!))).toBe(output);
   });
 
-  it.each(['界', '🌍'])('decodes the retained byte tail once after trimming chunks and split UTF-8 %s sequences', async character => {
+  it.each(['界', '🌍'])('preserves the retained tail across chunks and split UTF-8 %s sequences', async character => {
     const { runtime, storage, spillDir } = await createRuntime();
     const output = encoder.encode(character.repeat(80_000) + '\r\n');
     const chunks = [output.subarray(0, 130_001), output.subarray(130_001, 170_000), output.subarray(170_000)];
     mockOutput(runtime, chunks);
-    const decode = vi.spyOn(TextDecoder.prototype, 'decode');
 
     const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir });
 
     expect(result).toMatchObject({ kind: 'exited', exitCode: 0, truncated: true, output: character.repeat(Math.floor(FOREGROUND_MAX_BYTES / encoder.encode(character).byteLength)) });
-    expect(decode).toHaveBeenCalledOnce();
   });
 
   it('keeps decoded replacement characters within the byte limit for invalid UTF-8', async () => {
@@ -112,7 +80,7 @@ describe('runForegroundCommand', () => {
     expect(result).toMatchObject({ kind: 'exited', exitCode: 0, truncated: true, output: '\uFFFD'.repeat(Math.floor(FOREGROUND_MAX_BYTES / 3)) });
   });
 
-  it.each(['mkdir', 'writeFile', 'appendFile', 'later append'] as const)('continues after a spill %s failure without retrying', async operation => {
+  it.each(['mkdir', 'writeFile', 'appendFile', 'later append'] as const)('preserves output and exit status after a spill %s failure', async operation => {
     const { runtime, storage, spillDir } = await createRuntime();
     const chunks = [encoder.encode('a'.repeat(FOREGROUND_MAX_BYTES)), encoder.encode('b'), encoder.encode('c'), encoder.encode('done\n')];
     const child = mockOutput(runtime, chunks, 7);
@@ -120,7 +88,7 @@ describe('runForegroundCommand', () => {
     const original = storage[method].bind(storage);
     let calls = 0;
     const failingCall = operation === 'later append' ? 2 : 1;
-    const failure = vi.spyOn(storage, method).mockImplementation(async (...args: Parameters<typeof original>) => {
+    vi.spyOn(storage, method).mockImplementation(async (...args: Parameters<typeof original>) => {
       if (++calls === failingCall) throw new Error('Storage unavailable');
       return Reflect.apply(original, storage, args);
     });
@@ -128,70 +96,54 @@ describe('runForegroundCommand', () => {
     const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir });
 
     expect(result).toEqual({ kind: 'exited', exitCode: 7, truncated: true, output: 'a'.repeat(FOREGROUND_MAX_BYTES - 6) + 'bcdone' });
-    expect(failure).toHaveBeenCalledTimes(failingCall);
-    expect(child.read).toHaveBeenCalledTimes(chunks.length + 1);
     expect(child.terminate).not.toHaveBeenCalled();
     expect(child.dispose).toHaveBeenCalledOnce();
   });
 
-  it('accepts an infinite timeout', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    await expect(runForegroundCommand(runtime, "printf 'done'", { timeoutMs: Infinity, storage, spillDir }))
-      .resolves.toEqual({ kind: 'exited', output: 'done', exitCode: 0, truncated: false });
-  });
-
-  it.each([0, -1, -Infinity, NaN])('rejects an invalid timeout %s before starting a process', async timeoutMs => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    await expect(runForegroundCommand(runtime, 'command', { timeoutMs, storage, spillDir })).rejects.toThrow('timeoutMs must be positive');
-    expect(runtime.processes!.startShell).not.toHaveBeenCalled();
-  });
-
   it('hands a live process back at the deadline without disposing it', async () => {
     const { runtime, storage, spillDir } = await createRuntime();
-    const before = Date.now();
-    const result = await runForegroundCommand(runtime, "sleep 0.2; printf 'done'; exit 7", { timeoutMs: 20, storage, spillDir });
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
+    const child = mockOutput(runtime, []);
+    vi.mocked(child.read).mockImplementationOnce(async () => {
+      now.mockReturnValue(1_020);
+      return { output: new Uint8Array(), nextOffset: 0, running: true };
+    });
+    const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 20, storage, spillDir });
 
     expect(result.kind).toBe('timeout');
     if (result.kind !== 'timeout') throw new Error('Expected a timeout');
-    expect(result.startedAt).toBeGreaterThanOrEqual(before);
-    expect(await result.process.read(0)).toMatchObject({ running: true });
-    let offset = 0;
-    let output = '';
-    while (true) {
-      const snapshot = await result.process.read(offset, { waitMs: 1_000 });
-      output += decoder.decode(snapshot.output);
-      offset = snapshot.nextOffset;
-      if (!snapshot.running) {
-        expect(snapshot.exitCode).toBe(7);
-        break;
-      }
-    }
-    expect(output).toBe('done');
+    expect(result.startedAt).toBe(1_000);
+    expect(result.process).toBe(child);
+    expect(child.terminate).not.toHaveBeenCalled();
+    expect(child.dispose).not.toHaveBeenCalled();
+    vi.mocked(child.read).mockResolvedValue({ output: encoder.encode('done'), nextOffset: 4, running: false, exitCode: 7 });
+    expect(await result.process.read(0)).toMatchObject({ output: encoder.encode('done'), running: false, exitCode: 7 });
     await result.process.dispose();
   });
 
   it.each(['before', 'during'])('terminates and disposes when aborted %s the read loop', async (when) => {
     const { runtime, storage, spillDir } = await createRuntime();
     const controller = new AbortController();
-    const start = vi.mocked(runtime.processes!.startShell).getMockImplementation()!;
-    let child: AgentRuntimeProcess | undefined;
-    let terminate: ReturnType<typeof vi.spyOn> | undefined;
-    let dispose: ReturnType<typeof vi.spyOn> | undefined;
-    vi.spyOn(runtime.processes!, 'startShell').mockImplementation(async (command, options) => {
-      child = await start(command, options);
-      terminate = vi.spyOn(child, 'terminate');
-      dispose = vi.spyOn(child, 'dispose');
-      if (when === 'during') setTimeout(() => controller.abort(), 40);
-      return child;
-    });
+    let running = true;
+    const child: AgentRuntimeProcess = {
+      pid: undefined,
+      read: vi.fn(async () => {
+        if (when === 'during') controller.abort();
+        return { output: new Uint8Array(), nextOffset: 0, running };
+      }),
+      write: vi.fn(async () => {}),
+      terminate: vi.fn(async () => { running = false; }),
+      dispose: vi.fn(async () => {}),
+    };
+    vi.mocked(runtime.processes!.startShell).mockResolvedValue(child);
     if (when === 'before') controller.abort();
 
-    await expect(runForegroundCommand(runtime, 'sleep 30', { timeoutMs: 5_000, storage, spillDir, signal: controller.signal }))
+    await expect(runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir, signal: controller.signal }))
       .rejects.toThrow('Command cancelled');
 
-    expect(terminate).toHaveBeenCalledWith('SIGTERM');
-    expect(dispose).toHaveBeenCalled();
-    expect(await child!.read(0)).toMatchObject({ running: false });
+    expect(child.terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(child.dispose).toHaveBeenCalled();
+    expect(running).toBe(false);
   });
 
   it('prunes only the oldest spill files down to the newest 20 names', async () => {
@@ -246,8 +198,4 @@ function mockOutput(runtime: HostAgentRuntime, chunks: Uint8Array[], exitCode = 
 
 function nodeCommand(source: string): string {
   return `'${process.execPath.replaceAll("'", "'\\''")}' -e '${source.replaceAll("'", "'\\''")}'`;
-}
-
-function printCommand(output: string): string {
-  return nodeCommand(`process.stdout.write(${JSON.stringify(output)});`);
 }

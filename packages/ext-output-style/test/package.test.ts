@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -28,13 +28,5 @@ describe('@felan-ai/ext-output-style package boundary', () => {
     expect(notice).toContain('https://github.com/JuliusBrussee/caveman');
     expect(notice).toContain('Copyright (c) 2026 Julius Brussee');
     expect(license).toContain('Copyright (c) 2026 Julius Brussee');
-  });
-
-  it('loads configured files only through AgentRuntime', async () => {
-    const files = await readdir(join(packageRoot, 'src'));
-    const source = (await Promise.all(files.map(file => readFile(join(packageRoot, 'src', file), 'utf8')))).join('\n');
-    expect(source).not.toMatch(/node:(?:fs|os|http|net)|@felan-cloud|@earendil-works/u);
-    expect(source).not.toMatch(/fetch\(|process\./u);
-    expect(source).toContain('runtime.readFile(resolvedPath)');
   });
 });

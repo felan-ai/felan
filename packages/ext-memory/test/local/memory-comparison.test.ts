@@ -29,106 +29,108 @@ interface Fixture {
 const toolNames = ['read', 'ls', 'grep', 'edit', 'write', 'remove_memory_page'];
 
 describe('memory decision comparison fixture', () => {
-  const publishedByMode = new Map<string, string>();
-  it.each(['full', 'jsonl', 'view'] as const)('publishes the same sourced wiki with %s evidence', async (mode) => {
-    const guided = mode !== 'full';
-    const fixture = JSON.parse(await readFile(new URL('./fixtures/memory-classification.json', import.meta.url), 'utf8')) as Fixture;
-    fixture.existing.push({
-      path: 'pages/archive/status.md',
-      content: '# Old status\n\nRoutine task status.\n\n## Sources\n- session:previous\n',
-    });
-    const root = await mkdtemp(join(tmpdir(), 'felan-memory-compare-'));
-    const cwd = join(root, 'project');
-    const agentDir = join(root, 'agent');
-    await mkdir(cwd);
-    let coordinator: LocalMemoryCoordinator | undefined;
-    try {
-      const project = await resolveLocalMemoryProject(cwd);
-      await hydrateMemoryDirectory(fixture.existing, join(localMemoryProjectDirectory(agentDir, project), 'current'), {
-        memoryPath: '.memory', mode: 'read',
+  it('publishes the same sourced wiki with full, JSONL, and view evidence', async () => {
+    const publishedByMode = new Map<string, string>();
+    for (const mode of ['full', 'jsonl', 'view'] as const) {
+      const guided = mode !== 'full';
+      const fixture = JSON.parse(await readFile(new URL('./fixtures/memory-classification.json', import.meta.url), 'utf8')) as Fixture;
+      fixture.existing.push({
+        path: 'pages/archive/status.md',
+        content: '# Old status\n\nRoutine task status.\n\n## Sources\n- session:previous\n',
       });
-      const models = { getAvailable: () => [{
-        provider: 'test', id: 'test-mini', input: ['text'], reasoning: true,
-      } as Model<Api>] } as unknown as import('@felan-ai/agent-core').ModelsService;
-      let prompt = '';
-      let thinking = '';
-      let classifierCalls = 0;
-      coordinator = new LocalMemoryCoordinator({
-        agentDir, models, recover: false,
-        ...(guided ? { classifier: { canEvaluate: (state: unknown) => Buffer.byteLength(JSON.stringify(state)) < 32_000,
-          classify: async (state: unknown, questions: Record<string, unknown>) => {
-          classifierCalls += 1;
-          const data = state as { items: Array<{ content: string }> };
-          const items = data.items;
-          return { answers: Object.fromEntries(Object.keys(questions).map((id, index) => [id, {
-            type: 'choice', confidence: 0.95,
-            choice: items[index]!.content.includes('permanent release smoke') || items[index]!.content.includes('auth incident')
-              ? 'inspect' : 'noise',
-          }])), metadata: { usage: { requests: 1, inputTokens: 50, outputTokens: 4, costUsd: 0.001 }, elapsedMs: 12 } };
-        } } } : {}),
-        dreamRunner: createDefaultLocalMemoryDreamRunner({ createSession: async (options) => {
-          thinking = options.thinkingLevel ?? '';
-          const session: LocalMemoryDreamSession = {
-            abort: async () => {}, bindExtensions: async () => {}, dispose: () => {},
-            getActiveToolNames: () => toolNames, setActiveToolsByName: () => {},
-            messages: [{ role: 'assistant', stopReason: 'stop', content: [] }] as never,
-            prompt: async (text) => {
-              prompt = text;
-              await simulateWikiWorker(options.runtime.cwd, fixture, text, mode);
-            },
-          };
-          return { session };
-        } }),
-      });
-
-      const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'projection') });
-      for (const { id, entries } of fixture.sessions) {
-        const persisted = entries.map((entry, index) => ({
-          ...entry, type: 'message', parentId: index === 0 ? null : entries[index - 1]!.id,
-          timestamp: new Date(index * 1_000).toISOString(),
-        }));
-        const sessionFile = join(cwd, `${id}.jsonl`);
-        await writeFile(sessionFile, [
-          JSON.stringify({ type: 'session', id, version: 3, cwd }),
-          ...persisted.map((entry) => JSON.stringify(entry)), '',
-        ].join('\n'));
-        await host.recordCheckpoint({
-          sessionId: id, sessionFile, leafId: entries.at(-1)!.id,
-          transcriptDigest: digestActiveBranch(persisted),
+      const root = await mkdtemp(join(tmpdir(), 'felan-memory-compare-'));
+      const cwd = join(root, 'project');
+      const agentDir = join(root, 'agent');
+      await mkdir(cwd);
+      let coordinator: LocalMemoryCoordinator | undefined;
+      try {
+        const project = await resolveLocalMemoryProject(cwd);
+        await hydrateMemoryDirectory(fixture.existing, join(localMemoryProjectDirectory(agentDir, project), 'current'), {
+          memoryPath: '.memory', mode: 'read',
         });
+        const models = { getAvailable: () => [{
+          provider: 'test', id: 'test-mini', input: ['text'], reasoning: true,
+        } as Model<Api>] } as unknown as import('@felan-ai/agent-core').ModelsService;
+        let prompt = '';
+        let thinking = '';
+        let classifierCalls = 0;
+        coordinator = new LocalMemoryCoordinator({
+          agentDir, models, recover: false,
+          ...(guided ? { classifier: { canEvaluate: (state: unknown) => Buffer.byteLength(JSON.stringify(state)) < 32_000,
+            classify: async (state: unknown, questions: Record<string, unknown>) => {
+            classifierCalls += 1;
+            const data = state as { items: Array<{ content: string }> };
+            const items = data.items;
+            return { answers: Object.fromEntries(Object.keys(questions).map((id, index) => [id, {
+              type: 'choice', confidence: 0.95,
+              choice: items[index]!.content.includes('permanent release smoke') || items[index]!.content.includes('auth incident')
+                ? 'inspect' : 'noise',
+            }])), metadata: { usage: { requests: 1, inputTokens: 50, outputTokens: 4, costUsd: 0.001 }, elapsedMs: 12 } };
+          } } } : {}),
+          dreamRunner: createDefaultLocalMemoryDreamRunner({ createSession: async (options) => {
+            thinking = options.thinkingLevel ?? '';
+            const session: LocalMemoryDreamSession = {
+              abort: async () => {}, bindExtensions: async () => {}, dispose: () => {},
+              getActiveToolNames: () => toolNames, setActiveToolsByName: () => {},
+              messages: [{ role: 'assistant', stopReason: 'stop', content: [] }] as never,
+              prompt: async (text) => {
+                prompt = text;
+                await simulateWikiWorker(options.runtime.cwd, fixture, text, mode);
+              },
+            };
+            return { session };
+          } }),
+        });
+
+        const host = coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'projection') });
+        for (const { id, entries } of fixture.sessions) {
+          const persisted = entries.map((entry, index) => ({
+            ...entry, type: 'message', parentId: index === 0 ? null : entries[index - 1]!.id,
+            timestamp: new Date(index * 1_000).toISOString(),
+          }));
+          const sessionFile = join(cwd, `${id}.jsonl`);
+          await writeFile(sessionFile, [
+            JSON.stringify({ type: 'session', id, version: 3, cwd }),
+            ...persisted.map((entry) => JSON.stringify(entry)), '',
+          ].join('\n'));
+          await host.recordCheckpoint({
+            sessionId: id, sessionFile, leafId: entries.at(-1)!.id,
+            transcriptDigest: digestActiveBranch(persisted),
+          });
+        }
+        expect(await coordinator.runNow(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
+        const published = await readMemoryDirectory(await coordinator.canonicalDirectory(cwd), {
+          memoryPath: '.memory', sourceSessionIds: fixture.expected.sources,
+        });
+        publishedByMode.set(mode, JSON.stringify(published.files));
+        if (mode !== 'full') expect(publishedByMode.get(mode)).toBe(publishedByMode.get('full'));
+        const files = new Map(published.files.map(({ path, content }) => [path, content]));
+        expect(files.get('summary.md')).toBe(fixture.expected.summary);
+        expect(files.get('pages/decisions/release.md')).toContain(`- session:${fixture.expected.sources[0]}`);
+        expect(files.get('pages/decisions/incident.md')).toContain(`- session:${fixture.expected.sources[1]}`);
+        expect(files.get('pages/decisions/incident.md')).toContain(fixture.expected.detail);
+        expect(JSON.stringify(published)).not.toContain(fixture.expected.omitted);
+        expect(published.files.some(({ path }) => path.startsWith('pages/archive/'))).toBe(false);
+        expect(prompt.includes('decisions.json')).toBe(guided);
+        expect(thinking).toBe('medium');
+        expect(classifierCalls > 0).toBe(guided);
+        const runs = join(localMemoryProjectDirectory(agentDir, project), 'runs');
+        const runIds = await readdir(runs);
+        expect(runIds).toHaveLength(1);
+        const run = JSON.parse(await readFile(join(runs, runIds[0]!, 'manifest.json'), 'utf8')) as {
+          triage?: { counts: { inspect: number; noise: number; uncertain: number }; inputTokens: number; costUsd: number };
+        };
+        if (guided) {
+          expect(run.triage).toMatchObject({ counts: { inspect: 2, noise: 1, uncertain: 0 },
+            inputTokens: 50 * classifierCalls, costUsd: 0.001 * classifierCalls });
+          expect(JSON.stringify(run.triage)).not.toContain(fixture.expected.detail);
+        } else {
+          expect(run.triage).toBeUndefined();
+        }
+      } finally {
+        await coordinator?.dispose();
+        await rm(root, { recursive: true, force: true });
       }
-      expect(await coordinator.runNow(cwd)).toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
-      const published = await readMemoryDirectory(await coordinator.canonicalDirectory(cwd), {
-        memoryPath: '.memory', sourceSessionIds: fixture.expected.sources,
-      });
-      publishedByMode.set(mode, JSON.stringify(published.files));
-      if (mode !== 'full') expect(publishedByMode.get(mode)).toBe(publishedByMode.get('full'));
-      const files = new Map(published.files.map(({ path, content }) => [path, content]));
-      expect(files.get('summary.md')).toBe(fixture.expected.summary);
-      expect(files.get('pages/decisions/release.md')).toContain(`- session:${fixture.expected.sources[0]}`);
-      expect(files.get('pages/decisions/incident.md')).toContain(`- session:${fixture.expected.sources[1]}`);
-      expect(files.get('pages/decisions/incident.md')).toContain(fixture.expected.detail);
-      expect(JSON.stringify(published)).not.toContain(fixture.expected.omitted);
-      expect(published.files.some(({ path }) => path.startsWith('pages/archive/'))).toBe(false);
-      expect(prompt.includes('decisions.json')).toBe(guided);
-      expect(thinking).toBe('medium');
-      expect(classifierCalls > 0).toBe(guided);
-      const runs = join(localMemoryProjectDirectory(agentDir, project), 'runs');
-      const runIds = await readdir(runs);
-      expect(runIds).toHaveLength(1);
-      const run = JSON.parse(await readFile(join(runs, runIds[0]!, 'manifest.json'), 'utf8')) as {
-        triage?: { counts: { inspect: number; noise: number; uncertain: number }; inputTokens: number; costUsd: number };
-      };
-      if (guided) {
-        expect(run.triage).toMatchObject({ counts: { inspect: 2, noise: 1, uncertain: 0 },
-          inputTokens: 50 * classifierCalls, costUsd: 0.001 * classifierCalls });
-        expect(JSON.stringify(run.triage)).not.toContain(fixture.expected.detail);
-      } else {
-        expect(run.triage).toBeUndefined();
-      }
-    } finally {
-      await coordinator?.dispose();
-      await rm(root, { recursive: true, force: true });
     }
   });
 });

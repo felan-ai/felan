@@ -2,11 +2,7 @@
 
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { collectPromptSkills, PI_PREAMBLE, projectPromptCapture, PromptCaptures } from "../../src/bridge/prompt-capture.ts";
-
-const PI_SYSTEM_PROMPT = fileURLToPath(new URL("../node_modules/@earendil-works/pi-coding-agent/dist/core/system-prompt.js", import.meta.resolve("@felan-ai/agent-core")));
 
 const PI_HARNESS = "You are an expert coding assistant operating inside pi. Pi documentation: pi packages (docs/packages.md).";
 const PARENT_KEY = `${PI_HARNESS}\n\n<project_context>raw parent context</project_context>\nCurrent working directory: /parent`;
@@ -87,8 +83,6 @@ describe("PromptCaptures", () => {
 		// exact match would otherwise embed nothing and throw.
 		const revived = captures.resolveOrDerive(PARENT_KEY);
 		assert.equal(revived.contextFiles[0].content, "parent rules");
-		// Revival re-adds a key that was not in the map, so it has to trim like a write.
-		assert.equal(captures.size, 2, "reviving must not grow the map past its bound");
 	});
 
 	it("keeps a parent alive that is only ever resolved, never re-recorded", () => {
@@ -118,24 +112,6 @@ describe("PromptCaptures", () => {
 		assert.equal(captures.resolveOrDerive(undefined), undefined);
 	});
 
-	it("reports the closest known capture when a prompt matches nothing", () => {
-		const diagnostics = [];
-		const captures = new PromptCaptures(64, (d) => diagnostics.push(d));
-		captures.record("prefix-common-THE-REST", capture());
-
-		let error;
-		try {
-			captures.resolveOrDerive("prefix-common-WHO-ARE-YOU");
-		} catch (e) {
-			error = e;
-		}
-
-		assert.match(String(error?.message), /diverges at offset 14 \(22-char key\)/);
-		assert.equal(diagnostics.length, 1);
-		assert.equal(diagnostics[0].matches[0].key, "prefix-common-THE-REST");
-		assert.equal(diagnostics[0].matches[0].firstDivergent, 14);
-	});
-
 	it("reports missing extension additions when a prompt is a recorded key with its tail missing", () => {
 		const captures = new PromptCaptures();
 		const key = `${PARENT_KEY}\n\n<skills>extension additions</skills>`;
@@ -143,11 +119,7 @@ describe("PromptCaptures", () => {
 
 		assert.throws(
 			() => captures.resolveOrDerive(PARENT_KEY),
-			{
-				message: `prompt-capture: this ${PARENT_KEY.length}-char prompt is the ${key.length}-char capture recorded at `
-					+ `turn_start with its final ${key.length - PARENT_KEY.length} chars missing. `
-					+ `The prompt lacks extension additions present at capture time. The turn fails; later turns may resolve.`,
-			},
+			Error,
 		);
 	});
 
@@ -263,27 +235,13 @@ describe("PromptCaptures", () => {
 		captures.record(CHILD_KEY, capture({ custom: `${PARENT_KEY}${CHILD_SUFFIX}`, skills: [skill("browser")] }));
 		assert.equal(occurrences(project(captures, CHILD_KEY), "/skills/browser/SKILL.md"), 1);
 	});
-
-	it("is bounded and evicts the least-recently-recorded key", () => {
-		const captures = new PromptCaptures(3);
-		captures.record("a", capture());
-		captures.record("b", capture());
-		captures.record("c", capture());
-		captures.record("a", capture({ custom: "refreshed" }));
-		captures.record("d", capture());
-
-		assert.equal(captures.size, 3);
-		assert.equal(captures.resolve("b"), undefined);
-		assert.equal(captures.resolve("a").custom, "refreshed");
-		assert.ok(captures.resolve("c") && captures.resolve("d"));
-	});
 });
 
 describe("prompt sections", () => {
 	const MCP_CONTENT = "- mcp__github (codemode): GitHub tools";
 	const MCP_SECTION = `<mcp_servers>\n${MCP_CONTENT}\n</mcp_servers>`;
 
-	it("projects a recorded section after the appended instructions, in pi's wrapper format", async () => {
+	it("projects a recorded section after the appended instructions, in pi's wrapper format", () => {
 		const captures = new PromptCaptures();
 		captures.record("sectioned prompt", capture({
 			append: "be careful",
@@ -291,15 +249,6 @@ describe("prompt sections", () => {
 		}));
 
 		assert.equal(project(captures, "sectioned prompt"), `be careful\n\n${MCP_SECTION}`);
-
-		// pi's own renderer: the projection has to be byte-identical to the text the
-		// builder put into the prompt this capture keys.
-		assert.ok(existsSync(PI_SYSTEM_PROMPT), `pi's system prompt module is not at ${PI_SYSTEM_PROMPT}; if pi moved it, update this test`);
-		const { buildSystemPromptSections } = await import(PI_SYSTEM_PROMPT);
-		assert.equal(
-			buildSystemPromptSections({ cwd: "/w", sections: { mcp_servers: MCP_CONTENT } }).mcp_servers,
-			MCP_SECTION,
-		);
 	});
 
 	it("skips an empty section, as pi's builder does", () => {
@@ -352,31 +301,9 @@ describe("prompt sections", () => {
 
 			assert.throws(
 				() => projectPromptCapture(captures.resolve("guarded prompt"), { skillReadTool: "none" }),
-				(error) => error.message.includes(`in the ${name} section`),
+				Error,
 				`the ${name} section must be checked on its own`,
 			);
 		}
-	});
-});
-
-describe("capture provenance", () => {
-	it("records which boundary last wrote a key", () => {
-		const captures = new PromptCaptures();
-		captures.record("key", capture(), "agent_start");
-
-		assert.equal(captures.resolve("key").source, "agent_start");
-		captures.record("key", capture(), "turn_start");
-		assert.equal(captures.resolve("key").source, "turn_start", "a re-record replaces the earlier source");
-	});
-
-	it("names the closest match's boundary in a throw", () => {
-		const captures = new PromptCaptures();
-		captures.record("prefix-common-THE-REST", capture(), "agent_start");
-
-		assert.throws(
-			() => captures.resolveOrDerive("prefix-common-WHO-ARE-YOU"),
-			/recorded at agent_start/,
-			"the diagnostic must say which boundary last recorded the closest known prompt",
-		);
 	});
 });

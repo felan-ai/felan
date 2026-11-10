@@ -138,8 +138,8 @@ describe("delivery to the provider call that owns the stream", () => {
 	];
 	const drain = async (stream, log) => { for await (const e of stream) log.push(e.type); };
 	// Async, like an after_provider_response handler: the report must finish before the next event.
-	const reportingTo = (log) => async (r) => {
-		await new Promise(setImmediate);
+	const reportingTo = (log, beforeReport = async () => {}) => async (r) => {
+		await beforeReport();
 		log.push(`usage ${r.headers["anthropic-ratelimit-unified-5h-utilization"]}`);
 	};
 
@@ -164,11 +164,27 @@ describe("delivery to the provider call that owns the stream", () => {
 		});
 		const first = [], second = [];
 		const tools = [{ name: "read", description: "read", parameters: { type: "object", properties: {} } }];
+		const reports = [
+			{ entered: gate(), ack: gate() },
+			{ entered: gate(), ack: gate() },
+		];
+		let reportIndex = 0;
+		const onResponse = reportingTo(second, async () => {
+			const report = reports[reportIndex++];
+			report.entered.open();
+			await report.ack.wait();
+		});
 
 		await drain(providerConfig.streamSimple(model, { messages: [user], tools }, { sessionId: "pi-rate-limit", onResponse: reportingTo(first) }), first);
 		await usageConsumed.wait();
-		const resumed = drain(providerConfig.streamSimple(model, { messages: [user, call, result], tools }, { sessionId: "pi-rate-limit", onResponse: reportingTo(second) }), second);
+		const resumed = drain(providerConfig.streamSimple(model, { messages: [user, call, result], tools }, { sessionId: "pi-rate-limit", onResponse }), second);
 		toolDelivered.open();
+		await reports[0].entered.wait();
+		assert.deepEqual(second, []);
+		reports[0].ack.open();
+		await reports[1].entered.wait();
+		assert.equal(second.at(-1), "text_end");
+		reports[1].ack.open();
 		await resumed;
 
 		assert.ok(!first.some((e) => e.startsWith("usage")), `a call whose stream has ended hears nothing: ${first}`);
@@ -178,7 +194,7 @@ describe("delivery to the provider call that owns the stream", () => {
 	});
 
 	it("drops an aborted query's held event instead of reporting it on the next query", async () => {
-		const usageConsumed = gate(), closed = gate();
+		const usageConsumed = gate(), closed = gate(), cleanedUp = gate();
 		const queries = [
 			async function* () {
 				yield { type: "system", subtype: "init", session_id: "cc-rate-limit-abort" };
@@ -196,7 +212,10 @@ describe("delivery to the provider call that owns the stream", () => {
 		__test.setQuery(() => {
 			const gen = queries.shift()();
 			gen.interrupt = async () => {};
-			gen.close = () => closed.open();
+			gen.close = () => {
+				closed.open();
+				if (![...__test.activeQueryContexts].some((c) => c.activeQuery === gen)) cleanedUp.open();
+			};
 			return gen;
 		});
 		const first = [], second = [];
@@ -206,7 +225,7 @@ describe("delivery to the provider call that owns the stream", () => {
 		await drain(providerConfig.streamSimple(model, { messages: [user], tools }, { sessionId: "pi-rate-limit-abort", signal: abort.signal, onResponse: reportingTo(first) }), first);
 		await usageConsumed.wait();
 		abort.abort();
-		await new Promise(setImmediate);
+		await cleanedUp.wait();
 		const next = { role: "user", content: "something else", timestamp: 3 };
 		await drain(providerConfig.streamSimple(model, { messages: [user, call, next], tools }, { sessionId: "pi-rate-limit-abort", onResponse: reportingTo(second) }), second);
 

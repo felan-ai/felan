@@ -137,6 +137,7 @@ describe("toBridgeContext section replay order", () => {
 
 	it("returns a context without system messages unchanged (systemless call shape)", () => {
 		const context = { messages: [userMessage("go")], systemPrompt: "P", tools: [] };
-		assert.equal(toBridgeContext(context), context, "same object reference — a true no-op");
+		const original = structuredClone(context);
+		assert.deepEqual(toBridgeContext(context), original);
 	});
 });

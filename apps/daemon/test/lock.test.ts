@@ -1,12 +1,13 @@
 import { lstat, mkdtemp, rename, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { acquireLocalFileLock, withLocalFileLock } from '../src/lock.js';
 
 const temporaryPaths: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -15,6 +16,7 @@ describe('local file locks', () => {
     const root = await temporaryDirectory();
     const target = join(root, 'target');
     await writeFile(target, '');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const lock = await acquireLocalFileLock(target, {
       realpath: false,
       stale: 2_000,
@@ -22,7 +24,7 @@ describe('local file locks', () => {
     });
 
     await utimes(`${target}.lock`, new Date(Date.now() + 5_000), new Date(Date.now() + 5_000));
-    await waitFor(() => lock.isCompromised());
+    await heartbeatCompromise(lock.compromised);
 
     expect(lock.compromised.aborted).toBe(true);
     expect(() => lock.throwIfCompromised('lock was lost')).toThrow('lock was lost');
@@ -33,6 +35,7 @@ describe('local file locks', () => {
     const root = await temporaryDirectory();
     const target = join(root, 'target');
     await writeFile(target, '');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
     await expect(withLocalFileLock(target, {
       realpath: false,
@@ -40,7 +43,7 @@ describe('local file locks', () => {
       update: 1_000,
     }, async (lock) => {
       await utimes(`${target}.lock`, new Date(Date.now() + 5_000), new Date(Date.now() + 5_000));
-      await waitFor(() => lock.isCompromised());
+      await heartbeatCompromise(lock.compromised);
       return 'unreachable';
     })).rejects.toThrow('Unable to update lock within the stale threshold');
   });
@@ -50,6 +53,7 @@ describe('local file locks', () => {
     const target = join(root, 'target');
     const lockPath = `${target}.lock`;
     await writeFile(target, '');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const first = await acquireLocalFileLock(target, {
       realpath: false,
       stale: 2_000,
@@ -69,7 +73,7 @@ describe('local file locks', () => {
     await replacement.release();
     await utimes(lockPath, firstMtime, firstMtime);
 
-    await waitFor(() => first.isCompromised());
+    await heartbeatCompromise(first.compromised);
 
     expect(await replacement.isCurrent()).toBe(true);
     expect((await lstat(lockPath)).mtime.getTime()).toBe(firstMtime.getTime());
@@ -84,10 +88,8 @@ async function temporaryDirectory(): Promise<string> {
   return path;
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Condition was not reached before timeout');
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
+async function heartbeatCompromise(signal: AbortSignal): Promise<void> {
+  const compromised = new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+  await vi.advanceTimersByTimeAsync(1_000);
+  await compromised;
 }

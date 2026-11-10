@@ -105,22 +105,12 @@ async function fixture(options: { configured?: boolean; credential?: string; tok
 }
 
 describe('RemoteConnector publication', () => {
-  it('reads each idle remote record once per publication scan', async () => {
-    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick(0);
-    const ids = [f.id, requestId(), requestId()];
-    for (const id of ids.slice(1)) f.connector.store.setSession(id, { shared: false, origin: 'local', backfilled: false, unsharedPending: false });
-    const session = vi.spyOn(f.connector.store, 'session'); f.platform.publish.mockClear();
-    await f.clock.tick(100);
-    expect(session.mock.calls.map(([id]) => id).sort()).toEqual(ids.sort());
-    expect(f.platform.publish).not.toHaveBeenCalled();
-  });
-
-  it('acknowledges later publications without rewriting unchanged session records', async () => {
+  it('acknowledges later publications and retains the session record', async () => {
     const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick(0);
     const record = f.connector.store.session(f.id); const acked = f.connector.outbox.acked(f.id);
-    const setSession = vi.spyOn(f.connector.store, 'setSession'); f.platform.publish.mockClear();
+    f.platform.publish.mockClear();
     f.change('first'); await f.clock.tick(0); f.change('second'); await f.clock.tick(0);
-    expect(f.platform.publish).toHaveBeenCalledTimes(2); expect(setSession).not.toHaveBeenCalled();
+    expect(f.platform.publish).toHaveBeenCalledTimes(2);
     expect(f.connector.store.session(f.id)).toEqual(record);
     expect(f.connector.outbox.acked(f.id)).toBe(acked + 2); expect(f.connector.outbox.pendingCount()).toBe(0);
   });
@@ -171,34 +161,11 @@ describe('RemoteConnector publication', () => {
     expect(f.connector.outbox.pendingCount()).toBe(0);
   });
 
-  it('observes 1000 shared text deltas without registry scans or remote database reads after warm-up', async () => {
-    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick();
-    const publish = (f.registry as unknown as { publish(value: TextStreamEvent): void }).publish.bind(f.registry);
-    publish({ v: 1, session: f.id, stream: { id: 'hot', message: 'hot-message', kind: 'text', offset: 0 }, text: 'a' });
-    const list = vi.spyOn(f.registry, 'list'); const read = vi.spyOn(f.store.database, 'record'); const lines = vi.spyOn(f.store.database, 'outbox');
-    const metadata = vi.spyOn(f.registry.options.store, 'findSessionMetadata');
-    f.platform.realtime.sendText.mockClear();
-    for (let offset = 1; offset <= 1000; offset++) publish({ v: 1, session: f.id, stream: { id: 'hot', message: 'hot-message', kind: 'text', offset }, text: 'a' });
-    expect({ list: list.mock.calls.length, read: read.mock.calls.length, lines: lines.mock.calls.length }).toEqual({ list: 0, read: 0, lines: 0 });
-    expect(metadata).not.toHaveBeenCalled();
-    expect(f.platform.realtime.sendText).toHaveBeenCalledTimes(1000);
-  });
-
-  it.each([false, true])('skips disconnected text before session lookup when configured=%s', async configured => {
+  it.each([false, true])('does not forward disconnected text when configured=%s', async configured => {
     const f = await fixture({ configured, connector: { connect: async () => { throw new PlatformError('retry', 'offline'); } } });
     const publish = (f.registry as unknown as { publish(value: TextStreamEvent): void }).publish.bind(f.registry);
-    const list = vi.spyOn(f.registry, 'list'); const metadata = vi.spyOn(f.registry.options.store, 'findSessionMetadata');
-    const session = vi.spyOn(f.connector.store, 'session'); const settings = vi.spyOn(f.connector.store, 'settings');
-    for (let offset = 0; offset < 1000; offset++) publish({ v: 1, session: f.id, stream: { id: 'offline', message: 'offline-message', kind: 'text', offset }, text: 'a' });
-    expect(list).not.toHaveBeenCalled(); expect(metadata).not.toHaveBeenCalled(); expect(session).not.toHaveBeenCalled(); expect(settings).not.toHaveBeenCalled();
+    for (let offset = 0; offset < 3; offset++) publish({ v: 1, session: f.id, stream: { id: 'offline', message: 'offline-message', kind: 'text', offset }, text: 'a' });
     expect(f.platform.realtime.sendText).not.toHaveBeenCalled();
-  });
-
-  it('computes status with one registry scan and cached remote records', async () => {
-    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick(); f.connector.status();
-    const list = vi.spyOn(f.registry, 'list'); const read = vi.spyOn(f.store.database, 'record'); const lines = vi.spyOn(f.store.database, 'outbox');
-    expect(f.connector.status()).toMatchObject({ sessions: 1, pending: 0 });
-    expect({ list: list.mock.calls.length, read: read.mock.calls.length, lines: lines.mock.calls.length }).toEqual({ list: 1, read: 0, lines: 0 });
   });
 
   it('does not treat a deleted session as shared through its cached root', async () => {

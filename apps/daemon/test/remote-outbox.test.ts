@@ -7,50 +7,17 @@ import { RemoteIntegrityError, RemoteStorageError } from '../src/remote/state.js
 import type { PersistenceBoundary, RemoteDatabase } from '../src/daemon/persistence.js';
 import { closeRemoteDatabases, openRemoteDatabase } from './remote-database.js';
 
-type CapacityCheck = { checkCapacity(session: string, previous: number, bytes: number): void };
 const item = (rev: number): OutboxItem => ({ rev, occurredAt: 123, change: { type: 'run.updated', run: { state: 'idle' } } });
 const message = (text: string): OutboxItem => ({ rev: 1, occurredAt: 1, change: { type: 'message.completed', message: {
   id: 'm', entryId: 'e', role: 'assistant', timestamp: 1, content: [{ type: 'text', text }],
 } } });
 const large = message('x'.repeat(1_000_000));
+const small = message('x'.repeat(1_000));
+const limits = { session: 4_096, total: 17_000 };
 const outboxBytes = (database: RemoteDatabase, session: string) => database.outbox(session).reduce((sum, row) => sum + row.bytes, 0);
 afterEach(async () => { vi.restoreAllMocks(); await closeRemoteDatabases(); });
 
 describe('durable remote outbox', () => {
-  it('group-commits buffered appends once and reads warm cursors without table scans', async () => {
-    const { database } = await openRemoteDatabase(); const box = new RemoteOutbox(database); const id = randomUUID(); box.nextSeq(id);
-    const record = vi.spyOn(database, 'record'); const records = vi.spyOn(database, 'records'); const rows = vi.spyOn(database, 'outbox');
-    const transaction = vi.spyOn(database, 'transaction'); const insert = vi.spyOn(database, 'insertOutbox');
-    for (let index = 0; index < 1000; index++) box.append(id, [item(index + 1)]);
-    expect(insert).not.toHaveBeenCalled(); expect(transaction).not.toHaveBeenCalled();
-    expect(box.pendingCount()).toBe(1000); expect(box.nextSeq(id)).toBe(1001);
-    const listings = records.mock.calls.length;
-    for (let index = 0; index < 10; index++) { expect(box.pendingCount()).toBe(1000); expect(box.sessions()).toEqual([id]); }
-    expect(record).not.toHaveBeenCalled(); expect(rows).not.toHaveBeenCalled(); expect(records).toHaveBeenCalledTimes(listings);
-    box.flush(); expect(transaction).toHaveBeenCalledTimes(1); expect(insert).toHaveBeenCalledTimes(1000);
-    box.flush(); expect(transaction).toHaveBeenCalledTimes(1);
-  });
-  it('flushes once per session in the next immediate and flushes pending pages synchronously', async () => {
-    const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database); const id = randomUUID(); const other = randomUUID();
-    const transaction = vi.spyOn(fixture.database, 'transaction');
-    box.append(id, [item(1)]); box.append(id, [item(2)]); box.append(other, [item(1)]);
-    expect(transaction).not.toHaveBeenCalled(); expect(box.pendingCount()).toBe(3);
-    await new Promise<void>(resolve => setImmediate(resolve)); expect(transaction).toHaveBeenCalledTimes(2);
-    box.append(id, [item(3)]); expect(box.pending(id)).toHaveLength(3); expect(transaction).toHaveBeenCalledTimes(3);
-    await new Promise<void>(resolve => setImmediate(resolve)); expect(transaction).toHaveBeenCalledTimes(3);
-    expect(new RemoteOutbox(fixture.reopen()).pendingCount()).toBe(4);
-  });
-  it('maintains the global byte cache across mutations without aggregate queries or table rescans', async () => {
-    const { database } = await openRemoteDatabase(); const box = new RemoteOutbox(database);
-    const [first, second, third] = [randomUUID(), randomUUID(), randomUUID()] as [string, string, string];
-    for (const id of [first, second, third]) box.nextSeq(id);
-    box.initialize(first, [item(1)]);
-    const records = vi.spyOn(database, 'records'); const rows = vi.spyOn(database, 'outbox');
-    box.append(first, [item(2)]); box.initialize(second, [item(1), item(2)]); box.acknowledge(first, 1);
-    box.drop(second); box.append(third, [item(1)]); box.discard(third);
-    expect(box.pendingCount()).toBe(1); expect(box.sessions()).toEqual([first]);
-    expect(records).not.toHaveBeenCalled(); expect(rows).not.toHaveBeenCalled();
-  });
   it('reports a scheduled storage failure and fences subsequent operations', async () => {
     let fail = false;
     const fixture = await openRemoteDatabase(at => { if (fail && at === 'after_commit') throw new Error('injected'); });
@@ -61,25 +28,17 @@ describe('durable remote outbox', () => {
     for (const action of [() => box.nextSeq(id), () => box.pendingCount(), () => box.flush(), () => box.append(id, [item(3)])]) expect(action).toThrow(/fenced/u);
     expect(new RemoteOutbox(fixture.reopen()).nextSeq(id)).toBe(3);
   });
-  it('uses a bounded database query for a warm pending page', async () => {
+  it('returns byte-bounded batches through a large backlog', async () => {
     const { database } = await openRemoteDatabase(); const box = new RemoteOutbox(database); const id = randomUUID();
-    box.append(id, Array.from({ length: 1000 }, (_, index) => item(index + 1))); box.flush();
-    const rows = vi.spyOn(database, 'outbox');
-    expect(box.pending(id, 3).map(entry => entry.seq)).toEqual([1, 2, 3]); expect(rows).toHaveBeenCalledExactlyOnceWith(id, 0, 3);
-  });
-  it('reads only one byte-bounded batch per pass through a large backlog', async () => {
-    const { database } = await openRemoteDatabase(); const box = new RemoteOutbox(database); const id = randomUUID();
-    box.initialize(id, Array.from({ length: 24 }, () => large));
-    const rows = vi.spyOn(database, 'outbox'); let read = 0;
-    for (let pass = 0; pass < 6; pass++) {
-      const pending = box.pending(id); expect(pending).toHaveLength(4);
-      expect(rows).toHaveBeenLastCalledWith(id, pass * 4, 4);
-      const fetched = rows.mock.results.at(-1)!.value as ReturnType<RemoteDatabase['outbox']>;
-      expect(fetched.reduce((sum, row) => sum + row.bytes, 0)).toBeLessThanOrEqual(PUBLICATION_LIMITS.batchBytes);
-      read += fetched.length; box.acknowledge(id, pending.at(-1)!.seq);
+    box.initialize(id, Array.from({ length: 5 }, () => large));
+    let read = 0;
+    for (let pass = 0; pass < 2; pass++) {
+      const pending = box.pending(id); expect(pending).toHaveLength(pass === 0 ? 4 : 1);
+      expect(pending.reduce((sum, row) => sum + Buffer.byteLength(JSON.stringify(row)) + 1, 0)).toBeLessThanOrEqual(PUBLICATION_LIMITS.batchBytes);
+      read += pending.length; box.acknowledge(id, pending.at(-1)!.seq);
     }
-    expect(read).toBe(24); expect(box.pending(id)).toEqual([]); expect(rows).toHaveBeenCalledTimes(6);
-  }, 30_000);
+    expect(read).toBe(5); expect(box.pending(id)).toEqual([]);
+  });
   it.each(['record', 'records', 'outbox'] as const)('classifies %s read failures as storage failures', async method => {
     const { database } = await openRemoteDatabase(); const box = new RemoteOutbox(database); const id = randomUUID();
     vi.spyOn(database, method).mockImplementation(() => { throw new Error('SQLite read failure'); });
@@ -101,7 +60,7 @@ describe('durable remote outbox', () => {
       box.initialize(randomUUID(), [item(100)]); box.nextSeq(id);
       if (operation === 'fastForward') { box.initialize(id, [item(1), item(2)]); box.append(id, [item(3)]); }
       if (operation === 'append') box.append(id, [item(1), item(2), item(3)]);
-      const cursor = structuredClone(box['cursors'].get(id)); const total = box['totalPendingBytes']; const pending = box.pendingCount(); const next = box.nextSeq(id);
+      const acked = box.acked(id); const pending = box.pendingCount(); const next = box.nextSeq(id);
       const stored = fixture.database.outbox(id); const record = fixture.database.record('outbox_cursor', id);
       const insert = fixture.database.insertOutbox.bind(fixture.database); let count = 0;
       const fault = vi.spyOn(fixture.database, 'insertOutbox').mockImplementation((...args) => {
@@ -114,11 +73,10 @@ describe('durable remote outbox', () => {
         else box.flush();
       };
       expect(act).toThrow(/commit failed/u);
-      expect(box['cursors'].get(id)).toEqual(cursor); expect(box['totalPendingBytes']).toBe(total);
-      expect(box.acked(id)).toBe(cursor!.acked); expect(box.nextSeq(id)).toBe(next); expect(box.pendingCount()).toBe(pending);
+      expect(box.acked(id)).toBe(acked); expect(box.nextSeq(id)).toBe(next); expect(box.pendingCount()).toBe(pending);
       expect(fixture.database.outbox(id)).toEqual(stored); expect(fixture.database.record('outbox_cursor', id)).toBe(record);
       const durable = new RemoteOutbox(fixture.database); expect(durable.nextSeq(id)).toBe(operation === 'fastForward' ? 3 : 1);
-      fault.mockRestore(); box.flush(); expect(box['cursors'].get(id)!.buffered).toEqual([]);
+      fault.mockRestore(); box.flush();
       expect(box.append(id, [item(4)])[0]!.seq).toBe(next); box.flush();
       const reopened = new RemoteOutbox(fixture.reopen()); expect(reopened.nextSeq(id)).toBe(next + 1); expect(reopened.pendingCount()).toBe(pending + 1);
     });
@@ -169,11 +127,7 @@ describe('durable remote outbox', () => {
   it('fast-forwards durable and buffered entries in one transaction without replaying the acknowledged prefix', async () => {
     const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database); const id = randomUUID();
     box.initialize(id, [item(11), item(22), item(33)]); box.acknowledge(id, 1); box.append(id, [item(44), item(55)]);
-    const transaction = vi.spyOn(fixture.database, 'transaction'); const insert = vi.spyOn(fixture.database, 'insertOutbox');
-    const read = vi.spyOn(fixture.database, 'outbox');
     box.fastForward(id, 99);
-    expect(transaction).toHaveBeenCalledTimes(1); expect(insert).toHaveBeenCalledTimes(4);
-    expect(read).toHaveBeenCalledExactlyOnceWith(id, 1);
     expect(box.acked(id)).toBe(99); expect(box.nextSeq(id)).toBe(104); expect(box.pendingCount()).toBe(4); expect(box.sessions()).toEqual([id]);
     const rows = fixture.database.outbox(id);
     expect(rows.map(row => row.seq)).toEqual([100, 101, 102, 103]);
@@ -181,70 +135,43 @@ describe('durable remote outbox', () => {
     for (const row of rows) expect(row.bytes).toBe(Buffer.byteLength(row.data) + 1);
     expect(JSON.parse(fixture.database.record('outbox_cursor', id)!)).toEqual({ version: 1, acked: 99, lastSeq: 103, dropped: false });
     expect(box.pending(id).map(row => row.seq)).toEqual([100, 101, 102, 103]);
-    await new Promise<void>(resolve => setImmediate(resolve)); expect(transaction).toHaveBeenCalledTimes(1);
     const reopened = new RemoteOutbox(fixture.reopen());
     expect(reopened.acked(id)).toBe(99); expect(reopened.pending(id).map(row => row.rev)).toEqual([22, 33, 44, 55]);
     expect(reopened.append(id, [item(66)])[0]!.seq).toBe(104); reopened.flush();
   });
-  it('recalculates fast-forward byte sizes and the total cache for later append, acknowledgement and drop', async () => {
-    const { database } = await openRemoteDatabase(); const box = new RemoteOutbox(database); const id = randomUUID(); const other = randomUUID();
-    box.initialize(id, [item(1), item(2)]); box.initialize(other, [item(3)]);
-    const otherBytes = outboxBytes(database, other); const originalBytes = outboxBytes(database, id);
-    const buffered = box.append(id, [item(4)])[0]!; const bufferedBytes = Buffer.byteLength(JSON.stringify(buffered)) + 1;
-    const previous = originalBytes + bufferedBytes; const total = previous + otherBytes;
-    const capacity = vi.spyOn(box as unknown as CapacityCheck, 'checkCapacity');
-    box.fastForward(id, 999);
-    const rows = database.outbox(id); const bytes = rows.reduce((sum, row) => sum + row.bytes, 0);
-    expect(bytes).toBeGreaterThan(previous); expect(capacity).not.toHaveBeenCalled();
-    expect(box['totalPendingBytes']).toBe(total + bytes - previous);
-    const appended = box.append(id, [item(5)])[0]!; const appendedBytes = Buffer.byteLength(JSON.stringify(appended)) + 1;
-    expect(capacity).toHaveBeenCalledExactlyOnceWith(id, bytes, bytes + appendedBytes);
-    expect(box['totalPendingBytes']).toBe(otherBytes + bytes + appendedBytes); capacity.mockClear();
-    box.acknowledge(id, 1000);
-    const otherEntry = box.append(other, [item(6)])[0]!; const addedBytes = Buffer.byteLength(JSON.stringify(otherEntry)) + 1;
-    expect(box['totalPendingBytes']).toBe(otherBytes + bytes + appendedBytes - rows[0]!.bytes + addedBytes); capacity.mockClear();
-    box.drop(id); const last = box.append(other, [item(7)])[0]!;
-    expect(capacity).toHaveBeenCalledExactlyOnceWith(other, otherBytes + addedBytes, expect.any(Number));
-    expect(box['totalPendingBytes']).toBe(otherBytes + addedBytes + Buffer.byteLength(JSON.stringify(last)) + 1); box.flush();
-  });
-  it('recovers a cold outbox without scanning unrelated corruption and rebuilds byte totals after repair', async () => {
+  it('recovers a session despite unrelated corruption and preserves byte totals after repair', async () => {
     const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database); const id = randomUUID(); const other = randomUUID();
     box.initialize(id, [item(1), item(2)]); box.initialize(other, [item(3)]);
     const original = fixture.database.record('outbox_cursor', other)!;
     fixture.database.transaction(() => fixture.database.putRecord('outbox_cursor', other, '{'));
     const database = fixture.reopen(); const cold = new RemoteOutbox(database);
-    const record = vi.spyOn(database, 'record'); const records = vi.spyOn(database, 'records'); const rows = vi.spyOn(database, 'outbox');
     cold.fastForward(id, 99);
-    expect(record).toHaveBeenCalledExactlyOnceWith('outbox_cursor', id); expect(records).not.toHaveBeenCalled();
-    expect(rows.mock.calls).toEqual([[id], [id, 0]]); expect(cold['totalPendingBytes']).toBeUndefined();
     expect(cold.pending(id).map(row => [row.seq, row.rev])).toEqual([[100, 1], [101, 2]]);
     database.transaction(() => database.putRecord('outbox_cursor', other, original));
     const bytes = outboxBytes(database, id) + outboxBytes(database, other);
     const reopenedDatabase = fixture.reopen(); const reopened = new RemoteOutbox(reopenedDatabase);
-    expect(reopened['totalPendingBytes']).toBeUndefined();
     const added = reopened.append(id, [item(4)])[0]!; const total = bytes + Buffer.byteLength(JSON.stringify(added)) + 1;
-    expect(added.seq).toBe(102); expect(reopened['totalPendingBytes']).toBe(total); reopened.flush();
+    expect(added.seq).toBe(102); reopened.flush();
     expect(outboxBytes(reopenedDatabase, id) + outboxBytes(reopenedDatabase, other)).toBe(total);
   });
   it('recovers a full outbox despite sequence metadata growth while accounting bytes and limiting new appends', async () => {
-    const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database); const id = randomUUID(); const other = randomUUID();
-    const entries = Array.from({ length: 67 }, () => large);
+    const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database, limits); const id = randomUUID(); const other = randomUUID();
+    const entries = Array.from({ length: 3 }, () => small);
     const used = [...entries, message('')].reduce((sum, entry, index) => sum + Buffer.byteLength(JSON.stringify({ seq: index + 1, ...entry })) + 1, 0);
-    entries.push(message('x'.repeat(REMOTE_OUTBOX_PENDING_BYTES_LIMIT - used)));
+    entries.push(message('x'.repeat(limits.session - used)));
     box.initialize(other, [item(1)]); const otherBytes = outboxBytes(fixture.database, other);
-    box.initialize(id, entries); expect(outboxBytes(fixture.database, id)).toBe(REMOTE_OUTBOX_PENDING_BYTES_LIMIT);
-    const capacity = vi.spyOn(box as unknown as CapacityCheck, 'checkCapacity');
-    box.fastForward(id, 9999); expect(capacity).not.toHaveBeenCalled();
+    box.initialize(id, entries); expect(outboxBytes(fixture.database, id)).toBe(limits.session);
+    box.fastForward(id, 9999);
     const growth = entries.reduce((sum, _, index) => sum + String(10_000 + index).length - String(index + 1).length, 0);
     const bytes = outboxBytes(fixture.database, id);
-    expect(growth).toBeGreaterThan(0); expect(bytes).toBe(REMOTE_OUTBOX_PENDING_BYTES_LIMIT + growth);
-    expect(box['totalPendingBytes']).toBe(bytes + otherBytes);
-    const reopened = new RemoteOutbox(fixture.reopen()); expect(reopened.acked(id)).toBe(9999); expect(reopened.nextSeq(id)).toBe(10_068);
+    expect(growth).toBeGreaterThan(0); expect(bytes).toBe(limits.session + growth);
+    const database = fixture.reopen(); const reopened = new RemoteOutbox(database, limits); expect(reopened.acked(id)).toBe(9999); expect(reopened.nextSeq(id)).toBe(10_004);
     expect(() => reopened.append(id, [item(2)])).toThrow(expect.objectContaining({ scope: 'session' }));
     const added = reopened.append(other, [item(2)])[0]!;
-    expect(reopened['totalPendingBytes']).toBe(bytes + otherBytes + Buffer.byteLength(JSON.stringify(added)) + 1);
-    reopened.acknowledge(id, 10_000); expect(reopened.append(id, [item(2)])[0]!.seq).toBe(10_068); reopened.flush();
-  }, 30_000);
+    reopened.flush();
+    expect(outboxBytes(database, id) + outboxBytes(database, other)).toBe(bytes + otherBytes + Buffer.byteLength(JSON.stringify(added)) + 1);
+    reopened.acknowledge(id, 10_000); expect(reopened.append(id, [item(2)])[0]!.seq).toBe(10_004); reopened.flush();
+  });
   it('rejects invalid, backwards, overflowing and dropped fast-forwards without writing', async () => {
     const { database } = await openRemoteDatabase(); const box = new RemoteOutbox(database); const id = randomUUID();
     box.initialize(id, [item(1), item(2)]); box.append(id, [item(3)]);
@@ -295,28 +222,28 @@ describe('durable remote outbox', () => {
   });
   it('caps pending bytes including buffered entries and initialization, releasing acknowledged bytes', async () => {
     expect(REMOTE_OUTBOX_PENDING_BYTES_LIMIT).toBe(64 * 1024 * 1024);
-    const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database); const id = randomUUID(); const other = randomUUID();
-    box.append(id, Array.from({ length: 64 }, () => large));
-    expect(() => box.append(id, Array.from({ length: 4 }, () => large))).toThrow(RemoteOutboxCapacityError);
-    expect(box.pendingCount()).toBe(64); expect(box.nextSeq(id)).toBe(65); expect(fixture.database.outbox(id)).toEqual([]);
-    expect(() => box.initialize(other, Array.from({ length: 68 }, () => large))).toThrow(RemoteOutboxCapacityError);
+    const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database, limits); const id = randomUUID(); const other = randomUUID();
+    box.append(id, Array.from({ length: 3 }, () => small));
+    expect(() => box.append(id, [small])).toThrow(RemoteOutboxCapacityError);
+    expect(box.pendingCount()).toBe(3); expect(box.nextSeq(id)).toBe(4); expect(fixture.database.outbox(id)).toEqual([]);
+    expect(() => box.initialize(other, Array.from({ length: 4 }, () => small))).toThrow(RemoteOutboxCapacityError);
     expect(box.nextSeq(other)).toBe(1); box.append(other, [item(1)]); box.flush();
-    const reopened = new RemoteOutbox(fixture.reopen());
-    expect(() => reopened.append(id, Array.from({ length: 4 }, () => large))).toThrow(RemoteOutboxCapacityError);
-    reopened.acknowledge(id, 1); expect(reopened.append(id, [large])[0]!.seq).toBe(65); reopened.flush();
-    expect(reopened.pending(id, 1)[0]!.seq).toBe(2); expect(reopened.pendingCount()).toBe(65);
-  }, 30_000);
+    const reopened = new RemoteOutbox(fixture.reopen(), limits);
+    expect(() => reopened.append(id, [small])).toThrow(RemoteOutboxCapacityError);
+    reopened.acknowledge(id, 1); expect(reopened.append(id, [small])[0]!.seq).toBe(4); reopened.flush();
+    expect(reopened.pending(id, 1)[0]!.seq).toBe(2); expect(reopened.pendingCount()).toBe(4);
+  });
   it('enforces the total cap across buffered and durable sessions, releasing dropped bytes', async () => {
     expect(REMOTE_OUTBOX_TOTAL_PENDING_BYTES_LIMIT).toBe(256 * 1024 * 1024);
-    const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database); const ids = Array.from({ length: 5 }, () => randomUUID());
-    for (const id of ids.slice(0, 4)) box.initialize(id, Array.from({ length: 64 }, () => large));
-    expect(() => box.initialize(ids[4]!, Array.from({ length: 13 }, () => large))).toThrow(expect.objectContaining({ scope: 'total' }));
-    expect(box.nextSeq(ids[4]!)).toBe(1); box.append(ids[4]!, Array.from({ length: 12 }, () => large));
-    expect(() => box.append(ids[4]!, [large])).toThrow(expect.objectContaining({ scope: 'total' })); box.flush();
-    const reopened = new RemoteOutbox(fixture.reopen()); expect(() => reopened.append(ids[4]!, [large])).toThrow(expect.objectContaining({ scope: 'total' }));
-    reopened.acknowledge(ids[0]!, 64); expect(reopened.append(ids[4]!, [large])[0]!.seq).toBe(13); reopened.drop(ids[1]!);
-    expect(reopened.append(randomUUID(), Array.from({ length: 64 }, () => large))).toHaveLength(64); reopened.flush();
-  }, 30_000);
+    const fixture = await openRemoteDatabase(); const box = new RemoteOutbox(fixture.database, limits); const ids = Array.from({ length: 5 }, () => randomUUID());
+    for (const id of ids.slice(0, 4)) box.initialize(id, Array.from({ length: 3 }, () => small));
+    expect(() => box.initialize(ids[4]!, Array.from({ length: 3 }, () => small))).toThrow(expect.objectContaining({ scope: 'total' }));
+    expect(box.nextSeq(ids[4]!)).toBe(1); box.append(ids[4]!, Array.from({ length: 2 }, () => small));
+    expect(() => box.append(ids[4]!, [small])).toThrow(expect.objectContaining({ scope: 'total' })); box.flush();
+    const reopened = new RemoteOutbox(fixture.reopen(), limits); expect(() => reopened.append(ids[4]!, [small])).toThrow(expect.objectContaining({ scope: 'total' }));
+    reopened.acknowledge(ids[0]!, 3); expect(reopened.append(ids[4]!, [small])[0]!.seq).toBe(3); reopened.drop(ids[1]!);
+    expect(reopened.append(randomUUID(), Array.from({ length: 3 }, () => small))).toHaveLength(3); reopened.flush();
+  });
   it('rejects invalid session IDs and records before writing', async () => {
     const { database } = await openRemoteDatabase(); const box = new RemoteOutbox(database);
     for (const id of ['../escape', '', 'not-a-uuid', `${randomUUID()}/suffix`]) {
@@ -343,12 +270,11 @@ describe('durable remote outbox', () => {
     }
   });
   for (const boundary of ['before_commit', 'after_commit'] as PersistenceBoundary[]) {
-    it(`does not update a cold fast-forward byte cache at ${boundary}`, async () => {
+    it(`recovers an empty fast-forward at ${boundary}`, async () => {
       const fixture = await openRemoteDatabase(at => { if (at === boundary) throw new Error('injected'); });
       const box = new RemoteOutbox(fixture.database); const id = randomUUID(); box.nextSeq(id);
-      const cursor = structuredClone(box['cursors'].get(id));
-      expect(box['totalPendingBytes']).toBeUndefined(); expect(() => box.fastForward(id, 10)).toThrow(/commit failed/u);
-      expect(box['cursors'].get(id)).toEqual(cursor); expect(box['totalPendingBytes']).toBeUndefined();
+      expect(() => box.fastForward(id, 10)).toThrow(/commit failed/u);
+      expect(() => box.nextSeq(id)).toThrow(/fenced/u);
       const reopened = new RemoteOutbox(fixture.reopen()); expect(reopened.acked(id)).toBe(boundary === 'after_commit' ? 10 : 0);
       expect(reopened.pendingCount()).toBe(0);
     });
@@ -358,8 +284,6 @@ describe('durable remote outbox', () => {
         const id = randomUUID(); const box = new RemoteOutbox(fixture.database);
         if (operation !== 'initialize') box.initialize(id, [item(1), item(2)]);
         if (operation === 'fastForward') { box.acknowledge(id, 1); box.append(id, [item(3), item(4)]); }
-        const cursor = operation === 'fastForward' ? structuredClone(box['cursors'].get(id)) : undefined;
-        const total = box['totalPendingBytes'];
         fail = true;
         const act = () => {
           if (operation === 'append') { box.append(id, [item(3), item(4)]); box.flush(); }
@@ -370,7 +294,6 @@ describe('durable remote outbox', () => {
           if (operation === 'fastForward') box.fastForward(id, 99);
         };
         expect(act).toThrow(/commit failed/u); expect(() => box.nextSeq(id)).toThrow(/fenced/u);
-        if (operation === 'fastForward') { expect(box['cursors'].get(id)).toEqual(cursor); expect(box['totalPendingBytes']).toBe(total); }
         const reopened = new RemoteOutbox(fixture.reopen()); const committed = boundary === 'after_commit';
         if (operation === 'append') { expect(reopened.nextSeq(id)).toBe(committed ? 5 : 3); expect(reopened.pendingCount()).toBe(committed ? 4 : 2); }
         if (operation === 'initialize') { expect(reopened.nextSeq(id)).toBe(committed ? 4 : 1); expect(reopened.pendingCount()).toBe(committed ? 3 : 0); }

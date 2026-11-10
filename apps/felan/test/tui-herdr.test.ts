@@ -1,5 +1,5 @@
 import { createServer, type Server } from 'node:net';
-import { rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -125,7 +125,8 @@ describe('Herdr pane reporting', () => {
   });
 
   it('sends newline-delimited requests and retries after an unanswered attempt', async () => {
-    const socketPath = join(tmpdir(), `felan-herdr-${process.pid}-${Date.now()}.sock`);
+    const directory = await mkdtemp(join(tmpdir(), 'herdr-'));
+    const socketPath = join(directory, 's');
     const requests: string[] = [];
     let connections = 0;
     const server = createServer(socket => {
@@ -148,7 +149,7 @@ describe('Herdr pane reporting', () => {
       expect(requests[0]).toBe(requests[1]);
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-      await rm(socketPath, { force: true });
+      await rm(directory, { recursive: true, force: true });
     }
   }, 4_000);
 });

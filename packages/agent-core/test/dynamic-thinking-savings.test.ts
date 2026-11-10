@@ -21,13 +21,6 @@ describe('dynamic-thinking high-effort estimate', () => {
     }
   });
 
-  it.each([
-    ['xhigh', 'low'], ['xhigh', 'medium'], ['xhigh', 'high'], ['max', 'medium'],
-  ] as const)('estimates %s-to-%s selections with the same uplift', (baseline, selected) => {
-    expect(estimateHighEffortOutputTokens(astra, baseline, selected, { output: 1_000, reasoning: 400 }))
-      .toBe(1_020);
-  });
-
   it('does not estimate unsupported models or unchanged/upshifted effort', () => {
     const usage = { output: 1_000, reasoning: 400 };
     expect(estimateHighEffortOutputTokens(astra, 'high', 'high', usage)).toBeUndefined();

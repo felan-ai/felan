@@ -37,6 +37,7 @@ describe('persistent memory scheduling', { timeout: 15_000 }, () => {
   });
 
   it.each(['before', 'after'] as const)('joins a project %s its context exists and keeps its timer after session detach', async timing => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const f = await fixture({ debounceMs: 60_000 });
     const session = f.attach('session');
     let persistent;
@@ -54,13 +55,11 @@ describe('persistent memory scheduling', { timeout: 15_000 }, () => {
     await vi.waitFor(() => expect(session.busy()).toBe(false), { timeout: 5_000 });
     expect(f.runner.mock.calls[0]![0].models).toBe(f.models.get('session'));
 
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await f.seed(5, checkpoint => session.recordCheckpoint(f.cwd, checkpoint));
     expect(await session.status(f.cwd)).toMatchObject({ state: 'scheduled', pendingCheckpoints: 5 });
     await session.detach();
     expect(f.runner).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(60_000);
-    vi.useRealTimers();
     await vi.waitFor(async () => expect(await f.store.pendingAcceptedUpdates()).toBe(0), { timeout: 4_000 });
     expect(f.runner).toHaveBeenCalledTimes(2);
     expect(f.runner.mock.calls[1]![0].models).toBe(f.models.get('persistent'));
@@ -261,15 +260,14 @@ describe('persistent memory scheduling', { timeout: 15_000 }, () => {
   });
 
   it('still stops scheduling when the last non-persistent attachment detaches', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const f = await fixture({ debounceMs: 60_000 });
     const session = f.attach('session');
     await f.seed(1, checkpoint => session.recordCheckpoint(f.cwd, checkpoint));
     await session.runNow(f.cwd);
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await f.seed(5, checkpoint => session.recordCheckpoint(f.cwd, checkpoint));
     await session.detach();
     await vi.advanceTimersByTimeAsync(60_001);
-    vi.useRealTimers();
     expect(f.runner).toHaveBeenCalledOnce();
     expect(await f.store.pendingAcceptedUpdates()).toBe(5);
   });

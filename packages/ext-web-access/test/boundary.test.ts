@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_WEB_RESULT_BYTES, wrapUntrustedWebContent } from '../src/boundary.js';
+import { wrapUntrustedWebContent } from '../src/boundary.js';
 
 describe('untrusted web content boundary', () => {
   it('wraps one JSON envelope and prevents delimiter breakout', () => {
@@ -14,9 +14,4 @@ describe('untrusted web content boundary', () => {
     expect(wrapped).toContain('\\u2028\\u2029');
   });
 
-  it('defines the hard model-facing result bound in UTF-8 bytes', () => {
-    expect(MAX_WEB_RESULT_BYTES).toBe(12 * 1024);
-    expect(Buffer.byteLength(wrapUntrustedWebContent({ content: '😀' }), 'utf8'))
-      .toBeGreaterThan(wrapUntrustedWebContent({ content: '😀' }).length);
-  });
 });

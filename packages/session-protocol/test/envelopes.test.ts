@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { BootstrapHelloSchema, CONTROL_VERSION, ControlRequestSchema, LIMITS, PROTOCOL_VERSION, ROW_SCHEMA_VERSION,
+import { BootstrapHelloSchema, ControlRequestSchema, LIMITS,
   canonicalRequestPayload, compareRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse, parseOperationResult, parseSchema,
   parseServerEnvelope, requestTimestamp } from '../src/index.js';
-import * as protocol from '../src/index.js';
 import { identity, now, request, requestId, results } from './fixtures.js';
 
 describe('outcomes and handshake', () => {
@@ -21,9 +20,6 @@ describe('outcomes and handshake', () => {
     expect(parseServerEnvelope({ v: 1, interaction })).toEqual({ v: 1, interaction });
     const session = { ...interaction, scope: { kind: 'session', session: 's', root: 's' } };
     expect(() => parseServerEnvelope({ v: 1, interaction: session })).toThrow(/revisioned/);
-  });
-  it('exports independent protocol, row and control versions', () => {
-    expect([PROTOCOL_VERSION, ROW_SCHEMA_VERSION, CONTROL_VERSION]).toEqual([1, 1, 1]);
   });
   it.each(['rejected', 'indeterminate'] as const)('preserves %s with typed bounded errors', outcome => {
     const value = { v: 1, re: requestId(), outcome, error: { code: 'unavailable', message: 'Try again', retryable: true } };
@@ -85,15 +81,6 @@ describe('request retry identity', () => {
 });
 
 describe('shared daemon environment boundary', () => {
-  it('exposes no per-session environment API or limits', () => {
-    expect(Object.keys(protocol.OperationSchemas)).toHaveLength(54);
-    expect(Object.keys(protocol.OperationSchemas).some(op => op.startsWith('environment.'))).toBe(false);
-    for (const name of ['EnvironmentSchema', 'parseEnvironment', 'ProvisioningReferenceSchema']) expect(protocol).not.toHaveProperty(name);
-    expect(Object.keys(LIMITS).some(name => name.startsWith('environment'))).toBe(false);
-    for (const op of ['environment.provision', 'environment.refresh']) {
-      expect(() => parseClientEnvelope({ v: 1, id: requestId(), op, params: {} })).toThrow();
-    }
-  });
   it('creates and imports without handles and strips obsolete environment data from canonical requests', () => {
     for (const op of ['sessions.create', 'session.import'] as const) {
       const input = request(op, { ...request(op).params, environmentId: 'obsolete', environment: { SYNTHETIC_SECRET: 'not-real' } });

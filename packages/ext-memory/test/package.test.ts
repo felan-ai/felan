@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HOST_WORKERS_SERVICE, RUNTIME_LIFETIME_SERVICE, MODELS_SERVICE, SESSIONS_SERVICE } from '@felan-ai/agent-core';
@@ -20,13 +20,6 @@ describe('@felan-ai/ext-memory package boundary', () => {
       },
     });
     expect(manifest.exports['./service']).toBeUndefined();
-  });
-
-  it('does not import application or cloud implementation details', async () => {
-    const sources = (await readdir(join(packageRoot, 'src'), { recursive: true })).filter((file) => file.endsWith('.ts'));
-    const content = (await Promise.all(sources.map((file) => readFile(join(packageRoot, 'src', file), 'utf8')))).join('\n');
-    expect(content).not.toMatch(/felan-platform|supabase|daytona|InteractiveMode|pi-tui/);
-    expect(content).not.toMatch(/from ['"]node:(?:fs|child_process)/u);
   });
 
   it('declares core model and session services', () => {

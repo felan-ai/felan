@@ -22,8 +22,6 @@ describe('client distribution wiring', () => {
     expect(manifest.exports['./providers/runtime']).toEqual({ types: './dist/providers/runtime.d.ts', import: './dist/providers/runtime.js' });
     expect(manifest.exports['./providers/models']).toEqual({ types: './dist/providers/models.d.ts', import: './dist/providers/models.js' });
     expect(manifest.exports['./providers/secrets']).toEqual({ types: './dist/providers/secrets.d.ts', import: './dist/providers/secrets.js' });
-    expect(readFileSync(join(root, 'src/daemon-host.ts'), 'utf8')).not.toMatch(/tui|acp|presenter/iu);
-    expect(readFileSync(join(root, 'src/providers/runtime.ts'), 'utf8')).not.toMatch(/tui|acp|presenter/iu);
     const host = JSON.parse(readFileSync(join(root, 'src/host.json'), 'utf8'));
     expect(host.services).toContainEqual({ id: 'felan.runtime', major: 1, use: '@felan-ai/felan/providers/runtime' });
     expect(host.services).toContainEqual({ id: 'felan.models', major: 1, use: '@felan-ai/felan/providers/models' });

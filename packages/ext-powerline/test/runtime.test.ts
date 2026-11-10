@@ -1,8 +1,9 @@
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createSilentLogger, type ExtensionContext, type FelanExtensionAPI } from '@felan-ai/agent-core';
 import { createPowerlineRuntimeExtension, type PowerlinePresentationHost } from '../src/runtime.js';
 import type { PowerlineData } from '../src/data.js';
 
+beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 function harness() {
   const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void | Promise<void>>();
@@ -22,7 +23,7 @@ it('publishes data in non-TUI sessions without an observer or footer', async () 
   const h = harness(); const fetchUsage = vi.fn(async () => ({ ok: true as const, data: {} }));
   createPowerlineRuntimeExtension({ fetchUsage }, {}, h.host)(h.pi);
   try {
-    await h.emit('session_start'); await vi.waitFor(() => expect(h.values.length).toBeGreaterThan(0));
+    await h.emit('session_start'); await vi.advanceTimersByTimeAsync(0); expect(h.values.length).toBeGreaterThan(0);
     expect(h.exec).toHaveBeenCalled(); expect(fetchUsage).toHaveBeenCalledOnce();
     await h.emit('turn_end');
     expect(h.clear).not.toHaveBeenCalled();
@@ -38,18 +39,18 @@ it.each([true, false])('publishes Claude Code response usage with host service %
   const subscription = () => h.values.at(-1)?.segments.find(segment => segment.name === 'subscription')?.values;
   try {
     await h.emit('session_start');
-    await vi.waitFor(() => expect(subscription()).toEqual({ provider: 'anthropic', loading: false, windows: [] }));
+    await vi.advanceTimersByTimeAsync(0); expect(subscription()).toEqual({ provider: 'anthropic', loading: false, windows: [] });
     await h.emit('after_provider_response', { type: 'after_provider_response', status: 200, headers: {
       'anthropic-ratelimit-unified-5h-utilization': '0.14',
       'anthropic-ratelimit-unified-7d-utilization': '0.35',
     } });
-    await vi.waitFor(() => expect(subscription()).toEqual({ provider: 'anthropic', loading: false, windows: [
+    await vi.advanceTimersByTimeAsync(0); expect(subscription()).toEqual({ provider: 'anthropic', loading: false, windows: [
       { label: '5h', usedPercent: 14 }, { label: 'Week', usedPercent: 35 },
-    ] }));
+    ] });
     await h.emit('after_provider_response', { type: 'after_provider_response', status: 200, headers: {
       'anthropic-ratelimit-unified-5h-utilization': '0.27',
     } });
-    await vi.waitFor(() => expect(subscription()).toMatchObject({ windows: [{ label: '5h', usedPercent: 27 }] }));
+    await vi.advanceTimersByTimeAsync(0); expect(subscription()).toMatchObject({ windows: [{ label: '5h', usedPercent: 27 }] });
     await h.emit('model_select');
     expect(fetchUsage).not.toHaveBeenCalled();
   } finally { await h.emit('session_shutdown'); }
@@ -65,9 +66,9 @@ it('leaves host-backed Claude usage unchanged by provider response headers', asy
   const subscription = () => h.values.at(-1)?.segments.find(segment => segment.name === 'subscription')?.values;
   try {
     await h.emit('session_start');
-    await vi.waitFor(() => expect(subscription()).toMatchObject({ windows: [{ label: '5h', usedPercent: 40 }] }));
+    await vi.advanceTimersByTimeAsync(0); expect(subscription()).toMatchObject({ windows: [{ label: '5h', usedPercent: 40 }] });
     await h.emit('after_provider_response', { status: 200, headers: { 'anthropic-ratelimit-unified-5h-utilization': '0.99' } });
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
     expect(subscription()).toMatchObject({ windows: [{ label: '5h', usedPercent: 40 }] });
     expect(fetchUsage).toHaveBeenCalledOnce();
   } finally { await h.emit('session_shutdown'); }
@@ -79,10 +80,10 @@ it('joins an outstanding Git probe before restarting and during shutdown', async
   createPowerlineRuntimeExtension(undefined, {}, h.host)(h.pi);
   let shutdown: Promise<void> | undefined;
   try {
-    await h.emit('session_start'); await vi.waitFor(() => expect(h.exec).toHaveBeenCalledOnce());
-    await h.emit('turn_end'); await Promise.resolve(); expect(h.exec).toHaveBeenCalledOnce();
+    await h.emit('session_start'); await vi.advanceTimersByTimeAsync(0); expect(h.exec).toHaveBeenCalledOnce();
+    await h.emit('turn_end'); await vi.advanceTimersByTimeAsync(0); expect(h.exec).toHaveBeenCalledOnce();
     let stopped = false; shutdown = Promise.resolve(h.emit('session_shutdown')).then(() => { stopped = true; });
-    await Promise.resolve(); expect(stopped).toBe(false); release(); await shutdown;
+    await vi.advanceTimersByTimeAsync(0); expect(stopped).toBe(false); release(); await shutdown;
     expect(h.exec).toHaveBeenCalledOnce();
   } finally { release(); await (shutdown ?? h.emit('session_shutdown')); }
 });
@@ -100,13 +101,15 @@ it('retries an uncommitted data projection without polling Git again', async () 
 
 it('joins host lease cleanup before shutdown finishes', async () => {
   const h = harness(); let release = () => {};
-  const settle = vi.fn(async () => { await new Promise<void>(resolve => { release = resolve; }); });
+  let entered!: () => void;
+  const settling = new Promise<void>(resolve => { entered = resolve; });
+  const settle = vi.fn(async () => { await new Promise<void>(resolve => { release = resolve; entered(); }); });
   createPowerlineRuntimeExtension({ fetchUsage: async () => ({ ok: true, data: {} }), settle }, {}, h.host)(h.pi);
   let shutdown: Promise<void> | undefined;
   try {
-    await h.emit('session_start'); await vi.waitFor(() => expect(h.values.length).toBeGreaterThan(0));
+    await h.emit('session_start'); await vi.advanceTimersByTimeAsync(0); expect(h.values.length).toBeGreaterThan(0);
     let done = false; shutdown = Promise.resolve(h.emit('session_shutdown')).then(() => { done = true; });
-    await vi.waitFor(() => expect(settle).toHaveBeenCalledOnce()); expect(done).toBe(false);
+    await settling; expect(settle).toHaveBeenCalledOnce(); expect(done).toBe(false);
     release(); await shutdown;
   } finally { release(); await (shutdown ?? h.emit('session_shutdown')); }
 });
@@ -118,7 +121,7 @@ it('collects independently of display and respects behavior settings', async () 
   createPowerlineRuntimeExtension(undefined, { savingsHost: { query } }, h.host)(h.pi);
   try {
     await h.emit('session_start');
-    await vi.waitFor(() => expect(query).toHaveBeenCalled());
+    await vi.advanceTimersByTimeAsync(0); expect(query).toHaveBeenCalled();
     expect(query).toHaveBeenCalledWith(expect.objectContaining({ periodDays: 14 }));
     expect(h.exec.mock.calls.some(([, args]) => args[0] === 'status' || args[0] === 'stash')).toBe(false);
     const data = h.values.at(-1)!;
@@ -137,7 +140,7 @@ it.each([2, 3])('keeps shared Codex windows before applying maxWindows %s for Sp
     additional_rate_limits: [{ limit_name: 'GPT-5.3-Codex-Spark', rate_limit }] } }) }, {}, h.host)(h.pi);
   try {
     await h.emit('session_start');
-    await vi.waitFor(() => expect(h.values.at(-1)?.segments.find(segment => segment.name === 'subscription')?.values)
-      .toMatchObject({ loading: false, windows: [{ label: '5h' }, { label: 'Week' }] }));
+    await vi.advanceTimersByTimeAsync(0); expect(h.values.at(-1)?.segments.find(segment => segment.name === 'subscription')?.values)
+      .toMatchObject({ loading: false, windows: [{ label: '5h' }, { label: 'Week' }] });
   } finally { await h.emit('session_shutdown'); }
 });

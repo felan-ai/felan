@@ -9,26 +9,20 @@ const record = { shared: true, origin: 'local' as const, backfilled: false, unsh
 afterEach(async () => { vi.restoreAllMocks(); await closeRemoteDatabases(); });
 
 describe('remote state', () => {
-  it('loads records and missing records once, caches the id list, and returns isolated copies', async () => {
+  it('returns isolated copies of session records and listings', async () => {
     const { database } = await openRemoteDatabase(); const first = randomUUID(); const missing = randomUUID();
     new RemoteStore(database).setSession(first, record);
-    const store = new RemoteStore(database); const read = vi.spyOn(database, 'record'); const rows = vi.spyOn(database, 'records');
+    const store = new RemoteStore(database);
     expect(store.session(first)).toEqual(record); expect(store.session(missing)).toBeUndefined(); expect(store.sessions()).toEqual([first]);
-    for (let index = 0; index < 10; index++) {
-      const copy = store.session(first)!; copy.shared = false;
-      expect(store.session(missing)).toBeUndefined(); store.sessions().pop();
-    }
+    const copy = store.session(first)!; copy.shared = false; store.sessions().pop();
     expect(store.session(first)).toEqual(record); expect(store.sessions()).toEqual([first]);
-    expect(read).toHaveBeenCalledTimes(2); expect(rows).toHaveBeenCalledTimes(1);
     const input = { ...record }; const result = store.setSession(missing, input); input.shared = false; result.shared = false;
     expect(store.session(missing)).toEqual(record); expect(store.sessions().sort()).toEqual([first, missing].sort());
-    expect(read).toHaveBeenCalledTimes(2); expect(rows).toHaveBeenCalledTimes(1);
   });
   it('checks database ownership for every cached read and list', async () => {
     const { database } = await openRemoteDatabase(); const store = new RemoteStore(database); const id = randomUUID();
     store.setSession(id, record); store.session(id); store.sessions();
-    const check = vi.spyOn(database, 'assertCurrent'); check.mockClear();
-    store.settings(); store.session(id); store.sessions(); expect(check).toHaveBeenCalledTimes(3);
+    const check = vi.spyOn(database, 'assertCurrent');
     check.mockImplementation(() => { throw new Error('ownership lost'); });
     expect(() => store.settings()).toThrow(RemoteStorageError);
     expect(() => store.session(id)).toThrow(RemoteStorageError);

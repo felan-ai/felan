@@ -38,6 +38,7 @@ type Handler = (event: unknown, ctx: ExtensionContext) => unknown;
 type LiveClient = {
   call(name: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<ToolResult>;
   messages: Parameters<FelanExtensionAPI['sendMessage']>[0][];
+  firstCompletion: Promise<Parameters<FelanExtensionAPI['sendMessage']>[0]>;
   shutdown(reason?: 'reload' | 'shutdown'): Promise<void>;
 };
 type LiveFixture = {
@@ -66,9 +67,7 @@ describe('registered Background Bash tools with live host processes', () => {
     await withLiveTools(async ({ runtime, owner }) => {
       const start = vi.spyOn(runtime.processes!, 'startShell');
       try {
-        const before = Date.now();
         const result = await within(owner.call('bash', { command: '(sleep 3) & echo started', timeout: 1.5 }), 2_000, 'foreground shell exit');
-        expect(Date.now() - before).toBeLessThan(2_000);
         expect(text(result)).toBe('Exit: 0\n\nstarted');
         expect(result.details).toEqual({ background: false, exitCode: 0, truncated: false });
         expect(jobs(await call(owner, 'list_background_bash', {}))).toEqual([]);
@@ -113,16 +112,16 @@ describe('registered Background Bash tools with live host processes', () => {
       const details = result.details as BackgroundBashDetails;
       expect(details).toMatchObject({ background: true, command, pid: expect.any(Number) });
       expect(text(result)).toContain('Started background process.');
-      expect(details.pid).toBe(Number(decoder.decode(await runtime.readFile('bash.pid'))));
+      const pid = await eventually(async () => Number(decoder.decode(await runtime.readFile('bash.pid'))),
+        value => Number.isSafeInteger(value) && value > 0, 'promoted process writes its PID');
+      expect(details.pid).toBe(pid);
       const info = JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo;
       expect(info).toMatchObject({ executionMode: 'attached', pid: details.pid, startedAt: details.startedAt, promotedAt: expect.any(Number) });
       expect(listedJob(await call(child, 'list_background_bash', {}), details.id).status.status).toBe('running');
-      expect(text(await call(child, 'read_background_bash', { id: details.id }))).toContain('before');
+      await waitForOutput(child, details.id, 'before');
 
       await runtime.writeFile('continue', new Uint8Array());
-      const completion = await eventually(async () => owner.messages.find(message =>
-        (message.details as { job?: { id: string } } | undefined)?.job?.id === details.id),
-      message => message !== undefined, 'promoted process completion message');
+      const completion = await within(owner.firstCompletion, OPERATION_TIMEOUT_MS, 'promoted process completion message');
       expect(completion).toMatchObject({ details: { job: { id: details.id, status: 'completed', exitCode: 0 } } });
       expect(text(await call(child, 'read_background_bash', { id: details.id }))).toContain('before\nafter');
       expect(owner.messages).toHaveLength(1);
@@ -261,12 +260,14 @@ describe('registered Background Bash tools with live host processes', () => {
     await withLiveTools(async ({ owner, child }) => {
       const started = await startPty(owner, interactiveCommand(), params);
       await waitForOutput(child, started.id, 'ready');
-      await delay(5_500);
-
-      const listed = await call(child, 'list_background_bash', { status: 'all' });
-      expect.soft(listedJob(listed, started.id).status.status).toBe('running');
-      const running = await call(owner, 'list_background_bash', { status: 'running' });
-      expect.soft(jobs(running).map((job) => job.meta.id)).toContain(started.id);
+      const clock = vi.spyOn(Date, 'now').mockReturnValue(started.startedAt + 5_500);
+      try {
+        const listed = await call(child, 'list_background_bash', { status: 'all' });
+        expect.soft(listedJob(listed, started.id).status.status).toBe('running');
+        const running = await call(owner, 'list_background_bash', { status: 'running' });
+        expect.soft(jobs(running).map((job) => job.meta.id)).toContain(started.id);
+      } finally { clock.mockRestore(); }
+      await call(child, 'write_background_bash', { id: started.id, chars: 'late\n' });
       await waitForOutput(child, started.id, 'late-output');
 
       await call(child, 'write_background_bash', { id: started.id, chars: UNICODE_INPUT });
@@ -302,24 +303,27 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(expected.completedAt).toEqual(expect.any(Number));
       expect(expected.updatedAt).toEqual(expect.any(Number));
 
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        await delay(25);
+      const originalNow = Date.now;
+      let elapsed = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => originalNow() + elapsed);
+      try { for (let attempt = 0; attempt < 3; attempt += 1) {
+        elapsed += 25;
         const listed = await call(child, 'list_background_bash', {});
         expect.soft(listedJob(listed, started.id).status).toMatchObject(expected);
 
-        await delay(25);
+        elapsed += 25;
         await waitForOutput(owner, started.id, 'finished');
         const persisted = JSON.parse(decoder.decode(
           await runtime.storage('session').readFile(finished.job.meta.completionPath),
         )) as BackgroundBashInfo;
         expect.soft(persisted).toMatchObject(expected);
 
-        await delay(25);
+        elapsed += 25;
         const repeated = await waitForJob(child, started.id);
         expect.soft(repeated.timedOut).toBe(false);
         expect.soft(repeated.job.status).toMatchObject(expected);
         expect.soft(repeated.job.info).toMatchObject(expected);
-      }
+      } } finally { clock.mockRestore(); }
     });
   }, TEST_TIMEOUT_MS);
 
@@ -496,6 +500,8 @@ async function createClient(
   const tools = new Map<string, ToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const messages: LiveClient['messages'] = [];
+  let completed!: (message: LiveClient['messages'][number]) => void;
+  const firstCompletion = new Promise<LiveClient['messages'][number]>(resolve => { completed = resolve; });
   const ctx = { mode: 'print', cwd: runtime.cwd } as unknown as ExtensionContext;
   let activeTools: string[] = [];
   let callId = 0;
@@ -506,7 +512,7 @@ async function createClient(
     registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
     registerMessageRenderer() {},
     registerCommand() {},
-    sendMessage(message: LiveClient['messages'][number]) { messages.push(message); },
+    sendMessage(message: LiveClient['messages'][number]) { messages.push(message); completed(message); },
     getActiveTools: () => activeTools,
     setActiveTools: (names: string[]) => { activeTools = names; },
     on(name: string, handler: Handler) {
@@ -523,7 +529,7 @@ async function createClient(
     'stop_background_bash', 'write_background_bash',
   ]);
   return {
-    messages,
+    messages, firstCompletion,
     call(name, params, signal) {
       const tool = tools.get(name);
       if (!tool) throw new Error(`Tool was not registered: ${name}`);
@@ -596,7 +602,6 @@ function nodeCommand(script: string): string {
 function interactiveCommand(): string {
   return nodeCommand(`
     setTimeout(() => process.exit(99), 25000);
-    setTimeout(() => process.stdout.write('late-output\\n'), 5200);
     process.stdin.setEncoding('utf8');
     let pending = '';
     process.stdin.on('data', chunk => {
@@ -606,6 +611,7 @@ function interactiveCommand(): string {
         const line = pending.slice(0, newline + 1);
         pending = pending.slice(newline + 1);
         if (line === 'exit7\\n') process.exit(7);
+        if (line === 'late\\n') { process.stdout.write('late-output\\n'); continue; }
         process.stdout.write('received:' + JSON.stringify(line) + '\\n');
       }
     });

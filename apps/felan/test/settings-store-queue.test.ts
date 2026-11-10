@@ -1,6 +1,9 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
-const lock = vi.hoisted(() => vi.fn<(...args: unknown[]) => Promise<Record<string, unknown>>>());
+const lock = vi.hoisted(() => {
+  vi.resetModules();
+  return vi.fn<(...args: unknown[]) => Promise<Record<string, unknown>>>();
+});
 vi.mock('@felan-ai/daemon/provider', () => ({ withLocalFileLock: lock }));
 vi.mock('node:fs/promises', () => ({
   mkdir: async () => undefined,
@@ -19,17 +22,22 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-const settle = () => new Promise<void>(resolve => setImmediate(resolve));
+function holdLock() {
+  const held = deferred();
+  const entered = deferred();
+  lock.mockImplementationOnce(() => { entered.resolve({}); return held.promise; });
+  return { ...held, entered: entered.promise };
+}
 
 it('queues reads and writes before attempting a contended local file lock', async () => {
-  const held = deferred(); lock.mockImplementationOnce(() => held.promise);
+  const held = holdLock();
   const owner = vi.fn();
   const first = updateDaemonSettingsStore('/settings-queue', owner, () => {});
-  await settle();
+  await held.entered;
   const second = readDaemonSettingsStore('/settings-queue', owner);
   const third = updateDaemonSettingsStore('/settings-queue', owner, () => {});
   try {
-    await settle();
+    await Promise.resolve();
     expect(lock).toHaveBeenCalledOnce();
     expect(owner).toHaveBeenCalledOnce();
   } finally { held.resolve({}); await Promise.all([first, second, third]); }
@@ -38,9 +46,9 @@ it('queues reads and writes before attempting a contended local file lock', asyn
 });
 
 it('does not block a different canonical settings directory', async () => {
-  const held = deferred(); lock.mockImplementationOnce(() => held.promise);
+  const held = holdLock();
   const first = readDaemonSettingsStore('/settings-first', () => {});
-  await settle();
+  await held.entered;
   try {
     expect(await readDaemonSettingsStore('/settings-second', () => {})).toEqual({});
     expect(lock).toHaveBeenCalledTimes(2);
@@ -48,11 +56,11 @@ it('does not block a different canonical settings directory', async () => {
 });
 
 it('continues queued transactions after a failed lock attempt', async () => {
-  const held = deferred(); lock.mockImplementationOnce(() => held.promise);
+  const held = holdLock();
   const failure = new Error('External lock is held');
   const first = readDaemonSettingsStore('/settings-failed', () => {}).catch(error => error);
   const second = updateDaemonSettingsStore('/settings-failed', () => {}, () => {});
-  await settle();
+  await held.entered;
   held.reject(failure);
   expect(await first).toBe(failure);
   expect(await second).toEqual({});

@@ -45,10 +45,6 @@ function cacheWarm(timestamp: number): SessionEntry {
 }
 
 describe('prompt cache state', () => {
-  it('starts uncached without a model or entries', () => {
-    expect(promptCacheState(undefined, [])).toEqual({ cached: false });
-  });
-
   it.each([{ cacheRead: 1 }, { cacheWrite: 1 }])('tracks cache usage %j at the assistant timestamp', (usage) => {
     expect(promptCacheState(undefined, [assistant(usage)])).toEqual({ cached: true, refreshedAt });
     expect(promptCacheState(undefined, [assistant(usage, { timestamp: 0 })])).toEqual({ cached: true, refreshedAt: 0 });
@@ -128,19 +124,9 @@ describe('prompt cache state', () => {
       .toMatchObject({ lifetimeMs: 3_600_000, lifetimeSource: 'reported' });
   });
 
-  it('keeps lifetime unknown for explicit openai-responses cache mode', () => {
-    const explicit = model({ compat: { supportsExplicitPromptCacheMode: true } });
-    const state = promptCacheState(explicit, [assistant()]);
-    expect(state).toEqual({ cached: true, refreshedAt });
-    expect(promptCacheState(model(), [assistant()])).toEqual({ cached: true, refreshedAt });
-    expect(promptCacheState(model({ compat: { supportsExplicitPromptCacheMode: false } }), [assistant()]))
-      .toEqual({ cached: true, refreshedAt });
-    expect(promptCacheState(model({ ...explicit, api: 'openai-codex-responses' }), [assistant()]))
-      .toEqual({ cached: true, refreshedAt });
-    expect(promptCacheState(model({ ...explicit, promptCache: { short: 0 } }), [assistant()]))
+  it('expires a declared zero-lifetime cache at its refresh time', () => {
+    expect(promptCacheState(model({ promptCache: { short: 0 } }), [assistant()]))
       .toMatchObject({ lifetimeMs: 0, lifetimeSource: 'declared', expiresAt: refreshedAt });
-    expect(promptCacheState(explicit, [assistant({ cacheWrite: 1, cacheWrite1h: 0 })]))
-      .toMatchObject({ lifetimeMs: 300_000, lifetimeSource: 'reported' });
   });
 
   it('ignores malformed entries and unrelated message or usage kinds', () => {

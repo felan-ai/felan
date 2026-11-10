@@ -124,16 +124,18 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     const namespace = join(resolved.accountDirectory, namespaceLockName(resolved)); const store = join(resolved.agentDir, '.felan-store.lock');
     const stale = new Date(Date.now() - 10 * 86_400_000);
     const age = async (path: string) => Date.now() - (await stat(path)).mtimeMs;
-    const tick = () => new Promise(resolve => setTimeout(resolve, 100));
     await utimes(namespace, stale, stale); await utimes(store, stale, stale);
-    const owner = await acquire(input); await tick();
+    const owner = await acquire(input);
+    await vi.waitFor(async () => expect(await age(namespace)).toBeLessThan(60_000));
     for (const lock of [namespace, store, join(resolved.accountDirectory, 'claims.lock')]) expect(await age(lock)).toBeLessThan(60_000);
-    await utimes(namespace, stale, stale); await utimes(store, stale, stale); await tick();
+    await utimes(namespace, stale, stale); await utimes(store, stale, stale);
     expect(await age(namespace)).toBeGreaterThan(86_400_000);
     vi.useFakeTimers({ toFake: ['Date'] });
     try {
-      vi.setSystemTime(Date.now() + 2 * 60 * 60_000); await tick();
-      expect(await age(namespace)).toBeLessThan(60_000); expect(await age(store)).toBeLessThan(60_000);
+      vi.setSystemTime(Date.now() + 2 * 60 * 60_000);
+      await vi.waitFor(async () => {
+        expect(await age(namespace)).toBeLessThan(60_000); expect(await age(store)).toBeLessThan(60_000);
+      });
     } finally { vi.useRealTimers(); }
     owner.assertCurrent();
   });
@@ -173,6 +175,5 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     const exited = once(first.child, 'exit'); first.child.kill('SIGKILL'); await exited;
     const second = start(input); const next = JSON.parse(await second.line());
     expect(next.ready.instanceId).not.toBe(identity.instanceId);
-    await new Promise(resolve => setTimeout(resolve, 1_100));
   });
 });

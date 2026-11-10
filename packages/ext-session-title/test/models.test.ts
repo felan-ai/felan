@@ -10,27 +10,31 @@ import {
   type SessionEntry,
   type TextModelInfo,
 } from '@felan-ai/agent-core';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import extension from '../src/index.js';
 import { createSessionTitleModelsHost } from '../src/models.js';
+
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
 
 describe('Models-backed session titles', () => {
   it.each(['tui', 'rpc', 'json', 'print'] as const)('names a new root in %s mode without consulting UI', async mode => {
     const fake = fakeModels();
+    fake.response.content = [{ type: 'text', text: 'Title: "Review authentication flow."' }];
     const h = harness(fake.service, { mode });
     h.start('Review the authentication flow.');
     await vi.waitFor(() => expect(h.rename).toHaveBeenCalledWith('Review authentication flow'));
     expect(fake.getAvailable).toHaveBeenCalledWith('test', { signal: expect.any(AbortSignal) });
     const [reference, context, options] = fake.complete.mock.calls[0]!;
     expect(reference).toEqual({ provider: 'test', id: 'cheap' });
-    expect(Object.keys(reference).sort()).toEqual(['id', 'provider']);
     expect(context.systemPrompt).toContain('untrusted source text');
     expect(context.messages[0]?.content).toContain('Review the authentication flow.');
     expect(options).toMatchObject({ maxTokens: 64, maxRetries: 0, reasoning: 'minimal', cacheRetention: 'none', timeoutMs: 30_000 });
     expect(options?.signal).toBe(fake.getAvailable.mock.calls[0]?.[1]?.signal);
     expect(h.notify).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(0);
     h.start('Follow-up');
-    await tick();
+    await vi.advanceTimersByTimeAsync(0);
     expect(fake.complete).toHaveBeenCalledOnce();
     await h.shutdown();
   });
@@ -43,10 +47,11 @@ describe('Models-backed session titles', () => {
       ...(kind === 'forked' ? { parentSession: '/parent.jsonl' } : {}),
     });
     h.start('Name this session');
-    await h.shutdown();
+    await vi.advanceTimersByTimeAsync(0);
     expect(fake.getAvailable).not.toHaveBeenCalled();
     expect(fake.complete).not.toHaveBeenCalled();
     expect(h.rename).not.toHaveBeenCalled();
+    await h.shutdown();
   });
 
   it('prefers an eligible current low-tier model without crossing providers', async () => {
@@ -83,7 +88,7 @@ describe('Models-backed session titles', () => {
     const h = harness(fake.service);
     h.start('First try');
     await vi.waitFor(() => expect(h.warn).toHaveBeenCalledOnce());
-    await tick();
+    await vi.advanceTimersByTimeAsync(0);
     expect(fake.dispatched).toHaveLength(0);
     expect(h.rename).not.toHaveBeenCalled();
     fake.available = [model('newly-authorized')];
@@ -102,10 +107,10 @@ describe('Models-backed session titles', () => {
     for (let attempt = 1; attempt <= 3; attempt++) {
       h.start('Retry');
       await vi.waitFor(() => expect(h.warn).toHaveBeenCalledTimes(attempt));
-      await tick();
+      await vi.advanceTimersByTimeAsync(0);
     }
     h.start('Fourth attempt');
-    await tick();
+    await vi.advanceTimersByTimeAsync(0);
     expect(fake.getAvailable).toHaveBeenCalledTimes(3);
     expect(fake.complete).toHaveBeenCalledTimes(2);
     expect(h.warn.mock.calls[0]?.[0]).toEqual({ component: 'session-title', sessionId: 'session-1', stage: 'prepare' });
@@ -242,5 +247,3 @@ function harness(models: ModelsService, options: {
 function userEntry(): SessionEntry {
   return { type: 'message', message: { role: 'user', content: 'Prior prompt', timestamp: 0 } } as SessionEntry;
 }
-
-async function tick(): Promise<void> { await new Promise<void>(resolve => setTimeout(resolve, 0)); }

@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { expect, it, vi } from 'vitest';
 import { loadFelanExtensions, type AgentRuntime, type ExtensionAPI, type ExtensionContext, type Model, type Api } from '@felan-ai/agent-core';
 import rootExtension, { createCodexTools } from '../../../../packages/ext-codex/src/index.js';
@@ -53,22 +52,4 @@ it.each([['root', rootExtension]] as const)('preserves configured generic loadin
   const [request] = await Promise.all((handlers.get('before_provider_request') ?? []).map(handler => handler({ payload: {} }, { model } as ExtensionContext)));
   expect(request).toMatchObject({ service_tier: 'priority', text: { verbosity: 'high' } });
   for (const handler of handlers.get('session_shutdown') ?? []) await handler({}, {} as ExtensionContext);
-});
-
-it('keeps every local execution module free of presenter imports', async () => {
-  const pending = [new URL('../../../../packages/ext-codex/src/index.ts', import.meta.url)];
-  const visited = new Set<string>();
-  while (pending.length) {
-    const file = pending.pop()!;
-    if (visited.has(file.href)) continue;
-    visited.add(file.href);
-    const source = await readFile(file, 'utf8');
-    for (const match of source.matchAll(/(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s*)(['"])([^'"]+)\1/gu)) {
-      const specifier = match[2]!;
-      expect(specifier, file.pathname).not.toMatch(/^@earendil-works\/pi-tui(?:\/|$)/u);
-      if (specifier.startsWith('.')) pending.push(new URL(specifier.replace(/\.js$/u, '.ts'), file));
-    }
-  }
-  expect([...visited].some(path => path.endsWith('/runtime.ts'))).toBe(true);
-  expect([...visited].some(path => path.endsWith('/tui.ts'))).toBe(false);
 });

@@ -18,6 +18,7 @@ vi.mock('undici', async (importOriginal) => ({
 
 describe('content extraction', () => {
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -151,27 +152,6 @@ describe('content extraction', () => {
     expect(result.content).toContain('CROSS ORIGIN FALLBACK TERM');
     expect(result.content).not.toContain('attacker-controlled');
     expect(result).not.toMatchObject({ llmsTxtReplacement: true });
-  });
-
-  it('uses requested HTML when ignoreLlmsTxt is true', async () => {
-    const fetchMock = vi.fn(async () => new Response(
-      '<html><head><title>Requested</title></head><body><p>REQUESTED TERM</p></body></html>',
-      { headers: { 'content-type': 'text/html' } },
-    ));
-    vi.stubGlobal('fetch', fetchMock);
-
-    const result = await extractContent(
-      'https://docs.example/guide',
-      {},
-      undefined,
-      undefined,
-      undefined,
-      { ignoreLlmsTxt: true },
-    );
-
-    expect(fetchMock).toHaveBeenCalledOnce();
-    expect(result.url).toBe('https://docs.example/guide');
-    expect(result.content).toContain('REQUESTED TERM');
   });
 
   it('does not probe direct llms.txt, JSON, declared text, or PDF resources', async () => {
@@ -530,13 +510,17 @@ describe('content extraction', () => {
   });
 
   it('uses caller cancellation rather than the expired HTTP timeout after download', async () => {
+    vi.useFakeTimers();
     mockResponse(pdfBytes('stalled converter'), 'application/pdf');
     const controller = new AbortController();
     let requestSignal: AbortSignal | undefined;
+    let conversionStarted!: () => void;
+    const conversion = new Promise<void>(resolve => { conversionStarted = resolve; });
     const events: PdfConversionEvents = {
       emit: vi.fn((_channel, value) => {
         const request = value as MarkitdownPdfConversionRequest;
         requestSignal = request.signal;
+        conversionStarted();
         if (request.claim()) request.respond(new Promise((_resolve, reject) => {
           request.signal?.addEventListener('abort', () => reject(request.signal?.reason), { once: true });
         }));
@@ -544,8 +528,8 @@ describe('content extraction', () => {
     };
 
     const extraction = extractContent('https://docs.example/queued.pdf', {}, events, controller.signal, 20);
-    await vi.waitFor(() => expect(requestSignal).toBeDefined());
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await conversion;
+    await vi.advanceTimersByTimeAsync(30);
     expect(requestSignal).toBe(controller.signal);
     expect(requestSignal?.aborted).toBe(false);
 

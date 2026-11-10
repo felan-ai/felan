@@ -30,21 +30,33 @@ import { localMemoryProjectDirectory } from './backend.js';
 
 const temporaryPaths: string[] = [];
 const memoryFixtureCleanups = new Set<() => Promise<void>>();
+const coordinators = new Set<LocalMemoryCoordinator>();
 
 afterEach(async () => {
   const results = await Promise.allSettled([cleanupMemoryFixtures()]);
+  results.push(...await Promise.allSettled([...coordinators].map((coordinator) => coordinator.dispose())));
+  coordinators.clear();
   results.push(...await Promise.allSettled(
     temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })),
   ));
   throwCleanupFailures(results);
 });
 
+function createCoordinator(options: ConstructorParameters<typeof LocalMemoryCoordinator>[0]): LocalMemoryCoordinator {
+  const coordinator = new LocalMemoryCoordinator(options);
+  const dispose = coordinator.dispose.bind(coordinator);
+  let disposing: Promise<void> | undefined;
+  coordinator.dispose = () => disposing ??= dispose();
+  coordinators.add(coordinator);
+  return coordinator;
+}
+
 describe('LocalMemoryCoordinator', () => {
   it('drains an accepted memory run without aborting it or starting more work', async () => {
     const root = await temporaryDirectory(); const cwd = join(root, 'workspace'); await mkdir(cwd);
     const sessionFile = await writeSession(cwd, 'session-1'); const entered = deferred(); const release = deferred();
     let signal: AbortSignal | undefined; let calls = 0;
-    const coordinator = new LocalMemoryCoordinator({ agentDir: join(root, 'agent'), models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recover: false,
+    const coordinator = createCoordinator({ agentDir: join(root, 'agent'), models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recover: false,
       dreamRunner: async input => { calls++; signal = input.signal; entered.resolve(); await release.promise; return updatedArtifact(); } });
     const fixture = trackMemoryFixture(coordinator, release.resolve);
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).recordCheckpoint(checkpointFor(sessionFile));
@@ -59,7 +71,7 @@ describe('LocalMemoryCoordinator', () => {
   it('preserves pending checkpoints while a drained coordinator refuses new processing', async () => {
     const root = await temporaryDirectory(); const cwd = join(root, 'workspace'); await mkdir(cwd);
     const sessionFile = await writeSession(cwd, 'session-1'); let calls = 0;
-    const coordinator = new LocalMemoryCoordinator({ agentDir: join(root, 'agent'), models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recover: false,
+    const coordinator = createCoordinator({ agentDir: join(root, 'agent'), models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recover: false,
       dreamRunner: async () => { calls++; return updatedArtifact(); } });
     const fixture = trackMemoryFixture(coordinator);
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).recordCheckpoint(checkpointFor(sessionFile));
@@ -70,7 +82,7 @@ describe('LocalMemoryCoordinator', () => {
   });
 
   it('rejects invalid batch sizes', () => {
-    expect(() => new LocalMemoryCoordinator({
+    expect(() => createCoordinator({
       agentDir: '/tmp/felan-memory-test',
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       batchSize: 0,
@@ -88,7 +100,7 @@ describe('LocalMemoryCoordinator', () => {
     let observedModel: Model<Api> | undefined;
     let observedScope: readonly Model<Api>[] | undefined;
     let observedClassifier: import('@felan-ai/agent-core').Classifier | undefined;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -119,7 +131,7 @@ describe('LocalMemoryCoordinator', () => {
     const sessionFile = await writeSession(cwd, 'session-1');
     const entered = deferred();
     const release = deferred();
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -180,7 +192,7 @@ describe('LocalMemoryCoordinator', () => {
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
     let runs = 0;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -198,9 +210,8 @@ describe('LocalMemoryCoordinator', () => {
     expect(runs).toBe(1);
 
     await host.recordCheckpoint(checkpoint);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(runs).toBe(1);
     await coordinator.dispose();
+    expect(runs).toBe(1);
   });
 
   it('waits for five accepted checkpoints and 24 hours after publication', async () => {
@@ -210,7 +221,7 @@ describe('LocalMemoryCoordinator', () => {
     const firstSessionFile = await writeSession(cwd, 'first-session');
     let now = Date.now();
     let runs = 0;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -269,7 +280,7 @@ describe('LocalMemoryCoordinator', () => {
     const sessionFile = await writeSession(cwd, 'session-1');
     const entries = sessionEntries();
     const observed: { input?: LocalMemoryDreamInput; transcripts: string[] } = { transcripts: [] };
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir,
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -326,7 +337,7 @@ describe('LocalMemoryCoordinator', () => {
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
     let shouldFail = true;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -356,7 +367,7 @@ describe('LocalMemoryCoordinator', () => {
     const project = await resolveLocalMemoryProject(cwd);
     const writerLock = join(localMemoryProjectDirectory(agentDir, project), 'writer.lock');
     let workerSawAbort = false;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir,
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -364,7 +375,7 @@ describe('LocalMemoryCoordinator', () => {
       dreamRunner: async ({ signal }) => {
         const changedAt = new Date(Date.now() + 5_000);
         await utimes(writerLock, changedAt, changedAt);
-        await waitFor(() => signal.aborted);
+        if (!signal.aborted) await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
         workerSawAbort = true;
         throw new Error('worker aborted after lease compromise');
       },
@@ -389,7 +400,7 @@ describe('LocalMemoryCoordinator', () => {
     const validSessionFile = await writeSession(cwd, 'valid-session');
     const observedSessionIds: string[] = [];
     let runs = 0;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -439,7 +450,7 @@ describe('LocalMemoryCoordinator', () => {
     const secondReleased = new Promise<void>((resolve) => { releaseSecond = resolve; });
     const observedSessionIds: string[] = [];
     let runs = 0;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -492,7 +503,7 @@ describe('LocalMemoryCoordinator', () => {
     const firstStarted = new Promise<void>((resolve) => { firstStartedResolve = resolve; });
     const firstReleased = new Promise<void>((resolve) => { releaseFirst = resolve; });
     let runs = 0;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -530,7 +541,7 @@ describe('LocalMemoryCoordinator', () => {
     const agentDir = join(root, 'agent');
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir,
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -557,7 +568,7 @@ describe('LocalMemoryCoordinator', () => {
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
     let runs = 0;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -578,7 +589,6 @@ describe('LocalMemoryCoordinator', () => {
       pendingCheckpoints: 0,
       message: 'Dropped 1 memory checkpoint that could not be read',
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(runs).toBe(0);
 
     await host.recordCheckpoint(checkpointFor(sessionFile));
@@ -596,7 +606,7 @@ describe('LocalMemoryCoordinator', () => {
     await mkdir(cwd, { recursive: true });
     let runs = 0;
     const observedSessionIds: string[] = [];
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -649,7 +659,7 @@ describe('LocalMemoryCoordinator', () => {
         return updatedArtifact();
       },
     };
-    const first = new LocalMemoryCoordinator(options);
+    const first = createCoordinator(options);
     await first.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).recordCheckpoint(invalid);
     await expect(first.runNow(cwd)).resolves.toMatchObject({ state: 'idle', pendingCheckpoints: 0 });
     await first.dispose();
@@ -661,7 +671,7 @@ describe('LocalMemoryCoordinator', () => {
       reason: 'checkpoint_changed',
     });
 
-    const second = new LocalMemoryCoordinator(options);
+    const second = createCoordinator(options);
     const host = second.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') });
     await host.recordCheckpoint(invalid);
     await expect(second.status(cwd)).resolves.toMatchObject({ pendingCheckpoints: 0 });
@@ -678,7 +688,7 @@ describe('LocalMemoryCoordinator', () => {
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     let processedSessionIds: string[] = [];
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       enabled: false,
@@ -713,7 +723,7 @@ describe('LocalMemoryCoordinator', () => {
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     let processedSessionIds: string[] = [];
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       enabled: false,
@@ -752,7 +762,7 @@ describe('LocalMemoryCoordinator', () => {
     const aborted = deferred();
     const release = deferred();
     let workerFinished = false;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir,
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -794,7 +804,7 @@ describe('LocalMemoryCoordinator', () => {
       await fixture.cleanup();
     }
 
-    const retryCoordinator = new LocalMemoryCoordinator({ agentDir, models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recover: false });
+    const retryCoordinator = createCoordinator({ agentDir, models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recover: false });
     const retryFixture = trackMemoryFixture(retryCoordinator);
     try {
       await expect(retryCoordinator.status(cwd)).resolves.toMatchObject({ pendingCheckpoints: 1 });
@@ -810,7 +820,7 @@ describe('LocalMemoryCoordinator', () => {
     const createSession = vi.fn();
     const dreamRunner = vi.fn(createDefaultLocalMemoryDreamRunner({ createSession }));
     let abortedAtEntry: boolean | undefined;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir,
       models: {
         getAvailable: () => [{
@@ -859,78 +869,13 @@ describe('LocalMemoryCoordinator', () => {
     }
   });
 
-  it('reports early run settlement instead of waiting for an unreachable lifecycle milestone', async () => {
-    const root = await temporaryDirectory();
-    const cwd = join(root, 'workspace');
-    const coordinator = new LocalMemoryCoordinator({
-      agentDir: join(root, 'agent'), models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recover: false,
-    });
-    const fixture = trackMemoryFixture(coordinator);
-    const originalDispose = coordinator.dispose.bind(coordinator);
-    let disposals = 0;
-    const dispose = vi.spyOn(coordinator, 'dispose').mockImplementation(async () => {
-      disposals += 1;
-      await originalDispose();
-    });
-    const originalBegin = Store.prototype.beginAttempt;
-    const begin = vi.spyOn(Store.prototype, 'beginAttempt').mockRejectedValue(
-      new Error('injected attempt creation failure'),
-    );
-    fixture.restoreWith(() => {
-      begin.mockRestore();
-      dispose.mockRestore();
-    });
-    await mkdir(cwd, { recursive: true });
-    await coordinator.recordCheckpoint(cwd, checkpointFor(await writeSession(cwd, 'session-1')));
-    const running = fixture.runNow(cwd);
-    try {
-      for (const milestone of ['worker startup', 'persisted attempt']) {
-        await expect(waitForMemoryMilestone(deferred().promise, running, milestone)).rejects.toThrow(
-          `Memory run settled before ${milestone}`,
-        );
-      }
-      expect(begin).toHaveBeenCalledOnce();
-      const failure = new Error('injected run rejection');
-      await expect(waitForMemoryMilestone(deferred().promise, Promise.reject(failure), 'worker startup'))
-        .rejects.toBe(failure);
-    } finally {
-      await fixture.cleanup();
-    }
-    await fixture.cleanup();
-    expect(disposals).toBe(1);
-    expect(Store.prototype.beginAttempt).toBe(originalBegin);
-  });
-
-  it('drains a suspended fixture and restores its spy even when disposal rejects', async () => {
-    const released = deferred();
-    const failure = new Error('injected disposal failure');
-    const release = vi.fn(() => released.resolve());
-    const dispose = vi.fn(async () => { throw failure; });
-    const originalBegin = Store.prototype.beginAttempt;
-    const fixture = trackMemoryFixture({ dispose, runNow: () => released.promise }, release);
-    const begin = vi.spyOn(Store.prototype, 'beginAttempt');
-    fixture.restoreWith(() => begin.mockRestore());
-    let runSettled = false;
-    const running = fixture.runNow('/unused').then(() => { runSettled = true; });
-
-    expect(runSettled).toBe(false);
-    await expect(cleanupMemoryFixtures()).rejects.toBeInstanceOf(AggregateError);
-    await running;
-    await expect(fixture.cleanup()).rejects.toMatchObject({ errors: [failure] });
-    expect(runSettled).toBe(true);
-    expect(release).toHaveBeenCalledOnce();
-    expect(dispose).toHaveBeenCalledOnce();
-    expect(Store.prototype.beginAttempt).toBe(originalBegin);
-    expect(memoryFixtureCleanups.size).toBe(0);
-  });
-
   it('leaves normal TUI startup usable when no local model is configured', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
     const getAvailable = vi.fn(() => []);
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       models: { getAvailable } as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -943,9 +888,8 @@ describe('LocalMemoryCoordinator', () => {
       pendingCheckpoints: 1,
       message: 'Low-tier memory model is unavailable; evidence remains pending',
     });
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(getAvailable).toHaveBeenCalledTimes(1);
     await coordinator.dispose();
+    expect(getAvailable).toHaveBeenCalledTimes(1);
   });
 
   it('recovers stable root sessions on startup but does not scan child session paths', async () => {
@@ -960,7 +904,7 @@ describe('LocalMemoryCoordinator', () => {
     const old = new Date(Date.now() - 60_000);
     await utimes(sessionFile, old, old);
     let runs = 0;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir,
       sessionDir: cwd,
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
@@ -988,7 +932,7 @@ describe('LocalMemoryCoordinator', () => {
     await utimes(await writeSession(cwd, 'recovery-failing'), old, old);
     await utimes(await writeSession(cwd, 'recovery-healthy'), old, old);
     faults.failingHistory.add('recovery-failing');
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recoveryStableMs: 0,
     });
@@ -999,27 +943,25 @@ describe('LocalMemoryCoordinator', () => {
     await vi.waitFor(async () => {
       expect(await coordinator.status(cwd)).toMatchObject({ pendingCheckpoints: 1 });
     }, { timeout: 4_000 });
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    await coordinator.dispose();
     expect(faults.historyReads.filter((id) => id === 'recovery-failing')).toHaveLength(1);
     expect(faults.listCalls).toBe(1);
-    await coordinator.dispose();
   });
 
-  it('retries a failed session listing once, then completes startup recovery', async () => {
+  it('retries a failed session listing once without reading history', async () => {
     const root = await temporaryDirectory();
     const cwd = join(root, 'workspace');
     await mkdir(cwd, { recursive: true });
     faults.listFailures = Number.POSITIVE_INFINITY;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recoveryStableMs: 0, recoveryRetryMs: 20,
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
     await vi.waitFor(() => expect(faults.listCalls).toBe(2), { timeout: 4_000 });
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    await coordinator.dispose();
     expect(faults.listCalls).toBe(2);
     expect(faults.historyReads).toEqual([]);
-    await coordinator.dispose();
   });
 
   it('retries startup session listing without another attachment call and records stable sessions', async () => {
@@ -1029,7 +971,7 @@ describe('LocalMemoryCoordinator', () => {
     const old = new Date(Date.now() - 60_000);
     await utimes(await writeSession(cwd, 'recovery-after-retry'), old, old);
     faults.listFailures = 1;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recoveryStableMs: 0, recoveryRetryMs: 20,
     });
@@ -1049,7 +991,7 @@ describe('LocalMemoryCoordinator', () => {
     const old = new Date(Date.now() - 60_000);
     await utimes(await writeSession(cwd, 'recovery-held'), old, old);
     faults.heldHistory.add('recovery-held');
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recoveryStableMs: 0,
     });
@@ -1073,7 +1015,7 @@ describe('LocalMemoryCoordinator', () => {
     const old = new Date(Date.now() - 60_000);
     await utimes(await writeSession(cwd, 'recovery-disposed'), old, old);
     faults.heldHistory.add('recovery-disposed');
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'), sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recoveryStableMs: 0,
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
@@ -1095,7 +1037,7 @@ describe('LocalMemoryCoordinator', () => {
     ].join('\n'), 'utf8');
     const old = new Date(Date.now() - 60_000);
     await utimes(file, old, old);
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir, sessionDir: cwd, models: {} as unknown as import('@felan-ai/agent-core').ModelsService, recoveryStableMs: 0,
     });
     await coordinator.createSessionHost({ cwd, sessionStorageRoot: join(root, 'session-storage') }).readCurrent();
@@ -1119,7 +1061,7 @@ describe('LocalMemoryCoordinator', () => {
     const sessionFile = await writeSession(cwd, 'deferred-root');
     const old = new Date(Date.now() - 60_000);
     await utimes(sessionFile, old, old);
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir: join(root, 'agent'),
       sessionDir: cwd,
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
@@ -1155,7 +1097,7 @@ describe('LocalMemoryCoordinator', () => {
       await gate;
       return sessions;
     });
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir,
       sessionDir: cwd,
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
@@ -1181,7 +1123,7 @@ describe('LocalMemoryCoordinator', () => {
     await mkdir(cwd, { recursive: true });
     const sessionFile = await writeSession(cwd, 'session-1');
     let modelCalls = 0;
-    const coordinator = new LocalMemoryCoordinator({
+    const coordinator = createCoordinator({
       agentDir,
       models: {} as unknown as import('@felan-ai/agent-core').ModelsService,
       recover: false,
@@ -1384,13 +1326,5 @@ async function expectCancelledMemoryRun(
     expect(lease).toBeDefined();
   } finally {
     await lease?.release();
-  }
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Condition was not reached before timeout');
-    await new Promise((resolve) => setTimeout(resolve, 25));
   }
 }

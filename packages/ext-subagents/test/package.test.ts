@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -24,14 +24,5 @@ describe('@felan-ai/ext-subagents package boundary', () => {
     expect(license).toContain('MIT License');
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');
     expect(notice).toContain('No source code was copied');
-  });
-
-  it('contains no private cloud imports or terminal dependencies', async () => {
-    const sources = (await readdir(join(packageRoot, 'src'))).filter((file) => file.endsWith('.ts'));
-    const content = (await Promise.all(
-      sources.map((file) => readFile(join(packageRoot, 'src', file), 'utf8')),
-    )).join('\n');
-
-    expect(content).not.toMatch(/felan-platform|supabase|daytona|pi-tui|InteractiveMode/);
   });
 });

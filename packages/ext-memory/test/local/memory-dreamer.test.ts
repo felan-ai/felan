@@ -527,13 +527,6 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     expect(captured?.customTools?.map(({ name }) => name)).toEqual(['remove_memory_page']);
     expect(session.bound).toBe(true);
     expect(session.activeTools).toEqual(['read', 'ls', 'grep', 'edit', 'write', 'remove_memory_page']);
-    expect(session.promptText).toContain('Read .dreaming/input/manifest.json');
-    expect(session.promptText).toContain('Keep memory sparse');
-    expect(session.promptText).toContain('direct user-authored durable facts');
-    expect(session.promptText).toContain('not be cheaply recovered');
-    expect(session.promptText).toContain('Delete old repository mirrors');
-    expect(session.promptText).toContain('Use remove_memory_page');
-    expect(session.promptText).not.toContain('Return only a JSON object');
     expect(session.disposed).toBe(true);
 
     const runtime = captured!.runtime;
@@ -627,9 +620,10 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     });
     const controller = new AbortController();
     const running = runner(inputFor(stagingDirectory, { signal: controller.signal }));
-    for (let attempt = 0; attempt < 100 && !session.promptStarted; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 0));
-    }
+    await Promise.race([
+      session.promptEntered,
+      running.then(() => { throw new Error('Memory run completed before prompt entry'); }),
+    ]);
     controller.abort();
 
     await expect(running).rejects.toThrow('Memory processing was cancelled');
@@ -789,6 +783,7 @@ interface FakeSession {
   readonly disposed: boolean;
   readonly aborted: boolean;
   readonly promptStarted: boolean;
+  readonly promptEntered: Promise<void>;
   readonly promptText: string | undefined;
 }
 
@@ -798,6 +793,8 @@ function fakeSession(options: { readonly waitForPrompt?: boolean; readonly assis
   let disposed = false;
   let aborted = false;
   let promptStarted = false;
+  let markPromptEntered!: () => void;
+  const promptEntered = new Promise<void>((resolve) => { markPromptEntered = resolve; });
   let promptText: string | undefined;
   let resolvePrompt: (() => void) | undefined;
   const session = {
@@ -820,6 +817,7 @@ function fakeSession(options: { readonly waitForPrompt?: boolean; readonly assis
     prompt: async (text: string) => {
       promptStarted = true;
       promptText = text;
+      markPromptEntered();
       if (options.waitForPrompt) {
         await new Promise<void>((resolve) => {
           resolvePrompt = resolve;
@@ -832,6 +830,7 @@ function fakeSession(options: { readonly waitForPrompt?: boolean; readonly assis
   } as unknown as LocalMemoryDreamSession;
   return {
     session,
+    promptEntered,
     get activeTools() {
       return activeTools;
     },

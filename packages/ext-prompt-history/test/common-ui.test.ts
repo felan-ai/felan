@@ -1,3 +1,4 @@
+import { setImmediate as checkpoint } from "node:timers/promises";
 import {
 	createExtensionServiceAccess, createFelanServiceRegistry, createUnavailableExtensionUi,
 	SESSIONS_HISTORY_SERVICE, type SessionsHistory,
@@ -50,7 +51,6 @@ function fixture(entries: SessionEntry[] = [entry("live", "live prompt")]) {
 		checkpoint: async (id: string) => ({ sessionId: id, revision: `revision-${id}`, branch: null, leafId: null, byteLength: 1024 * 1024, transcriptDigest: "digest" }),
 		history: async (id: string) => ({ sessionId: id, revision: `revision-${id}`, branch: null, entries: (await readSession(references.get(id)!))?.entries ?? [] }),
 	} satisfies SessionsHistory);
-	const legacyShow = vi.fn(async () => { throw new Error("Legacy presenter must not be used."); });
 	const history: UiInteractiveElement[] = [];
 	const rows = new Map<string, { element: UiInteractiveElement; options: UiPresentOptions; lifetime: AbortController; handle: UiElementHandle; closed: boolean }>();
 	const present = vi.fn<ExtensionUi["present"]>(async (element, options = {}) => {
@@ -113,7 +113,7 @@ function fixture(entries: SessionEntry[] = [entry("live", "live prompt")]) {
 	}
 	const search = (scope: string, query = "") => invoke(view(), "search", { values: { scope, query } });
 	const settled = () => vi.waitFor(() => expect(view().actions.some(action => action.id === "cancel-search")).toBe(false));
-	return { rows, history, present, listSessions, readSession, directories, legacyShow, sendUserMessage, view, document, invoke, search, settled, shutdown,
+	return { rows, history, present, listSessions, readSession, directories, sendUserMessage, view, document, invoke, search, settled, shutdown,
 		open: () => commands.get("prompt-history")!.handler("", context), setEntries: (value: SessionEntry[]) => { currentEntries = value; } };
 }
 
@@ -128,7 +128,6 @@ describe("generic prompt history", () => {
 		expect(f.view().actions.map(action => action.id)).toEqual(["search", "detail", "close"]);
 		expect(f.view().hint).toEqual({ id: "felan.prompt-history", version: "1" });
 		expect(f.listSessions).not.toHaveBeenCalled();
-		expect(f.legacyShow).not.toHaveBeenCalled();
 		f.setEntries([entry("fresh", "fresh prompt", 4)]);
 		await f.search("session"); await f.settled();
 		expect(f.view().items[0]?.values.preview).toBe("fresh prompt");
@@ -265,17 +264,22 @@ describe("generic prompt history", () => {
 		const f = fixture();
 		f.listSessions.mockResolvedValue(Array.from({ length: 8 }, (_, index) => ({ id: `s${index}`, label: "saved", timestamp: index })));
 		const read = deferred<PromptHistorySession | undefined>(undefined);
-		f.readSession.mockImplementation(() => read.promise);
+		const entered = deferred<void>(undefined);
+		let started = 0;
+		f.readSession.mockImplementation(() => { if (++started === 4) entered.resolve(); return read.promise; });
 		await f.open(); await f.settled(); await f.search("all");
-		await vi.waitFor(() => expect(f.readSession).toHaveBeenCalledTimes(4));
+		await entered.promise;
 		const count = f.history.length;
 		let done = false;
 		const shutdown = f.shutdown().then(() => { done = true; });
-		await Promise.resolve();
-		expect(done).toBe(false);
-		expect(f.rows.get(f.view().id)?.handle.close).not.toHaveBeenCalled();
-		read.resolve({ cwd: "/project", entries: [entry("late", "late result")] });
-		await shutdown;
+		try {
+			await checkpoint();
+			expect(done).toBe(false);
+			expect(f.rows.get(f.view().id)?.handle.close).not.toHaveBeenCalled();
+		} finally {
+			read.resolve({ cwd: "/project", entries: [entry("late", "late result")] });
+			await shutdown;
+		}
 		expect(f.history).toHaveLength(count);
 		expect(f.readSession).toHaveBeenCalledTimes(4);
 		expect(f.rows.get(f.view().id)?.handle.close).toHaveBeenCalledOnce();

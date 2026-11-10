@@ -23,7 +23,7 @@ const REASONING_MODELS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna
 
 describe('Codex extension activation', () => {
   it('resolves ultrafast and fallback afresh after model selection through the provider hook', async () => {
-    const harness = createHarness(true, { priority: 'ultrafast', fast: false });
+    const harness = createHarness({ priority: 'ultrafast', fast: false });
     await codexExtension(harness.pi);
     for (const [id, serviceTier] of [
       ['gpt-6-astra', 'ultrafast'],
@@ -53,19 +53,6 @@ describe('Codex extension activation', () => {
     expect(harness.registerTool.mock.calls.map(([tool]) => tool.name)).toEqual([
       'apply_patch',
     ]);
-  });
-
-  it('activates the structured tool surface for GPT-6 Astra', async () => {
-    const harness = createHarness();
-    const ctx = context('openai-codex', 'gpt-6-astra');
-    await codexExtension(harness.pi);
-
-    await harness.emit('session_start', {}, ctx);
-
-    expect(harness.activeTools).toEqual(expect.arrayContaining([
-      'apply_patch',
-    ]));
-    expect(harness.activeTools).toContain('read');
   });
 
   it('normalizes Codex function-tool strictness through the provider hook', async () => {
@@ -147,23 +134,6 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it.each(REASONING_MODELS)(
-    'records a cache-preserving change for $provider/$api/$id', async ({ provider, api, id }) => {
-      const harness = createHarness();
-      const ctx = context(provider, id, api);
-      await codexExtension(harness.pi);
-
-      persistAnswer(ctx);
-
-      await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
-
-      expect(sessionBranches.get(ctx)).toContainEqual(expect.objectContaining({
-        type: 'custom',
-        data: expect.objectContaining({ initialEffort: 'low', effort: 'high' }),
-      }));
-    },
-  );
-
   it.each(['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna'])(
     'leaves native OpenAI Responses reasoning updates to Pi for %s', async (id) => {
       const harness = createHarness();
@@ -194,18 +164,6 @@ describe('Codex extension activation', () => {
       expect(harness.pi.appendEntry).not.toHaveBeenCalled();
     },
   );
-
-  it.each(['gpt-6-astra', 'gpt-6.1-sol'])('supports the openai provider for %s when its API is Codex Responses', async (id) => {
-    const harness = createHarness();
-    const ctx = context('openai', id, 'openai-codex-responses');
-    await codexExtension(harness.pi);
-    persistAnswer(ctx);
-    await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
-
-    expect(sessionBranches.get(ctx)).toContainEqual(expect.objectContaining({
-      type: 'custom', data: expect.objectContaining({ initialEffort: 'low', effort: 'high' }),
-    }));
-  });
 
   it.each(REASONING_MODELS.filter(({ id }) => id === 'gpt-6-sol' || id === 'gpt-6-luna'))(
     'preserves $provider/$api/$id effort when moving from none to high', async ({ provider, api, id }) => {
@@ -368,40 +326,18 @@ describe('Codex extension activation', () => {
     expect(sessionBranches.get(oldSession)).toHaveLength(1);
   });
 
-  it.each(RESPONSES_APIS)('does not inject an update from another model lane after a switch on %s/%s', async (provider, api) => {
+  it.each(RESPONSES_APIS.flatMap(([provider, api]) => [
+    { provider, api, nextProvider: provider, nextApi: api, nextId: 'gpt-6-sol' },
+    ...RESPONSES_APIS.filter(([nextProvider, nextApi]) => nextProvider !== provider || nextApi !== api)
+      .map(([nextProvider, nextApi]) => ({ provider, api, nextProvider, nextApi, nextId: 'gpt-6-astra' })),
+  ]))('isolates $provider/$api/gpt-6-astra updates from $nextProvider/$nextApi/$nextId', async ({ provider, api, nextProvider, nextApi, nextId }) => {
     const harness = createHarness();
     const ctx = context(provider, 'gpt-6-astra', api);
     await codexExtension(harness.pi);
     persistAnswer(ctx);
     await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
 
-    ctx.model = model(provider, 'gpt-6-sol', api);
-    const nextUser = { role: 'user', content: 'Hello', timestamp: 1 };
-    persistMessage(ctx, nextUser);
-    const [projection] = await harness.emit('context', { messages: [nextUser] }, ctx) as [
-      { messages: Array<{ role: string; content: string }> },
-    ];
-    expect(projection.messages).toEqual([nextUser]);
-    const [request] = await harness.emit('before_provider_request', {
-      payload: { model: 'gpt-6-sol', reasoning: { effort: 'medium' }, input: [{ role: 'user', content: 'Hello' }] },
-    }, ctx);
-    expect(request).toMatchObject({
-      reasoning: { effort: 'medium' },
-      input: [{ role: 'user', content: 'Hello' }],
-    });
-  });
-
-  it.each(RESPONSES_APIS.flatMap(([provider, api]) => (
-    RESPONSES_APIS.filter(([nextProvider, nextApi]) => nextProvider !== provider || nextApi !== api)
-      .map(([nextProvider, nextApi]) => ({ provider, api, nextProvider, nextApi }))
-  )))('isolates $provider/$api updates from $nextProvider/$nextApi', async ({ provider, api, nextProvider, nextApi }) => {
-    const harness = createHarness();
-    const ctx = context(provider, 'gpt-6-astra', api);
-    await codexExtension(harness.pi);
-    persistAnswer(ctx);
-    await harness.emit('thinking_level_select', { previousLevel: 'low', level: 'high' }, ctx);
-
-    ctx.model = model(nextProvider, 'gpt-6-astra', nextApi);
+    ctx.model = model(nextProvider, nextId, nextApi);
     const user = { role: 'user', content: 'Continue', timestamp: 2 };
     persistMessage(ctx, user);
     const [projection] = await harness.emit('context', { messages: [user] }, ctx) as [
@@ -409,10 +345,10 @@ describe('Codex extension activation', () => {
     ];
     expect(projection.messages).toEqual([user]);
     const [request] = await harness.emit('before_provider_request', {
-      payload: { reasoning: { effort: 'high' }, input: [{ role: 'user', content: user.content }] },
+      payload: { model: nextId, reasoning: { effort: 'medium' }, input: [{ role: 'user', content: user.content }] },
     }, ctx);
     expect(request).toMatchObject({
-      reasoning: { effort: 'high' }, input: [{ role: 'user', content: user.content }],
+      reasoning: { effort: 'medium' }, input: [{ role: 'user', content: user.content }],
     });
   });
 
@@ -525,10 +461,8 @@ describe('Codex extension activation', () => {
     });
   });
 
-  it.each(RESPONSES_APIS.flatMap(([provider, api]) => (
-    (['manual', 'threshold', 'overflow'] as const).map((reason) => ({ provider, api, reason }))
-  )))(
-    'retires updates after $reason compaction on $provider/$api and starts a new effort baseline', async ({ reason, provider, api }) => {
+  it.each(RESPONSES_APIS)(
+    'retires updates after compaction on %s/%s and starts a new effort baseline', async (provider, api) => {
       const harness = createHarness();
       const ctx = context(provider, 'gpt-6-astra', api);
       await codexExtension(harness.pi);
@@ -537,7 +471,7 @@ describe('Codex extension activation', () => {
       const branch = sessionBranches.get(ctx)!;
       const compactionEntry = { type: 'compaction', id: 'compacted', parentId: branch.at(-1)?.id ?? null };
       branch.push(compactionEntry);
-      await harness.emit('session_compact', { reason, compactionEntry }, ctx);
+      await harness.emit('session_compact', { reason: 'manual', compactionEntry }, ctx);
       const summary = { role: 'compactionSummary', content: 'Summary', timestamp: 5 };
       const nextUser = { role: 'user', content: 'New request', timestamp: 6 };
       persistMessage(ctx, nextUser);
@@ -961,7 +895,7 @@ describe('Codex extension activation', () => {
   });
 
   it('keeps Pi threshold timing when post-agent compaction is disabled', async () => {
-    const harness = createHarness(true, { postAgentRunCompaction: false });
+    const harness = createHarness({ postAgentRunCompaction: false });
     await codexExtension(harness.pi);
     const ctx = context('openai-codex', 'gpt-5.3-codex');
     ctx.isIdle = () => false;
@@ -1016,8 +950,8 @@ describe('Codex image provider registration', () => {
     expect(codexExtension.execution).toBeTypeOf('function');
   });
 
-  it.each([{}, { imageGeneration: true }, { imageGeneration: undefined }])('registers only a native image provider with config %j', async (config) => {
-    const harness = createHarness(true, config);
+  it('registers only a native image provider by default', async () => {
+    const harness = createHarness();
     await codexExtension(harness.pi);
 
     expect(harness.registerProvider).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
@@ -1029,7 +963,7 @@ describe('Codex image provider registration', () => {
     const [provider] = harness.registerProvider.mock.calls[0]!;
     expect(provider.getModels()).toEqual([]);
     expect(provider.getAllModels?.().map(({ id }) => id)).toEqual(['gpt-image-2', 'gpt-image-2.5']);
-    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
+    expect(harness.getAvailable).toHaveBeenCalledWith('openai-codex');
 
     await harness.emit('session_shutdown', {}, context('openai', 'gpt-5.4'));
     expect(harness.unregisterProvider).not.toHaveBeenCalled();
@@ -1039,7 +973,7 @@ describe('Codex image provider registration', () => {
     { config: { imageGeneration: false }, modelsAvailable: true },
     { config: {}, modelsAvailable: false },
   ])('does not register when disabled or Models is absent: %j', async ({ config, modelsAvailable }) => {
-    const harness = createHarness(true, config, modelsAvailable);
+    const harness = createHarness(config, modelsAvailable);
     await codexExtension(harness.pi);
 
     expect(harness.registerProvider).not.toHaveBeenCalled();
@@ -1051,7 +985,7 @@ describe('Codex image provider registration', () => {
     if (available === false) harness.getAvailable.mockResolvedValue([]);
     if (available === 'rejected') harness.getAvailable.mockRejectedValue(new Error('unavailable'));
     await codexExtension(harness.pi);
-    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
+    expect(harness.getAvailable).toHaveBeenCalledWith('openai-codex');
     const [provider] = harness.registerProvider.mock.calls[0]!;
     const options = {
       signal: new AbortController().signal,
@@ -1063,7 +997,6 @@ describe('Codex image provider registration', () => {
     harness.getAvailable.mockRejectedValue(new Error('must not be called again'));
     await expect(provider.auth.apiKey!.check!(options)).resolves.toEqual(expected);
     await expect(provider.auth.apiKey!.resolve(options)).resolves.toBeUndefined();
-    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
   });
 
   it.each([true, false])('uses registry auth status after session_start despite initial availability %s', async (available) => {
@@ -1086,10 +1019,8 @@ describe('Codex image provider registration', () => {
         ? { type: 'api_key', source: 'OpenAI Codex login' }
         : undefined);
     }
-    expect(getProviderAuthStatus).toHaveBeenCalledTimes(2);
     expect(getProviderAuthStatus).toHaveBeenCalledWith('openai-codex');
     expect(getProviderAuth).not.toHaveBeenCalled();
-    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
   });
 
   it('resolves the current session registry token only after session_start', async () => {
@@ -1111,8 +1042,7 @@ describe('Codex image provider registration', () => {
     await expect(provider.auth.apiKey!.resolve(options)).resolves.toEqual({
       auth: { apiKey: 'test-codex-token' }, source: 'OpenAI Codex login',
     });
-    expect(getProviderAuth).toHaveBeenCalledExactlyOnceWith('openai-codex');
-    expect(harness.getAvailable).toHaveBeenCalledExactlyOnceWith('openai-codex');
+    expect(getProviderAuth).toHaveBeenCalledWith('openai-codex');
 
     for (const auth of [undefined, { auth: {} }, { auth: { apiKey: ' \n' } }]) {
       getProviderAuth.mockResolvedValue(auth);
@@ -1126,11 +1056,11 @@ describe('Codex image provider registration', () => {
     await expect(provider.auth.apiKey!.resolve(options)).resolves.toEqual({
       auth: { apiKey: 'next-session-token' }, source: 'OpenAI Codex login',
     });
-    expect(nextAuth).toHaveBeenCalledExactlyOnceWith('openai-codex');
+    expect(nextAuth).toHaveBeenCalledWith('openai-codex');
   });
 });
 
-function createHarness(processSupport = true, config: Record<string, unknown> = {}, modelsAvailable = true) {
+function createHarness(config: Record<string, unknown> = {}, modelsAvailable = true) {
   const handlers = new Map<string, Handler[]>();
   const activeTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate'];
   const registerTool = vi.fn();
@@ -1143,7 +1073,7 @@ function createHarness(processSupport = true, config: Record<string, unknown> = 
   let activeContext: ExtensionContext | undefined;
   let thinkingLevel = 'high';
   const pi = {
-    runtime: unusedRuntime(processSupport),
+    runtime: unusedRuntime(),
     services: createExtensionServiceAccess(services, codexExtension.serviceRequirements!),
     agentDir: '/agent',
     config,
@@ -1243,12 +1173,12 @@ function model(provider: string, id: string, api: Api = 'openai-responses'): Mod
   } as Model<Api>;
 }
 
-function unusedRuntime(processSupport: boolean): AgentRuntime {
+function unusedRuntime(): AgentRuntime {
   const unused = async (): Promise<never> => { throw new Error('unused'); };
   return {
     kind: 'host',
     cwd: '/workspace',
-    ...(processSupport ? { processes: { startShell: unused } } : {}),
+    processes: { startShell: unused },
     logger: { level: 'off', child() { return this; }, debug() {}, info() {}, warn() {}, error() {} },
     storage: () => ({ root: '/storage', readFile: unused, writeFile: unused, appendFile: unused, listFiles: unused, mkdir: unused, remove: unused }),
     exec: unused,

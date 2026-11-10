@@ -1,5 +1,6 @@
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loadHostConfig, resolveHostComposition, validPackageSpecifier, type HostConfig } from '../src/daemon/host-config.js';
 
@@ -7,7 +8,7 @@ const roots: string[] = [];
 const config = (extensions: string[] = []) => JSON.stringify({ version: 1, services: [], extensions: extensions.map(packageName => ({ package: packageName })), policy: { projectTrust: 'ask' } });
 
 async function fixture(): Promise<string> {
-  const root = await mkdtemp(join(process.cwd(), '.host-config-test-'));
+  const root = await mkdtemp(join(tmpdir(), '.host-config-test-'));
   roots.push(root);
   await mkdir(join(root, 'agent'), { mode: 0o700 });
   await mkdir(join(root, 'manager'), { mode: 0o700 });

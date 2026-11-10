@@ -31,6 +31,7 @@ mod.activateClaudeCodeBridge({
 }, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels: catalogModelRows });
 const streamSimple = providerConfig.streamSimple;
 const model = providerConfig.models[0];
+const tools = [{ name: "read", description: "Read a file", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
 
 const calls = [];
 const scripts = [];
@@ -61,7 +62,6 @@ const toolCall = (id) => ({ role: "assistant", content: [{ type: "toolCall", id,
 	usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
 	stopReason: "toolUse", timestamp: clock++ });
 const toolResult = (id) => ({ role: "toolResult", toolCallId: id, toolName: "read", content: [{ type: "text", text: "file" }], isError: false, timestamp: clock++ });
-const settle = () => new Promise((r) => setTimeout(r, 20));
 const replyText = (message) => message.content.filter((b) => b.type === "text").map((b) => b.text).join("");
 
 beforeEach(() => {
@@ -81,12 +81,12 @@ beforeEach(() => {
 			call.prompt = (await prompt[Symbol.asyncIterator]().next()).value.message.content[0].text;
 			for (const step of script.steps) {
 				if (closed) return;
-				if (typeof step === "function") { await step(killed); continue; }
+				if (typeof step === "function") { script.entered?.resolve(); await step(killed); continue; }
 				yield step;
 			}
 		})();
 		gen.interrupt = async () => {};
-		gen.close = () => { closed = true; onClose(); };
+		gen.close = () => { closed = true; onClose(); script.closed?.resolve(); };
 		return gen;
 	});
 });
@@ -120,9 +120,11 @@ describe("tool result with no parked query", () => {
 
 	it("after an abort, ends the turn without a query", async () => {
 		const controller = new AbortController();
-		scripts.push({ label: "parked", steps: [init("cc-aborted"), ...toolUse("toolu_2"), (killed) => killed] });
-		const first = streamSimple(model, { messages: [user("read a")], tools: [] }, { sessionId: "pi-aborted", signal: controller.signal });
-		await settle();
+		const entered = Promise.withResolvers();
+		scripts.push({ label: "parked", entered, steps: [init("cc-aborted"), ...toolUse("toolu_2"), (killed) => killed] });
+		const first = streamSimple(model, { messages: [user("read a")], tools }, { sessionId: "pi-aborted", signal: controller.signal });
+		await entered.promise;
+		assert.equal((await first.result()).stopReason, "toolUse");
 		controller.abort();
 		await first.result();
 		activeQueryContexts.clear();
@@ -137,9 +139,11 @@ describe("tool result with no parked query", () => {
 
 	it("a session aborted earlier still resumes a later retry ending at a tool result", async () => {
 		const controller = new AbortController();
-		scripts.push({ label: "parked", steps: [init("cc-earlier"), ...toolUse("toolu_5"), (killed) => killed] });
-		const first = streamSimple(model, { messages: [user("read a")], tools: [] }, { sessionId: "pi-retry", signal: controller.signal });
-		await settle();
+		const entered = Promise.withResolvers();
+		scripts.push({ label: "parked", entered, steps: [init("cc-earlier"), ...toolUse("toolu_5"), (killed) => killed] });
+		const first = streamSimple(model, { messages: [user("read a")], tools }, { sessionId: "pi-retry", signal: controller.signal });
+		await entered.promise;
+		assert.equal((await first.result()).stopReason, "toolUse");
 		controller.abort();
 		await first.result();
 		activeQueryContexts.clear();
@@ -156,25 +160,27 @@ describe("tool result with no parked query", () => {
 
 	it("a parked query that fails resumes on pi's retry, even after an earlier abort (#192)", async () => {
 		const controller = new AbortController();
-		scripts.push({ label: "aborted", steps: [init("cc-old"), ...toolUse("toolu_8"), (killed) => killed] });
-		const first = streamSimple(model, { messages: [user("read a")], tools: [] }, { sessionId: "pi-failed", signal: controller.signal });
-		await settle();
+		const entered = Promise.withResolvers();
+		scripts.push({ label: "aborted", entered, steps: [init("cc-old"), ...toolUse("toolu_8"), (killed) => killed] });
+		const first = streamSimple(model, { messages: [user("read a")], tools }, { sessionId: "pi-failed", signal: controller.signal });
+		await entered.promise;
+		assert.equal((await first.result()).stopReason, "toolUse");
 		controller.abort();
 		await first.result();
 
 		// The query parks on a tool call, then fails (a quota error) once its result arrives.
 		let fail;
 		const failure = new Promise((r) => { fail = r; });
-		scripts.push({ label: "failing", steps: [init("cc-failing"), ...toolUse("toolu_9"), async () => { await failure; throw new Error("rate limit (five_hour)"); }] });
+		const closed = Promise.withResolvers();
+		scripts.push({ label: "failing", closed, steps: [init("cc-failing"), ...toolUse("toolu_9"), async () => { await failure; throw new Error("rate limit (five_hour)"); }] });
 		const ask = user("read b");
-		const tools = [{ name: "read", description: "Read a file", parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } }];
 		const parked = await streamSimple(model, { messages: [ask], tools }, { sessionId: "pi-failed", signal: new AbortController().signal }).result();
 		assert.equal(parked.stopReason, "toolUse");
 		const history = [ask, parked, toolResult("toolu_9")];
 		const failing = streamSimple(model, { messages: history, tools }, { sessionId: "pi-failed", signal: new AbortController().signal });
 		fail();
 		assert.equal((await failing.result()).stopReason, "error");
-		await settle();
+		await closed.promise;
 
 		// pi retries the same history on a fresh signal.
 		scripts.push({ label: "retry", steps: [init("cc-retry"), ...text("answer after retry"), result("answer after retry")] });
@@ -186,9 +192,11 @@ describe("tool result with no parked query", () => {
 
 	it("an abort in one session does not orphan another session's resumed result", async () => {
 		const controller = new AbortController();
-		scripts.push({ label: "parked", steps: [init("cc-other"), ...toolUse("toolu_3"), (killed) => killed] });
-		const first = streamSimple(model, { messages: [user("read a")], tools: [] }, { sessionId: "pi-other", signal: controller.signal });
-		await settle();
+		const entered = Promise.withResolvers();
+		scripts.push({ label: "parked", entered, steps: [init("cc-other"), ...toolUse("toolu_3"), (killed) => killed] });
+		const first = streamSimple(model, { messages: [user("read a")], tools }, { sessionId: "pi-other", signal: controller.signal });
+		await entered.promise;
+		assert.equal((await first.result()).stopReason, "toolUse");
 		controller.abort();
 		await first.result();
 		activeQueryContexts.clear();

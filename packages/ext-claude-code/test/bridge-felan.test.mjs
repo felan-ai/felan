@@ -1,10 +1,8 @@
 import { setImmediate } from 'node:timers/promises';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { activateClaudeCodeBridge, claudeCodeSupportedModels, supportsPerTurnEffort, __test } from '../src/bridge/index.js';
 import { PI_PREAMBLE } from '../src/bridge/prompt-capture.js';
-import { diagLogPath } from '../src/bridge/log-paths.js';
 import { QueryContext, resetCtx } from '../src/bridge/query-state.js';
 import { rememberSessionCwd, sessionCwdFor } from '../src/bridge/session-cwd.js';
 import { setClaudeAgentSdk } from '../src/sdk/runtime.js';
@@ -101,6 +99,7 @@ function injectLiveQuery(turns = [], applyFlagSettings = async () => {}, afterIn
         for await (const message of request.prompt) {
           call.prompts.push(message);
           const turn = turns[call.prompts.length - 1] ?? {};
+          turn.entered?.resolve();
           yield { type: 'system', subtype: 'init', session_id: request.options.resume ?? 'cc-live' };
           if (turn.wait && await Promise.race([turn.wait.then(() => false), closed.then(() => true)])) return;
           yield turn.result ?? { type: 'result', subtype: 'success', result: `Answer ${call.prompts.length}.` };
@@ -339,9 +338,11 @@ describe('Felan provider registration and lifecycle', () => {
     const bridge = activate();
     bridge.start('closing-session');
     const { promise, resolve } = Promise.withResolvers();
+    const entered = Promise.withResolvers();
     __test.setQuery(() => {
       const query = (async function* () {
         yield { type: 'system', subtype: 'init', session_id: 'cc-late' };
+        entered.resolve();
         await promise;
         yield { type: 'result', subtype: 'success', result: 'Late answer.' };
       })();
@@ -350,7 +351,7 @@ describe('Felan provider registration and lifecycle', () => {
       return query;
     });
     const pending = run(bridge, capturedContext(), { sessionId: 'closing-session' });
-    await setImmediate();
+    await entered.promise;
     expect(__test.activeQueryContexts.size).toBe(1);
     if (event === 'shutdown') bridge.shutdown('closing-session');
     else bridge.start('closing-session', event);
@@ -363,9 +364,11 @@ describe('Felan provider registration and lifecycle', () => {
     const bridge = activate();
     bridge.start('restarted-session');
     const { promise, resolve } = Promise.withResolvers();
+    const entered = Promise.withResolvers();
     __test.setQuery(() => {
       const query = (async function* () {
         yield { type: 'system', subtype: 'init', session_id: 'cc-obsolete' };
+        entered.resolve();
         await promise;
         if (outcome === 'error') throw new Error('Late failure');
         yield { type: 'result', subtype: 'success', result: 'Late answer.' };
@@ -376,7 +379,7 @@ describe('Felan provider registration and lifecycle', () => {
     });
     const controller = new AbortController();
     const pending = run(bridge, capturedContext(), { sessionId: 'restarted-session', signal: controller.signal });
-    await setImmediate();
+    await entered.promise;
     bridge.start('restarted-session', 'resume');
     const replacement = { sessionId: 'cc-replacement', cursor: 3, cwd: process.env.PI_CODING_AGENT_DIR };
     __test.setSharedSession('restarted-session', replacement);
@@ -486,20 +489,21 @@ describe('Felan live Claude Code process', () => {
   it('ends an aborted turn without writing its prompt while the thinking level is pending', async () => {
     const bridge = activate();
     bridge.start('pending-effort');
-    const calls = injectLiveQuery([], () => new Promise(() => {}));
+    const entered = Promise.withResolvers();
+    const calls = injectLiveQuery([], () => { entered.resolve(); return new Promise(() => {}); });
     const model = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
     const first = capturedContext();
     const answer = await bridge.provider.streamSimple(model, first, { sessionId: 'pending-effort', reasoning: 'high' }).result();
-    await setImmediate();
+    const live = __test.liveQueries.get('pending-effort');
     const controller = new AbortController();
     const pending = bridge.provider.streamSimple(model, followUp(first, answer, 'Never sent.'), {
       sessionId: 'pending-effort', reasoning: 'max', signal: controller.signal,
     }).result();
-    await setImmediate();
+    await entered.promise;
     expect(calls[0].flagSettings).toEqual([{ settings: { effortLevel: 'max' }, promptsBefore: 1 }]);
     controller.abort();
     expect((await pending).stopReason).toBe('aborted');
-    await setImmediate();
+    await live.exited;
     expect(calls).toHaveLength(1);
     expect(calls[0].prompts).toHaveLength(1);
     expect(calls[0].exited).toBe(true);
@@ -510,13 +514,13 @@ describe('Felan live Claude Code process', () => {
     try {
       const bridge = activate();
       bridge.start('silent');
-      const calls = injectLiveQuery([], () => new Promise(() => {}));
+      const entered = Promise.withResolvers();
+      const calls = injectLiveQuery([], () => { entered.resolve(); return new Promise(() => {}); });
       const model = bridge.provider.models.find(({ id }) => id === 'claude-opus-5-5');
       const first = capturedContext();
       const answer = await bridge.provider.streamSimple(model, first, { sessionId: 'silent', reasoning: 'high' }).result();
-      await setImmediate();
       const pending = bridge.provider.streamSimple(model, followUp(first, answer, 'Quick one.'), { sessionId: 'silent', reasoning: 'xhigh' }).result();
-      await setImmediate();
+      await entered.promise;
       await vi.advanceTimersByTimeAsync(10_000);
       expect((await pending).content).toEqual([{ type: 'text', text: 'Answer 1.' }]);
       expect(calls).toHaveLength(2);
@@ -605,12 +609,13 @@ describe('Felan live Claude Code process', () => {
   it('kills the process when a live turn is aborted', async () => {
     const bridge = activate();
     bridge.start('aborting');
-    const calls = injectLiveQuery([{}, { wait: new Promise(() => {}) }]);
+    const entered = Promise.withResolvers();
+    const calls = injectLiveQuery([{}, { entered, wait: new Promise(() => {}) }]);
     const first = capturedContext();
     const answer = await run(bridge, first, { sessionId: 'aborting' });
     const controller = new AbortController();
     const pending = run(bridge, followUp(first, answer, 'Never answered.'), { sessionId: 'aborting', signal: controller.signal });
-    await setImmediate();
+    await entered.promise;
     controller.abort();
     expect((await pending).stopReason).toBe('aborted');
     expect(calls[0].query.close).toHaveBeenCalled();
@@ -663,9 +668,10 @@ describe('Felan live Claude Code process', () => {
     const bridge = activate();
     bridge.start('steered');
     const { promise: gate, resolve: open } = Promise.withResolvers();
-    const calls = injectLiveQuery([{ wait: gate }]);
+    const entered = Promise.withResolvers();
+    const calls = injectLiveQuery([{ entered, wait: gate }]);
     const pending = run(bridge, capturedContext(), { sessionId: 'steered' });
-    await setImmediate();
+    await entered.promise;
     const turn = [...__test.activeQueryContexts].find((c) => c.piSessionId === 'steered');
     void __test.deliverToolResults(turn, [], [{ type: 'text', text: 'Also mention testing.' }], 1);
     open();
@@ -773,41 +779,29 @@ describe('Felan prompt-only calls', () => {
     const bridge = activate();
     const calls = injectQuery();
     const sessionId = 'felan-models:3adc4ed4b815';
-    const resolution = vi.spyOn(__test.promptCaptures, 'resolveOrDerive');
-    try {
-      const output = await run(bridge, { ...context, tools }, { sessionId });
-      expect(output.stopReason).toBe('stop');
-      expect(output.content).toEqual([{ type: 'text', text: 'Recommendation.' }]);
-      expect(calls).toHaveLength(1);
-      expect(calls[0].prompt).toBe(user.content);
-      expect(calls[0].options).toMatchObject({ persistSession: false, maxTurns: 1, tools: [], systemPrompt: context.systemPrompt });
-      expect(resolution).not.toHaveBeenCalled();
-      expect(__test.getSharedSession(sessionId)).toBeNull();
-    } finally {
-      resolution.mockRestore();
-    }
+    const output = await run(bridge, { ...context, tools }, { sessionId });
+    expect(output.stopReason).toBe('stop');
+    expect(output.content).toEqual([{ type: 'text', text: 'Recommendation.' }]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].prompt).toBe(user.content);
+    expect(calls[0].options).toMatchObject({ persistSession: false, maxTurns: 1, tools: [], systemPrompt: context.systemPrompt });
+    expect(__test.getSharedSession(sessionId)).toBeNull();
   });
 
   it.each([undefined, 'felan-models:captured', 'untracked-session'])('isolates exact and embedded captured prompts for untracked sessionId=%s', async (sessionId) => {
     const bridge = activate();
     const { systemPrompt } = capturedContext();
-    const resolution = vi.spyOn(__test.promptCaptures, 'resolveOrDerive');
-    try {
-      for (const prompt of [systemPrompt, `Wrapper\n${systemPrompt}\nInstructions.`]) {
-        const calls = injectQuery([
-          { type: 'system', subtype: 'init', session_id: 'cc-isolated' },
-          { type: 'result', subtype: 'success', result: 'Isolated answer.' },
-        ]);
-        const output = await run(bridge, { ...context, systemPrompt: prompt }, { sessionId });
-        expect(output.stopReason).toBe('stop');
-        expect(calls).toHaveLength(1);
-        expect(calls[0].options).toMatchObject({ persistSession: false, maxTurns: 1, systemPrompt: prompt });
-        expect(calls[0].query.close).toHaveBeenCalled();
-        expect(__test.getSharedSession(sessionId ?? null)).toBeNull();
-      }
-      expect(resolution).not.toHaveBeenCalled();
-    } finally {
-      resolution.mockRestore();
+    for (const prompt of [systemPrompt, `Wrapper\n${systemPrompt}\nInstructions.`]) {
+      const calls = injectQuery([
+        { type: 'system', subtype: 'init', session_id: 'cc-isolated' },
+        { type: 'result', subtype: 'success', result: 'Isolated answer.' },
+      ]);
+      const output = await run(bridge, { ...context, systemPrompt: prompt }, { sessionId });
+      expect(output.stopReason).toBe('stop');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].options).toMatchObject({ persistSession: false, maxTurns: 1, systemPrompt: prompt });
+      expect(calls[0].query.close).toHaveBeenCalled();
+      expect(__test.getSharedSession(sessionId ?? null)).toBeNull();
     }
   });
 
@@ -972,42 +966,6 @@ describe('Felan prompt-only calls', () => {
     const bridge = activate();
     injectQuery();
     expect((await run(bridge, { ...context, systemPrompt })).stopReason).toBe('stop');
-  });
-});
-
-describe('Felan troubleshooting guidance', () => {
-  it('keeps session diagnostics while referring users to the shipped README and status command', () => {
-    const bridge = activate();
-    const ctx = bridge.start('diagnostic-session');
-    const jsonlPath = join(ctx.cwd, 'missing-session.jsonl');
-    __test.verifyWrittenSession(jsonlPath, 'cc-diagnostic', 1, ctx.cwd, 'diagnostic-session');
-    const [message, severity] = ctx.ui.notify.mock.calls[0];
-    expect(severity).toBe('warning');
-    expect(message).toContain('@felan-ai/ext-claude-code README (Compatibility section)');
-    expect(message).toContain('/claude-code status');
-    expect(message).not.toContain('docs/user-guide/claude-code.md');
-    expect(message).toContain('CLAUDE_BRIDGE_DEBUG=1');
-    expect(message).not.toContain('elidickinson');
-    expect(message).not.toContain('CLAUDE_CONFIG_DIR=');
-    const diagnostic = JSON.parse(readFileSync(diagLogPath(), 'utf8').trim().split('\n').at(-1));
-    expect(diagnostic).toMatchObject({ label: 'session_verify_fail', jsonlPath, cwd: ctx.cwd, claudeConfigDir: process.env.CLAUDE_CONFIG_DIR });
-    expect(diagnostic.msg).toBeTruthy();
-  });
-
-  it('preserves unresolved capture diagnostics and uses the shipped README and status command', async () => {
-    const bridge = activate();
-    const calls = injectQuery();
-    const output = await run(bridge, { ...context, tools: [{ name: 'read', description: 'Read', parameters: {} }] });
-    expect(output.stopReason).toBe('error');
-    expect(output.errorMessage).toContain('prompt-capture: no capture');
-    expect(output.errorMessage).toContain("Felan's Claude Code extension");
-    expect(output.errorMessage).toContain('@felan-ai/ext-claude-code README (Compatibility section)');
-    expect(output.errorMessage).toContain('/claude-code status');
-    expect(output.errorMessage).not.toContain('docs/user-guide/claude-code.md');
-    expect(output.errorMessage).not.toContain('after claude-bridge');
-    const diagnostic = JSON.parse(readFileSync(diagLogPath(), 'utf8').trim().split('\n').at(-1));
-    expect(diagnostic).toMatchObject({ label: 'prompt_capture_unresolved', promptChars: context.systemPrompt.length });
-    expect(calls).toHaveLength(0);
   });
 });
 

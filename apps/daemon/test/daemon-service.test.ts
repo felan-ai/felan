@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
 import { HOST_MAINTENANCE_SERVICE, HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, SessionManager, SettingsManager, createAssistantMessageEventStream,
-  defineServiceContract, type HostMaintenance, type HostWorkerOptions, type SessionsHistory } from '@felan-ai/agent-core';
+  defineServiceContract, type AgentRuntimeProcess, type HostMaintenance, type HostWorkerOptions, type SessionsHistory } from '@felan-ai/agent-core';
 import { SessionClient } from '../../felan/src/client/client.js';
 import { settleDaemonWork, startDaemonService } from '../src/daemon/service.js';
 import { acquireDaemonOwnership } from '../src/daemon/ownership.js';
@@ -26,7 +27,7 @@ const testManager = { packageName: '@felan-ai/test-manager', version: '0.0.0',
   } };
 
 async function target(initialize = true) {
-  const root = await mkdtemp(join(process.cwd(), '.s14-'));
+  const root = await realpath(await mkdtemp(join(tmpdir(), '.s14-')));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, 'isolated');
   await mkdir(directory, { mode: 0o700 });
@@ -213,7 +214,19 @@ it('forces an owned foreground process to settle and persists its interrupted ru
   const created = await client.request('sessions.create', { cwd: input.directory, model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   await client.attach(created.result.sessionId);
-  const shell = await client.request('shell.execute', { command: 'sleep 30', includeInContext: false }, { session: created.result.sessionId });
+  const binding = service.registry.binding(created.result.sessionId)!;
+  let running = true; let stop!: () => void;
+  const stopped = new Promise<void>(resolve => { stop = resolve; });
+  const process: AgentRuntimeProcess = { pid: undefined,
+    read: async (offset, options) => {
+      if (options?.waitMs && running) await stopped;
+      return { output: new Uint8Array(), nextOffset: offset, running, ...(running ? {} : { exitCode: 130 }) };
+    },
+    write: async () => {}, terminate: async () => { running = false; stop(); }, dispose: async () => {},
+  };
+  service.registry.processes.wrap({ ...binding.agentRuntime, processes: { startShell: async () => process } },
+    { session: binding.sessionId, root: binding.rootSessionId });
+  const shell = await client.request('shell.execute', { command: 'synthetic foreground', includeInContext: false }, { session: created.result.sessionId });
   expect(shell.outcome).toBe('accepted'); if (shell.outcome !== 'accepted') return;
   const run = service.registry.options.store.session(created.result.sessionId).run;
   expect(run.state).toBe('running');

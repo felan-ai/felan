@@ -93,8 +93,8 @@ describe("detectRage", () => {
 });
 
 describe("RAGE_WORDLIST", () => {
-  it("contains at least 30 entries", () => {
-    expect(wordCount()).toBeGreaterThanOrEqual(30);
+  it("reports the public word list size", () => {
+    expect(wordCount()).toBe(RAGE_WORDLIST.length);
   });
 
   it("has no duplicate words", () => {

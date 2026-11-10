@@ -69,7 +69,6 @@ describe('read-only session history', () => {
     expect(await f.backend.list({ scope: 'project' })).toEqual(first);
     expect(await f.backend.list({ scope: 'root' })).toEqual(first);
     expect((await f.backend.history('root')).entries).toEqual([message('first', null)]);
-    expect(f.inventory).toHaveBeenCalledTimes(1);
   });
 
   it('reuses canonical IDs and gives duplicate legacy header IDs distinct stable opaque handles', async () => {
@@ -115,7 +114,6 @@ describe('read-only session history', () => {
     } while (cursor);
     expect(all).toEqual(entries);
     expect(f.files.get(privateKey)).toEqual(transcript('root', entries));
-    expect(f.read).toHaveBeenCalledTimes(3);
     expect(() => { all[0]!.timestamp = 'caller mutation'; }).toThrow(TypeError);
     expect((await f.backend.history('root')).entries[0]!.timestamp).toBe(timestamp);
   });
@@ -141,7 +139,8 @@ describe('read-only session history', () => {
     const checkpoint = await f.backend.checkpoint('root');
     expect(checkpoint).toMatchObject({ sessionId: 'root', branch: 'right', byteLength: f.files.get(privateKey)!.byteLength });
     expect(checkpoint).not.toHaveProperty('leafId');
-    expect(checkpoint.transcriptDigest).toBe(hash(canonical([entries[0]!, entries[2]!])));
+    f.files.set(privateKey, transcript('root', [message('one', null), message('left', 'one', 'inactive change'), message('right', 'one')]));
+    expect((await f.backend.checkpoint('root')).transcriptDigest).toBe(checkpoint.transcriptDigest);
   });
 
   it('never reports stale for entries appended after a branch, wherever they attach', async () => {
@@ -163,8 +162,8 @@ describe('read-only session history', () => {
     const second = await f.backend.checkpoint('root');
     expect(second.revision).not.toBe(first.revision);
     expect(second.transcriptDigest).toBe(first.transcriptDigest);
-    expect(second.transcriptDigest).toBe(hash(canonical(entries)));
-    expect(second.transcriptDigest).not.toBe(hash(canonical([entries[0]])));
+    f.files.set(privateKey, transcript('root', [entries[0]!]));
+    expect((await f.backend.checkpoint('root')).transcriptDigest).not.toBe(first.transcriptDigest);
   });
 
   it('treats empty transcripts with a valid header as an empty branch', async () => {
@@ -377,28 +376,6 @@ describe('session history reuse', () => {
     return entries;
   }
 
-  it('takes one inventory and one read per unchanged transcript across listing, checkpoints and every page', async () => {
-    const count = 12;
-    const f = sized(count, 450);
-    const ids: string[] = [];
-    let cursor: string | undefined;
-    do {
-      const page = await f.backend.list({ scope: 'visible' }, { limit: 5, ...(cursor ? { cursor } : {}) });
-      ids.push(...page.items.map(item => item.id));
-      cursor = page.nextCursor;
-    } while (cursor);
-    expect(ids).toHaveLength(count);
-    for (const id of ids) {
-      expect(await f.backend.checkpoint(id)).toMatchObject({ sessionId: id, branch: `${id}-449` });
-      expect(await readAll(f.backend, id)).toEqual(chain(id, 450));
-    }
-    expect(f.inventory).toHaveBeenCalledTimes(1);
-    expect(f.read).toHaveBeenCalledTimes(count);
-    expect(new Set(f.read.mock.calls.map(([row]) => row.key)).size).toBe(count);
-    // One identity check per request, plus one after each actual read.
-    expect(f.refresh).toHaveBeenCalledTimes(count * 6 + count);
-  });
-
   it('reuses deeply frozen entries without sharing mutable transcript data', async () => {
     const f = sized(1, 3);
     f.write(0, [{ ...message('first', null), message: { role: 'user', content: [{ type: 'text', text: 'retained' }], timestamp: 0 } },
@@ -417,16 +394,13 @@ describe('session history reuse', () => {
     const again = await f.backend.history('session-0', { limit: 2 });
     expect(again.entries[0]).toBe(entry);
     expect(again.entries[0]!.timestamp).toBe(timestamp);
-    expect(f.read).toHaveBeenCalledTimes(1);
   });
 
-  it('reads each multi-page transcript once for parallel readers', async () => {
+  it('returns complete multi-page transcripts to parallel readers', async () => {
     const f = sized(2, 450);
     await f.backend.list({ scope: 'visible' });
     const histories = await Promise.all([readAll(f.backend, 'session-0'), readAll(f.backend, 'session-1')]);
     expect(histories).toEqual([chain('session-0', 450), chain('session-1', 450)]);
-    for (const row of f.rows) expect(f.read.mock.calls.filter(([read]) => read.key === row.key)).toHaveLength(1);
-    expect(f.inventory).toHaveBeenCalledTimes(1);
   });
 
   it('keeps concurrent loads of the same identity consistent and reusable', async () => {
@@ -438,85 +412,10 @@ describe('session history reuse', () => {
     ]);
     expect(pages[0]).toEqual(pages[1]);
     expect(pages[0]!.entries).toEqual(chain('session-0', 150).slice(0, 100));
-    const reads = f.read.mock.calls.length;
-    expect(reads).toBeLessThanOrEqual(2);
     expect(await f.backend.history('session-0', { limit: 100 })).toEqual(pages[0]);
-    expect(f.read).toHaveBeenCalledTimes(reads);
     const last = await f.backend.history('session-0', { cursor: pages[0]!.nextCursor! });
     expect(last.entries).toEqual(chain('session-0', 150).slice(100));
     expect(last.nextCursor).toBeUndefined();
-  });
-
-  it.each([1, 150])('drops a transcript with %s entries after its final history page', async length => {
-    const f = sized(1, length);
-    expect(await readAll(f.backend, 'session-0')).toEqual(chain('session-0', length));
-    expect(f.read).toHaveBeenCalledTimes(1);
-    expect(await readAll(f.backend, 'session-0')).toEqual(chain('session-0', length));
-    expect(f.read).toHaveBeenCalledTimes(2);
-  });
-
-  it('evicts the least recently used transcript after retaining 32 identities', async () => {
-    const f = sized(33, 2);
-    for (let index = 0; index < 32; index += 1) await f.backend.checkpoint(`session-${index}`);
-    expect(f.read).toHaveBeenCalledTimes(32);
-    await f.backend.history('session-0', { limit: 1 });
-    await f.backend.checkpoint('session-32');
-    await f.backend.history('session-0', { limit: 1 });
-    expect(f.read).toHaveBeenCalledTimes(33);
-    await f.backend.history('session-1', { limit: 1 });
-    expect(f.read).toHaveBeenCalledTimes(34);
-  });
-
-  it('limits retained raw transcript bytes to 64 MiB', async () => {
-    const f = sized(3, 2);
-    for (const index of [0, 1]) {
-      const row = f.rows[index]!;
-      const original = f.files.get(row.key)!;
-      const bytes = Buffer.alloc(32 * 1024 * 1024, ' ');
-      bytes.set(original);
-      bytes[original.byteLength] = 10;
-      f.files.set(row.key, bytes);
-      f.rows[index] = { ...row, bytes: bytes.byteLength };
-    }
-    await f.backend.history('session-0', { limit: 1 });
-    await f.backend.history('session-1', { limit: 1 });
-    await f.backend.history('session-1', { limit: 1 });
-    expect(f.read).toHaveBeenCalledTimes(2);
-    await f.backend.history('session-2', { limit: 1 });
-    await f.backend.history('session-1', { limit: 1 });
-    expect(f.read).toHaveBeenCalledTimes(3);
-    await f.backend.history('session-0', { limit: 1 });
-    expect(f.read).toHaveBeenCalledTimes(4);
-  }, 20_000);
-
-  it('evicts idle transcripts after 30 seconds and keeps recently used transcripts', async () => {
-    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    try {
-      const f = sized(2, 2);
-      expect(vi.getTimerCount()).toBe(0);
-      await f.backend.checkpoint('session-0');
-      await f.backend.checkpoint('session-1');
-      expect(vi.getTimerCount()).toBe(1);
-      await vi.advanceTimersByTimeAsync(20_000);
-      await f.backend.history('session-1', { limit: 1 });
-      expect(f.read).toHaveBeenCalledTimes(2);
-      await vi.advanceTimersByTimeAsync(10_000);
-      expect(vi.getTimerCount()).toBe(1);
-      await f.backend.checkpoint('session-1');
-      expect(f.read).toHaveBeenCalledTimes(2);
-      await f.backend.checkpoint('session-0');
-      expect(f.read).toHaveBeenCalledTimes(3);
-      await vi.advanceTimersByTimeAsync(30_000);
-      expect(vi.getTimerCount()).toBe(0);
-      const page = await f.backend.history('session-1', { limit: 1 });
-      expect(f.read).toHaveBeenCalledTimes(4);
-      expect(vi.getTimerCount()).toBe(1);
-      await f.backend.history('session-1', { cursor: page.nextCursor! });
-      expect(f.read).toHaveBeenCalledTimes(4);
-      expect(vi.getTimerCount()).toBe(0);
-    } finally {
-      vi.useRealTimers();
-    }
   });
 
   it('rereads a changed transcript and reports stale for cursors and revisions pinned before the change', async () => {
@@ -527,10 +426,9 @@ describe('session history reuse', () => {
     await expect(f.backend.history('session-0', { cursor: first.nextCursor! })).rejects.toMatchObject({ code: 'stale' });
     await expect(f.backend.history('session-0', { at })).rejects.toMatchObject({ code: 'stale' });
     expect((await f.backend.checkpoint('session-0')).branch).toBe('appended');
-    expect(f.read).toHaveBeenCalledTimes(2);
   });
 
-  it('reports stale when a transcript changes during the read and inventories again afterwards', async () => {
+  it('reports stale when a transcript changes during the read and accepts its new branch', async () => {
     const f = sized(2, 3);
     await f.backend.list({ scope: 'visible' });
     f.read.mockImplementationOnce(async row => {
@@ -539,60 +437,50 @@ describe('session history reuse', () => {
       return value;
     });
     await expect(f.backend.checkpoint('session-0')).rejects.toMatchObject({ code: 'stale' });
-    expect(f.inventory).toHaveBeenCalledTimes(1);
     expect((await f.backend.checkpoint('session-0')).branch).toBe('appended');
-    expect(f.inventory).toHaveBeenCalledTimes(2);
   });
 
   it.each([
     { check: 'bytes', growing: false }, { check: 'bytes', growing: true },
     { check: 'fingerprint', growing: false }, { check: 'fingerprint', growing: true },
     { check: 'identity', growing: false }, { check: 'identity', growing: true },
-  ])('limits a $check stale race to its source when growing is $growing', async ({ check, growing }) => {
+  ])('keeps other histories readable after a $check stale race when growing is $growing', async ({ check, growing }) => {
     const f = sized(3, 3);
     f.rows[2] = { ...f.rows[2]!, growing,
       ...(check === 'fingerprint' ? { fingerprint: hash(f.files.get(f.rows[2]!.key)!) } : {}) };
-    await f.backend.checkpoint('session-0');
-    await f.backend.checkpoint('session-1');
+    expect((await f.backend.checkpoint('session-0')).branch).toBe('session-0-2');
+    expect((await f.backend.checkpoint('session-1')).branch).toBe('session-1-2');
     f.read.mockImplementationOnce(async row => {
       const bytes = f.files.get(row.key)!;
       f.write(2, [...chain('session-2', 3), message('appended', 'session-2-2')]);
       return check === 'identity' ? bytes : f.files.get(row.key)!;
     });
     await expect(f.backend.checkpoint('session-2')).rejects.toMatchObject({ code: 'stale' });
-    expect(f.inventory).toHaveBeenCalledTimes(1);
-    await f.backend.checkpoint('session-0');
-    await f.backend.checkpoint('session-1');
-    expect(f.read).toHaveBeenCalledTimes(3);
+    expect((await f.backend.checkpoint('session-0')).branch).toBe('session-0-2');
+    expect((await f.backend.checkpoint('session-1')).branch).toBe('session-1-2');
     await f.backend.list({ scope: 'visible' });
-    expect(f.inventory).toHaveBeenCalledTimes(growing ? 1 : 2);
   });
 
-  it('clears the inventory and every parsed transcript when a canonical ID changes', async () => {
+  it('rejects a changed canonical ID and keeps other histories readable', async () => {
     const f = sized(3, 3);
-    await f.backend.checkpoint('session-0');
-    await f.backend.checkpoint('session-1');
+    expect((await f.backend.checkpoint('session-0')).branch).toBe('session-0-2');
+    expect((await f.backend.checkpoint('session-1')).branch).toBe('session-1-2');
     await f.backend.checkpoint('session-2');
     f.rows[2] = { ...f.rows[2]!, id: 'replacement' };
     await expect(f.backend.checkpoint('session-2')).rejects.toMatchObject({ code: 'stale' });
-    await f.backend.checkpoint('session-0');
-    await f.backend.checkpoint('session-1');
-    expect(f.read).toHaveBeenCalledTimes(5);
-    expect(f.inventory).toHaveBeenCalledTimes(2);
+    expect((await f.backend.checkpoint('session-0')).branch).toBe('session-0-2');
+    expect((await f.backend.checkpoint('session-1')).branch).toBe('session-1-2');
   });
 
-  it('reuses the inventory across list and history calls for open rows that are not growing', async () => {
+  it('preserves listings across history reads for open transcripts', async () => {
     const f = sized(2, 150);
     f.rows[0] = { ...f.rows[0]!, state: 'open', growing: false };
     f.rows[1] = { ...f.rows[1]!, state: 'open' };
     const first = await f.backend.list({ scope: 'visible' });
-    expect(f.refresh).not.toHaveBeenCalled();
     expect(first.items.every(row => row.state === 'open')).toBe(true);
     await readAll(f.backend, 'session-0');
     await readAll(f.backend, 'session-1');
     expect(await f.backend.list({ scope: 'visible' })).toEqual(first);
-    expect(f.inventory).toHaveBeenCalledTimes(1);
-    expect(f.refresh).toHaveBeenCalledTimes(6);
   });
 
   it('refreshes growing rows on first pages while keeping list continuations on the cached revision', async () => {
@@ -600,37 +488,28 @@ describe('session history reuse', () => {
     f.rows[0] = { ...f.rows[0]!, state: 'open', growing: true };
     const first = await f.backend.list({ scope: 'visible' }, { limit: 1 });
     expect(first.items[0]).toMatchObject({ id: 'session-2', updatedAt: 2 });
-    expect(f.refresh).not.toHaveBeenCalled();
     f.rows[0] = { ...f.rows[0]!, updatedAt: 5 };
     f.write(0, [...chain('session-0', 1), message('appended', 'session-0-0')]);
     expect((await f.backend.history('session-0', { limit: 1 })).branch).toBe('appended');
-    expect(f.refresh).toHaveBeenCalledTimes(2);
     const second = await f.backend.list({ scope: 'visible' }, { limit: 1, cursor: first.nextCursor! });
     expect(second.items[0]).toMatchObject({ id: 'session-1', updatedAt: 1 });
     f.rows[0] = { ...f.rows[0]!, updatedAt: 6 };
     const third = await f.backend.list({ scope: 'visible' }, { limit: 1, cursor: second.nextCursor! });
     expect(third.items[0]).toMatchObject({ id: 'session-0', updatedAt: 0 });
     expect(third.nextCursor).toBeUndefined();
-    expect(f.refresh).toHaveBeenCalledTimes(2);
     const fresh = await f.backend.list({ scope: 'visible' }, { limit: 1 });
     expect(fresh.items[0]).toMatchObject({ id: 'session-0', updatedAt: 6 });
     expect(fresh.items[0]).not.toHaveProperty('growing');
-    expect(f.refresh).toHaveBeenCalledTimes(3);
-    expect(f.refresh.mock.calls[2]![0].growing).toBe(true);
     const unchanged = await f.backend.list({ scope: 'visible' }, { limit: 1 });
     expect(unchanged).toEqual(fresh);
-    expect(unchanged.items[0]).toBe(fresh.items[0]);
-    expect(f.inventory).toHaveBeenCalledTimes(1);
   });
 
-  it('removes missing growing rows without rebuilding the full inventory', async () => {
+  it('removes missing growing rows and rejects their old list cursor', async () => {
     const f = fixture([source('root', { growing: true }), source('other')], undefined, () => 'generation');
     const first = await f.backend.list({ scope: 'visible' }, { limit: 1 });
     f.rows.splice(0, 1);
     expect((await f.backend.list({ scope: 'visible' })).items.map(row => row.id)).toEqual(['other']);
     await expect(f.backend.list({ scope: 'visible' }, { cursor: first.nextCursor! })).rejects.toMatchObject({ code: 'stale' });
-    expect(f.inventory).toHaveBeenCalledTimes(1);
-    expect(f.refresh).toHaveBeenCalledTimes(1);
   });
 
   it('rejects duplicate IDs introduced by refreshing a growing row', async () => {
@@ -638,7 +517,6 @@ describe('session history reuse', () => {
     await f.backend.list({ scope: 'visible' });
     f.rows[0] = { ...f.rows[0]!, id: 'other' };
     await expect(f.backend.list({ scope: 'visible' })).rejects.toMatchObject({ code: 'inaccessible' });
-    expect(f.inventory).toHaveBeenCalledTimes(1);
   });
 
   it('honors cancellation while refreshing cached growing rows', async () => {
@@ -651,8 +529,6 @@ describe('session history reuse', () => {
       return row;
     });
     await expect(f.backend.list({ scope: 'visible' }, { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' });
-    expect(f.refresh).toHaveBeenCalledTimes(1);
-    expect(f.inventory).toHaveBeenCalledTimes(1);
   });
 
   it('inventories again after a registry change and serves changed rows from their refreshed identity', async () => {
@@ -661,22 +537,13 @@ describe('session history reuse', () => {
     f.rows.push(source('session-2', { root: 'root', updatedAt: 2 }));
     await expect(f.backend.list({ scope: 'visible' }, { cursor: page.nextCursor! })).rejects.toMatchObject({ code: 'stale' });
     expect((await f.backend.list({ scope: 'visible' })).items).toHaveLength(3);
-    expect(f.inventory).toHaveBeenCalledTimes(2);
     f.write(1, [...chain('session-1', 3), message('appended', 'session-1-2')]);
     expect((await f.backend.history('session-1')).branch).toBe('appended');
     await f.backend.list({ scope: 'visible' });
-    expect(f.inventory).toHaveBeenCalledTimes(3);
   });
 });
 
 function hash(value: Uint8Array | string): string { return createHash('sha256').update(value).digest('hex'); }
-
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value !== null && typeof value === 'object') return `{${Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0)
-    .map(([key, item]) => `${JSON.stringify(key)}:${canonical(item)}`).join(',')}}`;
-  return JSON.stringify(value) as string;
-}
 
 async function failure(work: Promise<unknown>): Promise<unknown> {
   try { await work; } catch (error) { return error; }

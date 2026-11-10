@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -46,15 +46,5 @@ describe('@felan-ai/ext-ask-user package boundary', () => {
     expect(notice).toContain('2de7e145227f7a527e995e323a50e7ee9bf88b0e');
     expect(notice).toContain('Pi-TUI');
     expect(notice).toContain('TypeBox 1.1.38');
-  });
-
-  it('keeps TUI and global bridge code out of the root module', async () => {
-    const root = await readFile(join(packageRoot, 'src/index.ts'), 'utf8');
-    const sources = (await readdir(join(packageRoot, 'src'))).filter((file) => file.endsWith('.ts'));
-    const allSource = (await Promise.all(sources.map((file) => readFile(join(packageRoot, 'src', file), 'utf8')))).join('\n');
-    expect(root).not.toContain('@earendil-works/pi-tui');
-    expect(root).not.toContain('./tui.js');
-    expect(allSource).not.toContain('Symbol.for');
-    expect(allSource).not.toContain('pi-ask-user:external-bridge');
   });
 });

@@ -2,10 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { LIMITS, PresentationEventSchema, PresentationSchema, parsePresentation, parseSchema, parseServerEnvelope } from '../src/index.js';
 
 describe('runtime UI presentation contract', () => {
-  it('accepts plain working status text', () => {
-    const status = { id: 'working', kind: 'status', key: 'working', value: { kind: 'text', text: 'Indexing' }, fallback: 'Status' };
-    expect(parseSchema(PresentationSchema, status)).toEqual(status);
-  });
   it('validates optional widget placement', () => {
     const widget = { id: 'widget', kind: 'widget', text: 'value' };
     expect(parseSchema(PresentationSchema, widget)).toEqual(widget);

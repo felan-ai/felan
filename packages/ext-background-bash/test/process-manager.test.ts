@@ -401,26 +401,31 @@ describe('BackgroundBashManager', () => {
     }
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
-  it.each(SIGNAL_TEST_SHELLS)('does not publish a terminal outcome while a stopped detached runner is still exiting ($label)', async ({ executable }) => {
-    const { manager, runtime } = await createManager(executable);
-    const job = await manager.start('trap \'trap "" TERM; sleep 7; exit 0\' TERM; printf ready; while :; do sleep 0.1; done');
-    trackJob(manager, job.meta.id);
-    for (let attempt = 0; !(await manager.tail(job.meta.id)).includes('ready'); attempt += 1) {
-      if (attempt >= 40) throw new Error('Runner did not become ready');
-      await new Promise((resolve) => setTimeout(resolve, 25));
-    }
-    try {
-      await expect(manager.stop(job.meta.id, 'SIGTERM')).rejects.toThrow('did not exit after 5 seconds');
-      expect((await manager.get(job.meta.id)).status.status).toBe('running');
-      expect((await runtime.shell(`ps -p ${job.meta.pid}`, { shellFlavor: 'posix' })).code).toBe(0);
-      await expect(runtime.readFile(job.meta.completionPath)).rejects.toThrow();
-      const finished = await manager.wait(job.meta.id, 5);
-      expect(finished.job.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
-      expect((await manager.get(job.meta.id)).status).toEqual(finished.job.status);
-    } finally {
-      await runtime.shell(`kill -KILL -${job.meta.pid} 2>/dev/null || true`, { shellFlavor: 'posix' });
-    }
-  }, INTEGRATION_TEST_TIMEOUT_MS);
+  it('does not publish a terminal outcome while a stopped detached runner is still exiting', async () => {
+    const { manager, runtime, observedRuntime } = await createManager();
+    const store = new BackgroundBashJobStore(runtime, runtime.storage('session'));
+    const job = await store.createJob('command', 'detached', { pid: 424242, processGroupId: 424242 });
+    let signaled = false;
+    let clock = job.meta.startedAt;
+    vi.spyOn(Date, 'now').mockImplementation(() => signaled ? clock += 6_000 : clock);
+    vi.spyOn(observedRuntime, 'shell').mockImplementation(async command => {
+      if (command.startsWith('ps -o pgid=')) {
+        return { code: 0, stdout: `424242 sh ${job.meta.runnerPath} ${job.meta.processToken}`, stderr: '', killed: false };
+      }
+      if (command === 'kill -TERM -424242') signaled = true;
+      else if (command !== "kill -0 '424242' 2>/dev/null") throw new Error(`Unexpected process command: ${command}`);
+      return { code: 0, stdout: '', stderr: '', killed: false };
+    });
+
+    await expect(manager.stop(job.meta.id, 'SIGTERM')).rejects.toThrow('did not exit after 5 seconds');
+    expect(signaled).toBe(true);
+    expect((await manager.get(job.meta.id)).status.status).toBe('running');
+    await expect(runtime.readFile(job.meta.completionPath)).rejects.toThrow();
+    await store.markStatus(job.meta.id, { status: 'killed', signal: 'SIGTERM' });
+    const finished = await manager.wait(job.meta.id, 0);
+    expect(finished.job.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
+    expect((await manager.get(job.meta.id)).status).toEqual(finished.job.status);
+  });
 
   it.each(SIGNAL_TEST_SHELLS)('falls back to a positive PID signal when group signaling fails ($label)', async ({ executable }) => {
     const { manager, runtime, observedRuntime } = await createManager(executable);

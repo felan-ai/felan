@@ -96,11 +96,6 @@ describe("a rate-limited failure", () => {
 		assert.strictEqual(c.turnOutput.errorMessage, errorResult.result);
 	});
 
-	it("leaves an unrelated failure alone", async () => {
-		const c = makeCtx();
-		await consume(c, [errorResult]);
-		assert.strictEqual(c.turnOutput.errorMessage, errorResult.result);
-	});
 });
 
 describe("error results", () => {

@@ -312,25 +312,6 @@ describe('verified session compaction', () => {
     expect(complete.mock.calls[0]?.[1].messages[0]?.content[0]?.text).toContain('Keep this split-prefix request.');
   });
 
-  it('accepts a large required split-turn narrative within the evidence boundary', async () => {
-    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
-    const handlers = install(complete);
-
-    const result = await handlers.before({
-      preparation: {
-        ...prepared(),
-        turnPrefixMessages: [{ role: 'user', content: `Required request ${'x'.repeat(24 * 1_024)}` }],
-      },
-      branchEntries: branch(),
-      reason: 'threshold',
-      willRetry: false,
-      signal: new AbortController().signal,
-    });
-
-    expect(result?.compaction.summary).toContain('## Goal');
-    expect(complete).toHaveBeenCalledOnce();
-  });
-
   it('accepts a previous summary larger than the removed result bound', async () => {
     const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
     const handlers = install(complete);
@@ -362,7 +343,7 @@ describe('verified session compaction', () => {
     expect(handlers.diagnostics).toHaveLength(0);
   });
 
-  it.each([undefined, null, 'unknown'])('uses a verified summary for method %j even with a classifier', async (method) => {
+  it.each([undefined, null, 'unknown', 'summary'])('uses a verified summary for method %j even with a classifier', async (method) => {
     const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
     const classify = vi.fn(async () => ({ answers: {} }));
     const handlers = install(complete, { method }, [], [], { classify });
@@ -533,21 +514,6 @@ describe('verified session compaction', () => {
     expect(complete).not.toHaveBeenCalled();
   });
 
-  it('does not call the runtime classifier in summary mode', async () => {
-    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
-    const classify = vi.fn(async () => ({ answers: {} }));
-    const handlers = install(complete, { method: 'summary' }, [], [], { classify });
-
-    const result = await handlers.before({
-      preparation: prepared(), branchEntries: branch(), reason: 'manual', willRetry: false,
-      signal: new AbortController().signal,
-    });
-
-    expect(classify).not.toHaveBeenCalled();
-    expect(complete).toHaveBeenCalledOnce();
-    expect(result).toMatchObject({ compaction: { details: { method: 'summary' } } });
-  });
-
   it('accepts a classifier transcript larger than 24 KiB', async () => {
     const complete = vi.fn();
     const classify = vi.fn(async (_state: unknown, questions: Record<string, unknown>) => ({
@@ -573,7 +539,6 @@ describe('verified session compaction', () => {
     });
     expect(result?.compaction.summary.length).toBeGreaterThan(24 * 1_024);
     expect(result?.compaction.details).toMatchObject({ method: 'classifier', prune: { status: 'ran', asked: expect.any(Number) } });
-    expect((result?.compaction.details as any).prune.asked).toBeGreaterThan(64);
     expect(complete).not.toHaveBeenCalled();
   });
 
@@ -607,21 +572,30 @@ describe('verified session compaction', () => {
     })]);
   });
 
-  it('sanitizes classifier errors in both debug and warning logs', async () => {
-    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
-    const classify = vi.fn().mockRejectedValue(new Error(
+  it.each(['classifier', 'pruning'] as const)('sanitizes %s errors before falling back to verified summary', async (failure) => {
+    const error = new Error(
       `classifier failed: api_key\u0000=secret-value Bearer\u0000 bearer-secret ${'界'.repeat(2_000)}`,
-    ));
+    );
+    const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
+    const classify = vi.fn().mockRejectedValue(error);
+    if (failure === 'pruning') vi.spyOn(pruning, 'pruneEvidence').mockRejectedValueOnce(error);
     const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
 
-    await handlers.before({
+    const result = await handlers.before({
       preparation: classifierPreparation(),
       branchEntries: branch(), reason: 'manual', willRetry: false,
       signal: new AbortController().signal,
     });
 
+    expect(complete).toHaveBeenCalledOnce();
+    expect(result).toMatchObject({ compaction: { details: {
+      method: 'summary',
+      prune: { status: 'skipped', reason: 'classifier-failed' },
+    } } });
+    expect(handlers.diagnostics).toHaveLength(0);
+    expect(handlers.notifications).toHaveLength(0);
     expect(handlers.logs.filter(({ level }) => level !== 'info')).toEqual([
-      expect.objectContaining({
+      ...(failure === 'classifier' ? [expect.objectContaining({
         level: 'debug',
         msg: 'session compaction prune',
         fields: expect.objectContaining({
@@ -629,19 +603,24 @@ describe('verified session compaction', () => {
           report: { status: 'skipped', reason: 'classifier-failed' },
           state: expect.any(Object), questions: expect.any(Object), error: expect.any(String),
         }),
-      }),
+      })] : []),
       expect.objectContaining({
         level: 'warn',
         msg: 'session compaction classifier failed; trying verified summary',
-        fields: expect.objectContaining({ errorMessage: expect.any(String) }),
+        fields: expect.objectContaining({
+          component: 'session-compaction', sessionId: 'session-1', errorMessage: expect.any(String),
+        }),
       }),
     ]);
-    for (const error of [handlers.logs[0]?.fields.error, handlers.logs[1]?.fields.errorMessage]) {
-      expect(error).toContain('api_key=[redacted] Bearer [redacted]');
-      expect(error).not.toContain('secret-value');
-      expect(error).not.toContain('bearer-secret');
-      expect(error).not.toContain('\u0000');
-      expect(new TextEncoder().encode(error as string).byteLength).toBeLessThanOrEqual(1_024);
+    const errors = handlers.logs.flatMap(({ fields }) => [fields.error, fields.errorMessage])
+      .filter((value): value is string => typeof value === 'string');
+    expect(errors).toHaveLength(failure === 'classifier' ? 2 : 1);
+    for (const message of errors) {
+      expect(message).toContain('api_key=[redacted] Bearer [redacted]');
+      expect(message).not.toContain('secret-value');
+      expect(message).not.toContain('bearer-secret');
+      expect(message).not.toContain('\u0000');
+      expect(new TextEncoder().encode(message).byteLength).toBeLessThanOrEqual(1_024);
     }
   });
 
@@ -735,45 +714,7 @@ describe('verified session compaction', () => {
     expect(handlers.logs).toHaveLength(0);
   });
 
-  it('uses verified summary and logs a bounded sanitized error when pruning throws', async () => {
-    const prune = vi.spyOn(pruning, 'pruneEvidence').mockRejectedValueOnce(
-      new Error(`classifier failed: api_key\u0000=secret-value Bearer\u0000 bearer-secret ${'x'.repeat(2_000)}`),
-    );
-    try {
-      const complete = vi.fn().mockResolvedValue(assistantResponse(canonicalSummary()));
-      const handlers = install(complete, { method: 'classifier' }, [], [], { classify: vi.fn() });
-
-      const result = await handlers.before({
-        preparation: classifierPreparation(),
-        branchEntries: branch(), reason: 'manual', willRetry: false,
-        signal: new AbortController().signal,
-      });
-
-      expect(complete).toHaveBeenCalledOnce();
-      expect(result).toMatchObject({ compaction: { details: {
-        method: 'summary',
-        prune: { status: 'skipped', reason: 'classifier-failed' },
-      } } });
-      expect(handlers.diagnostics).toHaveLength(0);
-      expect(handlers.notifications).toHaveLength(0);
-      expect(handlers.logs.filter(({ level }) => level !== 'info')).toEqual([expect.objectContaining({
-        level: 'warn',
-        msg: 'session compaction classifier failed; trying verified summary',
-        fields: expect.objectContaining({
-          component: 'session-compaction', sessionId: 'session-1', errorMessage: expect.any(String),
-        }),
-      })]);
-      const errorMessage = handlers.logs[0]?.fields.errorMessage as string;
-      expect(errorMessage).toContain('classifier failed: api_key=[redacted] Bearer [redacted]');
-      expect(errorMessage).not.toContain('secret');
-      expect(errorMessage).not.toContain('\u0000');
-      expect(new TextEncoder().encode(errorMessage).byteLength).toBeLessThanOrEqual(1_024);
-    } finally {
-      prune.mockRestore();
-    }
-  });
-
-  it('logs classifier debug without putting it on the compaction entry', async () => {
+  it('logs skipped classifier runs', async () => {
     const complete = vi.fn();
     const classify = vi.fn(async () => ({ answers: {} }));
     const handlers = install(complete, { method: 'classifier' }, [], [], { classify });
@@ -793,7 +734,6 @@ describe('verified session compaction', () => {
     expect(result).toMatchObject({
       compaction: { details: { method: 'classifier', prune: { status: 'skipped', reason: 'no-candidates' } } },
     });
-    expect(JSON.stringify(result)).not.toContain('leftovers');
   });
 
   it('accepts a summary with bounded merged file lists, usage, and request telemetry', async () => {

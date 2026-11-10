@@ -359,17 +359,23 @@ describe('explore routing savings', () => {
     await f.start();
     let release!: () => void;
     const blocked = new Promise<void>(resolve => { release = resolve; });
-    f.sessions.executions.mockImplementationOnce(async () => { await blocked; return { items: [] }; });
+    let scanning!: () => void;
+    const scanStarted = new Promise<void>(resolve => { scanning = resolve; });
+    f.sessions.executions.mockImplementationOnce(async () => { scanning(); await blocked; return { items: [] }; });
     f.emit([]);
-    await vi.waitFor(() => expect(f.sessions.executions).toHaveBeenCalledTimes(2));
+    await scanStarted;
+    let entered!: () => void;
+    const admitted = new Promise<void>(resolve => { entered = resolve; });
     f.sessions.create.mockImplementationOnce(async () => {
+      entered();
       const execution = completed();
       f.emit([execution]);
       return execution;
     });
     const spawning = spawn(f);
-    await Promise.resolve();
+    expect(f.sessions.create).not.toHaveBeenCalled();
     release();
+    await admitted;
     await spawning;
     await f.shutdown();
     expect(f.report).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ baseline: expect.objectContaining({ model: parent }) }));

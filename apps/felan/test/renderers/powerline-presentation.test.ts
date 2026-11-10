@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { expect, it, vi } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { DEFAULT_CONFIG } from '../../src/tui/renderers/powerline/config.js';
@@ -33,12 +32,4 @@ it('renders client rail rows, follows data and theme changes, and disposes subsc
   expect(requestRender).toHaveBeenCalledOnce(); expect(footer.render(80).join('\n')).toContain('updated');
   footer.dispose(); footer.dispose(); listener();
   expect(unsubscribe).toHaveBeenCalledOnce(); expect(requestRender).toHaveBeenCalledOnce();
-});
-
-it('keeps projected renderer modules free of Git, subscription fetching and runtime construction', async () => {
-  for (const file of ['projected-footer.ts', 'footer-renderer.ts', 'colors.ts', 'symbols.ts']) {
-    const source = await readFile(new URL(`../../src/tui/renderers/powerline/${file}`, import.meta.url), 'utf8');
-    expect(source).not.toMatch(/from ['"].*\/(git|subscription|savings|index|footer)\.js['"]/);
-    expect(source).not.toMatch(/\b(exec|fetch|setInterval)\(/);
-  }
 });

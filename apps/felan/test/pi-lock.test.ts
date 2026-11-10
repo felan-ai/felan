@@ -29,14 +29,13 @@ describe('Pi async file lock guard', () => {
     const target = join(root, 'target');
     const lockPath = `${target}.lock`;
     await writeFile(target, '');
-    let compromiseError: Error | undefined;
+    let compromised!: (error: Error) => void;
+    const compromise = new Promise<Error>(resolve => { compromised = resolve; });
     const options = {
       realpath: false,
       stale: 2_000,
       update: 1_000,
-      onCompromised(error: Error): void {
-        compromiseError = error;
-      },
+      onCompromised: compromised,
     };
     const releaseFirst = await lockfile.lock(target, options);
     const firstMtime = (await lstat(lockPath)).mtime;
@@ -47,23 +46,13 @@ describe('Pi async file lock guard', () => {
     await mkdir(lockPath);
     await utimes(lockPath, firstMtime, firstMtime);
 
-    await waitFor(() => compromiseError !== undefined);
-
-    expect(compromiseError).toHaveProperty('code', 'ECOMPROMISED');
+    expect(await compromise).toHaveProperty('code', 'ECOMPROMISED');
     await expect(releaseFirst()).resolves.toBeUndefined();
-  });
+  }, 5_000);
 });
 
 async function temporaryDirectory(): Promise<string> {
   const path = await mkdtemp(join(tmpdir(), 'felan-pi-lock-'));
   temporaryPaths.push(path);
   return path;
-}
-
-async function waitFor(predicate: () => boolean, timeoutMs = 4_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error('Condition was not reached before timeout');
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
 }

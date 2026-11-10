@@ -61,20 +61,10 @@ beforeEach(() => {
 });
 
 describe("markRebuildForSession", () => {
-	it("records the rewrite before any Claude Code session exists", () => {
-		// The mirror is assigned when a query *completes*, so a session can have
-		// none for a whole first turn — and a first turn is long enough to compact.
-		assert.equal(getSharedSession("pi-parent"), null, "precondition: nothing has completed yet");
-
-		markRebuildForSession("pi-parent", "session_compact:threshold");
-
-		assert.ok(historyRewrittenBySession.has("pi-parent"),
-			"recorded only on the session, the first turn's parked query survives the compaction");
-	});
-
 	it("arms only the parked queries of the rewriting pi session", () => {
 		const { c } = parkedQuery("call_1", "pi-parent");
 		const sub = parkedQuery("call_sub", "pi-subagent");
+		assert.equal(getSharedSession("pi-parent"), null);
 
 		markRebuildForSession("pi-parent", "session_compact:threshold");
 		armStaleContexts();
@@ -137,7 +127,6 @@ describe("markRebuildForSession", () => {
 			"a history rewritten under the replacement's predecessor makes this one stale too");
 		discardRewrittenQuery(replacement.c);
 		assert.equal(historyRewrittenBySession.has("pi-parent"), false, "and consumes the mark again");
-		void c;
 	});
 });
 
@@ -181,7 +170,7 @@ describe("discardRewrittenQuery", () => {
 
 	it("consumes the mark for its pi session, leaving sibling sessions armed", () => {
 		const { c } = parkedQuery("call_1", "pi-b");
-		const other = parkedQuery("call_2", "pi-c");
+		parkedQuery("call_2", "pi-c");
 		markRebuildForSession("pi-c", "session_compact:threshold");
 		markRebuildForSession("pi-b", "session_compact:threshold");
 		armStaleContexts();
@@ -191,7 +180,6 @@ describe("discardRewrittenQuery", () => {
 
 		assert.equal(historyRewrittenBySession.has("pi-b"), false, "served");
 		assert.ok(historyRewrittenBySession.has("pi-c"), "a sibling pi session's rewrite is not ours to consume");
-		void other;
 	});
 
 	it("rotates the session id of the discarding session's own mirror, because the rebuild follows the kill immediately", () => {

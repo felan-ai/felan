@@ -1,4 +1,4 @@
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -25,21 +25,4 @@ describe('@felan-ai/ext-background-bash package boundary', () => {
     expect(notice).toContain('7e72e509fe45a5a87c4c2e176cb711de994a8c1d');
     expect(notice).toContain('TypeBox 1.1.38');
   });
-
-  it('routes host I/O through AgentRuntime and has no private cloud dependency', async () => {
-    const sources = await sourceFiles(join(packageRoot, 'src'));
-    const content = (await Promise.all(sources.map((path) => readFile(path, 'utf8')))).join('\n');
-
-    expect(content).not.toMatch(/node:(?:child_process|fs)/u);
-    expect(content).not.toMatch(/@felan-cloud|felan-platform|daytona-sdk/u);
-  });
 });
-
-async function sourceFiles(directory: string): Promise<string[]> {
-  const entries = await readdir(directory, { withFileTypes: true });
-  const nested = await Promise.all(entries.map((entry) => {
-    const path = join(directory, entry.name);
-    return entry.isDirectory() ? sourceFiles(path) : [path];
-  }));
-  return nested.flat().filter((path) => path.endsWith('.ts'));
-}

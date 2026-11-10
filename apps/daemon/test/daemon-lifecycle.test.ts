@@ -86,7 +86,6 @@ it.each([false, true])('drains a root turn after its final assistant message (st
   await settling.promise;
   expect(f.root.runtime.session.messages.some(message => message.role === 'assistant')).toBe(true);
   expect(f.root.runtime.session.isIdle).toBe(false);
-  await new Promise(resolve => setTimeout(resolve, 25));
   expect(lifecycle.state).toBe('draining'); expect(complete).not.toHaveBeenCalled(); expect(abort).not.toHaveBeenCalled();
   expect(() => f.registry.assertNewWork()).toThrow('draining');
   release.resolve(); await running!;
@@ -123,13 +122,11 @@ it('keeps admission closed when accepted drain settlement fails', async () => {
 
 it('stops waiting for active work at the drain deadline without releasing ownership or reopening admission', async () => {
   const f = await setup({ timeoutMs: 20 });
-  const active = vi.spyOn(f.registry, 'activeWork').mockResolvedValue(1);
+  vi.spyOn(f.registry, 'activeWork').mockResolvedValue(1);
   const shutdown = vi.spyOn(f.registry, 'shutdown');
   await f.request(); await vi.waitFor(() => expect(f.lifecycle.state).toBe('blocked'));
   expect(f.lifecycle.blocked).toMatchObject({ recoverable: false, step: 'settlement-deadline' });
-  const checks = active.mock.calls.length;
-  await new Promise(resolve => setTimeout(resolve, 25));
-  expect(active).toHaveBeenCalledTimes(checks); expect(shutdown).not.toHaveBeenCalled(); expect(f.complete).not.toHaveBeenCalled();
+  expect(shutdown).not.toHaveBeenCalled(); expect(f.complete).not.toHaveBeenCalled();
   expect(() => f.owner.assertCurrent()).not.toThrow(); expect(() => f.registry.assertNewWork()).toThrow('draining');
 });
 

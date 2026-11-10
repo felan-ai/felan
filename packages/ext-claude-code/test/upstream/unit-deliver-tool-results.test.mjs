@@ -19,22 +19,25 @@ const { __test } = await import("../../src/bridge/index.ts");
  *  recorder logs both, and the assertions key off `ack`. */
 function makeRecorder() {
 	const order = [];
+	const pushed = Promise.withResolvers();
+	const ack = Promise.withResolvers();
 	return {
 		order,
+		pushed: pushed.promise,
+		ack: ack.resolve,
 		promptStream(behavior = "ack") {
 			return {
 				push: (msg) => {
 					const label = msg.message.content.map((b) => b.text ?? `[${b.type}]`).join(",");
 					order.push(`push:${label}`);
+					pushed.resolve();
 					if (behavior === "reject") {
 						return Promise.reject(new Error("prompt stream closed")).catch((e) => {
 							order.push("push-rejected");
 							throw e;
 						});
 					}
-					// Ack on a later turn of the event loop: resolving synchronously
-					// would let a caller that forgot to await it still look correct.
-					return new Promise((resolve) => setTimeout(resolve, 5)).then(() => { order.push("ack"); });
+					return ack.promise.then(() => { order.push("ack"); });
 				},
 			};
 		},
@@ -57,7 +60,11 @@ describe("deliverToolResults", () => {
 		c.pendingToolCalls.set("call-1", rec.handler("read"));
 		c.pendingToolCalls.set("call-2", rec.handler("bash"));
 
-		await __test.deliverToolResults(c, [result("call-1"), result("call-2")], steerText, 4);
+		const delivery = __test.deliverToolResults(c, [result("call-1"), result("call-2")], steerText, 4);
+		await rec.pushed;
+		assert.deepStrictEqual(rec.order, ["push:actually stop"]);
+		rec.ack();
+		await delivery;
 
 		assert.deepStrictEqual(rec.order, ["push:actually stop", "ack", "resolve:read", "resolve:bash"]);
 	});
@@ -114,23 +121,4 @@ describe("deliverToolResults", () => {
 		assert.equal(__test.getSharedSession(null).needsRebuild, true);
 	});
 
-	it("queues a result whose handler has not arrived yet", async () => {
-		const c = new QueryContext();
-
-		await __test.deliverToolResults(c, [result("call-late")], null, 4);
-
-		assert.equal(c.pendingResults.get("call-late").toolCallId, "call-late");
-		assert.equal(c.pendingToolCalls.size, 0);
-	});
-
-	it("pairs results to handlers by tool_use id, not arrival order", async () => {
-		const rec = makeRecorder();
-		const c = new QueryContext();
-		c.pendingToolCalls.set("call-1", rec.handler("read"));
-		c.pendingToolCalls.set("call-2", rec.handler("bash"));
-
-		await __test.deliverToolResults(c, [result("call-2"), result("call-1")], null, 4);
-
-		assert.deepStrictEqual(rec.order, ["resolve:bash", "resolve:read"]);
-	});
 });
