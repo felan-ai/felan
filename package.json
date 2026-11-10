@@ -11,7 +11,9 @@
   "scripts": {
     "build": "pnpm -r --if-present build",
     "type-check": "pnpm -r --if-present type-check",
-    "test": "pnpm -r --if-present test",
+    "test": "vitest run --config vitest.projects.config.ts",
+    "test:perf": "vitest run --config vitest.perf.config.ts",
+    "test:dist": "pnpm -r --if-present test:dist",
     "theme:preview": "node scripts/theme-preview.mjs",
     "theme:preview:check": "node scripts/theme-preview.mjs --check",
     "theme:preview:build": "node scripts/theme-preview.mjs --build",

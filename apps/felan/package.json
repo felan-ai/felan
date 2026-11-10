@@ -92,7 +92,8 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json && cp -R src/themes dist/themes && cp src/host.json dist/host.json && chmod +x dist/cli.js",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests --testTimeout=30000",
+    "test": "vitest run",
+    "test:dist": "FELAN_TEST_DIST_SMOKE=1 vitest run test/daemon-process-bootstrap.test.ts",
     "prepack": "pnpm build"
   },
   "dependencies": {

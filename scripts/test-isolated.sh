@@ -11,11 +11,14 @@ mkdir -p "$root/tmp" "$root/.felan" "$root/.config" "$root/.cache" "$root/.local
 chmod 700 "$root" "$root/run"
 # Resolve the pnpm store before HOME changes so pack/install steps keep using the real store.
 store="$(pnpm store path 2>/dev/null || true)"
-exec env -i \
+# Keep corepack's package-manager cache too; otherwise every run downloads pnpm again.
+corepack_home="${COREPACK_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/node/corepack}"
+# Keep the shell alive so its EXIT trap runs after the command finishes.
+env -i \
   PATH="$PATH" LANG="${LANG:-en_US.UTF-8}" TERM="${TERM:-xterm-256color}" SHELL="${SHELL:-/bin/bash}" USER="${USER:-}" \
   HOME="$root" TMPDIR="$root/tmp" \
   FELAN_AGENT_DIR="$root/.felan" PI_CODING_AGENT_DIR="$root/.felan/agent" \
   XDG_CONFIG_HOME="$root/.config" XDG_CACHE_HOME="$root/.cache" XDG_DATA_HOME="$root/.local/share" XDG_RUNTIME_DIR="$root/run" \
   PI_OFFLINE=1 PI_TELEMETRY=0 PI_SKIP_VERSION_CHECK=1 FELAN_SKIP_VERSION_CHECK=1 CI=1 \
-  ${store:+npm_config_store_dir="$store"} ${PNPM_HOME:+PNPM_HOME="$PNPM_HOME"} \
+  ${store:+npm_config_store_dir="$store"} ${PNPM_HOME:+PNPM_HOME="$PNPM_HOME"} COREPACK_HOME="$corepack_home" \
   "$@"

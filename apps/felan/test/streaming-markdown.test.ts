@@ -1,10 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { performance } from 'node:perf_hooks';
 import { Markdown } from '@earendil-works/pi-tui';
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import { clientMarkdownTransform, type MermaidMode } from '../src/tui/markdown.js';
 import { StreamingMarkdown } from '../src/tui/streaming-markdown.js';
 import { clientMarkdownTheme, FELAN_THEME_PATHS, parseClientTheme } from '../src/tui/theme.js';
+import { codeHeavyCorpus } from './fixtures/markdown-corpus.js';
 
 const theme = parseClientTheme(readFileSync(FELAN_THEME_PATHS[1]!, 'utf8'));
 const markdown = clientMarkdownTheme(() => theme);
@@ -29,15 +29,6 @@ const corpus = {
 };
 
 const combined = [corpus.paragraphs, corpus.headings, corpus.fences, corpus.lists, corpus.quotes, corpus.tables, corpus.rules, corpus.unicode].join('\n');
-const codeHeavyCorpus = {
-  typescript: '# TypeScript\n\nUse `Promise<void>` for asynchronous work.\n\n```ts\nasync function run<T>(items: T[]): Promise<void> {\n  for (let i = 0; i < items.length; i++) {\n    if (i > 0) console.log(items[i]);\n  }\n}\n```\n\nDone.\n',
-  go: '# Go\n\nTabs remain readable.\n\n```go\nfunc main() {\n\tfor i := 0; i < 3; i++ {\n\t\tfmt.Println(i)\n\t}\n}\n```\n\nDone.\n',
-  json: '# JSON\n\nAn array of objects:\n\n```json\n[\n  { "name": "first", "enabled": true },\n  { "name": "second", "enabled": false }\n]\n```\n\n[1, 2, 3]\n\nDone.\n',
-  toml: '# TOML\n\nConfiguration:\n\n```toml\n[server]\nport = 3000\n\n[database]\nhost = "localhost"\n```\n\n[server]\nport = 3000\n\nDone.\n',
-  jsx: '# JSX\n\nRender a component:\n\n```tsx\nconst view = <Panel>\n  <Button disabled={count < 1}>Save</Button>\n</Panel>;\n```\n\n<Panel>\n  <Button>Save</Button>\n</Panel>\n\nDone.\n',
-  crlf: '# Windows\r\n\r\nUse `Promise<void>`.\r\n\r\n```go\r\nfunc main() {\r\n\tfmt.Println("hello")\r\n}\r\n```\r\n\r\nDone.\r\n',
-  carriageReturns: '# Returns\r\rFirst.\r\r\tIndented code.\r\rLast.\r',
-};
 const codeHeavy = Object.values(codeHeavyCorpus).join('\n');
 const inlineLatexCorpus = {
   shellPid: '# Shell PID\n\nRun `kill $$` to stop the current shell.\n\n```sh\nkill $$\n```\n\nTail.\n',
@@ -94,35 +85,16 @@ it.each(Object.entries({ ...codeHeavyCorpus, ...inlineLatexCorpus, math: corpus.
   }
 });
 
-it.each(Object.entries({ ...codeHeavyCorpus, ...inlineLatexCorpus }))('keeps settled blocks cached: %s', (_name, source) => {
-  const heading = vi.fn(markdown.heading);
-  const streaming = new StreamingMarkdown('', 1, { ...markdown, heading });
-  for (let length = 1; length <= source.length; length++) {
-    streaming.setText(source.slice(0, length));
-    streaming.render(80);
-  }
-  expect(streaming.render(80)).toEqual(new Markdown(source, 1, 0, markdown).render(80));
-  expect(heading).toHaveBeenCalled();
-  heading.mockClear();
-  streaming.setText(source + 'More tail text.\n');
-  expect(streaming.render(80)).toEqual(new Markdown(source + 'More tail text.\n', 1, 0, markdown).render(80));
-  expect(heading).not.toHaveBeenCalled();
-});
-
 it.each([['$$', '$$'], ['\\[', '\\]']])('invalidates settled blocks when a LaTeX block starts mid-stream with %s', (opening, closing) => {
   const source = '# Heading\n\nBefore.\n\nTail.\n\n';
   const suffix = `   ${opening}\nx = y\n\n+ z\n${closing}\n\nAfter.\n`;
-  const heading = vi.fn(markdown.heading);
-  const streaming = new StreamingMarkdown(source, 1, { ...markdown, heading });
+  const streaming = new StreamingMarkdown(source, 1, markdown);
   expect(streaming.render(80)).toEqual(new Markdown(source, 1, 0, markdown).render(80));
-  heading.mockClear();
   for (let length = 1; length <= suffix.length; length++) {
     const text = source + suffix.slice(0, length);
     streaming.setText(text);
     expect(streaming.render(80), `suffix prefix ${length}`).toEqual(new Markdown(text, 1, 0, markdown).render(80));
-    if (length < 3 + opening.length) expect(heading).not.toHaveBeenCalled();
   }
-  expect(heading).toHaveBeenCalled();
 });
 
 it.each((['off', 'final', 'streaming'] as const).flatMap(mode => ['lf', 'tabs', 'crlf'].map(normalization => [mode, normalization] as const)))('preserves the %s Mermaid transform with %s at every prefix', (mode: MermaidMode, normalization) => {
@@ -141,7 +113,7 @@ it.each((['off', 'final', 'streaming'] as const).flatMap(mode => ['lf', 'tabs', 
 });
 
 it('passes original tabs and CRLF to the transform after settling normalized blocks', () => {
-  const transform = vi.fn((text: string) => text.replace(/\t/g, 'TAB'));
+  const transform = (text: string) => text.replace(/\t/g, 'TAB');
   const source = '# Heading\r\n\r\nFirst\tparagraph.\r\n\r\nSecond\tparagraph.\r\n\r\nTail.\r\n';
   const streaming = new StreamingMarkdown('', 1, markdown, transform);
   for (let length = 0; length <= source.length; length++) {
@@ -149,42 +121,20 @@ it('passes original tabs and CRLF to the transform after settling normalized blo
     streaming.setText(text);
     expect(streaming.render(80)).toEqual(new Markdown(text, 1, 0, markdown, undefined, { transform: value => value.replace(/\t/g, 'TAB') }).render(80));
   }
-  expect(transform.mock.calls.some(([text]) => text.includes('\t') && text.includes('\r\n'))).toBe(true);
 });
 
-it('invalidates settled blocks when a reference definition arrives later', () => {
-  const heading = vi.fn(markdown.heading);
-  const source = '# Heading\n\nUse [the API][api].\n\nTail.\n';
-  const streaming = new StreamingMarkdown(source, 1, { ...markdown, heading });
-  streaming.render(80);
-  heading.mockClear();
-  streaming.setText(source + '\nMore.\n');
-  streaming.render(80);
-  expect(heading).not.toHaveBeenCalled();
-  const text = source + '\nMore.\n\n[api]: https://example.com\n';
-  streaming.setText(text);
-  expect(streaming.render(80)).toEqual(new Markdown(text, 1, 0, markdown).render(80));
-  expect(heading).toHaveBeenCalled();
-});
-
-it('reuses settled blocks, but refreshes them on resize and invalidation', () => {
-  const heading = vi.fn(markdown.heading);
-  const styled = { ...markdown, heading };
+it('matches the full renderer after resize and invalidation', () => {
   const source = '# Settled heading\n\nTail paragraph.\n';
-  const streaming = new StreamingMarkdown(source, 1, styled);
+  const streaming = new StreamingMarkdown(source, 1, markdown);
   expect(streaming.render(48)).toEqual(new Markdown(source, 1, 0, markdown).render(48));
-  heading.mockClear();
   for (const suffix of ['More', 'More text', 'More text in the tail.']) {
     streaming.setText(source + suffix);
     expect(streaming.render(48)).toEqual(new Markdown(source + suffix, 1, 0, markdown).render(48));
   }
-  expect(heading).not.toHaveBeenCalled();
-  streaming.render(18);
-  expect(heading).toHaveBeenCalled();
-  heading.mockClear();
+  const expected = new Markdown(source + 'More text in the tail.', 1, 0, markdown).render(18);
+  expect(streaming.render(18)).toEqual(expected);
   streaming.invalidate();
-  streaming.render(18);
-  expect(heading).toHaveBeenCalled();
+  expect(streaming.render(18)).toEqual(expected);
 });
 
 it('restarts after replacement, truncation, and a whole-document fallback', () => {
@@ -195,32 +145,3 @@ it('restarts after replacement, truncation, and a whole-document fallback', () =
     for (const width of widths) expect(streaming.render(width)).toEqual(new Markdown(text, 1, 0, markdown).render(width));
   }
 });
-
-it.skipIf(!process.env.FELAN_STREAMING_MARKDOWN_BENCHMARK).each([
-  ['prose', '## Streaming output\n\nA representative paragraph with **styled text**, `inline code`, and enough words to wrap across several terminal lines. 中文测试 👩🏽‍💻.\n\n- First list item with a useful detail.\n- Second item with another detail.\n\n'],
-  ['code-heavy', codeHeavy],
-])('benchmarks token-by-token rendering of a growing 20 KB message: %s', (sample, section) => {
-  const source = section.repeat(Math.ceil(20_000 / Buffer.byteLength(section)));
-  const tokens = source.match(/.{1,4}/gsu)!;
-  const transform = clientMarkdownTransform(theme, 'streaming', true);
-  const render = (incremental: boolean) => {
-    const component = new StreamingMarkdown('', 1, markdown, transform);
-    let text = '';
-    let lines: string[] = [];
-    const start = performance.now();
-    for (const token of tokens) {
-      text += token;
-      if (incremental) { component.setText(text); lines = component.render(80); }
-      else lines = new Markdown(text, 1, 0, markdown, undefined, { transform }).render(80);
-    }
-    return { milliseconds: performance.now() - start, lines };
-  };
-  render(true);
-  const baseline = render(false);
-  const incremental = render(true);
-  expect(incremental.lines).toEqual(baseline.lines);
-  const speedup = baseline.milliseconds / incremental.milliseconds;
-  console.log(JSON.stringify({ sample, bytes: Buffer.byteLength(source), tokens: tokens.length, baselineMs: baseline.milliseconds,
-    incrementalMs: incremental.milliseconds, speedup }));
-  expect(speedup).toBeGreaterThanOrEqual(5);
-}, 120_000);

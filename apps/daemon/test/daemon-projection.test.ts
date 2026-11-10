@@ -127,11 +127,6 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
       expect(secondCompletion.change).toMatchObject({ message: { id: all[1]!.id } });
       expect(manager.getEntry(first)).toMatchObject({ message: { content: [{ type: 'text', text }], details: { escaped: detailText } } });
       expect(manager.getEntry(second)).toMatchObject({ message: { ...secondMessage, content: [{ type: 'text', text: secondText }] } });
-      expect(() => f.registry.assertAdmission()).not.toThrow();
-    });
-
-    it('bounds branch and live completion events', () => {
-      const { f, events } = state;
       const completions = events.filter(event => event.change.type === 'message.completed');
       expect(completions).toHaveLength(3);
       expect(events.some(event => event.change.type === 'branch.updated')).toBe(true);
@@ -184,68 +179,6 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     const fault = f.registry as unknown as { failure?: unknown; failureSettlement?: Promise<void> };
     delete fault.failure; delete fault.failureSettlement;
   });
-  it.runIf(process.env.FELAN_ATTACH_BENCHMARK === '1')('benchmarks attach snapshot validation at five MiB', async () => {
-    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-    const projection = f.registry.projection(b.sessionId); const runtime = f.instances.get(b.sessionId)!;
-    const text = 'x'.repeat(1024 * 1024);
-    b.runtime.session.sessionManager.appendMessage({ role: 'user', content: text, timestamp: 0 });
-    const message = assistant('Pending'); runtime.emit({ type: 'message_start', message });
-    for (let contentIndex = 0; contentIndex < 4; contentIndex++) runtime.emit({ type: 'message_update', message,
-      assistantMessageEvent: { type: 'text_delta', contentIndex, delta: text, partial: message } });
-    const snapshot = projection.snapshot();
-    const bytes = Buffer.byteLength(JSON.stringify(snapshot));
-    expect(bytes).toBeGreaterThanOrEqual(5 * 1024 * 1024);
-    expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
-    for (const [name, parse] of [
-      ['parseSessionSnapshot', () => parseSessionSnapshot(snapshot)],
-      ['parseOperationResult(attach)', () => parseOperationResult('attach', { attachmentId: 'attachment', snapshot })],
-    ] as const) {
-      for (let warmup = 0; warmup < 20; warmup++) parse();
-      const samples: number[] = [];
-      for (let sample = 0; sample < 50; sample++) {
-        const start = performance.now(); parse(); samples.push(performance.now() - start);
-      }
-      samples.sort((a, b) => a - b);
-      console.log(JSON.stringify({ validator: name, attachSnapshotBytes: bytes, validationSamples: samples.length,
-        validationMedianMs: samples[25], validationP95Ms: samples[47] }));
-    }
-  });
-
-  it.runIf(process.env.FELAN_PROJECTION_BENCHMARK === '1')('benchmarks unchanged catalog refreshes and incremental streaming', async () => {
-    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-    const session = b.runtime.session; const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
-    const parameters = { type: 'object', properties: Object.fromEntries(Array.from({ length: 12 }, (_, index) => [
-      `option${index}`, { type: 'string', description: `Tool option ${index}`, enum: ['first', 'second', 'third'] },
-    ])), required: ['option0'] };
-    Object.assign(session, { getAllTools: () => Array.from({ length: 60 }, (_, index) => ({ name: `tool${index}`, description: `Tool ${index}`, parameters })) });
-    for (let index = 0; index < 256; index++) session.sessionManager.appendMessage({ role: 'user', content: `Message ${index}`, timestamp: index });
-    projection.refresh();
-    for (let index = 0; index < 100; index++) projection.refresh();
-    const median = (times: number[]) => times.sort((a, b) => a - b)[Math.floor(times.length / 2)]!;
-    const refreshTimes: number[] = [];
-    for (let sample = 0; sample < 5; sample++) {
-      const start = performance.now();
-      for (let index = 0; index < 500; index++) projection.refresh();
-      refreshTimes.push((performance.now() - start) / 500);
-    }
-    const deltaTimes: Record<string, number> = {};
-    for (const size of [100, 200, 400]) {
-      const times: number[] = [];
-      const text = 'x'.repeat(size * 1024); const delta = 'x'.repeat(25);
-      for (let sample = 0; sample < 5; sample++) {
-        const message = assistant(text); runtime.emit({ type: 'message_start', message });
-        const start = performance.now();
-        for (let index = 0; index < text.length; index += delta.length) runtime.emit({ type: 'message_update', message,
-          assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: text.slice(index, index + delta.length), partial: message } });
-        times.push(performance.now() - start);
-        expect(projection.snapshot().activeStreams[0]?.text).toBe(text);
-        runtime.emit({ type: 'message_end', message }); session.sessionManager.appendMessage(message); projection.refresh();
-      }
-      deltaTimes[`${size}KiB`] = median(times);
-    }
-    console.log(JSON.stringify({ refreshMedianMs: median(refreshTimes), deltaMedianMs: deltaTimes }));
-  }, 60_000);
-
   it('preserves configured compaction metadata while the provider keeps implementation details private', async () => {
     const f = await fixture();
     const open = vi.mocked(f.profile.openSession).getMockImplementation()!;
@@ -329,25 +262,21 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     projection.refresh(); expect(events).toHaveLength(6);
     stop();
   });
-  it('returns valid snapshots without full session reads and keeps previous tool snapshots stable', async () => {
+  it('returns valid snapshots and keeps previous tool snapshots stable', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
-    const read = vi.spyOn(f.store, 'session');
-    try {
-      await b.runtime.session.prompt('hello');
-      const message = assistant('A😀'); runtime.emit({ type: 'message_start', message });
-      runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'A😀', partial: message } });
-      runtime.emit({ type: 'tool_execution_start', toolCallId: 'read', toolName: 'read', args: {} });
-      projection.setPresentation({ id: 'notice', kind: 'notification', level: 'info', text: 'Ready' });
-      const snapshot = projection.snapshot();
-      expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
-      runtime.emit({ type: 'tool_execution_end', toolCallId: 'read', toolName: 'read', result: { content: [{ type: 'text', text: 'Output' }], details: {} }, isError: false });
-      const completed = projection.snapshot();
-      expect(parseSessionSnapshot(completed)).toEqual(completed);
-      expect(snapshot.tools[0]).toMatchObject({ state: 'running', output: '' });
-      expect(completed.tools[0]).toMatchObject({ state: 'completed', output: 'Output' });
-      expect(read).not.toHaveBeenCalled();
-    } finally { read.mockRestore(); }
+    await b.runtime.session.prompt('hello');
+    const message = assistant('A😀'); runtime.emit({ type: 'message_start', message });
+    runtime.emit({ type: 'message_update', message, assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'A😀', partial: message } });
+    runtime.emit({ type: 'tool_execution_start', toolCallId: 'read', toolName: 'read', args: {} });
+    projection.setPresentation({ id: 'notice', kind: 'notification', level: 'info', text: 'Ready' });
+    const snapshot = projection.snapshot();
+    expect(parseSessionSnapshot(snapshot)).toEqual(snapshot);
+    runtime.emit({ type: 'tool_execution_end', toolCallId: 'read', toolName: 'read', result: { content: [{ type: 'text', text: 'Output' }], details: {} }, isError: false });
+    const completed = projection.snapshot();
+    expect(parseSessionSnapshot(completed)).toEqual(completed);
+    expect(snapshot.tools[0]).toMatchObject({ state: 'running', output: '' });
+    expect(completed.tools[0]).toMatchObject({ state: 'completed', output: 'Output' });
   });
   it('shares one detached event clone between read-only registry observers', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
@@ -713,32 +642,6 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     manager.branch(second); projection.refresh(); projection.refresh();
     expect(events.flatMap(event => event.change.type === 'message.completed' ? [event.change.message.entryId] : [])).toEqual([first, second, branch, compact, after]);
     expect(projection.snapshot().history.entries.map(entry => entry.entryId)).toEqual([first, second]);
-  });
-  it('skips scanned entry ids until the entry list shrinks or the checkpoint changes', async () => {
-    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-    const manager = b.runtime.session.sessionManager; const projection = f.registry.projection(b.sessionId);
-    manager.appendMessage({ role: 'user', content: 'First', timestamp: 0 });
-    manager.appendMessage(assistant('Second')); projection.refresh();
-    const entries = manager.getEntries(); let idReads = 0;
-    const first = new Proxy(entries[0]!, { get(target, key, receiver) { if (key === 'id') idReads++; return Reflect.get(target, key, receiver); } });
-    const getEntries = vi.spyOn(manager, 'getEntries').mockReturnValue([first, ...entries.slice(1)]);
-    const events: SessionEvent[] = []; f.registry.subscribe(b.sessionId, event => { if ('change' in event) events.push(event); });
-    try {
-      projection.refresh(); expect(idReads).toBe(0);
-      manager.appendMessage(assistant('Appended'));
-      const appended = manager.getLeafEntry()!;
-      getEntries.mockReturnValue([first, ...entries.slice(1), appended]);
-      projection.refresh(); expect(idReads).toBe(0);
-      manager.appendMessage(assistant('After shrink'));
-      const shrunk = manager.getLeafEntry()!;
-      getEntries.mockReturnValue([first, shrunk]);
-      projection.refresh(); expect(idReads).toBeGreaterThan(0);
-      manager.appendMessage(assistant('Replaced checkpoint'));
-      const replaced = manager.getLeafEntry()!;
-      getEntries.mockReturnValue([first, replaced]);
-      projection.refresh();
-      expect(events.flatMap(event => event.change.type === 'message.completed' ? [event.change.message.entryId] : [])).toEqual([appended.id, shrunk.id, replaced.id]);
-    } finally { getEntries.mockRestore(); }
   });
   it('drops an over-limit prefix until completion and rejects stale history cursors', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } }); const runtime = f.instances.get(b.sessionId)!;

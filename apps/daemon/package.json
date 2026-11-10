@@ -21,7 +21,8 @@
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "type-check": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
     "prepack": "pnpm build"
   },
   "publishConfig": {
