@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Component } from '@earendil-works/pi-tui';
-import type { UiDocument, UiView } from '@felan-ai/session-protocol';
+import { parseUiPresentation, type UiDocument, type UiView } from '@felan-ai/session-protocol';
+import { stripVTControlCharacters } from 'node:util';
+import { defaultClientTheme } from '../src/tui/theme.js';
 import { MEMORY_HISTORY_HINT, presentMemoryHistory } from '../src/tui/renderers/memory.js';
 import type { InteractionPresenterUi } from '../src/client/presenters.js';
 
@@ -72,5 +74,39 @@ describe('memory history hint', () => {
     expect(h.component().render(80).join('\n')).toContain('q close');
     h.component().handleInput?.('q');
     await expect(result).resolves.toEqual({ elementId: 'detail', revision: 4, actionId: 'close', outcome: 'cancel', values: {} });
+  });
+
+  it('renders a retained run as a session transcript with tool and thinking toggles', async () => {
+    const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { total: 0 } };
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'Update project memory' }], timestamp: 1 },
+      { role: 'assistant', content: [{ type: 'text', text: 'Reading the index' }, { type: 'toolCall', id: 'call-1', name: 'read', arguments: { path: '.memory/index.md' } }],
+        provider: 'openai', model: 'gpt', api: 'openai-responses', stopReason: 'toolUse', usage, timestamp: 2 },
+      { role: 'toolResult', toolCallId: 'call-1', toolName: 'read', content: [{ type: 'text', text: '# Memory index' }], isError: false, timestamp: 3 },
+      { role: 'assistant', content: [{ type: 'text', text: 'Memory is current.' }], provider: 'openai', model: 'gpt', api: 'openai-responses',
+        stopReason: 'stop', usage, timestamp: 4 },
+    ];
+    const document = parseUiPresentation({ kind: 'document', id: 'detail', revision: 1, title: 'Memory: project · completed', fallback: 'Memory run',
+      markdown: '### User\n\nUpdate project memory', hint: { ...MEMORY_HISTORY_HINT, data: { transcript: {
+        cwd: '/project', page: 1, pages: 2, details: ['Status: completed · Phase: publish'], messages } } },
+      actions: [{ id: 'next', label: 'Next page', target: 'element', outcome: 'submit' }, { id: 'close', label: 'Close', target: 'element', outcome: 'cancel' }] });
+    let component!: Component;
+    const ui = { input: vi.fn(), custom: vi.fn<InteractionPresenterUi['custom']>(factory => new Promise(resolve => {
+      component = factory({ terminal: { rows: 60 }, requestRender: vi.fn() } as never, defaultClientTheme() as never,
+        { matches: (data: string, action: string) => action === 'app.tools.expand' && data === '\x0f' } as never, resolve) as Component;
+    })) } as Pick<InteractionPresenterUi, 'custom' | 'input'>;
+
+    const result = presentMemoryHistory(document, ui, new AbortController().signal);
+    const output = stripVTControlCharacters(component.render(100).join('\n'));
+    expect(output).toContain('Page 1 of 2');
+    expect(output).toContain('Status: completed');
+    expect(output).toContain('Update project memory');
+    expect(output).toContain('Memory is current.');
+    expect(output).not.toContain('"role"');
+    expect(output).toMatch(/expand tools/);
+    component.handleInput?.('\x0f');
+    expect(stripVTControlCharacters(component.render(100).join('\n'))).toMatch(/collapse tools/);
+    component.handleInput?.('\x1b[C');
+    await expect(result).resolves.toMatchObject({ actionId: 'next', outcome: 'submit' });
   });
 });

@@ -37,4 +37,37 @@ describe('memory history actions', () => {
     await work;
     expect(close).toHaveBeenCalledTimes(filtered ? 2 : 1);
   });
+
+  it('lists recent runs first and loads every run only to search', async () => {
+    const run = (id: string, name: string) => [id, { name, id, cwd: '/project', firstMessage: '', modified: new Date('2026-01-01'),
+      messageCount: 1 } as MemoryHistorySession] as const;
+    vi.mocked(listLocalSessionHistory).mockReset()
+      .mockResolvedValueOnce({ currentSessions: [], allSessions: [], memorySessions: new Map([run('new', 'Memory: new')]),
+        memorySessionsTruncated: true })
+      .mockResolvedValueOnce({ currentSessions: [], allSessions: [],
+        memorySessions: new Map([run('new', 'Memory: new'), run('old', 'Memory: old')]) });
+    const present = vi.fn<ExtensionUi['present']>(async () => ({ close: vi.fn(async () => {}), update: vi.fn(async () => {}) }));
+    const pi = { ui: { ...createUnavailableExtensionUi(), present } } as unknown as FelanExtensionAPI;
+    const ctx = { cwd: '/project', sessionManager: { getSessionDir: () => '/sessions' } } as unknown as ExtensionContext;
+    const controller = new AbortController();
+    const work = createMemoryPresentation(pi, {} as MemoryContext).showHistory(ctx, '/agent', 'enabled', controller.signal);
+    const act = async (index: number, actionId: string, values = {}) => {
+      const [source, options] = present.mock.calls[index]!;
+      await options!.onAction!({ elementId: source.id, revision: source.revision, actionId, values,
+        outcome: actionId === 'close' ? 'cancel' : 'submit' }, { requestId: actionId, signal: controller.signal });
+    };
+
+    await vi.waitFor(() => expect(present).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(listLocalSessionHistory).mock.calls[0]![1]).toMatchObject({ memoryLimit: 40 });
+    expect(present.mock.calls[0]![0]).toMatchObject({ fallback: expect.stringContaining('Search to include older runs'),
+      items: [{ fallback: 'Memory: new' }] });
+
+    await act(0, 'query', { query: 'old' });
+    await vi.waitFor(() => expect(present).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(listLocalSessionHistory).mock.calls[1]![1]).not.toHaveProperty('memoryLimit');
+    expect(present.mock.calls[1]![0]).toMatchObject({ fallback: 'enabled', items: [{ fallback: 'Memory: old' }] });
+
+    await act(1, 'close');
+    await work;
+  });
 });

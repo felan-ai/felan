@@ -47,7 +47,7 @@ export function createTerminalPresenters(controller: TuiSessionController, ui: I
     } }),
     presenters.hints.register(PREWALK_FORM_HINT, { form: (form, signal) => presentPrewalkForm(form, ui, signal) }),
     presenters.hints.register(CONTEXT_DOCUMENT_HINT, { presentation: (element, signal) => presentContextDocument(element, ui, signal, presentationSettings().contextView.displayMode) }),
-    presenters.hints.register(MEMORY_HISTORY_HINT, { presentation: (element, signal) => presentMemoryHistory(element, ui, signal) }),
+    presenters.hints.register(MEMORY_HISTORY_HINT, { presentation: (element, signal) => presentMemoryHistory(element, ui, signal, options.toolPresentation) }),
     presenters.hints.register(INSIGHTS_DOCUMENT_HINT, { presentation: (element, signal) => presentInsightsDocument(element, ui, signal) }),
     presenters.hints.register(SAVINGS_DASHBOARD_HINT, { presentation: (element, signal) => presentSavingsDocument(element, ui, signal) }),
     presenters.hints.register(FUSION_PICKER_HINT, { presentation: (element, signal) => presentFusionPickerView(element, ui, signal) }),

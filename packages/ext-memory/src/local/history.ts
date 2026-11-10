@@ -28,6 +28,7 @@ export interface LocalSessionHistory {
   readonly currentSessions: readonly SessionInfo[];
   readonly allSessions: readonly SessionInfo[];
   readonly memorySessions: ReadonlyMap<string, MemoryHistorySession>;
+  readonly memorySessionsTruncated?: boolean;
 }
 
 
@@ -36,6 +37,8 @@ export interface MemoryHistoryOptions {
   readonly agentDir: string;
   readonly sessionDir: string;
   readonly memoryOnly?: boolean;
+  /** Loads only the newest retained memory runs; omit to load every run. */
+  readonly memoryLimit?: number;
 }
 
 
@@ -64,14 +67,20 @@ export async function listLocalSessionHistory(environment: MemoryContext, option
     options.memoryOnly ? Promise.resolve<SessionInfo[]>([]) : listSessions(environment, 'visible'),
   ]);
   const memorySessions = new Map<string, MemoryHistorySession>();
-  let retained: SessionInfo[] = [];
+  let files: string[] = [];
   try {
     await requireDirectory(environment, memoryDir);
-    retained = await listMemorySessions(environment, memoryDir);
+    files = await listMemoryFiles(environment, memoryDir);
   } catch {}
   const projects = new Map<string, LocalMemoryProject>([[options.cwd, project]]);
-  for (const session of retained) {
-    if (!validMemoryRunId(session.id) || !session.cwd || dirname(resolve(session.path)) !== memoryDir) continue;
+  let memorySessionsTruncated = false;
+  for (const path of files) {
+    if (options.memoryLimit !== undefined && memorySessions.size >= options.memoryLimit) {
+      memorySessionsTruncated = true;
+      break;
+    }
+    const session = await readMemoryCatalogEntry(environment, path).catch(() => undefined);
+    if (!session || !validMemoryRunId(session.id) || !session.cwd || dirname(resolve(session.path)) !== memoryDir) continue;
     const sessionProject = projects.get(session.cwd) ?? await resolveLocalMemoryProject(environment, session.cwd);
     projects.set(session.cwd, sessionProject);
     const candidate: MemoryHistorySession = {
@@ -94,7 +103,8 @@ export async function listLocalSessionHistory(environment: MemoryContext, option
     if (sessionProject.key === project.key) currentSessions.push(labeled);
   }
   const recent = (left: SessionInfo, right: SessionInfo) => right.modified.getTime() - left.modified.getTime();
-  return { currentSessions: currentSessions.sort(recent), allSessions: allSessions.sort(recent), memorySessions };
+  return { currentSessions: currentSessions.sort(recent), allSessions: allSessions.sort(recent), memorySessions,
+    ...(memorySessionsTruncated ? { memorySessionsTruncated } : {}) };
 }
 
 
@@ -168,15 +178,15 @@ export async function readMemoryHistorySnapshot(environment: MemoryContext, sess
 }
 
 
-async function listMemorySessions(environment: MemoryContext, memoryDir: string): Promise<SessionInfo[]> {
-  const sessions: SessionInfo[] = [];
+async function listMemoryFiles(environment: MemoryContext, memoryDir: string): Promise<string[]> {
+  const files: { path: string; modifiedAt: number }[] = [];
   for (const name of await environment.runtime.listFiles(memoryDir, { includeDirectories: true, includeOther: true })) {
-    const file = await environment.runtime.files!.inspect(join(memoryDir, name));
-    if (file.kind !== 'file' || !name.endsWith('.jsonl')) continue;
-    const session = await readMemoryCatalogEntry(environment, join(memoryDir, name)).catch(() => undefined);
-    if (session) sessions.push(session);
+    if (!name.endsWith('.jsonl')) continue;
+    const path = join(memoryDir, name);
+    const file = await environment.runtime.files!.inspect(path).catch(() => undefined);
+    if (file?.kind === 'file') files.push({ path, modifiedAt: file.modifiedAt });
   }
-  return sessions;
+  return files.sort((left, right) => right.modifiedAt - left.modifiedAt).map(({ path }) => path);
 }
 
 

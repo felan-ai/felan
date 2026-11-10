@@ -5,7 +5,7 @@ beforeMemoryTest(() => { ({ listLocalSessionHistory, readMemoryHistorySnapshot, 
 import { sanitizeMemoryDiagnostic } from '../../src/diagnostics.js';
 import type { MemoryRunMetadata, MemoryHistorySession } from '../../src/index.js';
 import { execFile } from 'node:child_process';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -71,6 +71,24 @@ describe('local memory history', () => {
     expect(history.currentSessions.some((session) => session.path === other.getSessionFile())).toBe(false);
     expect(validMemoryRunId('../run')).toBe(false);
     expect(validMemoryRunId('run_01-AB')).toBe(true);
+  });
+
+  it('loads only the newest retained runs when limited', async () => {
+    const fixture = await memoryFixture();
+    const newer = SessionManager.create(fixture.project.canonicalRoot, join(fixture.sessionDir, 'memory'));
+    newer.appendCustomEntry(MEMORY_RUN_ENTRY, await metadataFor(newer, fixture.agentDir, fixture.project.canonicalRoot));
+    appendUser(newer, 'Newer memory run');
+    appendAssistant(newer, 'Newer result');
+    await utimes(fixture.memoryFile, new Date('2026-09-01T00:00:00Z'), new Date('2026-09-01T00:00:00Z'));
+    await utimes(newer.getSessionFile()!, new Date('2026-09-02T00:00:00Z'), new Date('2026-09-02T00:00:00Z'));
+
+    const limited = await listLocalSessionHistory({ ...fixture, memoryOnly: true, memoryLimit: 1 });
+    const complete = await listLocalSessionHistory({ ...fixture, memoryOnly: true });
+
+    expect([...limited.memorySessions.keys()]).toEqual([newer.getSessionFile()]);
+    expect(limited.memorySessionsTruncated).toBe(true);
+    expect([...complete.memorySessions.keys()]).toEqual([newer.getSessionFile(), fixture.memoryFile]);
+    expect(complete.memorySessionsTruncated).toBeUndefined();
   });
 
   it('discovers malformed transcripts from validated headers and preserves earlier messages', async () => {

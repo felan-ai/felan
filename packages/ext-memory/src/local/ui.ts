@@ -1,11 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import type { UiElementHandle } from '@felan-ai/agent-core';
-const MEMORY_DOCUMENT_BYTES = 64 * 1024 * 1024;
 import type { FelanExtensionAPI, UiActionRequest, UiAction, UiDocument, UiView } from '@felan-ai/agent-core';
 import type { MemoryControlPresentationHost } from './control.js';
 import type { MemoryContext } from './context.js';
 import { listLocalSessionHistory, readMemoryHistorySnapshot } from './history.js';
-import type { MemoryHistorySession } from './history.js';
+import type { LocalSessionHistory, MemoryHistorySession } from './history.js';
+import { memoryTranscriptPages, type MemoryTranscriptPage } from './transcript-pages.js';
 export const MEMORY_HISTORY_HINT = Object.freeze({ id: 'felan.memory-history', version: '1' });
 
 const close: UiAction = { id: 'close', label: 'Close', target: 'element', outcome: 'cancel' };
@@ -31,9 +31,10 @@ export function createMemoryPresentation(pi: FelanExtensionAPI, environment: Mem
       const signal = callerSignal;
       let handle: UiElementHandle | undefined;
       try {
-        const load = () => listLocalSessionHistory(environment, { cwd: ctx.cwd, agentDir, sessionDir: ctx.sessionManager.getSessionDir(), memoryOnly: true });
-        let history = await load(); let query = ''; let page = 0;
-        let detail: { title: string; pages: string[]; page: number } | undefined;
+        const load = (memoryLimit?: number) => listLocalSessionHistory(environment, { cwd: ctx.cwd, agentDir,
+          sessionDir: ctx.sessionManager.getSessionDir(), memoryOnly: true, ...(memoryLimit === undefined ? {} : { memoryLimit }) });
+        let recent = await load(pageSize); let all: LocalSessionHistory | undefined; let query = ''; let page = 0;
+        let detail: { title: string; pages: MemoryTranscriptPage[]; page: number } | undefined;
         while (!signal.aborted) {
           const selected = new Map<string, MemoryHistorySession>();
           const id = `memory-${randomUUID()}`;
@@ -42,10 +43,15 @@ export function createMemoryPresentation(pi: FelanExtensionAPI, environment: Mem
             const actions: UiAction[] = [{ id: 'back', label: 'Back to runs', target: 'element', outcome: 'submit' }];
             if (detail.page > 0) actions.push({ id: 'previous', label: 'Previous page', target: 'element', outcome: 'submit' });
             if (detail.page + 1 < detail.pages.length) actions.push({ id: 'next', label: 'Next page', target: 'element', outcome: 'submit' });
-            element = { id, kind: 'document', revision: 1, title: detail.title, hint: MEMORY_HISTORY_HINT,
-              markdown: `Page ${detail.page + 1} of ${detail.pages.length}\n\n${detail.pages[detail.page]}`, actions: [...actions, close], fallback: detail.title };
+            const current = detail.pages[detail.page]!;
+            element = { id, kind: 'document', revision: 1, title: detail.title,
+              hint: { ...MEMORY_HISTORY_HINT, data: current.data },
+              markdown: current.markdown, actions: [...actions, close], fallback: detail.title };
           } else {
-            const rows = [...history.memorySessions.values()].filter(row => `${row.name ?? ''} ${row.id} ${row.cwd} ${row.firstMessage}`.toLowerCase().includes(query.toLowerCase()));
+            const rows = query && all ? [...all.memorySessions.values()].filter(row => `${row.name ?? ''} ${row.id} ${row.cwd} ${row.firstMessage}`.toLowerCase().includes(query.toLowerCase()))
+              : [...recent.memorySessions.values()];
+            const fallback = !query && recent.memorySessionsTruncated
+              ? `${status || 'Memory history'} · Showing the ${pageSize} most recent runs. Search to include older runs.` : status || 'Memory history';
             page = Math.min(page, Math.max(0, Math.ceil(rows.length / pageSize) - 1));
             const actions: UiAction[] = [
               { id: 'inspect', label: 'Inspect run', target: 'item', outcome: 'submit' },
@@ -56,7 +62,7 @@ export function createMemoryPresentation(pi: FelanExtensionAPI, environment: Mem
             ];
             if (page > 0) actions.push({ id: 'previous', label: 'Previous page', target: 'element', outcome: 'submit' });
             if ((page + 1) * pageSize < rows.length) actions.push({ id: 'next', label: 'Next page', target: 'element', outcome: 'submit' });
-            element = { id, kind: 'view', revision: 1, title: 'Memory history', fallback: status || 'Memory history', hint: MEMORY_HISTORY_HINT,
+            element = { id, kind: 'view', revision: 1, title: 'Memory history', fallback, hint: MEMORY_HISTORY_HINT,
               fields: [{ id: 'run', label: 'Run', valueKind: 'text' }, { id: 'project', label: 'Project', valueKind: 'text' },
                 { id: 'updated', label: 'Updated', valueKind: 'date' }, { id: 'messages', label: 'Messages', valueKind: 'number' }],
               items: rows.slice(page * pageSize, (page + 1) * pageSize).map(row => {
@@ -81,17 +87,18 @@ export function createMemoryPresentation(pi: FelanExtensionAPI, environment: Mem
                   if (detail) {
                     if (value.actionId === 'back') detail = undefined;
                     else detail.page += value.actionId === 'next' ? 1 : -1;
-                  } else if (value.actionId === 'query') { query = typeof value.values.query === 'string' ? value.values.query : ''; page = 0; }
-                  else if (value.actionId === 'refresh') history = await load();
-                  else if (value.actionId === 'next') page++;
+                  } else if (value.actionId === 'query') {
+                    query = typeof value.values.query === 'string' ? value.values.query.trim() : ''; page = 0;
+                    if (query && !all) all = await load();
+                  } else if (value.actionId === 'refresh') {
+                    recent = await load(pageSize); all = query ? await load() : undefined;
+                  } else if (value.actionId === 'next') page++;
                   else if (value.actionId === 'previous') page--;
                   else {
                     const row = value.itemId ? selected.get(value.itemId) : undefined;
                     if (!row) throw new Error('The selected memory run is unavailable.');
                     const snapshot = await readMemoryHistorySnapshot(environment, row); signal.throwIfAborted();
-                    const text = JSON.stringify({ metadata: snapshot.metadata, messages: snapshot.messages, diagnostics: snapshot.diagnostics }, null, 2);
-                    if (Buffer.byteLength(text) > MEMORY_DOCUMENT_BYTES) throw new Error('Memory history exceeds the safe display limit. No retained files were changed.');
-                    detail = { title: label(row.name || row.id), pages: textPages(text), page: 0 };
+                    detail = { title: label(row.name || row.id), pages: memoryTranscriptPages(snapshot), page: 0 };
                   }
                 }
                 answer(value);
@@ -109,15 +116,3 @@ export function createMemoryPresentation(pi: FelanExtensionAPI, environment: Mem
 }
 
 function label(value: string): string { return Array.from(value).slice(0, 250).join(''); }
-function textPages(value: string): string[] {
-  const pages: string[] = []; let page = ''; let bytes = 0;
-  for (const character of value) {
-    const safe = character === '<' ? '&lt;' : character === '>' ? '&gt;' : character === '&' ? '&amp;'
-      : /[\\`*_{}\[\]()!#|]/u.test(character) ? `\\${character}` : character;
-    const size = Buffer.byteLength(safe);
-    if (bytes + size > 48 * 1024) { pages.push(page); page = ''; bytes = 0; }
-    page += safe; bytes += size;
-  }
-  if (page || !pages.length) pages.push(page || 'No retained messages.');
-  return pages;
-}
