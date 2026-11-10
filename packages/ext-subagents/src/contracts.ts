@@ -12,7 +12,7 @@ export interface SubagentDescriptor {
   readonly allowNesting: boolean;
 }
 
-export type SubagentStatus =
+type SubagentStatus =
   | 'queued'
   | 'running'
   | 'completed'
@@ -20,7 +20,7 @@ export type SubagentStatus =
   | 'timed_out'
   | 'cancelled';
 
-export type SubagentErrorCode =
+type SubagentErrorCode =
   | 'unknown_agent_type'
   | 'invalid_request'
   | 'unsupported_model'

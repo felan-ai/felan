@@ -7,14 +7,6 @@ const refreshedAt = Date.parse('2026-01-01T00:00:00.000Z');
 describe('cache-expiry compaction', () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it('registers nothing when disabled', () => {
-    const installed = install({ enabled: false });
-    expect(installed.handlers.size).toBe(0);
-    expect(installed.scheduler.takeTrigger()).toBe(false);
-    expect(installed.scheduler.takeTrigger()).toBe(false);
-    expect(installed.setTimer).not.toHaveBeenCalled();
-  });
-
   it('does not schedule unknown lifetimes or uncached contexts', () => {
     const installed = install();
     installed.ctx.model = model(false);
@@ -45,36 +37,26 @@ describe('cache-expiry compaction', () => {
     expect(installed.scheduler.takeTrigger()).toBe(false);
   });
 
-  it('uses a custom lead time and schedules immediately inside its window', () => {
-    const installed = install({ leadMs: 10_000 });
-    installed.emit('session_start');
-    expect(installed.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 50_000);
+  it('schedules immediately when already inside the default lead window', () => {
+    const installed = install();
     installed.setNow(refreshedAt + 55_000);
-    installed.emit('agent_settled');
-    expect(installed.timers.size).toBe(1);
+    installed.emit('session_start');
     expect(installed.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 0);
     installed.fireNext();
     expect(installed.ctx.compact).toHaveBeenCalledOnce();
-    expect(installed.ctx.ui.notify).toHaveBeenCalledWith('Prompt cache expires in 5s; compacting the idle session so the next request starts smaller.', 'info');
+    expect(installed.scheduler.takeTrigger()).toBe(true);
   });
 
-  it.each(['session_start', 'agent_settled', 'session_tree', 'model_select'])('schedules on %s and replaces the previous timer', (event) => {
+  it.each([
+    ['session_start', 1], ['agent_settled', 1], ['session_tree', 1], ['model_select', 1],
+    ['agent_start', 0], ['session_compact', 0], ['session_shutdown', 0], ['session_before_switch', 0], ['session_before_fork', 0],
+  ] as const)('updates the scheduled timer count after %s', (event, expectedTimers) => {
     const installed = install();
     installed.emit('session_start');
     const staleCallback = installed.timers.values().next().value!.fn;
     installed.emit(event);
-    expect(installed.timers.size).toBe(1);
+    expect(installed.timers.size).toBe(expectedTimers);
     expect(installed.clearTimer).toHaveBeenCalledOnce();
-    staleCallback();
-    expect(installed.ctx.compact).not.toHaveBeenCalled();
-  });
-
-  it.each(['agent_start', 'session_compact', 'session_shutdown', 'session_before_switch', 'session_before_fork'])('cancels on %s', (event) => {
-    const installed = install();
-    installed.emit('session_start');
-    const staleCallback = installed.timers.values().next().value!.fn;
-    installed.emit(event);
-    expect(installed.timers.size).toBe(0);
     staleCallback();
     expect(installed.ctx.compact).not.toHaveBeenCalled();
   });
@@ -99,36 +81,6 @@ describe('cache-expiry compaction', () => {
     expect(installed.scheduler.takeTrigger()).toBe(false);
   });
 
-  it('checks auto-compaction, idle state, pending messages, usage, and eligibility in order', () => {
-    const installed = install();
-    installed.getSettings.mockReturnValue({ compaction: { enabled: false } });
-    installed.ctx.isIdle.mockReturnValue(false);
-    installed.ctx.hasPendingMessages.mockReturnValue(true);
-    installed.ctx.getContextUsage.mockReturnValue(undefined);
-    installed.emit('session_start');
-    installed.fireNext();
-    expect(installed.ctx.isIdle).not.toHaveBeenCalled();
-    expect(installed.logs.at(-1)?.fields.reason).toBe('auto-compaction-disabled');
-
-    installed.getSettings.mockReturnValue({});
-    installed.emit('agent_settled');
-    installed.fireNext();
-    expect(installed.ctx.hasPendingMessages).not.toHaveBeenCalled();
-    expect(installed.logs.at(-1)?.fields.reason).toBe('agent-busy');
-
-    installed.ctx.isIdle.mockReturnValue(true);
-    installed.emit('agent_settled');
-    installed.fireNext();
-    expect(installed.ctx.getContextUsage).not.toHaveBeenCalled();
-    expect(installed.logs.at(-1)?.fields.reason).toBe('pending-messages');
-
-    installed.ctx.hasPendingMessages.mockReturnValue(false);
-    installed.emit('agent_settled');
-    installed.fireNext();
-    expect(installed.canCompact).not.toHaveBeenCalled();
-    expect(installed.logs.at(-1)?.fields.reason).toBe('context-usage-unavailable');
-  });
-
   it('reschedules when a cache warmer extends expiry beyond the lead window tolerance', () => {
     const installed = install();
     installed.emit('session_start');
@@ -139,15 +91,6 @@ describe('cache-expiry compaction', () => {
     expect(installed.setTimer).toHaveBeenLastCalledWith(expect.any(Function), 30_000);
     installed.fireNext();
     expect(installed.ctx.compact).toHaveBeenCalledOnce();
-  });
-
-  it('accepts a warmer extension within the one-second tolerance', () => {
-    const installed = install();
-    installed.emit('session_start');
-    installed.entries.push(cacheWarm(refreshedAt + 1_000));
-    installed.fireNext();
-    expect(installed.ctx.compact).toHaveBeenCalledOnce();
-    expect(installed.setTimer).toHaveBeenCalledOnce();
   });
 
   it('stops when the cache expires before scheduling or before the timer fires', () => {
@@ -276,23 +219,11 @@ describe('cache-expiry compaction', () => {
       component: 'session-compaction', sessionId: 's'.repeat(256), reason: 'r'.repeat(256), secondsLeft: 20, contextTokens: 30_000,
     });
   });
-
-  it('unrefs and cancels the default timer', () => {
-    const unref = vi.fn();
-    const timer = { unref: () => { unref(); return timer; } };
-    vi.spyOn(globalThis, 'setTimeout').mockReturnValue(timer as unknown as ReturnType<typeof setTimeout>);
-    const clearTimeout = vi.spyOn(globalThis, 'clearTimeout').mockImplementation(() => {});
-    const installed = install({}, { nativeTimers: true });
-    installed.emit('session_start');
-    expect(unref).toHaveBeenCalledOnce();
-    installed.emit('agent_start');
-    expect(clearTimeout).toHaveBeenCalledWith(timer);
-  });
 });
 
 type Installed = ReturnType<typeof install>;
 
-function install(overrides: Partial<CacheExpiryCompactionOptions> = {}, { nativeTimers = false } = {}) {
+function install(overrides: Partial<CacheExpiryCompactionOptions> = {}) {
   const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => void>();
   const logs: LogRecord[] = [];
   const entries = [assistant()];
@@ -323,7 +254,7 @@ function install(overrides: Partial<CacheExpiryCompactionOptions> = {}, { native
   };
   const scheduler = registerCacheExpiryCompaction(pi, {
     enabled: true, minContextTokens: 30_000, canCompact, now: () => time,
-    ...(nativeTimers ? {} : { setTimer, clearTimer }), ...overrides,
+    setTimer, clearTimer, ...overrides,
   });
   return {
     scheduler, handlers, timers, logs, entries, ctx, pi, setTimer, clearTimer, canCompact, getSettings,

@@ -143,6 +143,7 @@ export function wrapCommandWithRtkGain(command: string, capture: RtkGainSegment)
   return `(RTK_DB_PATH=${quotePosixShellArgument(capture.databasePath)}; export RTK_DB_PATH; ${command}\n\n)`;
 }
 
+/** @internal */
 export function parseRtkGainSummary(value: string): RtkGainTotals | undefined {
   let parsed: unknown;
   try {

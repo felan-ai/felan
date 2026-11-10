@@ -3,6 +3,7 @@ import { JsonLineDecoder, LIMITS, encodeFrame } from '@felan-ai/session-protocol
 import { connectLocalIpc } from '@felan-ai/daemon/client';
 import type { ResolvedDaemonTarget } from '@felan-ai/daemon/client';
 
+/** @internal */
 export interface TransportReceiver {
   frame(value: unknown): void;
   closed(reason: 'transport_lost' | 'invalid_frame' | 'overflow'): void;
@@ -15,6 +16,7 @@ export interface ClientTransport {
 
 export type TransportConnector = (receiver: TransportReceiver) => Promise<ClientTransport>;
 
+/** @internal */
 export function socketTransport(socket: Socket, receiver: TransportReceiver): ClientTransport {
   const decoder = new JsonLineDecoder();
   let closed = false;

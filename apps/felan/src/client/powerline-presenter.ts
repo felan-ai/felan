@@ -19,6 +19,7 @@ export function isPowerlinePresentation(item: Presentation): boolean {
     && item.hint?.id === 'felan.powerline' && item.hint.version === '3.0.0';
 }
 
+/** @internal */
 export function powerlineViewData(presentation: readonly Presentation[]): PowerlineData | undefined {
   const views = presentation.filter((item): item is UiView => item.kind === 'view' && isPowerlinePresentation(item));
   if (!views.length) return undefined;

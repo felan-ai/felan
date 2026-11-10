@@ -43,7 +43,7 @@ function literal(value: string): string {
   return uiText(value).replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;').replace(/[\\`*_{}\[\]()#+.!|~\-]/gu, '\\$&');
 }
 
-export function formText(form: UiForm): string {
+function formText(form: UiForm): string {
   return [literal(form.title), form.description && literal(form.description), form.markdown && uiText(form.markdown), literal(form.fallback)].filter(Boolean).join('\n\n');
 }
 

@@ -56,6 +56,7 @@ export function truncateHeadTail(
   return { text: safeSliceEnd(text, limit), omittedCharacters: text.length - limit };
 }
 
+/** @internal */
 export function truncate(text: string, maxLength: number): string {
   return truncateHeadTail(text, maxLength).text;
 }

@@ -244,7 +244,7 @@ class LocalMcpOAuthSession implements McpOAuthSession {
   }
 }
 
-export class LocalOAuthProvider implements OAuthClientProvider {
+class LocalOAuthProvider implements OAuthClientProvider {
   readonly server: ResolvedMcpServer;
   readonly #config: LocalMcpOAuthConfig;
   readonly #repository: McpOAuthCredentialRepository;

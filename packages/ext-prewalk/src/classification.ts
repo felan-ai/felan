@@ -11,16 +11,16 @@ import {
 } from '@felan-ai/agent-core';
 
 export type ExplorationDepth = 'sufficient' | 'targeted' | 'deep';
-export type CompletionVerdict = 'done' | 'gap' | 'unsure';
+type CompletionVerdict = 'done' | 'gap' | 'unsure';
 export type ImplementationTier = Extract<ModelTier, 'low' | 'medium' | 'high'>;
 export type ImplementationThinking = Extract<FelanThinkingLevel, 'low' | 'medium' | 'high'>;
 
-export interface ImplementationProfile {
+interface ImplementationProfile {
   tier: ImplementationTier;
   thinking: ImplementationThinking;
 }
 
-export interface RunContext {
+interface RunContext {
   request: string;
   plan?: string;
   tasks: readonly string[];

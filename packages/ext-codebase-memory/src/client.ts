@@ -7,8 +7,9 @@ import {
 import { RecoveryCoordinator, runStdioCommand } from './recovery.js';
 
 export const CODEBASE_MEMORY_VERSION = '0.11.0';
-export const QUERY_TIMEOUT_MS = 60_000;
+const QUERY_TIMEOUT_MS = 60_000;
 export const INDEX_TIMEOUT_MS = 20 * 60_000;
+/** @internal */
 export const MAX_OUTPUT_BYTES = 5 * 1024 * 1024;
 
 export interface CbmInvocation {

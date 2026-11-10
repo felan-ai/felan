@@ -31,7 +31,7 @@ export function codebaseMemoryRuntimeDirectory(agentStorageRoot: string): {
   return { root: `/tmp/felan-cbm-${key}` };
 }
 
-export function isWindowsRuntimePath(path: string): boolean {
+function isWindowsRuntimePath(path: string): boolean {
   return /^[A-Za-z]:[\\/]/u.test(path) || /^\\\\/u.test(path) || (path.includes('\\') && !path.includes('/'));
 }
 

@@ -9,11 +9,10 @@ import type {
 	PromptHistoryScope,
 	PromptHistorySearchState,
 } from "./contracts.js";
-export { PROMPT_HISTORY_SCOPES } from "./contracts.js";
-export type { PromptHistoryItem, PromptHistoryScope, PromptHistorySearchState } from "./contracts.js";
+export type { PromptHistoryScope, PromptHistorySearchState } from "./contracts.js";
 
 export const MAX_PROMPT_HISTORY_RESULTS = 50;
-export const PROMPT_HISTORY_SEARCH_BATCH_SIZE = 4;
+const PROMPT_HISTORY_SEARCH_BATCH_SIZE = 4;
 
 export interface PromptHistorySource {
 	readonly cwd: string;
@@ -50,6 +49,7 @@ export function createPromptHistorySource(
 	};
 }
 
+/** @internal */
 export function collectPrompts(
 	entries: readonly SessionEntry[],
 	metadata: PromptMetadata,
@@ -122,6 +122,7 @@ export async function searchPromptHistory(
 	return searchState(matches, false, scanned, sessions.length, scanned >= sessions.length && !failedRead);
 }
 
+/** @internal */
 export function limitedPrompts(
 	items: readonly PromptHistoryItem[],
 	query: string,
@@ -135,7 +136,7 @@ export function limitedPrompts(
 	).slice(0, MAX_PROMPT_HISTORY_RESULTS);
 }
 
-export function normalizeCwd(cwd: string): string {
+function normalizeCwd(cwd: string): string {
 	if (!cwd) return "";
 	const normalized = normalize(resolve(cwd));
 	return process.platform === "win32" ? normalized.toLocaleLowerCase() : normalized;

@@ -2,7 +2,7 @@ import { stripVTControlCharacters } from 'node:util';
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import type { HuggingFaceModel, LlamaModelInfo, LlamaProgress } from './sdk.js';
 
-export interface LlamaProgressOptions<T> {
+interface LlamaProgressOptions<T> {
   title: string;
   model: string;
   cancelTitle: string;

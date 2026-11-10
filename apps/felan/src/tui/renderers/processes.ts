@@ -12,10 +12,8 @@ export const renderBackgroundBashCall: NonNullable<AgentToolPresentation['render
   return new Text(theme.fg('toolTitle', theme.bold(`$ ${command}`)) + theme.fg('muted', suffix), 0, 0);
 };
 
-export { BackgroundBashCompletionComponent } from './processes/completion-message.js';
-export type { BackgroundProcessViewSource } from '@felan-ai/ext-background-bash/data';
-export { ProcessViewPanel, presentProcessView } from './processes/process-view.js';
-export type { ProcessViewNavigation } from './processes/process-view.js';
+/** @internal */
+export { ProcessViewPanel } from './processes/process-view.js';
 
 export { PROCESSES_HINT } from '@felan-ai/ext-background-bash/data';
 

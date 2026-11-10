@@ -8,6 +8,7 @@ import { probeDaemon, readControlFrame, readinessResponse } from './ipc.js';
 import { assertTargetIdentity, openPrivateFile, resolveDaemonTarget, type DaemonTarget } from './target.js';
 import type { DaemonOwnership } from './ownership.js';
 
+/** @internal */
 export interface DaemonLaunchReceipt {
   readonly target: DaemonTarget;
   readonly identity: DaemonIdentity;

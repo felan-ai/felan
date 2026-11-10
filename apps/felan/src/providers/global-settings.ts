@@ -10,12 +10,6 @@ import { validateBuiltinExtensionKeys } from './extension-catalog.js';
 
 export type DaemonGlobalSettings = Readonly<Record<string, unknown>>;
 
-export interface PiExtensionSettings {
-  readonly user?: boolean;
-  readonly project?: boolean;
-  readonly llamaCpp?: boolean;
-}
-
 export interface ResolvedPiExtensionSettings {
   readonly user: boolean;
   readonly project: boolean;
@@ -24,10 +18,6 @@ export interface ResolvedPiExtensionSettings {
 
 export function createDaemonSettingsManager(cwd: string, agentDir: string): SettingsManager {
   return SettingsManager.create(cwd, agentDir, { projectTrusted: false });
-}
-
-export function getPiExtensionSettings(settingsManager: SettingsManager): ResolvedPiExtensionSettings {
-  return parsePiExtensionSettings((settingsManager.getGlobalSettings() as Record<string, unknown>).piExtensions);
 }
 
 export function parsePiExtensionSettings(raw: unknown): ResolvedPiExtensionSettings {
@@ -40,7 +30,7 @@ export function parsePiExtensionSettings(raw: unknown): ResolvedPiExtensionSetti
   };
 }
 
-export interface DependencyOnboardingDecision {
+interface DependencyOnboardingDecision {
   readonly extension: string;
   readonly revision: number;
   readonly enabled: boolean;

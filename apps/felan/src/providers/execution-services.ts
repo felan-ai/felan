@@ -7,6 +7,7 @@ import { type LocalExecutionRoot, type LocalExecutionSession } from './extension
 import { SavingsService, createModelPriceSource } from './savings.js';
 import { createSavingsCommandExtension } from '../savings-command.js';
 
+/** @internal */
 export function createLocalExecutionRoots() {
   const roots = new Map<string, LocalExecutionRoot>();
   async function createRoot(context: Omit<SessionExtensionContext, 'services'>): Promise<LocalExecutionRoot> {
@@ -46,7 +47,7 @@ export function createLocalExecutionRoots() {
 
 const executionRoots = createLocalExecutionRoots();
 
-export async function createLocalExecutionSession(session: SessionExtensionContext, port: SessionExecutionPort, roots = executionRoots) {
+async function createLocalExecutionSession(session: SessionExtensionContext, port: SessionExecutionPort, roots = executionRoots) {
   const root = await roots.open(session, port);
   const isRoot = port.current.id === port.current.root;
   const state = { context: session, port, root, isRoot } satisfies LocalExecutionSession;

@@ -1,4 +1,4 @@
-import type { ModelUsage, ParsedSession, SessionActivity } from './types.js';
+import type { ModelUsage, ParsedSession } from './types.js';
 
 export function sliceParsedSession(session: ParsedSession, start?: Date, end?: Date): ParsedSession | null {
   if (!start && !end) return session;
@@ -48,5 +48,3 @@ function addModels(target: Record<string, ModelUsage>, source: Record<string, Mo
     } else target[key] = { ...value };
   }
 }
-
-export type { SessionActivity };

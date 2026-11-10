@@ -2,12 +2,12 @@ import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
 import { promptCacheState } from './internal/cache-state.js';
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+const CACHE_EXPIRY_LEAD_MS = 20_000;
 
 export interface CacheExpiryCompactionOptions {
   readonly enabled: boolean;
   readonly minContextTokens: number;
   readonly canCompact: (ctx: ExtensionContext) => { readonly ok: true } | { readonly ok: false; readonly reason: string };
-  readonly leadMs?: number;
   readonly now?: () => number;
   readonly setTimer?: (fn: () => void, ms: number) => unknown;
   readonly clearTimer?: (handle: unknown) => void;
@@ -25,7 +25,6 @@ export function registerCacheExpiryCompaction(
   if (!options.enabled) return { takeTrigger: () => false };
 
   const now = options.now ?? Date.now;
-  const leadMs = options.leadMs ?? 20_000;
   const setTimer = options.setTimer ?? ((fn: () => void, ms: number) => setTimeout(fn, ms).unref());
   const clearTimer = options.clearTimer ?? ((handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>));
   let timer: { handle: unknown } | undefined;
@@ -60,7 +59,7 @@ export function registerCacheExpiryCompaction(
         return;
       }
       const time = now();
-      if (expiresAt > time + leadMs + 1_000) {
+      if (expiresAt > time + CACHE_EXPIRY_LEAD_MS + 1_000) {
         schedule(undefined, ctx);
         return;
       }
@@ -146,7 +145,7 @@ export function registerCacheExpiryCompaction(
         if (timer !== scheduled) return;
         timer = undefined;
         fire(ctx);
-      }, Math.min(MAX_TIMER_DELAY_MS, Math.max(0, expiresAt - leadMs - time)));
+      }, Math.min(MAX_TIMER_DELAY_MS, Math.max(0, expiresAt - CACHE_EXPIRY_LEAD_MS - time)));
       log(ctx, 'scheduled', expiresAt);
     } catch {
       cancelTimer();

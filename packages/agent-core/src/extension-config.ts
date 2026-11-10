@@ -37,7 +37,7 @@ export interface ExtensionConfigDefinition<TFields extends ExtensionConfigFields
   readonly fields: TFields;
 }
 
-export type ExtensionConfigFieldValue<TField> = TField extends ExtensionConfigField<infer TValue>
+type ExtensionConfigFieldValue<TField> = TField extends ExtensionConfigField<infer TValue>
   ? TValue
   : never;
 

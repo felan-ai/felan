@@ -6,11 +6,13 @@ import { inspectScreenshotArguments, normalizeAttachedBrowserCommand, validateBr
 
 export { findBrowserCommand } from './command-policy.js';
 
+/** @internal */
 export const MAX_BROWSER_OUTPUT_CHARACTERS = 44_000;
+/** @internal */
 export const MAX_BROWSER_SKILL_OUTPUT_CHARACTERS = 100_000;
-export const DEFAULT_BROWSER_TIMEOUT_MS = 60_000;
-export const MAX_BROWSER_TIMEOUT_MS = 300_000;
-export const BROWSER_IDLE_TIMEOUT = '1h';
+const DEFAULT_BROWSER_TIMEOUT_MS = 60_000;
+const MAX_BROWSER_TIMEOUT_MS = 300_000;
+const BROWSER_IDLE_TIMEOUT = '1h';
 
 export interface BrowserSessionScope {
   readonly session: string;

@@ -12,6 +12,7 @@ import { prepareExport, prepareImport, publishExport, stageImport } from './sess
 import { canonicalPath } from './profile-storage.js';
 import { dirname } from 'node:path';
 
+/** @internal */
 export async function forkSession(
   registry: SessionRegistry,
   requestId: string,

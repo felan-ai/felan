@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
+/** @internal */
 export const LOCAL_APPEND_SYSTEM_PROMPT_FILENAME = 'APPEND_SYSTEM.md';
 
 export async function loadLocalAppendSystemPrompt(agentDir: string): Promise<string | undefined> {
@@ -13,6 +14,7 @@ export async function loadLocalAppendSystemPrompt(agentDir: string): Promise<str
   }
 }
 
+/** @internal */
 export async function loadLocalChildSystemPromptAppends(
   agentDir: string,
   persona: string,

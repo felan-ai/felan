@@ -253,6 +253,7 @@ export function createAcpToolCallUpdate(
   };
 }
 
+/** @internal */
 export class AcpPromptUpdateStream {
   readonly #sessionId: string;
   readonly #cwd: string;
@@ -576,6 +577,7 @@ export class AcpPromptUpdateStream {
   }
 }
 
+/** @internal */
 export async function replayAcpSessionEntries(
   sessionId: string,
   cwd: string,
@@ -710,13 +712,6 @@ export async function replayAcpSessionEntries(
       content: textToolContent('Tool did not complete'),
     }, client, isActive, budget);
   }
-}
-
-export function toAcpPromptError(error: unknown): RequestError {
-  if (error instanceof RequestError) {
-    return new RequestError(error.code, sanitizeAcpErrorMessage(error));
-  }
-  return RequestError.internalError(undefined, sanitizeAcpErrorMessage(error));
 }
 
 export function sanitizeAcpErrorMessage(error: unknown): string {

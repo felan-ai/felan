@@ -180,6 +180,7 @@ export async function runLocalFelanHeadless(options: RunLocalFelanHeadlessOption
 
 type CatalogModel = SessionSnapshot['catalog']['models'][number];
 
+/** @internal */
 export function resolveHeadlessModel(options: Pick<RunLocalFelanHeadlessOptions, 'provider' | 'model'>, models: readonly CatalogModel[]): { model: CatalogModel; thinking?: SessionSnapshot['thinking'] } {
   if (!models.length) throw new Error('No models available. Check your installation or add models to models.json.');
   const reference = options.model!;
@@ -219,6 +220,7 @@ export function resolveHeadlessModel(options: Pick<RunLocalFelanHeadlessOptions,
 }
 
 
+/** @internal */
 export class HeadlessJsonWriter {
   readonly #queue: string[] = [];
   readonly #waiters = new Set<{ resolve(): void; reject(error: Error): void }>();

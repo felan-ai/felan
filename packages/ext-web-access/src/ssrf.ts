@@ -6,8 +6,8 @@ import type { WebAccessConfig } from './config.js';
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 const DEFAULT_MAX_REDIRECTS = 5;
 
-export type LookupAddress = { address: string; family: number };
-export type Lookup = (hostname: string) => Promise<LookupAddress[]>;
+type LookupAddress = { address: string; family: number };
+type Lookup = (hostname: string) => Promise<LookupAddress[]>;
 
 export interface SsrfSettings {
   allowRanges: string[];
@@ -213,6 +213,7 @@ async function waitForLookup<T>(lookup: Promise<T>, signal: AbortSignal | undefi
   });
 }
 
+/** @internal */
 export function createPinnedLookup(hostname: string, addresses: LookupAddress[]): net.LookupFunction {
   const expected = hostnameForLookup(hostname);
   const pinned = addresses.map((entry) => ({ address: entry.address, family: entry.family as 4 | 6 }));

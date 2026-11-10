@@ -13,6 +13,7 @@ const displayDefinitions = new WeakMap<
   WeakMap<ToolDefinition<any, any, any>, ToolDefinition<any, any, any>>
 >();
 
+/** @internal */
 export function registerToolActivitySession(session: AgentSession, state: ToolActivityState): void {
   sessionStates.set(session, state);
 }
@@ -24,6 +25,7 @@ export function createToolActivitySessionView(
   return createSessionView(session, state);
 }
 
+/** @internal */
 export function createToolActivityRuntimeView<T extends AgentSessionRuntime>(runtime: T): T {
   const boundMethods = new Map<PropertyKey, { source: Function; bound: Function }>();
   return new Proxy(runtime, {

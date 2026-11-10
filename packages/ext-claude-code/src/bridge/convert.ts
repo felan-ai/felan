@@ -9,11 +9,11 @@ import { MCP_TOOL_PREFIX } from "./skills.js";
 export const PROVIDER_ID = "claude-code";
 
 // Pi tool names under Claude Code's builtin names for standalone transcript conversion.
-export const PI_TO_SDK_TOOL_NAME: Record<string, string> = {
+const PI_TO_SDK_TOOL_NAME: Record<string, string> = {
 	read: "Read", write: "Write", edit: "Edit", bash: "Bash",
 };
 
-export function sanitizeToolId(id: string, cache: Map<string, string>): string {
+function sanitizeToolId(id: string, cache: Map<string, string>): string {
 	const existing = cache.get(id);
 	if (existing) return existing;
 	const clean = id.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -39,7 +39,7 @@ export function sanitizeToolId(id: string, cache: Map<string, string>): string {
  *  - **Without a map — standalone conversion.** Use Claude Code builtin names
  *    for tools with known native equivalents.
  */
-export function mapPiToolNameToSdk(name: string, customToolNameToSdk?: Map<string, string>): string {
+function mapPiToolNameToSdk(name: string, customToolNameToSdk?: Map<string, string>): string {
 	if (!name) return "";
 	const normalized = name.toLowerCase();
 	// Pi history holds pi tool names. Our own SDK prefix can only reach here by

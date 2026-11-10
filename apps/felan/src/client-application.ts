@@ -45,7 +45,7 @@ export function clientConfigurationRoot(options: RunDaemonFelanOptions): string 
   return options.daemonRuntime ? join(resolve(options.daemonRuntime), 'client') : resolve(options.agentDir ?? getClientAgentDir());
 }
 
-/** The command that reattaches to `session` through the same daemon and session folder. */
+/** The command that reattaches to `session` through the same daemon and session folder.  @internal */
 export function resumeCommand(session: string, options: Pick<RunDaemonFelanOptions, 'daemonRuntime' | 'sessionDir'>): string {
   return ['felan', ...(options.daemonRuntime ? ['--daemon-runtime', shellQuote(resolve(options.daemonRuntime))] : []),
     ...(options.sessionDir ? ['--session-dir', shellQuote(resolve(options.sessionDir))] : []), '--session', shellQuote(session)].join(' ');
@@ -61,7 +61,7 @@ function writeResumeHint(text: string): void {
 }
 
 /** Client diagnostics live next to the daemon's `felan.jsonl`, in `client.jsonl`. */
-export function clientLogDirectory(options: RunDaemonFelanOptions): string {
+function clientLogDirectory(options: RunDaemonFelanOptions): string {
   return join(clientConfigurationRoot(options), 'storage', 'agent', 'logs');
 }
 

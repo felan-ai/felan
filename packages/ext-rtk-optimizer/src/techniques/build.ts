@@ -52,6 +52,7 @@ function isWarning(line: string): boolean {
   return WARNING_PATTERNS.some((pattern) => pattern.test(line));
 }
 
+/** @internal */
 export function isBuildCommand(command: string | undefined | null): boolean {
   return matchesCommandPatterns(command, BUILD_COMMAND_PATTERNS);
 }

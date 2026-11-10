@@ -25,6 +25,7 @@
 // tools/list_changed notifications we never send.
 
 import { claudeAgentSdk } from "../sdk/runtime.js";
+import type { SdkMcpServer } from "../sdk/types.js";
 import type { McpResult } from "./extract-tool-results.js";
 
 // Claude Code stamps every tools/call with the id of the tool_use block it came
@@ -135,7 +136,7 @@ function flattenRootCombinators(schema: Record<string, unknown>): { schema: Reco
 	return { schema: flat, note: combinatorNote(combinators, branchesOf) };
 }
 
-export function createToolServer(name: string, tools: McpToolDef[]) {
+export function createToolServer(name: string, tools: McpToolDef[]): SdkMcpServer {
 	const { McpServer, CallToolRequestSchema, ListToolsRequestSchema } = claudeAgentSdk();
 	const server = new McpServer({ name, version: "1.0.0" }, { capabilities: { tools: {} } });
 	const byName = new Map(tools.map((tool) => [tool.name, tool]));

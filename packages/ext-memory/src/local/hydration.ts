@@ -55,6 +55,7 @@ export async function hydrateMemoryDirectory(environment: MemoryContext, artifac
 }
 
 
+/** @internal */
 export async function hydrateMemorySnapshot(environment: MemoryContext, snapshot: MemorySnapshot,
   target: string,
   options: MemoryHydrationOptions = {},

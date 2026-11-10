@@ -2,10 +2,8 @@ import { createElementNavigation } from './navigation.js';
 import type { UiActionRequest, UiPresentation } from '@felan-ai/agent-core';
 import { Text } from '@earendil-works/pi-tui';
 import type { ExtensionContext } from '@felan-ai/agent-core';
-import type { TaskDataSource } from '@felan-ai/ext-tasks/data';
 import type { AgentToolPresentation } from '../../subagents/agent-transcript.js';
 import { TasksOverlay, type TasksNavigation } from './tasks/tasks-overlay.js';
-import type { TaskViewAction, TaskViewRequest } from '@felan-ai/ext-tasks/data';
 
 function field(args: unknown, key: string): string {
   const value = typeof args === 'object' && args !== null ? (args as Record<string, unknown>)[key] : undefined;
@@ -23,29 +21,6 @@ export const taskRenderCalls: Record<'TaskCreate' | 'TaskUpdate' | 'TaskList' | 
   TaskGet: (args, theme) => new Text(theme.fg('toolTitle', theme.bold(`TaskGet ${field(args, 'task_id')}`)), 0, 0),
 };
 
-export async function presentTaskView(ui: Pick<ExtensionContext['ui'], 'custom'>, source: TaskDataSource,
-  request: TaskViewRequest & { displayMode: 'inline' | 'overlay' }, signal: AbortSignal, initial?: TasksNavigation): Promise<{ action?: TaskViewAction; navigation?: TasksNavigation }> {
-  if (signal.aborted) return {};
-  let view: TasksOverlay | undefined;
-  let finish: ((value?: TaskViewAction) => void) | undefined;
-  let finished = false;
-  const abort = () => finish?.();
-  signal.addEventListener('abort', abort, { once: true });
-  try {
-    const action = await ui.custom<TaskViewAction | undefined>((tui, theme, _keys, done) => {
-      finish = value => { if (!finished) { finished = true; view?.dispose(); done(value); } };
-      const selected = initial ?? (request.selectedTaskId ? { view: 'detail' as const, selectedTaskId: request.selectedTaskId, scroll: 0, contentScroll: 0 } : undefined);
-      view = new TasksOverlay(source, theme, () => finish?.({ action: 'close' }), () => tui.requestRender(), undefined,
-        request.displayMode, { ...(selected ? { initial: selected } : {}), requestDetails: taskId => finish?.({ action: 'detail', taskId }) });
-      if (signal.aborted) abort();
-      return view;
-    }, request.displayMode === 'overlay' ? { overlay: true, overlayOptions: { width: '85%', minWidth: 72, maxHeight: '90%', margin: 2 } } : undefined);
-    return { ...(action ? { action } : {}), ...(view ? { navigation: view.snapshotNavigation() } : {}) };
-  } finally { signal.removeEventListener('abort', abort); view?.dispose(); }
-}
-
-export type { TaskDataSource } from '@felan-ai/ext-tasks/data';
-export type { TasksNavigation } from './tasks/tasks-overlay.js';
 
 export { TASKS_HINT } from '@felan-ai/ext-tasks/data';
 

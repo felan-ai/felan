@@ -18,7 +18,9 @@ interface CachedCursor extends Cursor {
 }
 export interface OutboxItem { rev: number; occurredAt: number; change: PublishedChange }
 export type OutboxEntry = PublicationEntry;
+/** @internal */
 export const REMOTE_OUTBOX_PENDING_BYTES_LIMIT = 64 * 1024 * 1024;
+/** @internal */
 export const REMOTE_OUTBOX_TOTAL_PENDING_BYTES_LIMIT = 256 * 1024 * 1024;
 export class RemoteOutboxCapacityError extends Error {
   constructor(readonly session?: string, readonly scope: 'session' | 'total' = 'session') {

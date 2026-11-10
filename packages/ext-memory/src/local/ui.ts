@@ -6,7 +6,7 @@ import type { MemoryContext } from './context.js';
 import { listLocalSessionHistory, readMemoryHistorySnapshot } from './history.js';
 import type { LocalSessionHistory, MemoryHistorySession } from './history.js';
 import { memoryTranscriptPages, type MemoryTranscriptPage } from './transcript-pages.js';
-export const MEMORY_HISTORY_HINT = Object.freeze({ id: 'felan.memory-history', version: '1' });
+const MEMORY_HISTORY_HINT = Object.freeze({ id: 'felan.memory-history', version: '1' });
 
 const close: UiAction = { id: 'close', label: 'Close', target: 'element', outcome: 'cancel' };
 const pageSize = 40;

@@ -19,11 +19,11 @@ import {
 	type PromptHistorySearch,
 } from "@felan-ai/ext-prompt-history/data";
 
-export const PROMPT_HISTORY_SHORTCUT = Key.ctrl("r");
-export const PROMPT_HISTORY_COMMAND_SHORTCUT = Key.super("r");
-export const PROMPT_HISTORY_SCOPE_SHORTCUT = Key.ctrl("s");
-export const MAX_VISIBLE_PROMPT_HISTORY_ITEMS = 12;
-export const PROMPT_HISTORY_SEARCH_DEBOUNCE_MS = 120;
+const PROMPT_HISTORY_SHORTCUT = Key.ctrl("r");
+const PROMPT_HISTORY_COMMAND_SHORTCUT = Key.super("r");
+const PROMPT_HISTORY_SCOPE_SHORTCUT = Key.ctrl("s");
+const MAX_VISIBLE_PROMPT_HISTORY_ITEMS = 12;
+const PROMPT_HISTORY_SEARCH_DEBOUNCE_MS = 120;
 
 const SCOPE_LABELS: Record<PromptHistoryScope, string> = {
 	all: "All projects",

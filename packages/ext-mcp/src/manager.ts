@@ -20,7 +20,7 @@ const MAX_TOOL_PAGES = 100;
 const MAX_TOOLS_PER_SERVER = 1_000;
 
 export type McpTool = ListToolsResult['tools'][number];
-export type McpServerStatus = 'disconnected' | 'connecting' | 'connected' | 'needs-auth' | 'failed';
+type McpServerStatus = 'disconnected' | 'connecting' | 'connected' | 'needs-auth' | 'failed';
 
 export interface McpStatusEntry {
   readonly server: string;
@@ -229,7 +229,7 @@ export class McpManager {
   }
 }
 
-export async function connectMcpServer(
+async function connectMcpServer(
   server: ResolvedMcpServer,
   provider: OAuthClientProvider,
   signal: AbortSignal,

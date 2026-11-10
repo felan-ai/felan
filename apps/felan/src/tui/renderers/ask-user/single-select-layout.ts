@@ -1,4 +1,4 @@
-export interface LayoutQuestionOption {
+interface LayoutQuestionOption {
   readonly title: string;
   readonly description?: string;
 }

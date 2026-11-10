@@ -34,7 +34,7 @@ interface OpenAIAuth {
   model: string;
 }
 
-export async function providerAvailable(name: ProviderName, environment: ProviderEnvironment): Promise<boolean> {
+async function providerAvailable(name: ProviderName, environment: ProviderEnvironment): Promise<boolean> {
   switch (name) {
     case 'searxng': return searxngBaseUrl(environment.config) !== undefined;
     case 'openai': return openAIAuthSourceAvailable(environment);

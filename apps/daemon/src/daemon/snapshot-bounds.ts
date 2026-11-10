@@ -1,11 +1,12 @@
 import { LIMITS, type SessionSnapshot } from '@felan-ai/session-protocol';
 
 // Reserve half the client state cap for live updates and the attach response envelope.
+/** @internal */
 export const SNAPSHOT_BYTE_BUDGET = LIMITS.pageBytes / 2;
 
 const bytes = (value: unknown): number => Buffer.byteLength(JSON.stringify(value));
 
-/** Uses the same branch-relative cutover as SessionProjection.history. */
+/** Uses the same branch-relative cutover as SessionProjection.history. @internal */
 export function encodeHistoryCursor(session: string, revision: number, branch: string, endIndex: number): string {
   return Buffer.from(JSON.stringify([session, revision, branch, endIndex])).toString('base64url');
 }

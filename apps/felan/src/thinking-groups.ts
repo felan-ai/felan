@@ -3,7 +3,7 @@ import type {
   MarkdownTransformer,
 } from '@earendil-works/pi-coding-agent';
 
-export const THINKING_GROUP_EXTENSION_NAME = '@felan-ai/felan/thinking-groups';
+const THINKING_GROUP_EXTENSION_NAME = '@felan-ai/felan/thinking-groups';
 
 const sentenceSegmenter = new Intl.Segmenter('en', { granularity: 'sentence' });
 const FENCED_CODE_MARKER = /`{3,}/gu;
@@ -25,6 +25,7 @@ export const renderThinkingGroupMarkdown: MarkdownTransformer = (markdown, conte
   ].join('\n');
 };
 
+/** @internal */
 export function createThinkingGroupExtension(): InlineExtension {
   return {
     name: THINKING_GROUP_EXTENSION_NAME,

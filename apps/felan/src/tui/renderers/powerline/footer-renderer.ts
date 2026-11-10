@@ -32,6 +32,7 @@ export function renderFooterLine(
   return lines;
 }
 
+/** @internal */
 export function renderStyledSegments(
   segments: RenderedSegment[],
   config: PowerlineConfig,

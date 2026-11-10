@@ -4,6 +4,7 @@ import {
 } from '@felan-ai/session-protocol';
 import { retryDelay, schedule, systemClock, type RemoteClock, type RetryOptions, type TimerHandle } from './backoff.js';
 
+/** @internal */
 export interface BroadcastChannel {
   on(type: 'broadcast', filter: { event: string }, listener: (message: { payload?: unknown }) => void): BroadcastChannel;
   subscribe(listener: (status: string) => void): BroadcastChannel;

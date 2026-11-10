@@ -4,6 +4,7 @@ import { Check } from 'typebox/value';
 // Static schemas from codebase-memory-mcp 0.11.0, src/mcp/mcp.c at
 // 8972ea69c6ad94b1ef1d4ffbf0a92d78d2db1798. Project selection and full indexing
 // are host-controlled; backend defaults are documented but never applied here.
+/** @internal */
 export const RAW_COMMANDS = [
   'index_repository',
   'search_graph',

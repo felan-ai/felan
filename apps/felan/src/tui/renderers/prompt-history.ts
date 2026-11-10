@@ -3,10 +3,8 @@ import { decodeUiMarkdown } from '../../client/ui.js';
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import { parseUiPresentation, validateUiAction, type UiActionRequest, type UiPresentation } from '@felan-ai/session-protocol';
 import { PromptHistoryPicker, type PromptHistoryNavigation } from './prompt-history/picker.js';
-export { PromptHistoryPicker } from './prompt-history/picker.js';
-export type { PromptHistoryNavigation } from './prompt-history/picker.js';
 
-export const promptHistoryOverlay = { overlay: true as const,
+const promptHistoryOverlay = { overlay: true as const,
   overlayOptions: { width: '80%' as const, minWidth: 64, maxHeight: '90%' as const, margin: 2 } };
 
 export { PROMPT_HISTORY_HINT } from '@felan-ai/ext-prompt-history/data';

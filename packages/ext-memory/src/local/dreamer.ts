@@ -93,7 +93,7 @@ export interface MaterializeMemoryInputOptions {
 }
 
 
-export type MemoryInputMaterializationFailureCode =
+type MemoryInputMaterializationFailureCode =
   | 'source_unavailable'
   | 'invalid_source'
   | 'checkpoint_changed'
@@ -102,7 +102,7 @@ export type MemoryInputMaterializationFailureCode =
   | 'source_changed';
 
 
-export interface MemoryInputMaterializationFailure {
+interface MemoryInputMaterializationFailure {
   readonly checkpoint: SessionCheckpoint;
   readonly code: MemoryInputMaterializationFailureCode;
   readonly message: string;

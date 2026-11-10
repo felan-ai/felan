@@ -29,18 +29,19 @@ export interface SdkModelInfo {
   resolvedModel?: string;
 }
 
-export interface SdkQuery extends AsyncIterable<SDKMessage> {
+interface SdkQuery extends AsyncIterable<SDKMessage> {
   interrupt(): Promise<void>;
   close(): void;
   supportedModels(): Promise<SdkModelInfo[]>;
   applyFlagSettings?(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
 }
 
+/** @internal */
 export interface McpRequest {
   params: { name: string; _meta?: Record<string, unknown> };
 }
 
-export interface McpServerInstance {
+interface McpServerInstance {
   server: {
     setRequestHandler(schema: unknown, handler: (request: McpRequest) => unknown): void;
   };
@@ -52,7 +53,7 @@ export interface SdkMcpServer {
   instance: McpServerInstance;
 }
 
-export interface SdkQueryOptions {
+interface SdkQueryOptions {
   cwd?: string;
   env?: Record<string, string | undefined>;
   tools?: string[];

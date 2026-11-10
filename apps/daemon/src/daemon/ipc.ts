@@ -96,6 +96,7 @@ export function readinessResponse(owner: DaemonOwnership, version: string, re: s
   return { control: CONTROL_VERSION, re, identity: owner.identity, daemonVersion: version, supportedProtocol: PROTOCOL_VERSION, state: 'ready', outcome: 'accepted' };
 }
 
+/** @internal */
 export function serveReadiness(owner: DaemonOwnership, version: string, socket: Socket): void {
   const decoder = new JsonLineDecoder(); let bytes = 0;
   const timeout = setTimeout(() => socket.destroy(), 2_000);

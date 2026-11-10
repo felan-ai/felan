@@ -123,6 +123,7 @@ export function ctx(): QueryContext { return _ctx; }
 
 // Test-only: replace the module-level context so test files start clean.
 // Not called from production.
+/** @internal */
 export function resetCtx(): void {
 	_ctx = new QueryContext();
 }

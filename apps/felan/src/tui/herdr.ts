@@ -102,7 +102,7 @@ async function listExecutions(controller: TuiSessionController, session: string)
  * clearing Herdr's unseen-completion markers. Queued or running executions anywhere below it, and direct children
  * whose result it has not consumed yet, keep it working, so a delegated workflow ends with one completion rather
  * than one per child.
- */
+  @internal */
 export function herdrStatus(snapshot: SessionSnapshot | undefined, prompts: readonly Interaction[], executions: readonly Execution[]): HerdrStatus {
   if (!snapshot) return { state: 'idle' };
   const waiting = prompts.find(item => (item.state === 'waiting' || item.state === 'deferred')
@@ -191,10 +191,12 @@ export class HerdrPane {
   }
 }
 
+/** @internal */
 export function herdrSocketEndpoint(socketPath: string, platform: NodeJS.Platform): string {
   return platform === 'win32' ? `\\\\.\\pipe\\${socketPath}` : socketPath;
 }
 
+/** @internal */
 export async function sendHerdrRequest(endpoint: string, request: HerdrRequest): Promise<void> {
   for (const timeoutMs of REPORT_TIMEOUTS_MS) {
     if (await sendHerdrRequestAttempt(endpoint, request, timeoutMs)) return;

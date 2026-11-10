@@ -1,3 +1,5 @@
-export { ProjectedPowerlineFooter, renderPowerlineData } from './powerline/projected-footer.js';
+export { ProjectedPowerlineFooter } from './powerline/projected-footer.js';
+/** @internal */
+export { renderPowerlineData } from './powerline/projected-footer.js';
+/** @internal */
 export { renderFooterLine, renderStyledSegments } from './powerline/footer-renderer.js';
-export { getThemePalette } from './powerline/colors.js';

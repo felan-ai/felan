@@ -4,7 +4,9 @@ import {
   type AgentSession,
 } from '@earendil-works/pi-coding-agent';
 import { COMPACTION_MESSAGE_TYPE, parseCompactionPresentation, type CompactionMethodLabel } from '@felan-ai/ext-session-compaction/view';
-export { compactionMethodForEntry, compactionMethodForMessage } from '@felan-ai/ext-session-compaction/view';
+/** @internal */
+export { compactionMethodForEntry } from '@felan-ai/ext-session-compaction/view';
+export { compactionMethodForMessage } from '@felan-ai/ext-session-compaction/view';
 export type { CompactionMethodLabel } from '@felan-ai/ext-session-compaction/view';
 import type { Message } from '@felan-ai/session-protocol';
 import {
@@ -16,11 +18,12 @@ import {
   type MarkdownTheme,
 } from '@earendil-works/pi-tui';
 
-export type CompactionSummaryMessage = Extract<
+type CompactionSummaryMessage = Extract<
   AgentSession['messages'][number],
   { role: 'compactionSummary' }
 >;
 
+/** @internal */
 export function projectedCompactionComponent(message: Message, theme: MarkdownTheme, outputPad: number): CompactionMethodMessageComponent | undefined {
   if (message.customType !== COMPACTION_MESSAGE_TYPE) return undefined;
   const details = parseCompactionPresentation(message.details);
@@ -30,6 +33,7 @@ export function projectedCompactionComponent(message: Message, theme: MarkdownTh
     tokensBefore: details.tokensBefore, timestamp: message.timestamp }, details.method, theme, outputPad);
 }
 
+/** @internal */
 export class CompactionMethodMessageComponent extends Container {
   #expanded = false;
   #outputPad: number;

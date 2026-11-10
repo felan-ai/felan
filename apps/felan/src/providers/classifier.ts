@@ -1,5 +1,6 @@
 import { createPiClassifier, formatModelReference, type Classifier, type ModelRuntime } from '@felan-ai/agent-core';
 
+/** @internal */
 export type LocalClassifierModel = Parameters<ModelRuntime['classify']>[0];
 
 export interface LocalClassifierSelection {
@@ -7,6 +8,7 @@ export interface LocalClassifierSelection {
   readonly warnings: readonly string[];
 }
 
+/** @internal */
 export function selectLocalClassifierModel(
   models: readonly LocalClassifierModel[], configured = 'auto',
 ): LocalClassifierSelection {

@@ -32,6 +32,7 @@ export function renderSegments(line: DisplayLineConfig, context: SegmentRenderCo
   return segments;
 }
 
+/** @internal */
 export function sanitizePlainText(value: string): string {
   return value
     .replace(ANSI_PATTERN, '')
@@ -41,7 +42,7 @@ export function sanitizePlainText(value: string): string {
     .trim();
 }
 
-export function formatTokens(count: number): string {
+function formatTokens(count: number): string {
   if (count < 1_000) return String(count);
   if (count < 10_000) return `${(count / 1_000).toFixed(1)}k`;
   if (count < 1_000_000) return `${Math.round(count / 1_000)}k`;

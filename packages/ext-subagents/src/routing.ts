@@ -21,6 +21,7 @@ const DISCOVERY_QUESTIONS: ClassifierQuestions = {
   },
 };
 
+/** @internal */
 export const DISCOVERY_GUIDANCE = [
   '## Subagent routing decision',
   `This request needs broad discovery across a largely unexplored surface. Delegate that discovery to \`${DISCOVERY_AGENT_TYPE}\` children with bounded, disjoint, read-only questions and a requested summary format. While they run, do not read the delegated scopes yourself; continue only with independent work or yield until their completion notices arrive. Then verify the facts you rely on and inspect only the critical-path files you will change.`,

@@ -2,6 +2,7 @@ import { builtinProviders } from '@felan-ai/agent-core';
 import { findPackageJSON } from 'node:module';
 import { pathToFileURL } from 'node:url';
 
+/** @internal */
 export const FELAN_DEFAULT_MODEL_PER_PROVIDER = {
   'amazon-bedrock': 'us.anthropic.claude-opus-5',
   'ant-ling': 'Ring-2.6-1T',

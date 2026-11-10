@@ -6,6 +6,7 @@ import type { TuiDialogHost, TuiDialogs } from './dialogs.js';
 import { defaultClientTheme } from './theme.js';
 import { uiText } from '../client/ui.js';
 
+/** @internal */
 export type SessionRow = OperationResult<'sessions.list'>['entries'][number];
 export type NavigationDialogs = TuiDialogHost & Partial<Pick<TuiDialogs, 'custom' | 'viewportHeight' | 'requestRender'>>;
 /** The first page is shown at once; `more` yields the remaining pages while the picker is open. */
@@ -17,6 +18,7 @@ const maxVisible = 10;
 const chromeLines = 12;
 const activeStates: Partial<Record<SessionRow['run']['state'], string>> = { running: 'running', waiting: 'waiting for input', cancelling: 'cancelling' };
 
+/** @internal */
 export class SessionNavigator implements Component, Focusable {
   private readonly sessions: SessionRow[] = [];
   private readonly known = new Set<string>();

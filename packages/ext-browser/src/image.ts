@@ -4,7 +4,7 @@ export const MAX_BROWSER_IMAGE_INPUT_BYTES = 20 * 1024 * 1024;
 export const MAX_BROWSER_IMAGE_BASE64_BYTES = 4 * 1024 * 1024;
 export const MAX_BROWSER_IMAGE_DIMENSION = 2_000;
 
-export interface BrowserImageDetails {
+interface BrowserImageDetails {
   readonly path: string;
   readonly delivered: boolean;
   readonly mimeType?: string;

@@ -2,7 +2,7 @@ import type { ExtensionUi, UiElementHandle, UiInteractiveElement } from '@felan-
 import type { PowerlinePresentationHost, PowerlineRuntimeSnapshot } from './runtime.js';
 import { parsePowerlineData, type PowerlineData } from './data.js';
 
-export const POWERLINE_GENERIC_HINT = Object.freeze({ id: 'felan.powerline', version: '3.0.0' });
+const POWERLINE_GENERIC_HINT = Object.freeze({ id: 'felan.powerline', version: '3.0.0' });
 
 type Status = Parameters<ExtensionUi['status']>[0];
 type View = Extract<UiInteractiveElement, { kind: 'view' }>;

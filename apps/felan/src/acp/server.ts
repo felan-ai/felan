@@ -16,7 +16,7 @@ import {
   type AcpStdioTransport,
 } from './stdio.js';
 
-export const ACP_TERMINAL_AUTH_METHOD = {
+const ACP_TERMINAL_AUTH_METHOD = {
   id: 'felan-terminal-login',
   name: 'Log in to Felan Code',
   description: 'Configure a model provider for Felan Code in an interactive terminal.',
@@ -29,16 +29,17 @@ export interface RunLocalFelanAcpOptions extends AcpStdioOptions, AcpSessionRegi
   readonly signalSource?: AcpSignalSource;
 }
 
-export interface AcpSignalSource {
+interface AcpSignalSource {
   once(signal: 'SIGINT' | 'SIGTERM', listener: () => void): unknown;
   off(signal: 'SIGINT' | 'SIGTERM', listener: () => void): unknown;
 }
 
-export interface FelanAcpService {
+interface FelanAcpService {
   readonly app: AgentApp;
   dispose(): Promise<void>;
 }
 
+/** @internal */
 export function createFelanAcpService(options: AcpSessionRegistryOptions = {}): FelanAcpService {
   const sessions = new AcpSessionRegistry(options);
   const app = agent({ name: 'felan' })

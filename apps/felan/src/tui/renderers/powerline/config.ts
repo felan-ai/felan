@@ -1,9 +1,9 @@
-export type FooterStyle = 'minimal' | 'powerline' | 'capsule';
+type FooterStyle = 'minimal' | 'powerline' | 'capsule';
 export type Charset = 'unicode' | 'text';
-export type DirectoryStyle = 'full' | 'fish' | 'basename';
-export type SessionDisplayType = 'cost' | 'tokens' | 'both' | 'breakdown';
-export type ContextDisplayStyle = 'text' | 'bar' | 'blocks' | 'blocks-line' | 'dots';
-export type SegmentAlignment = 'left' | 'right';
+type DirectoryStyle = 'full' | 'fish' | 'basename';
+type SessionDisplayType = 'cost' | 'tokens' | 'both' | 'breakdown';
+type ContextDisplayStyle = 'text' | 'bar' | 'blocks' | 'blocks-line' | 'dots';
+type SegmentAlignment = 'left' | 'right';
 export type SegmentName = 'directory' | 'git' | 'model' | 'session' | 'subscription' | 'savings' | 'context' | 'status' | 'version';
 export type ThemeColorKey = SegmentName | 'warning' | 'critical' | 'muted' | 'extensionStatus1' | 'extensionStatus2' | 'extensionStatus3' | 'extensionStatus4';
 

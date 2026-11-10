@@ -13,19 +13,21 @@ import { sanitizeAcpErrorMessage } from './session-updates.js';
 const MAX_INPUT_BYTES = 64 * 1024;
 const UNSAFE_INLINE_CHARACTERS = /[\u0000-\u001f\u007f]/u;
 
+/** @internal */
 export interface AcpLoginChoice {
   readonly id: string;
   readonly label: string;
   readonly description?: string;
 }
 
+/** @internal */
 export interface AcpLoginTerminal {
   select(message: string, options: readonly AcpLoginChoice[], signal: AbortSignal): Promise<string | undefined>;
   input(message: string, options: { readonly secret: boolean; readonly placeholder?: string }, signal: AbortSignal): Promise<string | undefined>;
   writeLine(message: string): void;
 }
 
-export interface AcpLoginSignalSource {
+interface AcpLoginSignalSource {
   once(signal: 'SIGINT' | 'SIGTERM', listener: () => void): unknown;
   off(signal: 'SIGINT' | 'SIGTERM', listener: () => void): unknown;
 }
@@ -234,6 +236,7 @@ function truncateUtf8(value: string, maxBytes: number): string {
     .replace(/�$/u, '');
 }
 
+/** @internal */
 export class NodeAcpLoginTerminal implements AcpLoginTerminal {
   readonly #input: NodeJS.ReadStream;
   readonly #output: NodeJS.WriteStream;

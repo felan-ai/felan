@@ -9,7 +9,7 @@ import {
   type FelanExtensionAPI,
   type Model,
 } from '@felan-ai/agent-core';
-import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   BackgroundBashManager,
@@ -18,7 +18,6 @@ import {
 } from '../../../../packages/ext-background-bash/src/index.js';
 import backgroundBashExtension from '../../../../packages/ext-background-bash/src/extension.js';
 import { BackgroundBashCompletionComponent, completionJob } from '../../src/tui/renderers/processes/completion-message.js';
-import { BackgroundBashView } from '../../src/tui/renderers/processes/background-bash-view.js';
 
 type Handler = (event: any, ctx: ExtensionContext) => unknown;
 type CompletionRenderer = (
@@ -95,86 +94,6 @@ describe('background bash extension activation', () => {
     } finally { await harness.emit('session_shutdown', { reason: 'shutdown' }, ctx); }
     expect(close).toHaveBeenCalledOnce();
   });
-
-  it('renders an inline frame for an empty process list', async () => {
-    const view = new BackgroundBashView(
-      { list: vi.fn(async () => []) } as unknown as BackgroundBashManager,
-      theme as never,
-      vi.fn(),
-      vi.fn(),
-    );
-    await Promise.resolve();
-    const lines = view.render(50);
-    expect(lines.join('\n')).toContain('Background processes');
-    expect(lines.join('\n')).toContain('No background processes');
-    expect(lines[0]).toBe('─'.repeat(50));
-    expect(lines.at(-1)).toBe('─'.repeat(50));
-    expect(lines.slice(1, -1).every((line) => !line.startsWith('│') && !line.endsWith('│'))).toBe(true);
-    expect(lines.every((line) => visibleWidth(line) <= 50)).toBe(true);
-    for (let width = 0; width <= 5; width += 1) {
-      expect(view.render(width).every((line) => visibleWidth(line) <= Math.max(1, width))).toBe(true);
-    }
-  });
-
-  it('sanitizes commands and logs before rendering them', async () => {
-    const job = backgroundJob('running');
-    job.meta.command = '\u001b]0;owned\u0007\u001b[31msleep\u001b[0m\u0008 30';
-    const view = new BackgroundBashView(
-      {
-        list: vi.fn(async () => [job]),
-        tail: vi.fn(async () => '--- output ---\n\u001b]0;owned\u0007\u001b[31mlog line\u001b[0m\u0008'),
-      } as unknown as BackgroundBashManager,
-      theme as never,
-      vi.fn(),
-      vi.fn(),
-    );
-    await Promise.resolve();
-
-    const listLines = view.render(100);
-    const listOutput = listLines.join('\n');
-    expect(listOutput).toContain('sleep 30');
-    expect(listOutput).not.toContain('owned');
-    expect(listLines.every((line) => (
-      !/[\u0000-\u001F\u007F-\u009F]/u.test(stripTerminalSequences(line))
-    ))).toBe(true);
-
-    view.handleInput('\r');
-    await Promise.resolve();
-    const detailLines = view.render(100);
-    const detailOutput = detailLines.join('\n');
-    expect(detailOutput).toContain('log line');
-    expect(detailOutput).not.toContain('owned');
-    expect(detailLines.every((line) => (
-      !/[\u0000-\u001F\u007F-\u009F]/u.test(stripTerminalSequences(line))
-    ))).toBe(true);
-  });
-
-  it('does not request a late render after closing during refresh', async () => {
-    let resolveList!: (jobs: BackgroundBashJob[]) => void;
-    const requestRender = vi.fn();
-    const done = vi.fn();
-    const view = new BackgroundBashView(
-      {
-        list: vi.fn(() => new Promise<BackgroundBashJob[]>((resolve) => {
-          resolveList = resolve;
-        })),
-      } as unknown as BackgroundBashManager,
-      theme as never,
-      done,
-      requestRender,
-    );
-    requestRender.mockClear();
-
-    view.handleInput('q');
-    resolveList([]);
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(done).toHaveBeenCalledOnce();
-    expect(requestRender).not.toHaveBeenCalled();
-  });
-
-
 
   it('renders existing completion messages with current process labels and optional details', async () => {
     const renderer: CompletionRenderer = (message, options, currentTheme) => new BackgroundBashCompletionComponent(

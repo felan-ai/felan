@@ -10,6 +10,11 @@
     "**/*.generated.{ts,tsx,js,mjs}",
     "packages/ext-claude-code/test/upstream/fixtures/**"
   ],
+  "ignoreIssues": {
+    // These public schema aliases must keep their names and shared object identity.
+    "packages/session-protocol/src/publication.ts": ["duplicates"],
+    "packages/session-protocol/src/schema.ts": ["duplicates"]
+  },
   "workspaces": {
     ".": {
       "entry": [
@@ -56,6 +61,7 @@
         "src/daemon-host.ts!",
         "src/providers/runtime.ts!",
         "src/providers/models.ts!",
+        "src/providers/host-models.ts!",
         "src/providers/secrets.ts!",
         "src/providers/sessions.ts!",
         "src/providers/session-runtime.ts!",
@@ -76,6 +82,14 @@
       ]
     },
     "packages/agent-core": {
+      // Keep these direct dependencies pinned with the Pi packages re-exported by Agent Core.
+      "ignoreDependencies": [
+        "@earendil-works/pi-agent-core",
+        "@earendil-works/pi-codemode",
+        "@earendil-works/pi-mcp",
+        "@earendil-works/pi-telemetry",
+        "@earendil-works/pi-tui"
+      ],
       "entry": [
         "src/index.ts!",
         "test/**/*.test.{ts,mts,mjs}",
@@ -257,6 +271,7 @@
     },
     "packages/ext-memory": {
       "entry": [
+        "src/daemon-provider.ts!",
         "src/data.ts!",
         "src/extension.ts!",
         "test/**/*.test.{ts,mts,mjs}",

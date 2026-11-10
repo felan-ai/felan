@@ -7,6 +7,7 @@ import type { AcpProtocolUpdates } from './protocol-updates.js';
 
 export const ACP_UI_CAPABILITIES = GENERIC_UI_CAPABILITIES;
 
+/** @internal */
 export function genericElicitationSchema(input: UiInput): ElicitationSchema {
   const properties: Record<string, ElicitationPropertySchema> = Object.create(null);
   for (const field of input.fields) {

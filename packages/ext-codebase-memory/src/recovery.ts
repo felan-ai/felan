@@ -3,8 +3,8 @@ import type { AgentRuntime } from '@felan-ai/agent-core';
 
 const RECOVERY_DIRECTORY = 'codebase-memory/recovery';
 const WORKER_LOG_LIMIT = 64 * 1024;
-export const RECOVERY_TTL_MS = 45_000;
-export const RECOVERY_COMPLETION_TTL_MS = 5 * 60_000;
+const RECOVERY_TTL_MS = 45_000;
+const RECOVERY_COMPLETION_TTL_MS = 5 * 60_000;
 
 export interface RecoveryRecord {
   readonly id: string;
@@ -12,21 +12,24 @@ export interface RecoveryRecord {
   readonly expiresAt: number;
 }
 
-export interface RecoveryCompletion {
+interface RecoveryCompletion {
   readonly id: string;
   readonly completedAt: number;
   readonly expiresAt: number;
   readonly success: boolean;
 }
 
+/** @internal */
 export function recoveryRecordPath(id: string): string {
   return `${RECOVERY_DIRECTORY}/active-${id}.json`;
 }
 
+/** @internal */
 export function recoveryCompletionPath(id: string): string {
   return `${RECOVERY_DIRECTORY}/done-${id}.json`;
 }
 
+/** @internal */
 export async function inspectIndexFailure(
   error: unknown,
   cacheRoot: string,

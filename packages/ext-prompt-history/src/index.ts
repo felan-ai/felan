@@ -43,5 +43,3 @@ export function createPromptHistoryExtension(host: PromptHistoryHost): FelanExte
 	return extension;
 }
 
-export default createPromptHistoryExtension;
-

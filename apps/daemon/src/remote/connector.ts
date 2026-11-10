@@ -26,7 +26,7 @@ import { RemoteIntegrityError, RemoteStorageError, RemoteStore, type RemoteSessi
 import { HostTokenSource, HostTokenExchangeError, PLAIN_HTTP_API_HOSTS, type HostTokenInfo, type HostTokenProvider, type HostTokenSourceOptions } from './token.js';
 import { HostPairing, HostPairingFailure, type HostPairingOptions } from './pairing.js';
 
-export const REMOTE_CAPABILITIES: HostCapabilities = {
+const REMOTE_CAPABILITIES: HostCapabilities = {
   operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'],
   interactionKinds: [...INTERACTION_KINDS],
   features: [...REMOTE_FEATURES],

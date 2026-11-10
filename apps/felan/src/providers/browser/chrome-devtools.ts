@@ -118,6 +118,7 @@ export async function inspectChromeRemoteDebugging(
   }
 }
 
+/** @internal */
 export function parseDevToolsActivePort(content: Uint8Array | string): BrowserAuthorizationConnection | undefined {
   try {
     const text = typeof content === 'string' ? content : new TextDecoder('utf-8', { fatal: true }).decode(content);

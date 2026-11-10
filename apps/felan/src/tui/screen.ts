@@ -350,6 +350,7 @@ function queueLabel(prompt: Prompt): string {
   return parts.filter(Boolean).join(' ').replace(/\s+/gu, ' ').trim();
 }
 
+/** @internal */
 export function fallbackPresentations(presentation: readonly Presentation[], hasRenderer?: (element: Presentation) => boolean): readonly Presentation[] {
   return presentation.filter(element => !hasRenderer?.(element));
 }

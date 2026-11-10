@@ -10,8 +10,10 @@ import {
   type Presentation, type UiActionRequest, type UiForm, type UiPresentation, type UiStatus,
 } from '@felan-ai/session-protocol';
 
+/** @internal */
 export type UiVocabularyUpdate = UiPresentation | Extract<Presentation, { kind: 'notification' }> | { id: string; remove: true };
 
+/** @internal */
 export interface UiVocabularyRequestOptions {
   readonly bindingId: string;
   readonly signal: AbortSignal;

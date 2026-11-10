@@ -22,9 +22,9 @@ import {
   FEEDBACK_PLAN_OPTION, PLAN_REVIEW_OPTIONS, reviewPlanWithDialogs,
   type PlanReviewResult,
 } from '@felan-ai/ext-prewalk/data';
-export { APPROVE_PLAN_OPTION, CANCEL_PREWALK_OPTION, FEEDBACK_PLAN_OPTION, PLAN_REVIEW_OPTIONS } from '@felan-ai/ext-prewalk/data';
-export { PREWALK_PLAN_LIMIT, PlanReviewRequestSchema, PlanReviewResultSchema } from '@felan-ai/ext-prewalk/data';
-export type { PlanReviewAction, PlanReviewResult, PrewalkHost } from '@felan-ai/ext-prewalk/data';
+/** @internal */
+export { APPROVE_PLAN_OPTION, PLAN_REVIEW_OPTIONS } from '@felan-ai/ext-prewalk/data';
+export type { PlanReviewResult } from '@felan-ai/ext-prewalk/data';
 
 type Theme = ExtensionContext['ui']['theme'];
 
@@ -36,6 +36,7 @@ interface EditorLayout {
   fullHeight: number;
 }
 
+/** @internal */
 export const PLAN_REVIEW_OVERLAY_OPTIONS: OverlayOptions = {
   anchor: 'top-left',
   width: '100%',
@@ -45,6 +46,7 @@ export const PLAN_REVIEW_OVERLAY_OPTIONS: OverlayOptions = {
 
 const UNSAFE_CONTROL_CHARACTERS = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/gu;
 
+/** @internal */
 export async function presentPlanReview(
   ctx: Pick<ExtensionContext, 'ui' | 'mode'>,
   plan: string,
@@ -85,6 +87,7 @@ export async function presentPrewalkPlan(
   }
 }
 
+/** @internal */
 export class PlanReview implements Component, Focusable {
   readonly #markdown: Markdown;
   readonly #editor: Editor;
@@ -394,6 +397,7 @@ export class PlanReview implements Component, Focusable {
   }
 }
 
+/** @internal */
 export function sanitizePlanForDisplay(plan: string): string {
   return stripTerminalSequences(plan)
     .replace(/\r\n?/gu, '\n')

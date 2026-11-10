@@ -115,6 +115,7 @@ export function detectLanguage(filePath: string): Language {
   return LANGUAGE_EXTENSIONS[extension] ?? 'unknown';
 }
 
+/** @internal */
 export function filterMinimal(content: string, language: Language): string {
   const patterns = COMMENT_PATTERNS[language];
   const lines = content.split('\n');
@@ -197,6 +198,7 @@ export function filterMinimal(content: string, language: Language): string {
     .trim();
 }
 
+/** @internal */
 export function filterAggressive(content: string, language: Language): string {
   const minimal = filterMinimal(content, language);
   const lines = minimal.split('\n');

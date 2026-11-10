@@ -47,7 +47,7 @@ export interface DynamicThinkingDecision {
   readonly classifierCostUsd?: number;
 }
 
-export async function evaluateDynamicThinkingLevel(
+async function evaluateDynamicThinkingLevel(
   classifier: Classifier,
   model: Model<Api>,
   request: string,

@@ -2,7 +2,7 @@ import type { HostBlocked } from '@felan-ai/session-protocol';
 
 export interface DaemonRecovery { client: 'cli' | 'tui'; action?: 'stop' | 'restart'; daemonRuntime?: string }
 
-export function daemonRecoveryHint(blocked: HostBlocked | undefined, recovery: DaemonRecovery): string {
+function daemonRecoveryHint(blocked: HostBlocked | undefined, recovery: DaemonRecovery): string {
   if (blocked?.recoverable === false) return `Cleanup cannot be retried safely; ${forceTermination(blocked.pid)}, then start Felan again.`;
   const action = recovery.action ?? 'restart';
   const runtime = recovery.daemonRuntime;

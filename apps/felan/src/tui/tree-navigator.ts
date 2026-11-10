@@ -7,7 +7,7 @@ import { uiText } from '../client/ui.js';
 
 type Tree = OperationResult<'session.tree'>;
 type Entry = Tree['entries'][number];
-export type Filter = 'default' | 'noTools' | 'userOnly' | 'labeledOnly' | 'all';
+type Filter = 'default' | 'noTools' | 'userOnly' | 'labeledOnly' | 'all';
 type Gutter = { position: number; show: boolean };
 type Layout = { indent: number; showConnector: boolean; isLast: boolean; gutters: Gutter[]; isVirtualRootChild: boolean };
 type View = { entries: Entry[]; index: number; layout: Map<string, Layout>; parents: Map<string, string | null>; children: Map<string | null, string[]>; multipleRoots: boolean };
@@ -31,6 +31,7 @@ const helpItems: Array<{ keys: Keybinding[]; label: string; labelFirst?: boolean
   { keys: ['app.tree.filter.cycleForward', 'app.tree.filter.cycleBackward'], label: 'cycle', labelFirst: true },
 ];
 
+/** @internal */
 export class TreeNavigator implements Component, Focusable {
   private readonly entries: Map<string, Entry>;
   private readonly order: Entry[];

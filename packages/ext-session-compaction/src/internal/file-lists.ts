@@ -5,7 +5,9 @@ export interface CompactionFileLists {
   readonly modifiedFiles: readonly string[];
 }
 
+/** @internal */
 export const MAX_FILE_LIST_ENTRIES = 200;
+/** @internal */
 export const MAX_FILE_PATH_BYTES = 1_024;
 
 export function collectFileLists(fileOps: unknown, previousCompactionDetails: unknown): CompactionFileLists {

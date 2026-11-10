@@ -8,13 +8,8 @@ import {
   type Theme,
   type ToolDefinition,
 } from '@earendil-works/pi-coding-agent';
-import { Text, visibleWidth } from '@earendil-works/pi-tui';
+import { visibleWidth } from '@earendil-works/pi-tui';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import {
-  createToolActivityExtension,
-  TOOL_ACTIVITY_SHORTCUT,
-} from '../src/tool-activity/extension.js';
-import { ToolActivityInspector } from '../src/tool-activity/inspector.js';
 import {
   createToolActivityDisplayDefinition,
   renderToolActivityGroup,
@@ -1068,80 +1063,6 @@ describe('tool activity runtime view', () => {
     expect(secondView).not.toBe(firstView);
     expect(secondView.getToolDefinition('read')).not.toBe(original);
     secondState.dispose();
-  });
-});
-
-describe('ToolActivityInspector', () => {
-  it('shows full arguments and results and closes cleanly', () => {
-    const harness = activityHarness([
-      assistant([toolCall('read-1', 'read', { path: 'src/a.ts', apiKey: 'do-not-render' })], 10),
-      toolResult('read-1', 'read', 'one\ntwo\nthree\nfour\nfive', false, 20),
-    ]);
-    harness.state.rememberDefinition('read', {
-      ...toolDefinition('read'),
-      renderCall: () => new Text('Specialized read view', 0, 0),
-      renderResult: () => new Text('Specialized result view', 0, 0),
-    });
-    const done = vi.fn();
-    const inspector = new ToolActivityInspector(
-      harness.state,
-      theme,
-      { terminal: { rows: 30 }, requestRender: vi.fn() } as never,
-      done,
-    );
-
-    const output = inspector.render(100).join('\n');
-    const lines = inspector.render(100);
-    expect(lines[0]).toBe('─'.repeat(100));
-    expect(lines.at(-1)).toBe('─'.repeat(100));
-    expect(lines.some((line) => line.startsWith('│') || line.endsWith('│'))).toBe(false);
-    expect(lines.every((line) => visibleWidth(line) <= 100)).toBe(true);
-    expect(output).toContain('Specialized read view');
-    expect(output).toContain('Specialized result view');
-    expect(output).toContain('"path": "src/a.ts"');
-    expect(output).toContain('"apiKey": "[redacted]"');
-    expect(output).not.toContain('do-not-render');
-    inspector.handleInput('\x1b[F');
-    expect(inspector.render(100).join('\n')).toContain('five');
-    expect(inspector.render(50).every((line) => visibleWidth(line) <= 50)).toBe(true);
-
-    inspector.handleInput('q');
-    inspector.handleInput('q');
-    expect(done).toHaveBeenCalledOnce();
-  });
-});
-
-describe('tool activity extension', () => {
-  it('registers hidden local inspector controls', async () => {
-    const registerCommand = vi.fn();
-    const registerShortcut = vi.fn();
-    const extension = createToolActivityExtension(new ToolActivityState('grouped'));
-
-    await extension.factory({
-      registerCommand,
-      registerShortcut,
-      on: vi.fn(),
-    } as never);
-
-    expect(extension.hidden).toBe(true);
-    expect(registerCommand).toHaveBeenCalledWith('tools', expect.any(Object));
-    expect(registerShortcut).toHaveBeenCalledWith(TOOL_ACTIVITY_SHORTCUT, expect.any(Object));
-  });
-
-  it('opens /tools inline without overlay options', async () => {
-    const registerCommand = vi.fn();
-    const extension = createToolActivityExtension(new ToolActivityState('grouped'));
-    await extension.factory({ registerCommand, registerShortcut: vi.fn(), on: vi.fn() } as never);
-    const handler = registerCommand.mock.calls[0]![1].handler as (
-      args: string,
-      ctx: { mode: string; ui: { custom: ReturnType<typeof vi.fn> } },
-    ) => Promise<void>;
-    const custom = vi.fn(async () => undefined);
-
-    await handler('', { mode: 'tui', ui: { custom } });
-
-    expect(custom).toHaveBeenCalledOnce();
-    expect(custom.mock.calls[0]).toHaveLength(1);
   });
 });
 

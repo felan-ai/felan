@@ -4,26 +4,19 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
 import {
-  initTheme,
   SessionManager,
 } from '@earendil-works/pi-coding-agent';
-import { Key, TuiAltScreen, type Terminal, type TUI, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import { HostAgentRuntime, type SessionsService } from '@felan-ai/agent-core';
-import { listLocalSessionHistory as listHistory, readMemoryHistorySnapshot as readSnapshot, localMemoryProjectDirectory, resolveLocalMemoryProject as resolveProject, MEMORY_RUN_ENTRY, type MemoryRunMetadata, type LocalSessionHistory } from '@felan-ai/ext-memory';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { listLocalSessionHistory as listHistory, localMemoryProjectDirectory, resolveLocalMemoryProject as resolveProject, MEMORY_RUN_ENTRY, type MemoryRunMetadata } from '@felan-ai/ext-memory';
+import { afterEach, describe, expect, it } from 'vitest';
 const environment = { runtime: new HostAgentRuntime('/', { pathAccess: 'host', sessionStorageRoot: tmpdir(), agentStorageRoot: tmpdir() }), sessions: {} as SessionsService };
 const listLocalSessionHistory = (options: Parameters<typeof listHistory>[1]) => listHistory(environment, options);
-const readMemoryHistorySnapshot = (session: Parameters<typeof readSnapshot>[1]) => readSnapshot(environment, session);
 const resolveLocalMemoryProject = (cwd: string) => resolveProject(environment, cwd);
-import { MemoryHistoryView } from '../src/memory/history-renderer.js';
 
 const temporaryPaths: string[] = [];
 const execFileAsync = promisify(execFile);
 
-beforeAll(() => initTheme('dark', false));
-
 afterEach(async () => {
-  vi.restoreAllMocks();
   await Promise.all(temporaryPaths.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
 
@@ -49,161 +42,7 @@ describe('local memory history', () => {
     expect([...history.memorySessions.keys()]).not.toContain(join(memoryDir, 'pipe.jsonl'));
   });
 
-  it('inspects a retained transcript read-only and returns to the picker', async () => {
-    const fixture = await memoryFixture();
-    const listed = await listLocalSessionHistory({ ...fixture, memoryOnly: true });
-    const memory = listed.memorySessions.get(fixture.memoryFile)!;
-    const history: LocalSessionHistory = {
-      currentSessions: [memory],
-      allSessions: [memory],
-      memorySessions: new Map([[memory.path, memory]]),
-    };
-    const tui = fakeTui();
-    const done = vi.fn();
-    const openSession = vi.spyOn(SessionManager, 'open');
-    const before = await readFile(fixture.memoryFile, 'utf8');
-    const view = new MemoryHistoryView(tui, history, done, { readSnapshot: readMemoryHistorySnapshot });
-
-    expect(view.render(120).join('\n')).toContain('Memory: workspace · failed');
-    view.handleInput(keyData(Key.enter));
-    await vi.waitFor(() => expect(view.render(120).join('\n')).toContain('Retained response'));
-    const output = view.render(120).join('\n');
-    expect(output).toContain('read-only');
-    expect(output).toContain('Retained request');
-    expect(output).toContain('Retained response');
-    expect(output).toContain('Bearer [REDACTED_TOKEN]');
-    expect(output).not.toContain('abcdefghijklmnop');
-    expect(openSession).not.toHaveBeenCalled();
-    expect(done).not.toHaveBeenCalled();
-
-    view.handleInput(keyData(Key.escape));
-    expect(view.render(120).join('\n')).toContain('Resume Session');
-    expect(await readFile(fixture.memoryFile, 'utf8')).toBe(before);
-    view.dispose();
-  });
-
-  it('explains a retained run that stopped before an assistant response', async () => {
-    const fixture = await memoryFixture();
-    const entries = (await readFile(fixture.memoryFile, 'utf8')).trim().split('\n')
-      .map((line) => JSON.parse(line) as Record<string, unknown>)
-      .filter((entry) => entry.type !== 'message'
-        || (entry.message as { role?: unknown } | undefined)?.role !== 'assistant');
-    await writeFile(fixture.memoryFile, `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
-    const listed = await listLocalSessionHistory({ ...fixture, memoryOnly: true });
-    const memory = listed.memorySessions.get(fixture.memoryFile)!;
-    const tui = fakeTui();
-    const view = new MemoryHistoryView(tui, {
-      currentSessions: [memory], allSessions: [memory], memorySessions: new Map([[memory.path, memory]]),
-    }, vi.fn(), { readSnapshot: readMemoryHistorySnapshot });
-
-    view.handleInput(keyData(Key.enter));
-    await vi.waitFor(() => expect(view.render(120).join('\n')).toContain('No assistant response was retained.'));
-    view.dispose();
-  });
-
-  it('scrolls a retained transcript one line per normalized wheel event', async () => {
-    const tui = fakeTui();
-    const view = await scrollableMemoryView(tui);
-    try {
-      const first = view.render(80);
-      view.handleInput('\x1b[B');
-      const afterOneLine = view.render(80);
-      expect(afterOneLine).not.toEqual(first);
-      view.handleInput('\x1b[H');
-      vi.mocked(tui.requestRender).mockClear();
-
-      expect(view.handleMouse({ ...wheelEvent(0), type: 'press', button: 'left' })).toBeUndefined();
-      expect(tui.requestRender).not.toHaveBeenCalled();
-      expect(view.handleMouse(wheelEvent(4))).toEqual({ handled: true });
-      expect(view.render(80)).toEqual(afterOneLine);
-
-      expect(view.handleMouse(wheelEvent(-1))).toEqual({ handled: true });
-      expect(view.render(80)).toEqual(first);
-      expect(tui.requestRender).not.toHaveBeenCalled();
-    } finally {
-      view.dispose();
-    }
-    vi.mocked(tui.requestRender).mockClear();
-    expect(view.handleMouse(wheelEvent(1))).toBeUndefined();
-    expect(tui.requestRender).not.toHaveBeenCalled();
-  });
-
-  it.each([
-    ['SGR', '\x1b[<64;20;5M', '\x1b[<65;20;5M'],
-    ['legacy', '\x1b[M' + String.fromCharCode(64 + 32, 52, 37), '\x1b[M' + String.fromCharCode(65 + 32, 52, 37)],
-  ])('receives %s wheel input through a focused fullscreen TUI overlay', async (_protocol, wheelUp, wheelDown) => {
-    const terminal = new TestTerminal();
-    const tui = new TuiAltScreen(terminal);
-    const view = await scrollableMemoryView(tui);
-    tui.showOverlay(view, { width: '100%', maxHeight: '100%', margin: 0 });
-    tui.start();
-    try {
-      tui.renderNow(true);
-      const first = view.render(terminal.columns);
-      const requestRender = vi.spyOn(tui, 'requestRender');
-      expect(tui.isOverlayFocused()).toBe(true);
-
-      terminal.send(wheelDown);
-      expect(view.render(terminal.columns)).not.toEqual(first);
-      expect(requestRender).toHaveBeenCalledOnce();
-
-      terminal.send(wheelUp);
-      expect(view.render(terminal.columns)).toEqual(first);
-      expect(requestRender).toHaveBeenCalledTimes(2);
-    } finally {
-      view.dispose();
-      tui.stop();
-    }
-  });
 });
-
-async function scrollableMemoryView(tui: TUI): Promise<MemoryHistoryView> {
-  const fixture = await memoryFixture();
-  const history = await listLocalSessionHistory({ ...fixture, memoryOnly: true });
-  const memory = history.memorySessions.get(fixture.memoryFile)!;
-  const snapshot = await readMemoryHistorySnapshot(memory);
-  return new MemoryHistoryView(tui, history, vi.fn(), {
-    memoryOnly: true,
-    snapshot: {
-      ...snapshot,
-      messages: [{
-        role: 'user',
-        content: Array.from({ length: 40 }, (_, index) => `Transcript line ${index + 1}`).join('\n'),
-        timestamp: 1,
-      }],
-    },
-  });
-}
-
-function wheelEvent(wheelDelta: number): TuiMouseEvent {
-  return {
-    type: 'wheel', button: 'none', wheelDelta,
-    x: 19, y: 4, screenX: 19, screenY: 4, width: 80, height: 12,
-    shift: false, alt: false, ctrl: false,
-  };
-}
-
-class TestTerminal implements Terminal {
-  readonly columns = 80;
-  readonly rows = 12;
-  readonly kittyProtocolActive = false;
-  #onInput?: (data: string) => void;
-
-  start(onInput: (data: string) => void): void { this.#onInput = onInput; }
-  stop(): void {}
-  async drainInput(): Promise<void> {}
-  write(): void {}
-  moveBy(): void {}
-  hideCursor(): void {}
-  showCursor(): void {}
-  clearLine(): void {}
-  clearFromCursor(): void {}
-  clearScreen(): void {}
-  setTitle(): void {}
-  setProgramStatus(): void {}
-  setProgress(): void {}
-  send(data: string): void { this.#onInput?.(data); }
-}
 
 async function memoryFixture() {
   const root = await temporaryDirectory();
@@ -302,21 +141,4 @@ async function temporaryDirectory(prefix = 'felan-memory-history-'): Promise<str
   const path = await mkdtemp(join(tmpdir(), prefix));
   temporaryPaths.push(path);
   return path;
-}
-
-function fakeTui(): TUI {
-  return {
-    terminal: { rows: 32 },
-    requestRender: vi.fn(),
-  } as unknown as TUI;
-}
-
-function keyData(key: string): string {
-  const values: Record<string, string> = {
-    enter: '\r',
-    escape: '\u001b',
-  };
-  const data = values[key];
-  if (!data) throw new Error(`Missing test key data for ${key}`);
-  return data;
 }

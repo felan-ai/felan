@@ -28,6 +28,7 @@ const SUMMARY_READS = 4;
 const WARM_READS = 2;
 
 // Pi's default per-cwd directory name under agentDir/sessions, as written by pre-daemon Felan.
+/** @internal */
 export function legacySessionDirectoryName(cwd: string): string {
   return `--${cwd.replace(/^[/\\]/u, '').replace(/[/\\:]/gu, '-')}--`;
 }

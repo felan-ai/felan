@@ -5,16 +5,16 @@ import type { RemoteDatabase } from '../daemon/persistence.js';
 import { Type, type Static } from 'typebox';
 import { HostProjectSchema, parseSchema, text, type HostProject } from '@felan-ai/session-protocol';
 
-export const REMOTE_UUID_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
+const REMOTE_UUID_PATTERN = '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$';
 const uuid = Type.String({ pattern: REMOTE_UUID_PATTERN });
 const object = { additionalProperties: false } as const;
-export const RemoteSettingsSchema = Type.Object({
+const RemoteSettingsSchema = Type.Object({
   installId: uuid, share: Type.Union([Type.Literal('all'), Type.Literal('on-request')]),
   appliedShare: Type.Optional(Type.Union([Type.Literal('all'), Type.Literal('on-request')])),
   projects: Type.Array(Type.Object(HostProjectSchema.properties, object), { maxItems: 256 }),
   apiUrl: Type.Optional(text(2048, 1)),
 }, object);
-export const RemoteSessionRecordSchema = Type.Object({
+const RemoteSessionRecordSchema = Type.Object({
   shared: Type.Boolean(), explicit: Type.Optional(Type.Boolean()), origin: Type.Union([Type.Literal('local'), Type.Literal('web')]),
   backfilled: Type.Boolean(), unsharedPending: Type.Boolean(), sharedPending: Type.Optional(Type.Boolean()),
   /** Whether the outbox holds the current run and metadata; records from before this field are re-recorded once. */

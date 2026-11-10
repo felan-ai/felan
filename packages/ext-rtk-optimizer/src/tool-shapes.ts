@@ -1,7 +1,7 @@
 import { toRecord } from './record-utils.js';
 
-export const COMMAND_TOOL_NAMES = ['bash', 'exec_command'] as const;
-export const STREAMING_COMMAND_TOOL_NAMES = ['bash', 'exec_command', 'write_stdin'] as const;
+const COMMAND_TOOL_NAMES = ['bash', 'exec_command'] as const;
+const STREAMING_COMMAND_TOOL_NAMES = ['bash', 'exec_command', 'write_stdin'] as const;
 
 export type CommandToolName = (typeof COMMAND_TOOL_NAMES)[number];
 

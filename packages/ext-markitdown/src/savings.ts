@@ -7,7 +7,7 @@ import type {
 const MARKITDOWN_BASELINE_PROMPT_TOKENS = 21_569;
 const MARKITDOWN_ACTUAL_PROMPT_TOKENS = 18_603;
 
-export const MARKITDOWN_SAVINGS_METHOD = 'markitdown-prompt-token-ratio-202609-v1';
+const MARKITDOWN_SAVINGS_METHOD = 'markitdown-prompt-token-ratio-202609-v1';
 
 export function reportMarkitdownSavings(
   reporter: SavingsReporter | undefined,

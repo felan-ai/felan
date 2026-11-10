@@ -6,6 +6,7 @@ const fields = ['id', 'title', 'status', 'availability', 'priority', 'ownerSessi
 export type TaskDetailRecord = { field: typeof fields[number]; value: string }
   | { relation: 'prerequisite' | 'dependent'; id: string; title: string; availability: string };
 
+/** @internal */
 export function taskDetailRecords(state: TaskState, task: Task): TaskDetailRecord[] {
   const values = { ...task, availability: taskAvailability(task, state), priority: String(task.priority) };
   const relation = (entry: Task, kind: 'prerequisite' | 'dependent'): TaskDetailRecord => ({ relation: kind,

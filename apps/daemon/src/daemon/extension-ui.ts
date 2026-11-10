@@ -8,6 +8,7 @@ import type { SessionUiPort } from './session-execution.js';
 
 type Ui = NonNullable<NonNullable<Parameters<AgentSession['bindExtensions']>[0]>['uiContext']>;
 type PresentationUpdate = Presentation | { id: string; remove: true };
+/** @internal */
 export class UnsupportedExtensionUiError extends Error {
   readonly code = 'unsupported';
   constructor(readonly surface: string) {

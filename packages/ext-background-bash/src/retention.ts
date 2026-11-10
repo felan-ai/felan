@@ -3,11 +3,13 @@ import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
 import { shellQuote } from './runtime-support.js';
 import { removeRetainedJob } from './retention-removal.js';
 
+/** @internal */
 export const RETENTION_INTERVAL = 32;
-export const RETENTION_BATCH_SIZE = 32;
-export const RETAINED_TERMINAL_JOBS = 1_000;
+const RETENTION_BATCH_SIZE = 32;
+const RETAINED_TERMINAL_JOBS = 1_000;
+/** @internal */
 export const TERMINAL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1_000;
-export const TERMINAL_RETENTION_GRACE_MS = 5 * 60 * 1_000;
+const TERMINAL_RETENTION_GRACE_MS = 5 * 60 * 1_000;
 const states = new Map<string, {
   mutations: number;
   cursor?: string;

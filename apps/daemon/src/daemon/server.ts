@@ -20,6 +20,7 @@ export interface RemoteSubmission {
   user?: string; command: string; requireRetained?: boolean; channel?: { provider: string }; automation?: { source: string }; sessionId?: string;
   interactionKinds?: OperationParams<'hello'>['interactionKinds'];
 }
+/** @internal */
 export interface BrokerDispatchPort {
   interactionKinds: OperationParams<'hello'>['interactionKinds'];
   dispatch(command: AdmittedCommand, client: { principal: string; kind: Kind; attachment: string;

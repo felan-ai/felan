@@ -8,7 +8,7 @@ import type {
 const CONCISE_BASELINE_OUTPUT_TOKENS = 4_187;
 const CONCISE_ACTUAL_OUTPUT_TOKENS = 3_500;
 
-export const CONCISE_SAVINGS_METHOD = 'concise-output-token-ratio-202609-v1';
+const CONCISE_SAVINGS_METHOD = 'concise-output-token-ratio-202609-v1';
 
 export function reportConciseSavings(
   reporter: SavingsReporter | undefined,

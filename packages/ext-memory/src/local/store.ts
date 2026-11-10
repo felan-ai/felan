@@ -11,9 +11,10 @@ import { createEmptyMemoryArtifact, createMemoryProjectionSnapshot, createMemory
 import type { LocalMemoryProject } from './project.js';
 import type { LocalMemoryLease } from './lease.js';
 
+/** @internal */
 export const MEMORY_ATTEMPT_TIMEOUT_MS = 60 * 60 * 1_000;
 
-export const MEMORY_RETRY_DELAYS_MS = [60_000, 300_000] as const;
+const MEMORY_RETRY_DELAYS_MS = [60_000, 300_000] as const;
 
 
 export interface StoredCheckpoint {
@@ -23,20 +24,20 @@ export interface StoredCheckpoint {
 }
 
 
-export interface ProcessedCheckpoint extends StoredCheckpoint {
+interface ProcessedCheckpoint extends StoredCheckpoint {
   readonly processedAt: string;
   readonly memoryFingerprint: string;
 }
 
 
-export interface DroppedCheckpoint {
+interface DroppedCheckpoint {
   readonly checkpoint: SessionCheckpoint;
   readonly droppedAt: string;
   readonly reason: string;
 }
 
 
-export const STATE_VERSION = 1 as const;
+const STATE_VERSION = 1 as const;
 
 export interface LocalMemoryState {
   readonly version: typeof STATE_VERSION;

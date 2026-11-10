@@ -1,4 +1,4 @@
-export const PROMPT_HISTORY_TEXT_BYTES = 64 * 1024 * 1024;
+const PROMPT_HISTORY_TEXT_BYTES = 64 * 1024 * 1024;
 const encoder = new TextEncoder();
 
 export function splitPromptHistoryText(value: string): { chunks: string[]; bytes: number } {

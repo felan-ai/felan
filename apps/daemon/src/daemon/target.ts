@@ -90,6 +90,7 @@ export function openPrivateFile(path: string, uid: number): number {
   } catch (error) { closeSync(fd); throw error; }
 }
 
+/** @internal */
 export function realAccountLocation(): { uid: number; home: string; directory: string } {
   const platform = requireOwnershipPlatform();
   const account = userInfo();

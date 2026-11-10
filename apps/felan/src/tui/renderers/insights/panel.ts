@@ -4,8 +4,8 @@ import { INSIGHTS_ACTIONS, type InsightsDashboard } from '@felan-ai/ext-insights
 import { decodeUiMarkdown } from '../../../client/ui.js';
 import { bar, formatCount, formatMinutes, formatMoney, formatPercent, heatLevel, hourLabels, shade, sparkline } from './charts.js';
 
-export const TABS = ['overview', 'models', 'projects', 'sessions', 'rage'] as const;
-export type InsightsTab = typeof TABS[number];
+const TABS = ['overview', 'models', 'projects', 'sessions', 'rage'] as const;
+type InsightsTab = typeof TABS[number];
 type Metric = 'sessions' | 'tokens' | 'cost';
 type ProjectSort = 'messages' | 'sessions' | 'tokens' | 'cost';
 

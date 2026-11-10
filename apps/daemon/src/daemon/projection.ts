@@ -17,7 +17,7 @@ import { catalogEntry, plainJson, sanitizeMessage, toolId, toolName, undisplayab
 import { boundSnapshot } from './snapshot-bounds.js';
 
 export type ProjectionOutput = SessionEvent | TextStreamEvent;
-export type ProjectionExtras = Pick<SessionSnapshot, 'children' | 'processes' | 'interactions'>;
+type ProjectionExtras = Pick<SessionSnapshot, 'children' | 'processes' | 'interactions'>;
 export interface LoadedSkill { name: string; description: string; filePath: string; scope: 'user' | 'project' | 'temporary' }
 export interface ProjectionOptions {
   binding: SessionBinding;
@@ -602,6 +602,7 @@ type MessageEntry = Extract<SessionEntry, { type: 'message' | 'custom_message' |
 function isMessageEntry(entry: SessionEntry): entry is MessageEntry {
   return entry.type === 'message' || entry.type === 'custom_message' && entry.display || entry.type === 'compaction' || entry.type === 'branch_summary';
 }
+/** @internal */
 export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Origin): Message {
   const role = entry.type === 'message' ? entry.message?.role : entry.type === 'custom_message' ? 'custom' : 'system';
   const fallback = undisplayableMessage({ id, entryId: entry.id, ...(entry.parentId ? { parentEntryId: entry.parentId } : {}),
@@ -639,7 +640,7 @@ export function projectPiMessage(entry: MessageEntry, id = entry.id, origin?: Or
     }, fallback, display);
   } catch { return fallback; }
 }
-export function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value) ?? 'null').digest('hex'); }
+function digest(value: unknown): string { return createHash('sha256').update(JSON.stringify(value) ?? 'null').digest('hex'); }
 export function boundedText(value: string, bytes: number): string {
   if (Buffer.byteLength(value) <= bytes) return value;
   let result = ''; let size = 0;

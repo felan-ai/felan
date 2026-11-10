@@ -4,11 +4,11 @@ const GIT_COMMAND_PATTERNS = [/^git\s+(diff|status|log|show|stash)\b/] as const;
 const RAW_GIT_DIFF_PATTERN = /^diff --git /m;
 const RAW_GIT_STATUS_PATTERN = /^(?:## |(?:M|A|D|R|C|U|\?| )\S)/m;
 
-export function isGitCommand(command: string | undefined | null): boolean {
+function isGitCommand(command: string | undefined | null): boolean {
   return matchesCommandPatterns(command, GIT_COMMAND_PATTERNS);
 }
 
-export function compactDiff(output: string, maxLines = 50): string {
+function compactDiff(output: string, maxLines = 50): string {
   const lines = output.split('\n');
   const result: string[] = [];
   let currentFile = '';
@@ -92,6 +92,7 @@ interface StatusStats {
   untrackedFiles: string[];
 }
 
+/** @internal */
 export function compactStatus(output: string): string {
   const lines = output.split('\n');
 
@@ -188,7 +189,7 @@ export function compactStatus(output: string): string {
   return result.trim();
 }
 
-export function compactLog(output: string, limit = 20): string {
+function compactLog(output: string, limit = 20): string {
   const lines = output.split('\n');
   const result: string[] = [];
 

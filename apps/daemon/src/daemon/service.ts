@@ -206,6 +206,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
   }
 }
 
+/** @internal */
 export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown' | 'waitForDrain'>, broker: Pick<InteractionBroker, 'drain'>, mode: HostMode, signal?: AbortSignal): Promise<void> {
   const draining = shutdownStep('broker-drain', () => broker.drain());
   if (mode === 'force') {

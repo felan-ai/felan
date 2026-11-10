@@ -1,6 +1,6 @@
 import type { Interaction, InteractionAnswer, InteractionAuthority } from '@felan-ai/session-protocol';
 
-export type SessionUiOutcome =
+type SessionUiOutcome =
   | { state: 'answered'; answer: InteractionAnswer }
   | { state: 'cancelled'; reason: 'user' | 'abort' | 'timeout' | 'unsupported' | 'drain' | 'restart' }
   | { state: 'deferred'; interactionId: string };

@@ -7,8 +7,8 @@ export const SAVINGS_RANGES = ['today', '7d', '30d', '90d', 'all'] as const;
 export const SAVINGS_TABS = ['overview', 'extensions', 'sessions', 'projects'] as const;
 export const SAVINGS_CATEGORIES = ['output-optimization', 'model-routing', 'context-management', 'other'] as const;
 export const SAVINGS_DEFAULT_RANGE: SavingsRangeId = '30d';
-export const SAVINGS_TEXT_BYTES = 256;
-/** The insights dashboard budget. A larger dashboard is published without data, so clients show the Markdown fallback. */
+const SAVINGS_TEXT_BYTES = 256;
+/** The insights dashboard budget. A larger dashboard is published without data, so clients show the Markdown fallback.  @internal */
 export const SAVINGS_DASHBOARD_BYTES = 512 * 1024;
 
 export type SavingsRangeId = typeof SAVINGS_RANGES[number];
@@ -31,8 +31,8 @@ export type SavingsShare = Pick<SavingsAmount, 'savedUsd' | 'decisions' | 'saved
 /** Decisions without a resolvable price, excluded from every USD figure. */
 export interface SavingsUnpriced { decisions: number; savedTokens: number }
 
-export interface SavingsExtensionInfo { id: string; label: string; category: SavingsCategoryId }
-export interface SavingsProjectInfo { label: string }
+interface SavingsExtensionInfo { id: string; label: string; category: SavingsCategoryId }
+interface SavingsProjectInfo { label: string }
 export interface SavingsSessionInfo {
   id: string;
   title: string;
@@ -42,7 +42,7 @@ export interface SavingsSessionInfo {
   extensions: Array<SavingsShare & { extension: number }>;
 }
 
-export interface SavingsOperationRow extends SavingsAmount { operation: string; basis: SavingsBasisKind; method: string }
+interface SavingsOperationRow extends SavingsAmount { operation: string; basis: SavingsBasisKind; method: string }
 
 export interface SavingsRangeView {
   id: SavingsRangeId;
@@ -149,6 +149,7 @@ export function readSavingsDashboard(data: UiValues | undefined): SavingsDashboa
   return parseSavingsDashboard(value);
 }
 
+/** @internal */
 export function parseSavingsDashboard(value: unknown): SavingsDashboard {
   const source = record(value, ['generatedAt', 'initialRange', 'initialTab', 'extensions', 'sessions', 'projects', 'ranges', 'diagnostics'],
     ['firstDay', 'lastDay', 'currentSession', 'currentProject']);

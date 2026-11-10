@@ -47,7 +47,7 @@ export function plainJson(value: unknown): JsonValue {
   return visit(value, 0);
 }
 
-export function imageContent(part: { mimeType: string; data: string }): Message['content'][number] {
+function imageContent(part: { mimeType: string; data: string }): Message['content'][number] {
   const mimeType = part.mimeType === 'image/jpg' ? 'image/jpeg' : part.mimeType;
   if (!['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(mimeType)) return { type: 'text', text: '[Image omitted: unsupported format]' };
   try {

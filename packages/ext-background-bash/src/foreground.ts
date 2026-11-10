@@ -4,6 +4,7 @@ import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeStorage } from '@fe
 
 export const FOREGROUND_MAX_LINES = 2000;
 export const FOREGROUND_MAX_BYTES = 50 * 1024;
+/** @internal */
 export const RETAINED_SPILL_FILES = 20;
 
 export type ForegroundRunResult =

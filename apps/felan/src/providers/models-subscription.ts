@@ -48,6 +48,7 @@ export function createSubscriptionUsageCache(fetchImplementation?: typeof fetch,
   };
 }
 
+/** @internal */
 export function createLocalSubscriptionUsage(
   modelRuntime: ModelRuntime,
   fetchImplementation: typeof fetch = fetch,

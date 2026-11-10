@@ -43,7 +43,7 @@ export type ValidationResult = { ok: true } | { ok: false; reason: string };
 
 const MUTATION_TOOLS = ['edit', 'write', 'apply_patch'] as const;
 
-export const MUTATION_TOOL_NAMES: ReadonlySet<string> = new Set(MUTATION_TOOLS);
+const MUTATION_TOOL_NAMES: ReadonlySet<string> = new Set(MUTATION_TOOLS);
 
 export function validateArmingTools(activeTools: readonly string[]): ValidationResult {
   return activeTools.some((toolName) => MUTATION_TOOL_NAMES.has(toolName))

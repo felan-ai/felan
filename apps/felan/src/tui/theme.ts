@@ -5,6 +5,7 @@ import { Theme, type ThemeBg, type ThemeColor } from '@earendil-works/pi-coding-
 import { backgroundAnsi, getTerminalColorMode, parseColor, type MarkdownTheme, type SelectListTheme, type Terminal, type TerminalColors } from '@earendil-works/pi-tui';
 
 export const THEME_BYTES = 128 * 1024;
+/** @internal */
 export const FELAN_THEME_PATHS = ['felan-light', 'felan-dark'].map(name => fileURLToPath(new URL(`../themes/${name}.json`, import.meta.url)));
 const foreground = ['accent', 'border', 'borderAccent', 'borderMuted', 'success', 'error', 'warning', 'muted', 'dim', 'text', 'thinkingText',
   'scrollbarTrack', 'scrollbarThumb', 'searchMatchText', 'userMessageText', 'customMessageText', 'customMessageLabel', 'toolTitle', 'toolOutput',
@@ -123,6 +124,7 @@ export function themedClientTerminal(terminal: Terminal, theme: () => Theme): Te
   } });
 }
 
+/** @internal */
 export function getLocalThemePaths(agentDir: string, packaged: readonly string[] = FELAN_THEME_PATHS): readonly string[] {
   const path = join(agentDir, 'themes');
   try {

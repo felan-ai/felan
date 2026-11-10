@@ -9,6 +9,7 @@ export interface MemoryControlPresentationHost {
   openDirectory(directory: string, signal: AbortSignal): Promise<void>;
 }
 
+/** @internal */
 export type MemoryControlCoordinator = Pick<LocalMemoryAttachment,
   'status' | 'runNow' | 'retryProject' | 'canonicalDirectory' | 'subscribeStatusChanges' | 'setSelectedModel'>;
 

@@ -271,7 +271,8 @@ export class PromptCaptures {
 /** Pi's own preamble, the first section of every prompt pi renders for a session
  *  without a custom prompt. Machine-generated, so operator text never carries it;
  *  forwarding it makes Claude Code's subscription path read the request as a
- *  third-party app. */
+ *  third-party app.
+ *  @internal */
 export const PI_PREAMBLE = "You are a coding assistant running inside pi";
 
 /** Both doc paths from pi's documentation-routing line. Anthropic's subscription gate
@@ -299,7 +300,8 @@ export function projectPromptCapture(
 	return projectCapture(capture, options, new Set());
 }
 
-/** Skills visible through inherited prompts, ancestor first and once per file. */
+/** Skills visible through inherited prompts, ancestor first and once per file.
+ *  @internal */
 export function collectPromptSkills(capture: PromptCapture): Skill[] {
 	const result: Skill[] = [];
 	const seenPaths = new Set<string>();

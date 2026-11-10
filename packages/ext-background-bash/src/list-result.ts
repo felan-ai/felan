@@ -1,6 +1,7 @@
 import { clipProcessText } from './data.js';
 import type { BackgroundBashPage } from './job-store.js';
 
+/** @internal */
 export const PROCESS_LIST_RESULT_BYTES = 64 * 1024;
 
 export function formatProcessListResult(page: BackgroundBashPage) {

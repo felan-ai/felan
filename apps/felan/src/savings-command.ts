@@ -10,14 +10,14 @@ import {
   SAVINGS_ACTIONS, SAVINGS_DASHBOARD_HINT, SAVINGS_RANGES, formatSavingsUsd, savingsRangeLabel, type SavingsRangeId, type SavingsTabId,
 } from './savings/data.js';
 
-export const SAVINGS_COMMAND_EXTENSION_NAME = '@felan-ai/felan/savings';
+const SAVINGS_COMMAND_EXTENSION_NAME = '@felan-ai/felan/savings';
 const USAGE = 'Usage: /savings [today|7d|30d|90d|all] [project|details]';
 const TAB_ALIASES: Readonly<Record<string, SavingsTabId>> = { project: 'projects', details: 'extensions' };
 const DOCUMENT_ID = 'savings-dashboard';
 const STALE_ATTEMPTS = 3;
 
 export type SavingsCommandContext = Pick<SessionExtensionContext, 'runtime' | 'resources' | 'services' | 'createExtensionUi'>;
-export interface SavingsCommandOptions { readonly range?: SavingsRangeId; readonly tab?: SavingsTabId }
+interface SavingsCommandOptions { readonly range?: SavingsRangeId; readonly tab?: SavingsTabId }
 interface ShownDashboard { handle?: UiElementHandle; document: UiDocument; closed: boolean }
 
 export function createSavingsCommandExtension(service: SavingsService, context: SavingsCommandContext): InlineExtension {
@@ -26,6 +26,7 @@ export function createSavingsCommandExtension(service: SavingsService, context: 
   return typeof extension === 'function' ? { name: SAVINGS_COMMAND_EXTENSION_NAME, factory: extension, hidden: true } : { ...extension, hidden: true };
 }
 
+/** @internal */
 export function parseSavingsArgs(args: string): SavingsCommandOptions | undefined {
   const words = args.trim().toLowerCase().split(/\s+/u).filter(Boolean);
   let range: SavingsRangeId | undefined;
@@ -38,6 +39,7 @@ export function parseSavingsArgs(args: string): SavingsCommandOptions | undefine
   return { ...(range ? { range } : {}), ...(tab ? { tab } : {}) };
 }
 
+/** @internal */
 export function createSavingsExtension(service: SavingsService): FelanExtension {
   return (pi) => {
     const lifetime = new AbortController();

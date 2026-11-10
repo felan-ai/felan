@@ -108,6 +108,7 @@ async function readProjectConfig(runtime: AgentRuntime): Promise<LocalMcpConfig>
   return normalizeProjectMcpConfig(parsed, source);
 }
 
+/** @internal */
 export function validateLocalMcpConfig(value: unknown, source = 'mcp.json'): LocalMcpConfig {
   if (!isRecord(value)) throw new Error(`${source} must contain a JSON object`);
   rejectUnknownFields(value, ROOT_FIELDS, source);

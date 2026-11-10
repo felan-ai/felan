@@ -8,7 +8,7 @@ export const TuiKeybindingsSchema = Type.Record(Type.String({ pattern: '^[A-Za-z
   Type.Union([key, Type.Array(key, { maxItems: 16, uniqueItems: true })]), { maxProperties: 256, additionalProperties: false, 'x-maxEncodedBytes': LIMITS.structuredBytes });
 const shortcut = Type.String({ maxLength: 128, pattern: '^[^\\x00-\\x1f\\x7f]*$' });
 const displayMode = enumOf(['inline', 'overlay'] as const);
-export const TuiPresentationSchema = Type.Object({
+const TuiPresentationSchema = Type.Object({
   askUser: Type.Object({ displayMode, singleSelectLayout: enumOf(['auto', 'list'] as const), overlayToggleKey: shortcut, commentToggleKey: shortcut }, { additionalProperties: false }),
   tasks: Type.Object({ displayMode }, { additionalProperties: false }),
   promptHistory: Type.Object({ displayMode }, { additionalProperties: false }),
@@ -37,6 +37,7 @@ export const TuiPreferencesSchema = Type.Object({
   fullscreenCopyOnSelect: Type.Optional(Type.Boolean()),
   fullscreenWheelScrollLines: Type.Optional(Type.Union([Type.Literal('auto'), Type.Integer({ minimum: 1, maximum: 100 })])),
 }, { additionalProperties: false, 'x-maxEncodedBytes': LIMITS.structuredBytes });
+/** @internal */
 export const TuiPreferencesUpdateSchema = Type.Partial(TuiPreferencesSchema, {
   minProperties: 1, additionalProperties: false, 'x-maxEncodedBytes': LIMITS.structuredBytes,
 });

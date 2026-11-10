@@ -9,7 +9,8 @@ import {
   type LogRecord,
 } from '@felan-ai/agent-core';
 
-export const FELAN_LOG_LEVEL_ENV = 'FELAN_LOG_LEVEL';
+const FELAN_LOG_LEVEL_ENV = 'FELAN_LOG_LEVEL';
+/** @internal */
 export const LOCAL_AGENT_LOG_PATH = join('logs', 'felan.jsonl');
 
 export function resolveLocalLoggerLevel(

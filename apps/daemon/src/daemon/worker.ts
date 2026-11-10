@@ -26,7 +26,7 @@ export function assertStagedWorker(owner: DaemonOwnership, resources: SessionRes
   return { id, path };
 }
 
-export async function resolveWorkerConfiguration(request: Parameters<ProviderWorkerLauncher>[0], modelRuntime: ModelRuntime,
+async function resolveWorkerConfiguration(request: Parameters<ProviderWorkerLauncher>[0], modelRuntime: ModelRuntime,
   allowedModels?: readonly ModelReference[]): Promise<SessionWorkerConfiguration> {
   if (!request || !request.model || !request.runtime || !request.sessionManager || !request.settingsManager || !Array.isArray(request.allowedTools)) throw new Error('Worker request is invalid.');
   request.signal?.throwIfAborted();

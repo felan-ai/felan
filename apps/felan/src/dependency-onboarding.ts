@@ -24,44 +24,6 @@ export interface DependencyInstallOption {
   readonly checked?: boolean;
 }
 
-export interface DependencyInstallProgress {
-  setMessage(message: string): void;
-}
-
-export async function runDependencyOnboarding(
-  ctx: ExtensionContext,
-  options: readonly DependencyInstallOption[],
-  afterSelection: (selected: readonly string[], progress: DependencyInstallProgress) => Promise<void>,
-): Promise<boolean> {
-  if (options.length === 0) {
-    await afterSelection([], { setMessage() {} });
-    return true;
-  }
-  let afterSelectionError: unknown;
-  const completed = await ctx.ui.custom<boolean>((tui, theme, keybindings, done) => {
-    const view = new DependencyOnboardingView(tui, theme, keybindings, options, {
-      onCancel: () => done(false),
-      onSubmit: (selected) => {
-        void (async () => {
-          try {
-            if (selected.length > 0) view.beginInstall('Installing...');
-            await afterSelection(selected, {
-              setMessage: (message) => view.setInstallMessage(message),
-            });
-            done(true);
-          } catch (error) {
-            afterSelectionError = error;
-            done(true);
-          }
-        })();
-      },
-    });
-    return view;
-  });
-  if (afterSelectionError !== undefined) throw afterSelectionError;
-  return completed === true;
-}
-
 export class DependencyInstallProgressLoader extends Loader {
   constructor(tui: Pick<TUI, 'requestRender'>, theme: Theme, message: string) {
     super(
@@ -81,6 +43,7 @@ export class DependencyInstallProgressLoader extends Loader {
   }
 }
 
+/** @internal */
 export class DependencyOnboardingView implements Component {
   readonly #checklist: DependencyInstallationChecklist;
   #loader: DependencyInstallProgressLoader | undefined;

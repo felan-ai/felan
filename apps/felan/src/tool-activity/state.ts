@@ -13,7 +13,7 @@ type AgentMessage = AgentSession['messages'][number];
 type AssistantMessage = Extract<AgentMessage, { role: 'assistant' }>;
 type ToolResultMessage = Extract<AgentMessage, { role: 'toolResult' }>;
 
-export interface ToolActivityContent {
+interface ToolActivityContent {
   readonly type: string;
   readonly text?: string;
   readonly data?: string;
@@ -25,7 +25,7 @@ export interface ToolActivityResult {
   readonly details?: unknown;
 }
 
-export type ToolActivityStatus = 'pending' | 'running' | 'completed' | 'error';
+type ToolActivityStatus = 'pending' | 'running' | 'completed' | 'error';
 
 export interface ToolActivityCall {
   readonly id: string;

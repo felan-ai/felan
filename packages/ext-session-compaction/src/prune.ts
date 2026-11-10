@@ -8,11 +8,11 @@ import {
 import { DEFAULT_EXTRACTION_BOUNDS, utf8Bytes } from './internal/bounds.js';
 import type { EvidenceBundle, EvidenceItem, PreparedSpan } from './internal/contracts.js';
 
-export const JEV_PRUNE_HEAD_CHARS = 300;
-export const JEV_PRUNE_EXACT_KEEP = 0.35;
-export const JEV_PRUNE_OBSOLETE_CONFIDENCE = 0.6;
-export const JEV_PRUNE_TINY_BYTES = 90;
-export const JEV_PRUNE_RESULT_HEAD_CHARS = 120;
+const JEV_PRUNE_HEAD_CHARS = 300;
+const JEV_PRUNE_EXACT_KEEP = 0.35;
+const JEV_PRUNE_OBSOLETE_CONFIDENCE = 0.6;
+const JEV_PRUNE_TINY_BYTES = 90;
+const JEV_PRUNE_RESULT_HEAD_CHARS = 120;
 
 export type EvidencePruneSkipReason = 'no-classifier' | 'no-candidates' | 'classifier-failed';
 export type EvidencePruneAction = 'keep' | 'shorten' | 'drop';

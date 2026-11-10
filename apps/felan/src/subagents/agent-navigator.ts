@@ -27,8 +27,9 @@ import { AgentTranscript, type AgentToolPresentation } from './agent-transcript.
 import { registerSubagentCompletionRenderer } from './completion-presentation.js';
 import type { LocalSubagentView } from './types.js';
 import type { AgentViewTranscript } from './types.js';
-import type { LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions, LocalSubagentPresentationHost } from './types.js';
-export type { AgentRailRenderer, LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions } from './types.js';
+import type { LocalSubagentNavigatorHost, LocalSubagentNavigatorOptions } from './types.js';
+/** @internal */
+export type { AgentRailRenderer, LocalSubagentNavigatorHost } from './types.js';
 
 export interface AgentNavigatorRecord extends LocalSubagentView {
   readonly projection?: AgentViewTranscript;
@@ -48,17 +49,13 @@ const MAX_RAIL_ROWS = 5;
 const REFRESH_INTERVAL_MS = 1_000;
 const ACTIVE_RAIL_REFRESH_INTERVAL_MS = 250;
 
-export const AGENT_NAVIGATOR_SHORTCUT = Key.alt('a');
+const AGENT_NAVIGATOR_SHORTCUT = Key.alt('a');
 export const AGENT_NAVIGATOR_OVERLAY_OPTIONS: OverlayOptions = {
   anchor: 'top-left',
   width: '100%',
   maxHeight: '100%',
   margin: 0,
 };
-
-export function createLocalSubagentPresentation(): LocalSubagentPresentationHost {
-  return { register: registerLocalSubagentNavigator };
-}
 
 export class AgentRailEditor extends CustomEditor {
   #railFocused = false;
@@ -627,7 +624,7 @@ function frameOverlayLines(lines: readonly string[], width: number, theme: Theme
   ];
 }
 
-export async function openAgentNavigator(
+async function openAgentNavigator(
   ctx: ExtensionContext,
   host: AgentNavigatorHost,
   initialAgentId?: string,
@@ -662,6 +659,7 @@ export async function openAgentNavigator(
   }
 }
 
+/** @internal */
 export function registerLocalSubagentNavigator(
   pi: Pick<
     FelanExtensionAPI,

@@ -1,5 +1,4 @@
 export { stripAnsiFast } from './ansi.js';
-export { truncate } from './truncate.js';
 export { filterBuildOutput } from './build.js';
 export { aggregateTestOutput } from './test-output.js';
 export { aggregateLinterOutput } from './linter.js';

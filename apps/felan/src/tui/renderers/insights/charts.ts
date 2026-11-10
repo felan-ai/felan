@@ -38,7 +38,7 @@ export function bar(value: number, maximum: number, width: number): string {
 }
 
 /** Samples long series by bucket maximum so spikes stay visible at narrow widths. */
-export function resample(values: readonly number[], width: number): number[] {
+function resample(values: readonly number[], width: number): number[] {
   if (values.length <= width) return [...values];
   return Array.from({ length: width }, (_, index) => {
     const start = Math.floor((index * values.length) / width);

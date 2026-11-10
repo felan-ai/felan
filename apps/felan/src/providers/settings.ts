@@ -30,16 +30,17 @@ export type FelanSettings = DaemonGlobalSettings & {
   readonly extensionConfig?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 };
 
-export const LOCAL_CODEMODE_MODES = ['off', 'on', 'only'] as const;
+const LOCAL_CODEMODE_MODES = ['off', 'on', 'only'] as const;
 export type LocalCodemodeMode = typeof LOCAL_CODEMODE_MODES[number];
 
-export interface PiExtensionSettings {
+interface PiExtensionSettings {
   readonly user?: boolean;
   readonly project?: boolean;
   readonly llamaCpp?: boolean;
 }
 
-export { isBuiltinExtensionEnabled, isDependencyOnboardingComplete, type ResolvedPiExtensionSettings };
+/** @internal */
+export { isBuiltinExtensionEnabled, isDependencyOnboardingComplete };
 
 export interface ResolvedExtensionConfigSettings {
   readonly overrides: readonly ExtensionConfigOverride[];
@@ -88,18 +89,18 @@ export function executionExtensionSettings(id: string, configured: Record<string
   return fields;
 }
 
-export interface FelanTuiSettings {
+interface FelanTuiSettings {
   readonly onboarding?: FelanOnboardingSettings;
 }
 
-export const FELAN_ONBOARDING_SCHEMA_VERSION = 1;
+const FELAN_ONBOARDING_SCHEMA_VERSION = 1;
 
-export interface FelanOnboardingSettings {
+interface FelanOnboardingSettings {
   readonly schemaVersion: number;
   readonly extensions: Readonly<Record<string, number>>;
 }
 
-export interface DependencyOnboardingDecision {
+interface DependencyOnboardingDecision {
   readonly extension: BuiltinExtensionName;
   readonly revision: number;
   readonly enabled: boolean;
@@ -134,6 +135,7 @@ export function getLocalCodemodeMode(settingsManager: SettingsManager): LocalCod
   return parseLocalCodemodeMode(raw.mode);
 }
 
+/** @internal */
 export async function setLocalCodemodeMode(agentDir: string, mode: LocalCodemodeMode): Promise<void> {
   const validated = parseLocalCodemodeMode(mode);
   await updateFelanSettings(agentDir, settings => {
@@ -159,10 +161,12 @@ export function getDynamicThinkingEnabled(settingsManager: SettingsManager): boo
   return raw.dynamic;
 }
 
+/** @internal */
 export function getPiExtensionSettings(settingsManager: SettingsManager): ResolvedPiExtensionSettings {
   return parsePiExtensionSettings((settingsManager.getGlobalSettings() as Record<string, unknown>).piExtensions);
 }
 
+/** @internal */
 export async function setDependencyOnboardingDecision(agentDir: string, decision: DependencyOnboardingDecision): Promise<void> {
   if (!Number.isSafeInteger(decision.revision) || decision.revision < 1) throw new Error('Dependency onboarding revision must be a positive safe integer');
   await updateFelanSettings(agentDir, settings => {

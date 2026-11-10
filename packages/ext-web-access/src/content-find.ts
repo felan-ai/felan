@@ -3,9 +3,9 @@ const MAX_MATCHES_PER_QUERY = 100;
 const MAX_IDENTIFIER_QUERY_CHARACTERS = 500;
 const MAX_IDENTIFIER_TOKENS = 32;
 const IDENTIFIER_SEPARATOR_PATTERN = '[ _.\\/:\\-]{1,8}';
-export const MAX_MERGED_SNIPPET_BYTES = 4_000;
+const MAX_MERGED_SNIPPET_BYTES = 4_000;
 
-export interface ContentMatch {
+interface ContentMatch {
   start: number;
   end: number;
   contextStart: number;

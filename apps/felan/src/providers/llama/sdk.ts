@@ -9,7 +9,7 @@ export interface LlamaModelInfo {
   meta?: { n_ctx?: number; n_ctx_train?: number; size?: number; ftype?: string };
 }
 export interface LlamaProgress { message: string; ratio?: number; detail?: string }
-export interface LlamaClient {
+interface LlamaClient {
   readonly serverUrl: string;
   list(options?: { reload?: boolean; signal?: AbortSignal }): Promise<LlamaModelInfo[]>;
   loadAndWait(model: string, update: (progress: LlamaProgress) => void, signal?: AbortSignal): Promise<LlamaModelInfo>;
@@ -18,7 +18,7 @@ export interface LlamaClient {
   downloadAndWait(model: string, update: (progress: LlamaProgress) => void, signal?: AbortSignal): Promise<LlamaModelInfo[]>;
 }
 export interface HuggingFaceModel { id: string; downloads: number }
-export interface HuggingFaceClient {
+interface HuggingFaceClient {
   search(query: string, signal?: AbortSignal): Promise<HuggingFaceModel[]>;
   details(id: string, signal?: AbortSignal): Promise<{ id: string; gated: false | 'auto' | 'manual'; quantizations: Array<{ name: string; size?: number }> }>;
 }

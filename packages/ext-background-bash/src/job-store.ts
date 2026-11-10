@@ -20,7 +20,8 @@ export interface BackgroundBashPage {
   scanned: number;
 }
 
-export const BACKGROUND_BASH_QUERY_LIMIT = 100;
+const BACKGROUND_BASH_QUERY_LIMIT = 100;
+/** @internal */
 export const BACKGROUND_BASH_SCAN_LIMIT = 100;
 
 export interface BackgroundBashInfo {
@@ -112,7 +113,7 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const jobOperations = new Map<string, Promise<void>>();
 
-export function getBackgroundBashWorkspaceKey(cwd: string): string {
+function getBackgroundBashWorkspaceKey(cwd: string): string {
   const resolvedCwd = resolve(cwd);
   const label = basename(resolvedCwd)
     .toLowerCase()
@@ -127,6 +128,7 @@ export function getBackgroundBashRoot(storageRoot: string, cwd: string): string 
   return join(storageRoot, 'background-bash', getBackgroundBashWorkspaceKey(cwd));
 }
 
+/** @internal */
 export function getBackgroundBashJobsDir(storageRoot: string, cwd: string): string {
   return join(getBackgroundBashRoot(storageRoot, cwd), 'jobs');
 }

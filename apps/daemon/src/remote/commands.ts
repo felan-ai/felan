@@ -7,7 +7,7 @@ import { systemClock, type RemoteClock } from './backoff.js';
 import type { RemoteSubmission } from '../daemon/server.js';
 
 export type ClaimedRemoteCommand = { id: string; requester?: string; command: RemoteCommand; expiresAt: number; claimedAt?: number; channel?: RemoteChannel; automation?: { source: string } } | { id: string; invalid: string };
-export interface RemoteChannel { provider: string }
+interface RemoteChannel { provider: string }
 export interface CommandClaimBatch { startedAt: number; receivedAt: number }
 export type RemoteHostIdentity = { kind: 'personal'; userId: string } | { kind: 'team' };
 export interface RemoteCommandDependencies {
@@ -151,6 +151,7 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/** @internal */
 export function remotePromptRequestId(command: string): string {
   requestTimestamp(command);
   const digest = createHash('sha256').update(`remote-initial-prompt:${command.toLowerCase()}`).digest('hex');

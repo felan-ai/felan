@@ -6,6 +6,7 @@ import type { PowerlineConfig } from './config.js';
 import type { RenderedSegment } from './segments.js';
 export type RenderedPowerlineData = Omit<PowerlineConfig['display'], 'lines'> & { lines: RenderedSegment[][] };
 
+/** @internal */
 export function renderPowerlineData(value: RenderedPowerlineData, theme: PiTheme, width: number, extraRows: readonly string[] = []): string[] {
   const data = value;
   const safeWidth = Math.max(0, Math.floor(width));

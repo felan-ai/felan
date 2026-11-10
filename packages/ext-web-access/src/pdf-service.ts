@@ -1,3 +1,4 @@
+/** @internal */
 export const MARKITDOWN_PDF_EVENT = 'felan:markitdown:pdf-convert:v1';
 
 export interface MarkitdownPdfConversionResult {
@@ -7,6 +8,7 @@ export interface MarkitdownPdfConversionResult {
   readonly cacheHit: boolean;
 }
 
+/** @internal */
 export interface MarkitdownPdfConversionRequest {
   readonly version: 1;
   readonly bytes: Uint8Array;

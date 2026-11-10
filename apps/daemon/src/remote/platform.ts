@@ -18,6 +18,7 @@ export class PlatformError extends Error {
 export interface RemoteSupabaseClient extends RealtimeClientPort {
   rpc(name: string, params?: Record<string, unknown>): PromiseLike<{ data: unknown; error: unknown; status?: number }>;
 }
+/** @internal */
 export type SupabaseClientFactory = (url: string, key: string, options: SupabaseClientOptions<'public'>) => RemoteSupabaseClient;
 export interface PlatformClientOptions {
   clientFactory?: SupabaseClientFactory;
@@ -50,6 +51,7 @@ function errorDetail(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
+/** @internal */
 export function parsePlatformError(error: unknown, status?: number, operation: 'publish' | 'other' = 'publish'): PlatformError {
   const record = errorDetail(error);
   if (typeof record?.code === 'string' && /^PT\d{3}$/u.test(record.code)) {

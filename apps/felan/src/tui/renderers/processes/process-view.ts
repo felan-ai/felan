@@ -2,7 +2,7 @@ import { decodeUiMarkdown } from '../../../client/ui.js';
 import type { UiDocument, UiView } from '@felan-ai/session-protocol';
 import type { ExtensionContext } from '@felan-ai/agent-core';
 import { matchesKey, stripTerminalSequences, truncateToWidth } from '@earendil-works/pi-tui';
-import { PROCESS_VIEW_PAGE_SIZE, parseProcessViewRequest, processViewAction,
+import { PROCESS_VIEW_PAGE_SIZE, processViewAction,
   type ProcessViewAction, type ProcessViewRequest } from '@felan-ai/ext-background-bash/data';
 
 type Theme = ExtensionContext['ui']['theme'];
@@ -161,23 +161,6 @@ export class ProcessViewPanel {
     const border = t.fg('border', '─'.repeat(width));
     return [border, ...lines.map(line => truncateToWidth(line, width, '…')), border];
   }
-}
-
-export async function presentProcessView(ui: Pick<ExtensionContext['ui'], 'custom'>, value: ProcessViewRequest,
-  signal: AbortSignal, navigation?: ProcessViewNavigation): Promise<{ action?: ProcessViewAction; navigation?: ProcessViewNavigation }> {
-  const state = parseProcessViewRequest(value);
-  if (signal.aborted) return {};
-  let panel: ProcessViewPanel | undefined; let finish: ((value: ProcessViewAction | undefined) => void) | undefined;
-  const abort = () => { panel?.dispose(); finish?.(undefined); };
-  signal.addEventListener('abort', abort, { once: true });
-  try {
-    const action = await ui.custom<ProcessViewAction | undefined>((tui, theme, _keys, done) => {
-      finish = done; panel = new ProcessViewPanel(state, theme, done, () => tui.requestRender(), navigation);
-      if (signal.aborted) abort();
-      return panel;
-    });
-    return { ...(action ? { action } : {}), ...(panel ? { navigation: panel.navigation } : {}) };
-  } finally { signal.removeEventListener('abort', abort); panel?.dispose(); }
 }
 
 function plain(value: string): string { return stripTerminalSequences(value).replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/gu, ''); }

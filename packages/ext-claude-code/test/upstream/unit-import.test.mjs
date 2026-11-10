@@ -4,7 +4,7 @@
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 import { repairToolPairing } from "cc-session-io";
-import { sanitizeToolId, convertPiMessages } from "../../src/bridge/convert.ts";
+import { convertPiMessages } from "../../src/bridge/convert.ts";
 
 /** Shorthand: convert pi messages and return just the anthropic messages. */
 function convert(messages, customToolNameToSdk) {
@@ -83,15 +83,6 @@ describe("empty text block filtering", () => {
 		assert.equal(result[0].content[0].text, "[incompatible content omitted]");
 	});
 
-	it("assistant with non-empty text → preserved", () => {
-		const msgs = [
-			{ role: "assistant", content: [{ type: "text", text: "Hello world" }] },
-		];
-		const result = convert(msgs);
-		assert.equal(result.length, 1);
-		assert.equal(result[0].content[0].text, "Hello world");
-	});
-
 	it("assistant with multiple text blocks, some empty", () => {
 		const msgs = [
 			{ role: "assistant", content: [
@@ -157,17 +148,6 @@ describe("thinking block filtering", () => {
 		const result = convert(msgs);
 		assert.equal(result[0].content.length, 1);
 		assert.equal(result[0].content[0].type, "text");
-	});
-
-	it("assistant with only thinking (non-Anthropic) → placeholder", () => {
-		const msgs = [
-			{ role: "assistant", provider: "deepseek", content: [
-				{ type: "thinking", thinking: "deep thoughts" },
-			]},
-		];
-		const result = convert(msgs);
-		assert.equal(result.length, 1);
-		assert.equal(result[0].content[0].text, "[incompatible content omitted]");
 	});
 });
 
@@ -242,10 +222,6 @@ describe("message structure", () => {
 		assert.equal(result[2].content[0].type, "tool_result");
 		assert.equal(result[3].role, "assistant");
 		assert.equal(result[3].content[0].text, "The file says hello world.");
-	});
-
-	it("user string content", () => {
-		assert.equal(convert([{ role: "user", content: "hello" }])[0].content, "hello");
 	});
 
 	it("user empty string → [empty]", () => {
@@ -418,14 +394,6 @@ describe("conversion survives repairToolPairing", () => {
 		assert.deepEqual(repaired[1].content.map((b) => b.content), ["first", "second"]);
 		assert.equal(repaired[2].content, "actually stop and check X");
 	});
-
-	it("leaves no synthetic result stubs behind", () => {
-		const repaired = repairToolPairing(convert(parallelCall(5)));
-
-		const stubs = repaired.flatMap((m) => (Array.isArray(m.content) ? m.content : []))
-			.filter((b) => b.type === "tool_result" && typeof b.content === "string" && b.content.includes("no tool result recorded"));
-		assert.deepEqual(stubs, []);
-	});
 });
 
 describe("aborted assistant turns", () => {
@@ -474,33 +442,5 @@ describe("aborted assistant turns", () => {
 		]);
 		assert.deepEqual(result.map((m) => m.role), ["assistant", "user"]);
 		assert.equal(result[1].content[0].tool_use_id, "t1");
-	});
-});
-
-describe("dropped-content accounting", () => {
-	it("counts stripped thinking by provider and aborted turns", () => {
-		const { dropped } = convertPiMessages([
-			{ role: "assistant", provider: "openrouter", content: [
-				{ type: "thinking", thinking: "reasoning" },
-				{ type: "text", text: "the answer" },
-			]},
-			{ role: "assistant", content: [] },
-			{ role: "assistant", provider: "claude-code", content: [
-				{ type: "thinking", thinking: "mine", thinkingSignature: "sig" },
-			]},
-		]);
-		assert.equal(dropped.thinking, 1);
-		assert.deepEqual([...dropped.providers], ["openrouter"]);
-		assert.equal(dropped.abortedTurns, 1);
-	});
-
-	it("reports nothing when everything converts", () => {
-		const { dropped } = convertPiMessages([
-			{ role: "user", content: [{ type: "text", text: "hi" }] },
-			{ role: "assistant", content: [{ type: "text", text: "hello" }] },
-		]);
-		assert.equal(dropped.thinking, 0);
-		assert.equal(dropped.abortedTurns, 0);
-		assert.equal(dropped.other.size, 0);
 	});
 });

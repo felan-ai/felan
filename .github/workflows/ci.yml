@@ -43,6 +43,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - run: pnpm dead-code
+        if: matrix.name == 'packed install'
       - run: pnpm build
       - run: ${{ matrix.run }}
 

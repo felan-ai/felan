@@ -15,14 +15,14 @@ import type { SessionExtensionBindings, SessionExtensionContext, SessionExecutio
 
 export const SESSION_LIFECYCLE_API_VERSION = 1;
 
-export interface SessionResourceRequest {
+interface SessionResourceRequest {
   readonly cwd: string;
   readonly sessionDir?: string;
 }
 
 export type SessionResources = SessionEnvironment;
 
-export interface SessionOwnership {
+interface SessionOwnership {
   // The registry must hold the source-session and destination-directory claims before opening; calls are idempotent.
   assertOwned(resources: SessionResources, target: SessionTargetIdentity): void | Promise<void>;
 }
@@ -55,7 +55,7 @@ export interface DaemonSessionServices {
   };
 }
 
-export type SessionTarget =
+type SessionTarget =
   | { readonly kind: 'new'; readonly id?: string }
   | { readonly kind: 'resume'; readonly sessionFile: string }
   | { readonly kind: 'fork'; readonly sourceSessionFile: string; readonly entryId: string; readonly position: 'before' | 'at' }

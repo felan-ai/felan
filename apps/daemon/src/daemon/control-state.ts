@@ -12,8 +12,8 @@ export class ControlStoreError extends Error {
     super(message); this.name = 'ControlStoreError';
   }
 }
-export const DigestSchema = Type.String({ pattern: '^[a-f0-9]{64}$' });
-export const IdentitySchema = Type.Object({ sha256: DigestSchema, bytes: CounterSchema });
+const DigestSchema = Type.String({ pattern: '^[a-f0-9]{64}$' });
+const IdentitySchema = Type.Object({ sha256: DigestSchema, bytes: CounterSchema });
 export const SessionProfileSchema = Type.Object({
   extensionPaths: Type.Optional(Type.Array(AbsolutePathSchema, { uniqueItems: true })),
   allowedTools: Type.Optional(Type.Array(IdSchema, { minItems: 1, uniqueItems: true })),
@@ -32,7 +32,7 @@ const projection = Type.Object({
     Type.Object({ type: Type.Literal('queue'), ids: Type.Array(IdSchema, { maxItems: 256 }), identity: IdentitySchema }),
   ]),
 });
-export const ExecutionMetadataSchema = Type.Object({
+const ExecutionMetadataSchema = Type.Object({
   request: Type.Object({
     prompt: unboundedText(1), description: unboundedText(1), appendSystemPrompt: Type.Optional(unboundedText()),
     model: Type.Optional(ModelSchema), thinking: Type.Optional(ThinkingSchema), label: Type.Optional(text(256, 1)),
@@ -61,17 +61,17 @@ export const ControlSessionSchema = Type.Object({
   projections: Type.Array(projection, { maxItems: CONTROL_LIMITS.projections }),
 });
 export const ControlSessionMetadataSchema = Type.Omit(ControlSessionSchema, ['projections']);
-export const ControlProjectionRecordSchema = projection;
+const ControlProjectionRecordSchema = projection;
 export type ControlSession = Static<typeof ControlSessionSchema>;
 export type ControlSessionMetadata = Omit<ControlSession, 'projections'>;
 export type ControlProjection = Static<typeof projection>['value'];
-export const ControlRequestSchema = Type.Object({
+const ControlRequestSchema = Type.Object({
   id: Type.String({ pattern: UUID_V7_PATTERN }), principal: IdSchema, session: Type.Optional(IdSchema), op: IdSchema,
   admittedAt: CounterSchema, retainUntil: CounterSchema, identity: IdentitySchema,
   phase: enumOf(['intent', 'dispatch_intent', 'terminal'] as const), response: Type.Optional(Type.Unknown()),
 });
 export type ControlRequest = Omit<Static<typeof ControlRequestSchema>, 'response'> & { response?: import('@felan-ai/session-protocol').Response };
-export const ControlContinuationSchema = Type.Object({
+const ControlContinuationSchema = Type.Object({
   id: IdSchema, interaction: IdSchema, session: IdSchema,
   phase: enumOf(['ready', 'dispatch_intent', 'completed', 'indeterminate', 'cancelled'] as const),
   createdAt: CounterSchema, updatedAt: CounterSchema,
@@ -87,7 +87,7 @@ export const ControlResourceSchema = Type.Object({
   exitCode: Type.Optional(Type.Integer()),
 });
 export type ControlResource = Static<typeof ControlResourceSchema>;
-export const ControlStateSchema = Type.Object({
+const ControlStateSchema = Type.Object({
   version: Type.Literal(1), namespace: IdSchema, agentDir: AbsolutePathSchema, clock: CounterSchema,
   sessions: Type.Array(ControlSessionSchema),
   requests: Type.Array(ControlRequestSchema),
@@ -97,6 +97,7 @@ export const ControlStateSchema = Type.Object({
 }, { additionalProperties: false });
 export type ControlState = Omit<Static<typeof ControlStateSchema>, 'requests'> & { requests: ControlRequest[] };
 
+/** @internal */
 export class ControlStateValidationError extends Error {
   constructor(readonly code: 'unsupported_version' | 'invalid_state') {
     super(code === 'unsupported_version' ? 'Control state version is unsupported.' : 'Control state is invalid.');

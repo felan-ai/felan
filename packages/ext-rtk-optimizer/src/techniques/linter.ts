@@ -21,7 +21,7 @@ interface Issue {
   message: string;
 }
 
-export function isLinterCommand(command: string | undefined | null): boolean {
+function isLinterCommand(command: string | undefined | null): boolean {
   return matchesCommandPatterns(command, LINTER_COMMAND_PATTERNS);
 }
 

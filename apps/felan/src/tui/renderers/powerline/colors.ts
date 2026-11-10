@@ -45,11 +45,6 @@ export function getThemePalette(theme: PiTheme): ThemePalette {
   };
 }
 
-export function colorBlock(text: string, pair: ColorPair, _mode?: ColorMode): string {
-  if (_mode === 'none') return text;
-  return `${pair.fg}${pair.bg}${text}\x1b[0m`;
-}
-
 export function colorForeground(text: string, ansi: string, _mode?: ColorMode): string {
   if (_mode === 'none') return text;
   return `${ansi}${text}\x1b[39m`;

@@ -103,6 +103,7 @@ export function createToolActivityDisplayDefinition(
   };
 }
 
+/** @internal */
 export function renderToolActivityGroup(
   state: ToolActivityState,
   groupId: string,
@@ -132,6 +133,7 @@ export function renderToolActivityGroup(
   return lines.join('\n');
 }
 
+/** @internal */
 export function toolCallLabel(call: ToolActivityCall): string {
   return toolCallPresentation(call).label;
 }
@@ -168,6 +170,7 @@ function resultChoicePreview(call: ToolActivityCall): string | undefined {
   return undefined;
 }
 
+/** @internal */
 export function toolGroupSummary(calls: readonly ToolActivityCall[]): string {
   const running = calls.some((call) => call.status === 'pending' || call.status === 'running');
   const counts = new Map<ToolCategory, number>();

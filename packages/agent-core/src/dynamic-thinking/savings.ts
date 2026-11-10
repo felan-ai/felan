@@ -6,8 +6,9 @@ import { supportsDynamicThinking } from './selection.js';
 const HIGH_EFFORT_REASONING_UPLIFT_DENOMINATOR = 20;
 const EFFORT_LEVELS: readonly FelanThinkingLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-export const DYNAMIC_THINKING_SAVINGS_METHOD = 'high-effort-reasoning-5pct-heuristic-v2';
+const DYNAMIC_THINKING_SAVINGS_METHOD = 'high-effort-reasoning-5pct-heuristic-v2';
 
+/** @internal */
 export function estimateHighEffortOutputTokens(
   model: Model<Api>,
   baseline: FelanThinkingLevel,

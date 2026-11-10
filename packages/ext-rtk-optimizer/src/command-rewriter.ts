@@ -15,7 +15,7 @@ export interface ResolveRtkRewriteOptions {
   readonly executable?: string;
 }
 
-export interface RtkRewriteResult {
+interface RtkRewriteResult {
   readonly changed: boolean;
   readonly rewrittenCommand: string;
   readonly exitCode: number;
@@ -177,12 +177,13 @@ export async function inspectRtkRuntime(runtime: AgentRuntime): Promise<RuntimeS
   };
 }
 
+/** @internal */
 export function isAlreadyRtk(command: string): boolean {
   const effectiveCommand = splitLeadingEnvAssignments(command.trimStart()).command.trimStart();
   return effectiveCommand === 'rtk' || effectiveCommand.startsWith('rtk ');
 }
 
-export function splitLeadingEnvAssignments(input: string): {
+function splitLeadingEnvAssignments(input: string): {
   readonly envPrefix: string;
   readonly command: string;
 } {
