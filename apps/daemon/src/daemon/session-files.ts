@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, constants, fstatSync, fsyncSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { AbsolutePathSchema, IdSchema } from '@felan-ai/session-protocol';
 import { Type } from 'typebox';
 import type { DaemonOwnership } from './ownership.js';
+import { syncDescriptor } from './durability.js';
 import { guardOwnedPaths, prepareControlDirectory, syncOwnedDirectory } from './persistence.js';
 import { assertPathIdentity, pathIdentity, pathInside, type PathIdentity } from './target.js';
 
@@ -74,7 +75,7 @@ export function stageImport(owner: DaemonOwnership, directory: string, source: s
   const path = join(target, `.felan-import-${randomUUID()}.tmp`);
   const output = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   let pin: PathIdentity | undefined;
-  try { pin = pathIdentity(path); check(); writeFileSync(output, prepared.bytes); fsyncSync(output); check(); }
+  try { pin = pathIdentity(path); check(); writeFileSync(output, prepared.bytes); syncDescriptor(output); check(); }
   catch (cause) { owner.assertCurrent(); if (pin) unlinkPinned(path, pin); throw cause; }
   finally { closeSync(output); }
   const pinned = pin;
@@ -103,13 +104,13 @@ export async function publishExport(owner: DaemonOwnership, render: (path: strin
     owner.assertCurrent();
     try { chmodSync(temp, statSync(target).mode & 0o777); } catch (cause) { if (!absent(cause)) throw cause; }
     const fd = openSync(temp, constants.O_RDONLY);
-    try { fsyncSync(fd); } finally { closeSync(fd); }
+    try { syncDescriptor(fd); } finally { closeSync(fd); }
     renameSync(temp, target);
   } catch (cause) {
     try { unlinkSync(temp); } catch {}
     throw cause;
   }
   const directory = openSync(dirname(target), constants.O_RDONLY | constants.O_DIRECTORY);
-  try { fsyncSync(directory); } finally { closeSync(directory); }
+  try { syncDescriptor(directory); } finally { closeSync(directory); }
   return target;
 }

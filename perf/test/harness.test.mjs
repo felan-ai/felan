@@ -30,8 +30,10 @@ test('per-case failures and skips do not stop later metrics', async () => {
 test('SQLite case names include the exact shipped control-store pragmas', () => {
   assert.deepEqual(SQLITE_CASES.map(([label]) => label), ['FULL-fullfsync', 'FULL', 'NORMAL', 'shipped']);
   const source = readFileSync(join(ROOT, 'apps/daemon/src/daemon/persistence.ts'), 'utf8');
-  const pragmas = source.match(/^const PRAGMAS = '([^']+)';$/m)?.[1];
-  assert.ok(pragmas, 'Control-store PRAGMAS must be available for comparison');
+  const sync = source.match(/\?\s*'(PRAGMA synchronous = [^']+)'/)?.[1];
+  const template = source.match(/return `(PRAGMA journal_mode = WAL; \$\{sync\}; PRAGMA busy_timeout = \d+)`;/)?.[1];
+  assert.ok(sync && template, 'Default control-store pragmas must be available for comparison');
+  const pragmas = template.replace('${sync}', sync);
   const normalize = sql => sql.split(';').map(statement => statement.replace(/\s/g, '').toLowerCase()).filter(Boolean).sort();
   assert.deepEqual(normalize(SQLITE_CASES.find(([label]) => label === 'shipped')[1]), normalize(pragmas));
 });
@@ -47,6 +49,14 @@ test('isolated environment has no ambient credentials and cleans its tree', asyn
     for (const name of ['HOME', 'TMPDIR', 'FELAN_AGENT_DIR', 'PI_CODING_AGENT_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME', 'XDG_RUNTIME_DIR']) assert.ok(env[name].startsWith(isolation.root));
   } finally { await cleanupIsolation(isolation); }
   assert.equal(existsSync(isolation.root), false);
+  for (const status of [0, 7]) {
+    const child = spawnSync(join(ROOT, 'scripts/test-isolated.sh'), [process.execPath, '-e',
+      'process.stdout.write(process.env.HOME); process.exit(Number(process.argv[1]));', String(status)],
+    { cwd: ROOT, encoding: 'utf8' });
+    assert.equal(child.status, status, child.stderr);
+    assert.match(child.stdout, /^\/tmp\/fth\.[^/]+$/u);
+    assert.equal(existsSync(child.stdout), false);
+  }
 });
 test('cleanup refuses unrelated paths', async () => {
   await assert.rejects(cleanupIsolation({ root: '/tmp/not-owned', runtime: '/tmp/not-owned/rt' }), /Refusing cleanup/);
@@ -56,7 +66,7 @@ test('cleanup stops a provider carrying this run runtime', async () => {
   const child = spawn(process.execPath, [join(HERE, 'fake-provider.mjs'), '--runtime', isolation.runtime], { env: isolation.env, stdio: ['ignore', 'pipe', 'pipe'] });
   const exited = once(child, 'exit');
   try {
-    await Promise.race([once(child.stdout, 'data'), exited.then(() => { throw new Error('Provider failed to start'); })]);
+    await Promise.race([once(child.stdout, 'data', { signal: AbortSignal.timeout(5_000) }), exited.then(() => { throw new Error('Provider failed to start'); })]);
   } finally { await cleanupIsolation(isolation); }
   await exited;
   assert.equal(existsSync(isolation.root), false);
@@ -85,8 +95,9 @@ test('cleanup escalates an unresponsive owned daemon before removing its runtime
   const exited = once(child, 'exit');
   let output = '';
   child.stdout.on('data', data => { output += data; });
-  await once(child.stdout, 'data');
-  await cleanupIsolation(isolation);
+  try {
+    await Promise.race([once(child.stdout, 'data', { signal: AbortSignal.timeout(5_000) }), exited.then(() => { throw new Error('Daemon failed to start'); })]);
+  } finally { await cleanupIsolation(isolation); }
   await exited;
   assert.equal(child.signalCode, 'SIGKILL');
   assert.match(output, /term-root-present=true/);

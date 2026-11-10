@@ -1,7 +1,8 @@
-import { closeSync, constants, fsyncSync, futimesSync, lstatSync, lutimesSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, futimesSync, lstatSync, lutimesSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
+import { syncDescriptor } from './durability.js';
 import { DaemonSecurityError, tryKernelLock } from './native-ownership.js';
 import { assertPathIdentity, assertPrivateStat, canonicalProspectivePath, identityFor, openPrivateFile, pathIdentity, pathInside, pathsOverlap, pinPathAncestry, pinPathChain, prepareDaemonTarget, privateDirectory, resolveDaemonTarget, storeDirectory, type DaemonTarget, type PathIdentity, type ResolvedDaemonTarget } from './target.js';
 
@@ -74,12 +75,12 @@ function claimActive(target: ResolvedDaemonTarget, claim: Claim): boolean {
 function saveLedger(directory: string, uid: number, ledger: Ledger): void {
   const temp = join(directory, `claims-${randomUUID()}.tmp`);
   const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-  try { writeFileSync(fd, JSON.stringify(ledger)); fsyncSync(fd); } finally { closeSync(fd); }
+  try { writeFileSync(fd, JSON.stringify(ledger)); syncDescriptor(fd); } finally { closeSync(fd); }
   try {
     assertPrivateStat(lstatSync(directory, { bigint: true }), uid, true);
     renameSync(temp, join(directory, 'claims.json'));
     const dir = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    try { fsyncSync(dir); } finally { closeSync(dir); }
+    try { syncDescriptor(dir); } finally { closeSync(dir); }
   } finally { try { unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
 }
 
@@ -101,6 +102,7 @@ async function coordination(target: ResolvedDaemonTarget): Promise<{ fd: number;
   } catch (error) { closeSync(fd); throw error; }
 }
 
+/** @internal */
 export function namespaceLockName(target: ResolvedDaemonTarget): string {
   return target.kind === 'production' ? 'production.lock' : `isolated-${createHash('sha256').update(target.namespaceId).digest('hex')}.lock`;
 }

@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { DaemonOwnership } from './ownership.js';
+import { durableWrites, syncDescriptor } from './durability.js';
 import { assertPathIdentity, pathIdentity, pathInside, pinPathAncestry, storeDirectory, type PathIdentity } from './target.js';
 import { ControlStoreError } from './control-state.js';
 
@@ -42,7 +43,7 @@ export function syncOwnedDirectory(owner: DaemonOwnership, directory: string): v
   try {
     const stat = fstatSync(fd, { bigint: true }); const pin = pathIdentity(path);
     if (stat.dev !== pin.dev || stat.ino !== pin.ino) throw new ControlStoreError('ownership_lost', 'Directory changed while syncing.');
-    check(); fsyncSync(fd); check();
+    check(); syncDescriptor(fd); check();
   } finally { closeSync(fd); }
 }
 
@@ -64,7 +65,7 @@ export const CONTROL_TABLES = ['sessions', 'requests', 'interactions', 'continua
 export type ControlTable = typeof CONTROL_TABLES[number];
 /** A persisted record; `ord` orders a table's rows as the in-memory arrays they were written from. */
 export interface ControlRow { readonly id: string; readonly ord: number; readonly data: string }
-export interface ControlMeta { readonly namespace: string; readonly agentDir: string; readonly clock: number }
+interface ControlMeta { readonly namespace: string; readonly agentDir: string; readonly clock: number }
 export interface StoredControl { readonly meta: ControlMeta; readonly rows: Readonly<Record<ControlTable, readonly ControlRow[]>> }
 export interface ControlChanges {
   readonly meta: ControlMeta;
@@ -88,8 +89,13 @@ export interface RemoteDatabase {
 const DATABASE = 'control.sqlite';
 const FORMAT = '1';
 const SIDECARS = ['-wal', '-shm', '-journal'] as const;
-// NORMAL avoids per-commit flushes; remaining syncs, including checkpoints, retain macOS F_FULLFSYNC.
-const PRAGMAS = 'PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON; PRAGMA busy_timeout = 1000';
+function controlPragmas(): string {
+  // NORMAL avoids per-commit flushes; remaining syncs, including checkpoints, retain macOS F_FULLFSYNC.
+  const sync = durableWrites()
+    ? 'PRAGMA synchronous = NORMAL; PRAGMA fullfsync = ON; PRAGMA checkpoint_fullfsync = ON'
+    : 'PRAGMA synchronous = OFF';
+  return `PRAGMA journal_mode = WAL; ${sync}; PRAGMA busy_timeout = 1000`;
+}
 /** SQLite primary result codes that describe the environment, not the file's contents. */
 const SQLITE_TRANSIENT = new Set([3 /* PERM */, 5 /* BUSY */, 6 /* LOCKED */, 7 /* NOMEM */, 8 /* READONLY */, 10 /* IOERR */, 13 /* FULL */, 14 /* CANTOPEN */]);
 const REMOTE_SCHEMA = `
@@ -170,7 +176,7 @@ export class ControlDatabase implements RemoteDatabase {
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       this.storeId = randomUUID();
       const fd = openSync(this.initialization, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-      try { writeFileSync(fd, JSON.stringify({ version: 1, storeId: this.storeId, directory: this.directory })); fsyncSync(fd); }
+      try { writeFileSync(fd, JSON.stringify({ version: 1, storeId: this.storeId, directory: this.directory })); syncDescriptor(fd); }
       finally { closeSync(fd); }
       syncOwnedDirectory(owner, owner.target.agentDir);
       prepareControlDirectory(owner, this.directory);
@@ -209,7 +215,7 @@ export class ControlDatabase implements RemoteDatabase {
   private connect(): void {
     const db = this.db = new (loadSqlite().DatabaseSync)(this.path);
     try {
-      db.exec(PRAGMAS);
+      db.exec(controlPragmas());
       if ((db.prepare('PRAGMA quick_check').get() as { quick_check?: unknown } | undefined)?.quick_check !== 'ok') throw new DatabaseIntegrityError();
       const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(row => (row as { name: string }).name));
       if (!['meta', ...CONTROL_TABLES].every(table => tables.has(table))) throw new DatabaseIntegrityError();
@@ -235,7 +241,7 @@ export class ControlDatabase implements RemoteDatabase {
     if (SIDECARS.some(extension => { try { lstatSync(`${this.path}${extension}`); return true; } catch { return false; } })) this.quarantineFiles();
     closeSync(openSync(this.path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600));
     const db = this.db = new (loadSqlite().DatabaseSync)(this.path);
-    db.exec(PRAGMAS);
+    db.exec(controlPragmas());
     db.exec(['BEGIN IMMEDIATE', 'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT',
       ...CONTROL_TABLES.map(table => `CREATE TABLE ${table} (id TEXT PRIMARY KEY, ord INTEGER NOT NULL, data TEXT NOT NULL) STRICT`), REMOTE_SCHEMA].join('; '));
     this.statements = prepareStatements(db);

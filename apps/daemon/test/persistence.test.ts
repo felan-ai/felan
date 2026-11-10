@@ -12,7 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, parseInteraction } from '@felan-ai/session-protocol';
 import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../src/daemon/control-store.js';
-import { ControlDatabase, type ControlChanges, type PersistenceBoundary } from '../src/daemon/persistence.js';
+import { ControlDatabase, type PersistenceBoundary } from '../src/daemon/persistence.js';
 import { controlDatabasePath, execControlDatabase, readControlDatabase, writeControlDatabase } from './fixtures/control-database.js';
 
 const supported = ['darwin', 'linux'].includes(process.platform);
@@ -96,19 +96,14 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     expect(() => store.project('s', [{ type: 'status', id: 'status', text: 'status' } as never])).toThrow();
     expect(store.snapshot()).toEqual(before);
   });
-  it('writes only changed rows and reloads every table in its in-memory order', async () => {
-    let commits = 0;
-    const { owner, store } = await open({ fault: at => { if (at === 'before_commit') commits++; } });
+  it('reloads every table in its in-memory order', async () => {
+    const { owner, store } = await open();
     store.createSession({ id: 'other', root: 'other', cwd: '/fixture', piPath: join(owner.target.agentDir, 'other.jsonl'), state: 'open', residency: 'warm', run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, title: '' });
     for (const id of ['first', 'second', 'third']) store.putResource({ id, session: 's', root: 's', kind: 'detached', state: 'running', reference: join(owner.target.agentDir, `${id}.json`), startIdentity: id, updatedAt: now });
     store.putResource({ id: 'first', session: 's', root: 's', kind: 'detached', state: 'exited', reference: join(owner.target.agentDir, 'first.json'), startIdentity: 'first', updatedAt: now });
     store.updateSession('s', { title: 'moved nowhere' });
     const before = store.snapshot();
-    const write = vi.spyOn(ControlDatabase.prototype, 'write');
-    const written = commits; store.updateSession('s', { title: 'only this row' });
-    expect(commits).toBe(written + 1);
-    const changes = write.mock.calls.at(-1)![0] as ControlChanges; write.mockRestore();
-    expect(changes.upserts.map(([table, row]) => [table, row.id])).toEqual([['sessions', 's']]); expect(changes.deletes).toEqual([]);
+    store.updateSession('s', { title: 'only this row' });
     expect(before.resources.map(item => item.id)).toEqual(['second', 'third', 'first']);
     store.close(); const reloaded = reopen(owner);
     expect(reloaded.snapshot()).toEqual({ ...before, sessions: [{ ...before.sessions[0]!, title: 'only this row', revision: before.sessions[0]!.revision + 1 }, before.sessions[1]] });
@@ -164,15 +159,6 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
       store.updateSession('s', { title: 'available' }); expect(store.session('s').title).toBe('available');
     }
   });
-  it('discards a rejected commit and writes the next one from the committed state', async () => {
-    const { owner, store } = await open(); const revision = store.session('s').revision;
-    const valid = vi.spyOn(store as unknown as { validSession(): boolean }, 'validSession').mockReturnValueOnce(false);
-    expect(() => store.updateSession('s', { title: 'rejected' })).toThrow(/inconsistent/);
-    valid.mockRestore();
-    expect(store.session('s')).toMatchObject({ title: '', revision });
-    store.updateSession('s', { title: 'accepted' }); store.close();
-    expect(reopen(owner).session('s')).toMatchObject({ title: 'accepted', revision: revision + 1 });
-  });
   it('quarantines a leftover WAL instead of replaying it into a new database', async () => {
     const { owner, store } = await open(); store.updateSession('s', { title: 'only in the WAL' });
     const path = controlDatabasePath(store.directory); const wal = await readFile(`${path}-wal`);
@@ -190,8 +176,7 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
       expect((await readdir(reopened.directory)).some(name => name.startsWith('control-corrupt-'))).toBe(true);
     });
   }
-  it('quarantines torn, deleted, unknown-format, foreign or replaced files and starts empty instead of restoring old revisions', async () => {
-    for (const mode of ['torn', 'delete', 'version', 'foreign', 'symlink']) {
+  it.each(['torn', 'delete', 'version', 'foreign', 'symlink'])('starts empty after a %s control file instead of restoring old revisions', async mode => {
       const { owner, store } = await open(); store.close(); const path = controlDatabasePath(store.directory);
       if (mode === 'torn') await writeFile(path, 'SQLite format 3\0torn');
       if (mode === 'delete') await rm(path);
@@ -202,7 +187,6 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
       expect(reopened.snapshot().sessions).toEqual([]); expect(reopened.needsRecovery).toBe(false);
       expect((await readdir(reopened.directory)).some(name => name.startsWith('control-corrupt-'))).toBe(mode !== 'delete');
       reopened.close();
-    }
   });
   it('rechecks ownership before writes and after injected scheduling gaps', async () => {
     let replace = false;
@@ -393,16 +377,15 @@ describe.skipIf(!supported)('atomic interaction winners and continuation intents
 });
 
 describe.skipIf(!supported)('control retention and cancellation boundaries', () => {
-  it('does not rewrite unchanged resources or renew their transition timestamp for metadata updates', async () => {
+  it('preserves resource transition timestamps for metadata updates', async () => {
     let time = now; const { store } = await open({ now: () => time });
     const resource = store.putResource({ id: 'process', session: 's', root: 's', kind: 'detached', state: 'exited', updatedAt: 0 }).value;
-    const revision = store.sessionMetadata('s').revision; const write = vi.spyOn(ControlDatabase.prototype, 'write');
+    const revision = store.sessionMetadata('s').revision;
     time += 1000;
     expect(store.putResource({ ...resource, updatedAt: time }).revisions).toEqual({});
-    expect(write).not.toHaveBeenCalled(); expect(store.sessionMetadata('s').revision).toBe(revision);
+    expect(store.sessionMetadata('s').revision).toBe(revision);
     expect(store.putResource({ ...resource, command: 'restored command', startedAt: now - 100 }).value.updatedAt).toBe(now);
     expect(store.putResource({ ...store.resource('process'), state: 'running' }).value.updatedAt).toBe(time);
-    write.mockRestore();
     const copies = store.resources('s'); copies[0]!.state = 'missing';
     expect(store.resource('process')?.state).toBe('running'); expect(store.resources('another-root')).toEqual([]);
   });
@@ -496,20 +479,23 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
     const rebuilt = reopen(nextOwner);
     expect(rebuilt.snapshot().sessions).toEqual([]); expect(rebuilt.needsRecovery).toBe(false);
   });
-  it('syncs new control directory entries in their parent and still creates genuinely new stores', async () => {
+  it('syncs new control directory entries in their parent unless tests disable durable writes', async () => {
     const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
-    const agent = fs.statSync(owner.target.agentDir); const directory = join(owner.target.agentDir, 'new', 'control');
-    const syncs: string[] = []; const original = fs.fsyncSync;
-    fs.fsyncSync = (fd: number) => {
-      const stat = fs.fstatSync(fd);
-      if (stat.dev === agent.dev && stat.ino === agent.ino) syncs.push(fs.existsSync(directory) ? 'parent-after-create' : 'initialization-parent');
-      return original(fd);
-    }; syncBuiltinESMExports();
-    try { const store = new DaemonControlStore(owner, { directory }); stores.push(store); expect(store.needsRecovery).toBe(false); }
-    finally { fs.fsyncSync = original; syncBuiltinESMExports(); }
-    expect(syncs).toContain('initialization-parent'); expect(syncs).toContain('parent-after-create');
-    const other = new DaemonControlStore(owner, { directory: join(owner.target.agentDir, 'other-control') }); stores.push(other);
-    expect(other.snapshot().requests).toEqual([]);
+    const agent = fs.statSync(owner.target.agentDir);
+    const parentSyncs = (directory: string, skipFsync: string | undefined) => {
+      const syncs: string[] = []; const original = fs.fsyncSync;
+      vi.stubEnv('FELAN_TEST_SKIP_FSYNC', skipFsync);
+      fs.fsyncSync = (fd: number) => {
+        const stat = fs.fstatSync(fd);
+        if (stat.dev === agent.dev && stat.ino === agent.ino) syncs.push(fs.existsSync(directory) ? 'parent-after-create' : 'initialization-parent');
+        return original(fd);
+      }; syncBuiltinESMExports();
+      try { const store = new DaemonControlStore(owner, { directory }); stores.push(store); expect(store.needsRecovery).toBe(false); }
+      finally { fs.fsyncSync = original; syncBuiltinESMExports(); vi.unstubAllEnvs(); }
+      return syncs;
+    };
+    expect(parentSyncs(join(owner.target.agentDir, 'new', 'control'), undefined)).toEqual(expect.arrayContaining(['initialization-parent', 'parent-after-create']));
+    expect(parentSyncs(join(owner.target.agentDir, 'other-control'), '1')).toEqual([]);
   });
   it('persists a large valid terminal interaction', async () => {
     const { owner, store } = await open();

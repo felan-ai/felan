@@ -1,11 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { closeSync, constants, existsSync, fsyncSync, openSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, openSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { AgentRuntime, AgentSession } from '@felan-ai/agent-core';
 import { parseInteraction, parseSchema, type Interaction, type InteractionAnswer, type KnownSessionChange, type OperationParams, type Origin, type Policy, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { RegistryExecutions, ExecutionHost } from './executions.js';
+import { syncDescriptor } from './durability.js';
 import type { ExecutionMetadata } from './control-state.js';
 import type { ProcessAdapter } from './process-adapter.js';
 import type { SessionRuntime } from './session-runtime.js';
@@ -25,6 +26,7 @@ import { shutdownStep } from './shutdown-error.js';
 import { HostWorkers } from './host-workers.js';
 import { assertStagedWorker } from './worker.js';
 
+/** @internal */
 export const PROJECTION_CLEANUP_LIMIT_MS = 30_000;
 
 export interface RegistryOpenRequest extends Omit<SessionOpenRequest, 'resources' | 'ownership' | 'services' | 'policy' | 'execution'> {
@@ -1124,9 +1126,9 @@ export class SessionRegistry {
           if (manager.getEntries().some(row => row.type === 'message' && ['user', 'assistant'].includes(row.message.role))) throw new Error('Conversation transcript was not persisted.');
           const bytes = rows.map(row => JSON.stringify(row)).join('\n') + '\n';
           const fd = openSync(this.options.owner.assertOwnsPath(path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-          try { this.options.owner.assertCurrent(); writeFileSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
+          try { this.options.owner.assertCurrent(); writeFileSync(fd, bytes); syncDescriptor(fd); } finally { closeSync(fd); }
           const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-          try { fsyncSync(directory); } finally { closeSync(directory); }
+          try { syncDescriptor(directory); } finally { closeSync(directory); }
         }
         if (claim && claim !== path) this.pathClaims.delete(claim);
         claim = path; this.pathClaims.add(path);
