@@ -30,6 +30,15 @@ scripts/test-isolated.sh pnpm verify
 - Run the changed workspace's `build`, `type-check`, and `test`; run
   `scripts/test-isolated.sh pnpm verify` for cross-package or release-facing
   changes. Run daemon and client tests only through `scripts/test-isolated.sh`.
+- Root `pnpm test` runs every workspace suite in one Vitest process with a
+  shared worker pool; `pnpm test -- --project <package name>` selects packages.
+  Use `pnpm test -- --maxWorkers=2` for lower CPU usage. Run local repetitions
+  serially rather than emulating concurrent CI jobs on a shared machine.
+  Files named `*.perf.test.ts` run only through `pnpm test:perf`. Run Supabase
+  suites through `pnpm --filter @felan-ai/daemon test:integration` and built-package
+  smokes through `pnpm test:dist`.
+  The [test audit](docs/maintainers/test-audit.md) records the reduction and
+  reliability decisions and their verification.
 - For terminal theme work, run `pnpm theme:preview`, review both light and dark
   states at wide and narrow widths, and run `pnpm theme:preview:check`.
 - Use Conventional Commit messages when maintainers request a commit.
