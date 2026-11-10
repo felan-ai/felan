@@ -255,7 +255,8 @@ describe('runtime-backed coding tools', () => {
       options: {
         recursive: true,
         ignore: ['**/node_modules/**', '**/.git/**'],
-        limit: 7,
+        // Pi requests one result past the limit to detect truncation.
+        limit: 8,
         pattern: '**/*.ts',
       },
     });

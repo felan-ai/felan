@@ -24,9 +24,15 @@ export interface SDKMessage {
   result?: string;
 }
 
+export interface SdkModelInfo {
+  value: string;
+  resolvedModel?: string;
+}
+
 export interface SdkQuery extends AsyncIterable<SDKMessage> {
   interrupt(): Promise<void>;
   close(): void;
+  supportedModels(): Promise<SdkModelInfo[]>;
   applyFlagSettings?(settings: { effortLevel?: EffortLevel | null }): Promise<void>;
 }
 

@@ -14,8 +14,13 @@ export const setupDependencies: readonly SetupDependency[] = [
     check: async runtime => { const result = await inspectAgentBrowserRuntime(runtime); return result.available ? { available: true, version: result.invocation.version } : { available: false, reason: result.reason }; },
     install: installManagedAgentBrowser },
   { id: 'claude-code', extension: 'claudeCode', revision: 1, label: 'Claude Code', providesModels: true,
-    description: `Download the pinned Claude Agent SDK ${MANAGED_CLAUDE_AGENT_SDK_VERSION} (~225 MB) and its MCP peers into Felan agent storage under Anthropic's terms. Requires a Claude Code login.`,
-    check: inspectClaudeCodeRuntime,
+    requiredVersion: MANAGED_CLAUDE_AGENT_SDK_VERSION,
+    description: `Download the pinned Claude Agent SDK ${MANAGED_CLAUDE_AGENT_SDK_VERSION} (~330 MB) and its MCP peers into Felan agent storage under Anthropic's terms. Requires a Claude Code login.`,
+    check: async runtime => {
+      const result = await inspectClaudeCodeRuntime(runtime);
+      return result.available ? result : { available: false, reason: result.reason,
+        ...(result.installedVersion === undefined ? {} : { version: result.installedVersion }) };
+    },
     install: installManagedClaudeAgentSdk },
   { id: 'codebase-memory', extension: 'codebaseMemory', revision: 2, label: 'Codebase Memory',
     description: `Verify the pinned official installer and install Codebase Memory ${MANAGED_CODEBASE_MEMORY_VERSION} in agent storage.`,

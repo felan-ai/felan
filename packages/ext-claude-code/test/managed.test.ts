@@ -74,9 +74,13 @@ class MemoryRuntime implements AgentRuntime {
       listFiles: async (path, options) => {
         this.events.push(`list:${path}`);
         if (path === 'claude-code') {
-          expect(options).toEqual({ pattern: 'agent-sdk-*.staging-*', includeDirectories: true, recursive: false });
+          expect(options).toEqual({
+            pattern: expect.stringMatching(/^agent-sdk-\*(?:\.staging-\*)?$/u), includeDirectories: true, recursive: false,
+          });
           return [...new Set([...this.directories, ...this.fileContents.keys()])]
-            .filter((entry) => /^claude-code\/agent-sdk-[^/]+\.staging-[^/]+$/u.test(entry))
+            .filter((entry) => options.pattern === 'agent-sdk-*'
+              ? /^claude-code\/agent-sdk-[^/]+$/u.test(entry)
+              : /^claude-code\/agent-sdk-[^/]+\.staging-[^/]+$/u.test(entry))
             .map((entry) => entry.slice('claude-code/'.length));
         }
         expect(options).toEqual({ pattern: 'claude', limit: 1 });
@@ -230,11 +234,11 @@ describe('Linux libc detection', () => {
 
 describe('managed Claude Agent SDK inspection', () => {
   it('uses a pinned, runtime-portable directory in agent storage', () => {
-    expect(MANAGED_CLAUDE_AGENT_SDK_VERSION).toBe('0.3.293');
+    expect(MANAGED_CLAUDE_AGENT_SDK_VERSION).toBe('0.3.322');
     expect(managedClaudeAgentSdkDirectory(new MemoryRuntime())).toBe(`/agent-storage/${DIRECTORY}`);
     expect(managedClaudeAgentSdkDirectory(new MemoryRuntime('host', '/'))).toBe(`/${DIRECTORY}`);
     expect(managedClaudeAgentSdkDirectory(new MemoryRuntime('host', 'C:\\agent-storage')))
-      .toBe('C:\\agent-storage\\claude-code\\agent-sdk-0.3.293');
+      .toBe('C:\\agent-storage\\claude-code\\agent-sdk-0.3.322');
   });
 
   it.each(['empty', 'entry missing', 'manifest missing'])('reports an incomplete installation: %s', async (state) => {
@@ -248,7 +252,7 @@ describe('managed Claude Agent SDK inspection', () => {
       reason: expect.stringContaining('run /claude-code install'),
     });
     expect([...runtime.fileContents]).toEqual(before);
-    expect(runtime.events.every((event) => event.startsWith('read:'))).toBe(true);
+    expect(runtime.events.every((event) => event.startsWith('read:') || event.startsWith('list:'))).toBe(true);
     expect(runtime.execCalls).toEqual([]);
   });
 
@@ -282,7 +286,7 @@ describe('managed Claude Agent SDK inspection', () => {
         runtime.seedPlatform(
           DIRECTORY,
           `@anthropic-ai/claude-agent-sdk-darwin-${state === 'wrong architecture' ? 'x64' : 'arm64'}`,
-          state === 'wrong version' ? '0.0.0' : '0.3.293',
+          state === 'wrong version' ? '0.0.0' : '0.3.322',
           state !== 'missing binary',
         );
       }
@@ -308,7 +312,7 @@ describe('managed Claude Agent SDK inspection', () => {
 
     await expect(inspectClaudeCodeRuntime(runtime)).resolves.toEqual({
       available: true,
-      version: '0.3.293',
+      version: '0.3.322',
       entryPath: `/agent-storage/${ENTRY}`,
     });
     expect(runtime.events.every((event) => event.startsWith('read:') || event.startsWith('list:'))).toBe(true);
@@ -342,7 +346,39 @@ describe('managed Claude Agent SDK inspection', () => {
     const runtime = new MemoryRuntime();
     runtime.seedComplete(`${DIRECTORY}.staging-old`);
     await expect(inspectClaudeCodeRuntime(runtime)).resolves.toMatchObject({ available: false });
-    expect(runtime.events).toEqual([`read:${ENTRY}`]);
+    expect(runtime.events).toEqual([`read:${ENTRY}`, 'list:claude-code']);
+  });
+
+  it('reports the installed older version and required update without changing files', async () => {
+    const runtime = new MemoryRuntime();
+    const oldDirectory = 'claude-code/agent-sdk-0.3.293';
+    runtime.seedComplete(oldDirectory);
+    runtime.seedManifests(oldDirectory, { '@anthropic-ai/claude-agent-sdk': '0.3.293' });
+    const before = [...runtime.fileContents];
+
+    await expect(inspectClaudeCodeRuntime(runtime)).resolves.toEqual({
+      available: false,
+      installedVersion: '0.3.293',
+      reason: `Claude Agent SDK 0.3.293 is installed, but Felan requires ${MANAGED_CLAUDE_AGENT_SDK_VERSION}. Run /claude-code install to approve the update.`,
+    });
+    expect([...runtime.fileContents]).toEqual(before);
+    expect(runtime.execCalls).toEqual([]);
+  });
+
+  it('ignores invalid and incomplete version directories and picks the newest installed SDK', async () => {
+    const runtime = new MemoryRuntime();
+    for (const version of ['0.3.99', '0.3.293']) {
+      const directory = `claude-code/agent-sdk-${version}`;
+      runtime.seedComplete(directory);
+      runtime.seedManifests(directory, { '@anthropic-ai/claude-agent-sdk': version });
+    }
+    runtime.seedComplete('claude-code/agent-sdk-0.3.321.staging-unfinished');
+    runtime.directories.add('claude-code/agent-sdk-0.3.321');
+    runtime.directories.add('claude-code/agent-sdk-../../outside');
+
+    expect(await inspectClaudeCodeRuntime(runtime)).toMatchObject({ available: false, installedVersion: '0.3.293' });
+    expect(runtime.events.some(event => event.includes('/../'))).toBe(false);
+    expect(runtime.execCalls).toEqual([]);
   });
 });
 
@@ -355,7 +391,7 @@ describe('managed Claude Agent SDK installation', () => {
 
     await expect(installManagedClaudeAgentSdk(runtime, (message) => statuses.push(message))).resolves.toEqual({
       available: true,
-      version: '0.3.293',
+      version: '0.3.322',
       entryPath: `/agent-storage/${ENTRY}`,
     });
     const staging = runtime.stagingDirectory();
@@ -379,6 +415,7 @@ describe('managed Claude Agent SDK installation', () => {
     expect(runtime.events).toEqual([
       `read:${ENTRY}`,
       `read:${DIRECTORY}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`,
+      'list:claude-code',
       'exec:npm --version',
       'list:claude-code',
       `mkdir:${staging}`,
@@ -391,6 +428,7 @@ describe('managed Claude Agent SDK installation', () => {
       `write:${staging}/${CLAUDE_AGENT_SDK_ENTRY_FILE}`,
       `read:${ENTRY}`,
       `read:${DIRECTORY}/node_modules/@anthropic-ai/claude-agent-sdk/package.json`,
+      'list:claude-code',
       `remove:${DIRECTORY}`,
       `move:${staging}:${DIRECTORY}`,
     ]);
@@ -398,7 +436,7 @@ describe('managed Claude Agent SDK installation', () => {
     expect(statuses).toEqual([
       'Checking npm availability...',
       'Preparing the managed Claude Agent SDK staging directory...',
-      'Installing Claude Agent SDK 0.3.293 in Felan agent storage...',
+      'Installing Claude Agent SDK 0.3.322 in Felan agent storage...',
       'Verifying the installed Claude Agent SDK and its dependencies...',
     ]);
   });
@@ -467,9 +505,15 @@ describe('managed Claude Agent SDK installation', () => {
     const warning = vi.spyOn(runtime.logger, 'warn');
     if (operation === 'inspect') {
       vi.spyOn(runtime.files!, 'inspect').mockRejectedValueOnce(new Error('permission denied'));
+    } else if (operation === 'list') {
+      const storage = runtime.storage('agent');
+      const listFiles = storage.listFiles.bind(storage);
+      vi.spyOn(storage, 'listFiles').mockImplementation(async (path, options) => {
+        if (options?.pattern === 'agent-sdk-*.staging-*') throw new Error('permission denied');
+        return listFiles(path, options);
+      });
     } else {
-      vi.spyOn(runtime.storage('agent'), operation === 'list' ? 'listFiles' : 'remove')
-        .mockRejectedValueOnce(new Error('permission denied'));
+      vi.spyOn(runtime.storage('agent'), 'remove').mockRejectedValueOnce(new Error('permission denied'));
     }
 
     await expect(installManagedClaudeAgentSdk(runtime)).resolves.toMatchObject({ available: true });
@@ -554,6 +598,25 @@ describe('managed Claude Agent SDK installation', () => {
     expect(runtime.directories.size).toBe(0);
   });
 
+  it.each([true, false])('keeps the previous SDK installation when an approved update succeeds=%s', async (succeeds) => {
+    const runtime = new MemoryRuntime();
+    const oldDirectory = 'claude-code/agent-sdk-0.3.293';
+    runtime.seedComplete(oldDirectory);
+    runtime.seedManifests(oldDirectory, { '@anthropic-ai/claude-agent-sdk': '0.3.293' });
+    const before = [...runtime.fileContents];
+    if (!succeeds) runtime.execHandler = async (args) => args[0] === 'ci' ? result(1, 'registry unavailable') : result();
+
+    expect((await installManagedClaudeAgentSdk(runtime)).available).toBe(succeeds);
+
+    for (const [path, content] of before) expect(runtime.fileContents.get(path)).toBe(content);
+    expect(runtime.directories.has(oldDirectory)).toBe(true);
+    expect(runtime.events).not.toContain(`remove:${oldDirectory}`);
+    expect(runtime.directories.has(DIRECTORY)).toBe(succeeds);
+    expect(await inspectClaudeCodeRuntime(runtime)).toMatchObject(succeeds
+      ? { available: true, version: MANAGED_CLAUDE_AGENT_SDK_VERSION }
+      : { available: false, installedVersion: '0.3.293' });
+  });
+
   it.each(['exit code', 'exception', 'timeout'])('preserves the previous state and removes staging on npm failure: %s', async (failure) => {
     const runtime = new MemoryRuntime();
     runtime.fileContents.set(`${DIRECTORY}/existing`, 'preserved');
@@ -605,7 +668,7 @@ describe('managed Claude Agent SDK installation', () => {
       if (args[0] === 'ci') {
         runtime.seedManifests(directory);
         if (state !== 'missing') {
-          runtime.seedPlatform(directory, undefined, state === 'wrong version' ? '0.0.0' : '0.3.293', state !== 'missing binary');
+          runtime.seedPlatform(directory, undefined, state === 'wrong version' ? '0.0.0' : '0.3.322', state !== 'missing binary');
         }
       }
       return result();
@@ -640,7 +703,7 @@ describe('managed Claude Agent SDK installation', () => {
       available: false,
       reason: expect.stringContaining('npm is required'),
     });
-    expect(runtime.events).toEqual([`read:${ENTRY}`, 'exec:npm --version']);
+    expect(runtime.events).toEqual([`read:${ENTRY}`, 'list:claude-code', 'exec:npm --version']);
     expect(runtime.fileContents.get(`${DIRECTORY}/existing`)).toBe('preserved');
   });
 
@@ -652,7 +715,7 @@ describe('managed Claude Agent SDK installation', () => {
       available: false,
       reason: expect.stringContaining('requires runtime file move support'),
     });
-    expect(runtime.events).toEqual([`read:${ENTRY}`]);
+    expect(runtime.events).toEqual([`read:${ENTRY}`, 'list:claude-code']);
     expect(runtime.execCalls).toEqual([]);
     expect(runtime.fileContents.get(`${DIRECTORY}/existing`)).toBe('preserved');
   });

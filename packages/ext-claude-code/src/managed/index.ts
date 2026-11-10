@@ -5,7 +5,7 @@ import packageLock from './agent-sdk-package-lock.json' with { type: 'json' };
 import { detectLinuxLibc } from './linux-libc.js';
 import { isWindowsRuntimePath, joinRuntimePath } from './runtime-path.js';
 
-export const MANAGED_CLAUDE_AGENT_SDK_VERSION = '0.3.293';
+export const MANAGED_CLAUDE_AGENT_SDK_VERSION = '0.3.322';
 
 const STORAGE_DIRECTORY = 'claude-code';
 const DIRECTORY = `${STORAGE_DIRECTORY}/agent-sdk-${MANAGED_CLAUDE_AGENT_SDK_VERSION}`;
@@ -15,7 +15,7 @@ const PROBE_TIMEOUT_MS = 5_000;
 
 export type ClaudeCodeRuntimeStatus =
   | { available: true; version: string; entryPath: string }
-  | { available: false; reason: string };
+  | { available: false; reason: string; installedVersion?: string };
 
 export function managedClaudeAgentSdkDirectory(runtime: AgentRuntime): string {
   return joinRuntimePath(runtime.storage('agent').root, DIRECTORY);
@@ -31,11 +31,48 @@ export async function inspectClaudeCodeRuntime(runtime: AgentRuntime): Promise<C
     await verifyInstallation(storage, DIRECTORY);
     return available(runtime);
   } catch (error) {
+    const installedVersion = await findInstalledSdkVersion(runtime.storage('agent'));
+    if (installedVersion && installedVersion !== MANAGED_CLAUDE_AGENT_SDK_VERSION) {
+      return {
+        available: false,
+        installedVersion,
+        reason: `Claude Agent SDK ${installedVersion} is installed, but Felan requires ${MANAGED_CLAUDE_AGENT_SDK_VERSION}. Run /claude-code install to approve the update.`,
+      };
+    }
     return {
       available: false,
       reason: `Claude Agent SDK is not installed or is incomplete; run /claude-code install. ${diagnostic(error)}`,
     };
   }
+}
+
+async function findInstalledSdkVersion(storage: AgentRuntimeStorage): Promise<string | undefined> {
+  let entries: string[];
+  try {
+    entries = await storage.listFiles(STORAGE_DIRECTORY, {
+      pattern: 'agent-sdk-*', includeDirectories: true, recursive: false,
+    });
+  } catch {
+    return undefined;
+  }
+  const versions = entries
+    .map(entry => /^agent-sdk-(\d+\.\d+\.\d+)$/u.exec(entry)?.[1])
+    .filter((version): version is string => version !== undefined)
+    .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }));
+  for (const version of versions) {
+    const directory = `${STORAGE_DIRECTORY}/agent-sdk-${version}`;
+    try {
+      const manifest: unknown = JSON.parse(new TextDecoder().decode(await storage.readFile(
+        joinRuntimePath(directory, 'node_modules/@anthropic-ai/claude-agent-sdk/package.json'),
+      )));
+      if (typeof manifest !== 'object' || manifest === null || !('version' in manifest) || manifest.version !== version) continue;
+      await storage.readFile(joinRuntimePath(directory, CLAUDE_AGENT_SDK_ENTRY_FILE));
+      return version;
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
 }
 
 export async function installManagedClaudeAgentSdk(

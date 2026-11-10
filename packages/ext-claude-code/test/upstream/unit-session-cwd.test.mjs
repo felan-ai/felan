@@ -1,11 +1,12 @@
 import { describe, it, onTestFinished } from "vitest";
 import assert from "node:assert/strict";
+import { catalogModelRows } from "./lib/catalog-models.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { rememberSessionCwd, forgetSessionCwd, sessionCwdFor } from "../../src/bridge/session-cwd.ts";
 import { activateClaudeCodeBridge, __test } from "../../src/bridge/index.ts";
-const activate = (pi) => activateClaudeCodeBridge(pi, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR });
+const activate = (pi) => activateClaudeCodeBridge(pi, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels: catalogModelRows });
 
 const KEY = Symbol.for("claude-bridge:sessionCwds");
 

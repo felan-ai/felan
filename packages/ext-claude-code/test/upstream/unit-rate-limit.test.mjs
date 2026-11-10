@@ -3,6 +3,7 @@
  */
 import { describe, it, afterEach } from "vitest";
 import assert from "node:assert/strict";
+import { catalogModelRows } from "./lib/catalog-models.mjs";
 import { readFileSync } from "node:fs";
 import { QueryContext } from "../../src/bridge/query-state.ts";
 import { rateLimitResponse } from "../../src/bridge/rate-limit.ts";
@@ -102,7 +103,7 @@ describe("delivery to the provider call that owns the stream", () => {
 		on: () => {},
 		registerProvider: (_name, config) => { providerConfig = config; },
 		registerTool: () => {},
-	}, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR });
+	}, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels: catalogModelRows });
 	const model = providerConfig.models[0];
 
 	const gate = () => { let open; const p = new Promise((r) => { open = r; }); return { wait: () => p, open }; };

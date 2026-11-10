@@ -1,9 +1,10 @@
 import { it } from "vitest";
 import assert from "node:assert/strict";
+import { catalogModelRows } from "./lib/catalog-models.mjs";
 import { SessionManager, SettingsManager } from "@felan-ai/agent-core";
 import { createTestSession } from "./lib/session.mjs";
 import { activateClaudeCodeBridge, __test } from "../../src/bridge/index.ts";
-const activate = (pi) => activateClaudeCodeBridge(pi, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR });
+const activate = (pi) => activateClaudeCodeBridge(pi, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels: catalogModelRows });
 import { activateWithMockPi } from "./lib/mock-pi.mjs";
 
 it("bridge leaves compaction and branch-summary ownership to Pi and other extensions", () => {

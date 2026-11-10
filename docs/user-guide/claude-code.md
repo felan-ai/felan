@@ -20,26 +20,44 @@ continues to use the ordinary Anthropic provider.
 In Felan:
 
 1. Run `/claude-code install` and approve the installation. The managed Agent
-   SDK download includes an approximately **225 MB per-platform binary** and is
+   SDK download includes an approximately **330 MB per-platform binary** and is
    subject to [Anthropic's SDK license and terms][sdk]. Linux downloads both
-   glibc and musl variants, roughly **450 MB** in total. It is not bundled with
+   glibc and musl variants, roughly **640 MB** in total. It is not bundled with
    Felan or installed automatically at startup.
 2. Start a new session or use `/reload` to load the provider.
-3. Run `/model claude-code/claude-opus-4-6`, or choose an available `claude-code`
+3. Run `/model claude-code/claude-opus-5-5`, or choose an available `claude-code`
    model in `/model`.
 4. Run `/claude-code status` to inspect the SDK version, provider registration,
    and plan/long-context settings. `/claude-code` alone also shows status.
 
-Models come from Agent Core's Anthropic catalog, excluding dated snapshot
-aliases. A catalog entry does not guarantee access on your account. Models keep
+The `claude-code` models are the Agent Core Anthropic catalog models that Claude
+Code lists in its own `/model` picker for your login, excluding dated snapshot
+aliases. A model newer than the pinned Claude Code, or one your plan or managed
+settings exclude, does not appear. Felan asks Claude Code for this list once per
+process. If Claude Code is not signed in or does not answer, the provider stays
+unregistered and the next session asks again. Claude Code receives most of this
+list through its telemetry service, so the list request runs with Claude Code
+telemetry enabled; set `DISABLE_TELEMETRY=1` or
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` in Felan's environment to turn it
+off and get only the base models. Models keep
 the catalog's API prices, so the session cost in the footer is an
 **API-equivalent estimate at list prices, not your bill**. Anthropic's [October 7, 2026 support update][plan-usage] says Agent SDK,
 `claude -p`, and third-party apps can still use subscription limits. Plan limits,
 Extra Usage, and billing classification remain Anthropic's responsibility;
 Felan does not guarantee quota eligibility or savings.
 
+If a Felan update requires a newer SDK, local interactive startup offers an
+update for an enabled Claude Code provider. The prompt shows the installed
+version and the required version. Nothing is installed without confirmation.
+Leaving the update unchanged skips it for that required version; cancelling
+lets startup ask again. `/dependencies` and `/claude-code install` remain
+available to update later.
+
+Fable 5.2 uses 1M context, as shown in Claude Code. Felan requests its `[1m]`
+variant so the model picker, context accounting, and request agree.
+
 The managed runtime lives at
-`<agent-storage>/claude-code/agent-sdk-0.3.293`. See
+`<agent-storage>/claude-code/agent-sdk-0.3.322`. See
 [Runtime dependencies](../reference/runtime-dependencies.md#claude-code-managed-runtime)
 for its pinned packages and installation behavior. Installation requires the
 local host's runtime-dependency service; status remains available without it.

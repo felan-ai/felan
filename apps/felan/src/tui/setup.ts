@@ -160,15 +160,16 @@ export class TerminalSetup {
     if (automatic && !this.ui.isIdle()) return false;
     const actionFor = (value: SetupCatalog['dependencies'][number]): 'install' | 'enable' | 'disable' | 'skip' =>
       !value.available && value.installable ? 'install' : value.available && !value.enabled ? 'enable' : value.enabled ? 'disable' : 'skip';
+    const actionLabel = (value: SetupCatalog['dependencies'][number]) => actionFor(value) === 'install' && value.version ? 'update' : actionFor(value);
     const selected = await this.ui.checklist(dependencies.map(value => ({ id: value.id,
       ...(automatic && ['install', 'enable'].includes(actionFor(value)) ? { checked: true } : {}),
-      label: `${actionFor(value)}: ${value.label}${value.version ? ` (${value.version})` : ''}`,
+      label: `${actionLabel(value)}: ${value.label}${value.version ? ` (${value.version})` : ''}`,
       description: `${actionFor(value) === 'install' ? value.description : actionFor(value) === 'disable'
         ? `Disable ${value.label}; installed software is kept.` : actionFor(value) === 'enable'
-        ? `Enable the installed ${value.label} extension.` : `No changes are available for ${value.label}.`}${value.reason ? ` ${value.reason}` : ''} Checked: ${actionFor(value)}. Unchecked: leave unchanged.` })), signal);
+        ? `Enable the installed ${value.label} extension.` : `No changes are available for ${value.label}.`}${value.reason ? ` ${value.reason}` : ''} Checked: ${actionLabel(value)}. Unchecked: leave unchanged.` })), signal);
     if (selected === undefined || signal.aborted) return false;
     if (selected.some(id => !dependencies.some(value => value.id === id))) throw new Error('Unknown dependency choice.');
-    const summary = dependencies.map(value => `${selected.includes(value.id) ? actionFor(value) : 'unchanged'}: ${value.label}`).join('\n');
+    const summary = dependencies.map(value => `${selected.includes(value.id) ? actionLabel(value) : 'unchanged'}: ${value.label}${value.version ? ` (${value.version})` : ''}`).join('\n');
     if (!await this.ui.confirm('Apply extension changes?', summary, { signal }) || signal.aborted) return false;
     return this.start(flow, { kind: 'dependencies',
       choices: dependencies.map(value => ({ id: value.id, action: selected.includes(value.id) ? actionFor(value) : 'skip' })) });

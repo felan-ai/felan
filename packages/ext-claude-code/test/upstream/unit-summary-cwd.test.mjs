@@ -1,12 +1,13 @@
 import { it, onTestFinished } from "vitest";
 import assert from "node:assert/strict";
+import { catalogModelRows } from "./lib/catalog-models.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager, SettingsManager } from "@felan-ai/agent-core";
 import { createTestSession } from "./lib/session.mjs";
 import { activateClaudeCodeBridge, __test } from "../../src/bridge/index.ts";
-const activate = (pi) => activateClaudeCodeBridge(pi, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR });
+const activate = (pi) => activateClaudeCodeBridge(pi, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels: catalogModelRows });
 
 const model = { id: "claude-sonnet-4-6", name: "Controlled bridge", api: "claude-code", provider: "claude-code", baseUrl: "claude-code", reasoning: false, input: ["text"], contextWindow: 200000, maxTokens: 8192, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
 

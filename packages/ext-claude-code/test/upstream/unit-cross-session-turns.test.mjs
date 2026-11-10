@@ -18,6 +18,7 @@
  */
 import { describe, it, beforeEach, afterEach } from "vitest";
 import assert from "node:assert/strict";
+import { catalogModelRows } from "./lib/catalog-models.mjs";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { getSessionPath } from "cc-session-io";
 import { tmpdir } from "node:os";
@@ -44,7 +45,7 @@ mod.activateClaudeCodeBridge({
 	on: (event, handler) => handlers.set(event, handler),
 	registerProvider: (_name, config) => { providerConfig = config; },
 	registerTool: () => {},
-}, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR });
+}, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels: catalogModelRows });
 const streamSimple = providerConfig.streamSimple;
 // A real registered model object, not a bare {id}: pi-ai's calculateCost reads
 // the pricing tiers off it for every usage update.

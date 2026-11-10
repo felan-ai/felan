@@ -6,6 +6,7 @@
  */
 import { describe, it, beforeEach, afterEach } from "vitest";
 import assert from "node:assert/strict";
+import { catalogModelRows } from "./lib/catalog-models.mjs";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +31,7 @@ activate({
 	on: (event, handler) => handlers.set(event, handler),
 	registerProvider: (_name, config) => { providerConfig = config; },
 	registerTool: () => {},
-}, { settings: {}, agentDir: agentDir });
+}, { settings: {}, agentDir: agentDir, supportedModels: catalogModelRows });
 const model = providerConfig.models[0];
 const turn = (systemPrompt, tools = []) => providerConfig.streamSimple(
 	model,

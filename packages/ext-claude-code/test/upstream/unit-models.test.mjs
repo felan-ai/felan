@@ -196,3 +196,17 @@ describe("applyLongContext", () => {
 it("claude-opus-5-5 requests 1M on Pro", () => {
 	assert.deepEqual(resolveClaudeCodeRuntimeModel({ id: "claude-opus-5-5" }, PRO), { cliModelId: "claude-opus-5-5[1m]", contextWindow: 1000000 });
 });
+
+it("registers and requests Claude Code's 1M context for Fable 5.2", () => {
+	for (const settings of [PRO, MAX, EXTRA]) {
+		const models = applyLongContext(buildModels(getModels("anthropic")), settings);
+		const fable = find(models, "claude-fable-5-2");
+		assert.equal(fable.name, "Claude Fable 5.2 1M");
+		assert.equal(fable.contextWindow, 1000000);
+		assert.equal(claudeCodeModelId(fable, settings), "claude-fable-5-2[1m]");
+	}
+	assert.deepEqual(
+		resolveClaudeCodeRuntimeModel({ id: "claude-fable-5-2" }, { ...MAX, forceTwoHundredK: ["claude-fable-5-2"] }),
+		{ cliModelId: "claude-fable-5-2", contextWindow: 200000 },
+	);
+});

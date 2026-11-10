@@ -49,7 +49,7 @@ portable detection, optional installation, and safe unavailable behavior;
 | RTK command rewriting | compatible `rtk` | Rewriting is bypassed; binary-independent output compaction remains active | Digest-verified official installer pinned to RTK 0.45.0 on Linux/macOS |
 | Browser automation and screenshots | `agent-browser` 0.37.1 | The browser tools are unavailable; the extension can be disabled | Integrity-verified native CLI package in agent storage; Chrome is installed separately by an explicit agent-browser action; existing-browser authorization is local-TUI-only |
 | Codebase Memory structural exploration | exact `codebase-memory-mcp` 0.11.0 | No Codebase Memory tools, capability, prompt, or grep augmentation; cloud logs a nonfatal hard error | Commit-pinned, digest-verified official installer into agent storage with upstream configuration disabled |
-| Claude Code model provider | Claude Agent SDK 0.3.293 and Claude Code | No `claude-code` models; `/claude-code status` reports the reason; other providers are unaffected | Explicit, lockfile-integrity-verified npm installation in agent storage on macOS/Linux; approximately 225 MB per-platform binary (Linux downloads both libc variants, roughly 450 MB); Anthropic's terms apply |
+| Claude Code model provider | Claude Agent SDK 0.3.322 and Claude Code | No `claude-code` models; `/claude-code status` reports the reason; other providers are unaffected | Explicit, lockfile-integrity-verified npm installation in agent storage on macOS/Linux; approximately 330 MB per-platform binary (Linux downloads both libc variants, roughly 640 MB); Anthropic's terms apply |
 | Background processes | POSIX shell plus `sh`, `nohup`, `ps`, `tr`, `kill`, `date`, `cat`, `mv`, `sleep`, and `tail`; PTY support is optional and requested per command | Detached Bash remains available; PTY requests fail clearly when unsupported | No managed installer; use a compatible runtime |
 
 ## Claude Code managed runtime
@@ -58,11 +58,11 @@ Run `/claude-code install` and approve the local host's installation request,
 or select Claude Code in `/dependencies`. The runtime-dependency ID is
 `claude-code`. The installer needs `npm` on the host's `PATH` and stages a
 private ESM package for
-`<agent-storage>/claude-code/agent-sdk-0.3.293` with these exact dependencies:
+`<agent-storage>/claude-code/agent-sdk-0.3.322` with these exact dependencies:
 
 | Package | Version |
 | --- | --- |
-| `@anthropic-ai/claude-agent-sdk` | `0.3.293` |
+| `@anthropic-ai/claude-agent-sdk` | `0.3.322` |
 | `@modelcontextprotocol/sdk` | `1.31.0` |
 | `zod` | `4.6.5` |
 | `@anthropic-ai/sdk` | `0.124.0` |
@@ -83,13 +83,21 @@ npm configuration still applies, including registry mirrors through
 `replace-registry-host` and proxies, but the lockfile's integrity hashes remain
 enforced.
 
-Inspection is read-only and validates the installed runtime.
-Startup/activation never downloads the SDK or runs `npm`. A missing or
-unloadable runtime leaves the provider unregistered and logs a diagnostic.
-After installation, start a new session or reload to register the models.
+Inspection is read-only and validates the required runtime. If only a previous
+SDK is installed, status reports its version and the required version. An enabled
+Claude Code provider with an outdated SDK appears in local interactive startup
+onboarding, even after a previous onboarding decision. The update requires an
+explicit confirmation. A confirmed unchanged choice applies to that required
+version; a later required version is offered again. Cancelling saves no decision,
+and disabled providers are not offered automatic updates.
 
-The SDK is proprietary and includes an approximately **225 MB per-platform
-binary**. Linux downloads both glibc and musl variants, roughly **450 MB** in
+Startup checks and extension activation never download the SDK or run `npm`.
+Only an approved installation does so. A missing or unloadable runtime leaves the
+provider unregistered and logs a diagnostic. After installation, start a new
+session or reload to register the models.
+
+The SDK is proprietary and includes an approximately **330 MB per-platform
+binary**. Linux downloads both glibc and musl variants, roughly **640 MB** in
 total, although only the host-matched variant is used. It is not a dependency of
 any Felan package; approval installs it
 separately under [Anthropic's SDK license and terms](https://github.com/anthropics/claude-agent-sdk-typescript).

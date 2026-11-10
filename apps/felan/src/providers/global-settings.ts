@@ -44,6 +44,7 @@ export interface DependencyOnboardingDecision {
   readonly extension: string;
   readonly revision: number;
   readonly enabled: boolean;
+  readonly version?: string;
 }
 
 export const EXECUTION_DEFAULT_KEYS = ['autoCompact', 'skillCommands', 'steeringMode', 'followUpMode', 'transport', 'cacheWarming', 'httpIdleTimeoutMs', 'modelThinkingLevels'] as const;
@@ -111,7 +112,8 @@ export async function mergeDaemonGlobalSettings(
   validateBuiltinExtensionKeys(builtins);
   const decisions = update.dependencyDecisions ?? [];
   if (decisions.length > 16 || decisions.some(value => !isExtensionIdentifier(value.extension)
-    || !Number.isSafeInteger(value.revision) || value.revision < 1 || typeof value.enabled !== 'boolean')) throw new Error('Invalid dependency decisions.');
+    || !Number.isSafeInteger(value.revision) || value.revision < 1 || typeof value.enabled !== 'boolean'
+    || (value.version !== undefined && !isRuntimeVersion(value.version)))) throw new Error('Invalid dependency decisions.');
   if (!extensions.length && !Object.keys(defaults).length && !Object.keys(execution).length && !Object.keys(imageSettings).length && !decisions.length && !builtins && classifierModel === undefined && codemode === undefined) throw new Error('Empty configuration update.');
   await updateDaemonGlobalSettings(agentDir, assertCurrent, settings => {
     if (execution.autoCompact !== undefined) {
@@ -152,9 +154,14 @@ export async function mergeDaemonGlobalSettings(
       if (settings.felanTui !== undefined && !isRecord(settings.felanTui)) throw new Error('felanTui must be an object');
       if (settings.builtinExtensions !== undefined && !isRecord(settings.builtinExtensions)) throw new Error('builtinExtensions must be an object');
       const tui = { ...settings.felanTui }; const versions = currentOnboardingExtensions(tui.onboarding);
+      const runtimeVersions = isCurrentOnboardingSettings(tui.onboarding) && isRecord(tui.onboarding.runtimeVersions)
+        ? { ...tui.onboarding.runtimeVersions } : {};
       const builtins = { ...settings.builtinExtensions };
-      for (const decision of decisions) { versions[decision.extension] = decision.revision; builtins[decision.extension] = decision.enabled; }
-      tui.onboarding = { schemaVersion: 1, extensions: versions }; delete tui.dependencyOnboarding;
+      for (const decision of decisions) {
+        versions[decision.extension] = decision.revision; builtins[decision.extension] = decision.enabled;
+        if (decision.version !== undefined) runtimeVersions[decision.extension] = decision.version;
+      }
+      tui.onboarding = { schemaVersion: 1, extensions: versions, ...(Object.keys(runtimeVersions).length ? { runtimeVersions } : {}) }; delete tui.dependencyOnboarding;
       settings.felanTui = tui; settings.builtinExtensions = builtins;
     }
     Object.assign(settings, defaults);
@@ -182,19 +189,25 @@ export function isDependencyOnboardingComplete(
   settings: DaemonGlobalSettings,
   extension: string,
   revision: number,
+  version?: string,
 ): boolean {
   const tui = settings.felanTui;
   if (!isRecord(tui)) return false;
   const onboarding = tui.onboarding;
-  return isCurrentOnboardingSettings(onboarding) && onboarding.extensions[extension] === revision;
+  return isCurrentOnboardingSettings(onboarding) && onboarding.extensions[extension] === revision
+    && (version === undefined || (isRuntimeVersion(version) && isRecord(onboarding.runtimeVersions) && onboarding.runtimeVersions[extension] === version));
 }
 
 function currentOnboardingExtensions(value: unknown): Record<string, unknown> {
   return isCurrentOnboardingSettings(value) ? { ...value.extensions } : {};
 }
 
-function isCurrentOnboardingSettings(value: unknown): value is { readonly schemaVersion: 1; readonly extensions: Readonly<Record<string, unknown>> } {
+function isCurrentOnboardingSettings(value: unknown): value is { readonly schemaVersion: 1; readonly extensions: Readonly<Record<string, unknown>>; readonly runtimeVersions?: unknown } {
   return isRecord(value) && value.schemaVersion === 1 && isRecord(value.extensions);
+}
+
+function isRuntimeVersion(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && Buffer.byteLength(value) <= 128 && !/[\u0000-\u001f\u007f-\u009f]/u.test(value);
 }
 
 function isExtensionIdentifier(value: unknown): value is string {

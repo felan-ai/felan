@@ -57,6 +57,19 @@ export function buildModels<T extends { id: string; [key: string]: any }>(piAiMo
 		}));
 }
 
+// Felan: Claude Code's model rows use aliases (default, opus), [1m] variants and
+// dated snapshot ids; resolvedModel names the wire id they run. The picker keeps
+// only bare ids, and catalog models Claude Code does not offer for this login are
+// not registered.
+export function selectOfferedModels<T extends { id: string }>(
+	models: T[],
+	offered: readonly { value: string; resolvedModel?: string }[],
+): T[] {
+	const ids = new Set(offered.map((row) =>
+		(row.resolvedModel ?? row.value).replace(/\[1m\]$/i, "").replace(/-20\d{6}$/, "")));
+	return models.filter((m) => ids.has(m.id));
+}
+
 export type LongContextSettings = {
 	plan: "pro" | "max";
 	longContextExtraUsage: boolean;
@@ -73,19 +86,16 @@ export type ClaudeCodeRuntimeModel = {
 // Measured Claude Agent SDK behavior - see diag/CONTEXT-SIZE.md:
 // - The `[1m]` suffix is the only reliable way to request 1M context through
 //   the SDK; bare ids serve 200K.
-// - An unentitled `[1m]` id is rejected outright (400/429), failing every turn
-//   — worse than serving 200K, so the default is bare id at 200K and only
-//   measured-good ids get `[1m]`.
+// - An unentitled `[1m]` id is rejected outright (400/429), failing every turn.
+//   Known 1M models get the suffix; unknown models default to bare ids at 200K.
 // - The registered contextWindow must match the window the bridge actually
 //   requests, or pi's status bar and compaction threshold misreport.
-// [1m] ids verified to serve 1M on every plan (sonnet-5-5 measured on Pro with
-// and without Extra Usage; opus-5-5 on Max per its run notes). A new model
-// serves 200K until someone measures it (diag/context-size.mjs) and adds it
-// here. Known exception unrelated to long context: fable-5 is not included
-// with Pro account without Extra Usage.
-const MEASURED_ONE_M = new Set([
+// Fable 5.2 advertises 1M in Claude Code; the other entries were checked with
+// diag/context-size.mjs. Fable 5 requires Extra Usage on Pro regardless of context.
+const ONE_M_MODELS = new Set([
 	"claude-fable-5",
 	"claude-fable-5-1",
+	"claude-fable-5-2",
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-opus-4-8",
@@ -112,7 +122,7 @@ export function resolveClaudeCodeRuntimeModel(
 	if (settings.forceTwoHundredK?.includes(modelId)) {
 		return { cliModelId: modelId, contextWindow: TWO_HUNDRED_K_CONTEXT };
 	}
-	if (MEASURED_ONE_M.has(modelId)) {
+	if (ONE_M_MODELS.has(modelId)) {
 		return { cliModelId: `${modelId}[1m]`, contextWindow: ONE_M_CONTEXT };
 	}
 	const planGate = PLAN_GATED_ONE_M[modelId];

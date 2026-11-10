@@ -198,6 +198,37 @@ it('preselects recommended install and enable rows only during automatic onboard
   expect(f.calls.some(call => call.op === 'host.setup.start')).toBe(false);
 });
 
+it('labels an installed runtime upgrade as an update and waits for confirmation before requesting installation', async () => {
+  const description = 'Download the reviewed Claude Agent SDK 0.3.322 installer into Felan agent storage.';
+  const reason = 'Claude Agent SDK 0.3.293 is installed; 0.3.322 is required.';
+  const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, dependencies: [
+    { id: 'claude-code', label: 'Claude Code', description, reason, version: '0.3.293', enabled: true, available: false, installable: true, needsSetup: true },
+  ] }), 'host.setup.start': () => ({ ...finished, kind: 'dependencies' }) });
+  let confirm!: (value: boolean) => void;
+  f.ui.checklist.mockResolvedValueOnce(['claude-code']);
+  f.ui.confirm.mockImplementationOnce(() => new Promise(resolve => { confirm = resolve; }));
+  const work = f.setup.dependencies(true); await vi.advanceTimersByTimeAsync(0);
+  expect(f.ui.checklist.mock.calls[0]?.[0]).toEqual([{ id: 'claude-code', checked: true,
+    label: 'update: Claude Code (0.3.293)', description: `${description} ${reason} Checked: update. Unchecked: leave unchanged.` }]);
+  expect(f.ui.confirm).toHaveBeenCalledWith('Apply extension changes?', 'update: Claude Code (0.3.293)', expect.anything());
+  expect(f.calls.some(call => call.op === 'host.setup.start')).toBe(false);
+  confirm(true); expect(await work).toBe(true);
+  expect(f.calls.find(call => call.op === 'host.setup.start')?.params).toEqual({ kind: 'dependencies', choices: [{ id: 'claude-code', action: 'install' }] });
+});
+
+it.each(['dismiss', 'decline', 'skip'] as const)('keeps an installed runtime unchanged after %s', async choice => {
+  const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, dependencies: [
+    { id: 'claude-code', label: 'Claude Code', description: 'Reviewed installer.', version: '0.3.293', enabled: true, available: false, installable: true, needsSetup: true },
+  ] }), 'host.setup.start': () => ({ ...finished, kind: 'dependencies' }) });
+  f.ui.checklist.mockResolvedValueOnce(choice === 'dismiss' ? undefined : choice === 'skip' ? [] : ['claude-code']);
+  f.ui.confirm.mockResolvedValueOnce(choice === 'skip');
+  expect(await f.setup.dependencies(true)).toBe(choice === 'skip');
+  const starts = f.calls.filter(call => call.op === 'host.setup.start');
+  expect(starts).toEqual(choice === 'skip' ? [{ op: 'host.setup.start', params: { kind: 'dependencies', choices: [{ id: 'claude-code', action: 'skip' }] } }] : []);
+  if (choice === 'skip') expect(f.ui.confirm).toHaveBeenCalledWith('Apply extension changes?', 'unchanged: Claude Code (0.3.293)', expect.anything());
+  if (choice === 'dismiss') expect(f.ui.confirm).not.toHaveBeenCalled();
+});
+
 it('does not stack automatic dependency onboarding over another active dialog', async () => {
   const f = fixture({ 'host.setup.catalog': () => ({ ...catalog, dependencies: [
     { id: 'needs', label: 'Needs setup', description: '', enabled: true, available: false, installable: true, needsSetup: true },

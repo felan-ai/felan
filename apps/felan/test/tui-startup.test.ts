@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ScrollView, TuiAltScreen, stripTerminalSequences, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { identityFor } from '../../daemon/src/daemon/target.js';
-import type { Interaction, Operation, SetupJob } from '@felan-ai/session-protocol';
+import type { Interaction, Operation, SetupCatalog, SetupJob } from '@felan-ai/session-protocol';
 import { SessionClient } from '../src/client/client.js';
 import { TuiSessionController } from '../src/tui/controller.js';
 import type { TuiPreferencesUpdate } from '../src/tui/preferences-schema.js';
@@ -21,7 +21,7 @@ const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 const question: Interaction = { id: 'model-question', scope: { kind: 'host' }, createdAt: 1, state: 'waiting', request: { kind: 'input', title: 'Model question must wait' } };
 
-async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; dependencyModels?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; compositionMismatch?: boolean; buildMismatch?: 'version' | 'composition'; remote?: boolean; pairing?: boolean; remoteNeed?: string } = {}) {
+async function fixture(options: { provider?: boolean; statusAvailable?: boolean; createError?: boolean; askBeforeAttach?: boolean; dependencies?: boolean; dependency?: SetupCatalog['dependencies'][number]; dependencyModels?: boolean; preferences?: TuiPreferencesUpdate; incompatibleWork?: number; compositionMismatch?: boolean; buildMismatch?: 'version' | 'composition'; remote?: boolean; pairing?: boolean; remoteNeed?: string } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'tui-startup-')); const fake = new FakeTransport();
   await mkdir(join(directory, 'tui'));
   await writeFile(join(directory, 'tui/settings.json'), JSON.stringify({ showImages: false, ...options.preferences }));
@@ -58,7 +58,8 @@ async function fixture(options: { provider?: boolean; statusAvailable?: boolean;
         if (options.askBeforeAttach) fake.frame({ v: 1, interaction: question }, connection);
         fake.reply(request, { attachmentId: 'binding', snapshot: snapshot() }, connection); break;
       case 'host.setup.catalog': fake.reply(request, { providers: [{ id: 'provider', label: 'Fixture provider', configured: loggedIn, subscription: false, apiKeyLogin: true, methods: ['api_key'] }],
-        credentials: [], dependencies: options.dependencies ? [{ id: 'dependency', label: 'Optional dependency', description: 'Reviewed install', enabled: true, available: decided, installable: true, needsSetup: !decided }] : [] }, connection); break;
+        credentials: [], dependencies: options.dependency ? [{ ...options.dependency, ...(decided ? { available: true, needsSetup: false } : {}) }]
+          : options.dependencies ? [{ id: 'dependency', label: 'Optional dependency', description: 'Reviewed install', enabled: true, available: decided, installable: true, needsSetup: !decided }] : [] }, connection); break;
       case 'host.setup.start':
         if ((request.params as { kind?: string }).kind !== 'dependencies') { fake.reply(request, waiting, connection); break; }
         decided = true; if (options.dependencyModels) loggedIn = true;
@@ -285,6 +286,26 @@ it('shows pending dependency onboarding once before creating a session for a log
   await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
   expect(f.fake.requests.filter(request => request.op === 'sessions.create')).toHaveLength(1);
   expect(f.fake.requests.filter(request => request.op === 'host.setup.start' && (request.params as { kind?: string }).kind === 'dependencies')).toHaveLength(1);
+});
+
+it('asks a returning user to approve a runtime update before creating the next session', async () => {
+  const f = await fixture({ provider: true, dependency: {
+    id: 'claude-code', label: 'Claude Code', description: 'Download the reviewed Claude Agent SDK 0.3.322 installer.',
+    version: '0.3.293', reason: 'Claude Agent SDK 0.3.293 is installed; 0.3.322 is required.',
+    enabled: true, available: false, installable: true, needsSetup: true,
+  } }); f.start();
+  await vi.waitFor(() => expect(f.text()).toContain('[✓] update: Claude Code (0.3.293)'));
+  expect(f.text()).toContain('0.3.322');
+  expect(f.fake.requests.some(request => request.op === 'host.setup.start' || request.op === 'sessions.create')).toBe(false);
+  f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.text()).toContain('Apply extension changes?'));
+  expect(f.text()).toContain('update: Claude Code (0.3.293)');
+  expect(f.fake.requests.some(request => request.op === 'host.setup.start')).toBe(false);
+  f.terminal.input('\x1b[B'); f.terminal.input('\r');
+  await vi.waitFor(() => expect(f.controller.sessionId).toBe('session'));
+  expect(f.fake.requests.find(request => request.op === 'host.setup.start')?.params).toEqual({
+    kind: 'dependencies', choices: [{ id: 'claude-code', action: 'install' }],
+  });
 });
 
 it.each([

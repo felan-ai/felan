@@ -23,7 +23,7 @@ function activateWithMockPi() {
 		},
 		registerProvider: (name, config) => registered.push({ name, config }),
 		registerTool: () => {},
-	}, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR });
+	}, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels: [{ value: "opus", resolvedModel: "claude-opus-5-5" }] });
 	const emit = (event, ...args) => {
 		for (const handler of handlers.get(event) ?? []) handler(...args);
 	};

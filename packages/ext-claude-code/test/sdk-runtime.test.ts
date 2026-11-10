@@ -110,6 +110,7 @@ describe('Claude Agent SDK runtime', () => {
       async *[Symbol.asyncIterator]() { yield { type: 'result', subtype: 'success', result: text }; },
       async interrupt() {},
       close() {},
+      async supportedModels() { return []; },
     });
     setClaudeAgentSdk({ ...sdk, query: queryWithText('managed') });
     __test.setQuery(queryWithText('override'));

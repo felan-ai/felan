@@ -2,13 +2,14 @@ import { setImmediate } from 'node:timers/promises';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { activateClaudeCodeBridge, supportsPerTurnEffort, __test } from '../src/bridge/index.js';
+import { activateClaudeCodeBridge, claudeCodeSupportedModels, supportsPerTurnEffort, __test } from '../src/bridge/index.js';
 import { PI_PREAMBLE } from '../src/bridge/prompt-capture.js';
 import { diagLogPath } from '../src/bridge/log-paths.js';
 import { QueryContext, resetCtx } from '../src/bridge/query-state.js';
 import { rememberSessionCwd, sessionCwdFor } from '../src/bridge/session-cwd.js';
 import { setClaudeAgentSdk } from '../src/sdk/runtime.js';
 import { fakeSdk } from './upstream/lib/fake-sdk.mjs';
+import { catalogModelRows } from './upstream/lib/catalog-models.mjs';
 
 const user = { role: 'user', content: 'Give one recommendation.', timestamp: 0 };
 const context = { systemPrompt: 'You are an advisor.', messages: [user] };
@@ -21,14 +22,14 @@ function capturedContext() {
   return { systemPrompt, messages: [user] };
 }
 
-function activate(settings = {}) {
+function activate(settings = {}, supportedModels = catalogModelRows) {
   const handlers = new Map();
   const registrations = [];
   const sessions = new Map();
   activateClaudeCodeBridge({
     on: (event, handler) => handlers.set(event, handler),
     registerProvider: (id, provider) => registrations.push({ id, provider }),
-  }, { settings, agentDir: process.env.PI_CODING_AGENT_DIR });
+  }, { settings, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels });
   const provider = registrations[0].provider;
   const emit = (event, data, ctx) => handlers.get(event)?.(data, ctx);
   const result = {
@@ -63,6 +64,19 @@ function injectQuery(messages = [{ type: 'result', subtype: 'success', result: '
     })();
     query.interrupt = vi.fn(async () => {});
     query.close = vi.fn();
+    calls.push({ ...request, query });
+    return query;
+  });
+  return calls;
+}
+
+function injectModelsQuery(answer) {
+  const calls = [];
+  __test.setQuery((request) => {
+    const query = (async function* () {})();
+    query.interrupt = vi.fn(async () => {});
+    query.close = vi.fn();
+    query.supportedModels = vi.fn(async () => (typeof answer === 'function' ? answer() : answer));
     calls.push({ ...request, query });
     return query;
   });
@@ -135,10 +149,116 @@ afterEach(async () => {
   await setImmediate();
   for (const bridge of activations.splice(0)) bridge.cleanup();
   __test.resetSharedSession();
+  __test.resetSupportedModels();
   __test.setQuery(null);
   setClaudeAgentSdk(undefined);
   vi.unstubAllEnvs();
   expect(__test.activeQueryContexts.size).toBe(0);
+});
+
+describe('Claude Code supported models', () => {
+  it('asks Claude Code without a prompt in the child environment and closes it', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-test');
+    vi.stubEnv('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', undefined);
+    vi.stubEnv('DISABLE_TELEMETRY', undefined);
+    const calls = injectModelsQuery([
+      { value: 'opus', resolvedModel: 'claude-opus-5-5', displayName: 'Opus' },
+      { value: 'claude-fable-5-1[1m]', resolvedModel: 'claude-fable-5-1' },
+    ]);
+
+    await expect(claudeCodeSupportedModels({ pathToClaudeCodeExecutable: '/opt/claude' })).resolves.toEqual([
+      { value: 'opus', resolvedModel: 'claude-opus-5-5' },
+      { value: 'claude-fable-5-1[1m]', resolvedModel: 'claude-fable-5-1' },
+    ]);
+
+    expect(calls).toHaveLength(1);
+    const [{ prompt, options, query }] = calls;
+    expect(options).toMatchObject({ tools: [], strictMcpConfig: true, persistSession: false, pathToClaudeCodeExecutable: '/opt/claude' });
+    expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(options.env).not.toHaveProperty('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC');
+    expect(options.env).not.toHaveProperty('DISABLE_TELEMETRY');
+    expect(options.env).toMatchObject({ DISABLE_ERROR_REPORTING: '1', DISABLE_AUTOUPDATER: '1', DISABLE_BUG_COMMAND: '1' });
+    expect(query.close).toHaveBeenCalledOnce();
+    const sent = [];
+    for await (const message of prompt) sent.push(message);
+    expect(sent).toEqual([]);
+  });
+
+  it('keeps telemetry off for the probe when the daemon environment opts out', async () => {
+    vi.stubEnv('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', 'true');
+    vi.stubEnv('DISABLE_TELEMETRY', '1');
+    const calls = injectModelsQuery([]);
+
+    await claudeCodeSupportedModels({});
+
+    expect(calls[0].options.env).toMatchObject({ CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: 'true', DISABLE_TELEMETRY: '1' });
+  });
+
+  it('reuses one answer across activations and asks again when the child settings change', async () => {
+    const calls = injectModelsQuery([{ value: 'sonnet', resolvedModel: 'claude-sonnet-5-5' }]);
+
+    await Promise.all([claudeCodeSupportedModels({}), claudeCodeSupportedModels({ plan: 'max' })]);
+    await claudeCodeSupportedModels({});
+    expect(calls).toHaveLength(1);
+
+    await claudeCodeSupportedModels({ inheritAnthropicEnvironment: true });
+    expect(calls).toHaveLength(2);
+    expect(calls[1].options.env).toBeDefined();
+  });
+
+  it('asks again after a failed answer', async () => {
+    let fail = true;
+    const calls = injectModelsQuery(() => {
+      if (fail) throw new Error('Not logged in');
+      return [{ value: 'haiku', resolvedModel: 'claude-haiku-5-5' }];
+    });
+
+    await expect(claudeCodeSupportedModels({})).rejects.toThrow('Not logged in');
+    expect(calls[0].query.close).toHaveBeenCalledOnce();
+    fail = false;
+    await expect(claudeCodeSupportedModels({})).resolves.toEqual([{ value: 'haiku', resolvedModel: 'claude-haiku-5-5' }]);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('gives up on a Claude Code process that never answers', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const calls = injectModelsQuery(() => new Promise(() => {}));
+
+      const answer = expect(claudeCodeSupportedModels({})).rejects.toThrow('Claude Code did not list its models within 20s');
+      await vi.advanceTimersByTimeAsync(20_000);
+      await answer;
+      expect(calls[0].query.close).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps well-formed rows and rejects an answer that is not a list', async () => {
+    injectModelsQuery([{ value: 'opus', resolvedModel: 'claude-opus-5-5' }, null, { value: 42 }, { value: 'haiku', resolvedModel: 7 }]);
+    await expect(claudeCodeSupportedModels({})).resolves.toEqual([
+      { value: 'opus', resolvedModel: 'claude-opus-5-5' },
+      { value: 'haiku' },
+    ]);
+
+    __test.resetSupportedModels();
+    injectModelsQuery({ models: [] });
+    await expect(claudeCodeSupportedModels({})).rejects.toThrow('Claude Code returned an invalid model list');
+  });
+
+  it('registers only the catalog models Claude Code offers', () => {
+    const bridge = activate({}, [
+      { value: 'default', resolvedModel: 'claude-opus-5-5' },
+      { value: 'opus', resolvedModel: 'claude-opus-5-5' },
+      { value: 'claude-fable-5-1[1m]' },
+      { value: 'sonnet', resolvedModel: 'claude-sonnet-5-5' },
+      { value: 'claude-haiku-4-5-20251001', resolvedModel: 'claude-haiku-4-5-20251001' },
+      { value: 'claude-opus-9', resolvedModel: 'claude-opus-9' },
+    ]);
+
+    expect(bridge.provider.models.map(({ id }) => id))
+      .toEqual(['claude-fable-5-1', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-4-5']);
+  });
 });
 
 describe('Felan provider registration and lifecycle', () => {

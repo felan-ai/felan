@@ -3,6 +3,7 @@ import { SessionClient } from '../src/client/client.js';
 import { HostSetupManager } from '../src/providers/setup/manager.js';
 import { AuthCleanupError, type startAuthWorker } from '../src/providers/setup/auth-driver.js';
 import { DaemonConfiguration } from '../src/providers/configuration.js';
+import { isDependencyOnboardingComplete, mergeDaemonGlobalSettings, readDaemonGlobalSettings } from '../src/providers/global-settings.js';
 import { SessionServer } from '../../daemon/src/daemon/server.js';
 import { serverFixture, gate } from '../../daemon/test/fixtures/server.js';
 import type { SetupDependency } from '../../daemon/src/setup/dependencies.js';
@@ -137,6 +138,84 @@ it('installs selected dependencies concurrently with a status line each and keep
   await vi.waitFor(() => expect(f.manager.read(job.id, 'owner').state).toBe('failed'));
   expect(f.manager.read(job.id, 'owner').message).toBe('Good: installed\nBad: failed: Download refused.\nFailed items remain pending. Retry them with /dependencies.');
   expect((await f.manager.catalog()).dependencies).toMatchObject([{ id: 'good', available: true, needsSetup: false }, { id: 'bad', needsSetup: true }]);
+});
+
+it.each([
+  { name: 'an enabled old runtime', available: false, enabled: true, revision: 1, needsSetup: true },
+  { name: 'an approved old runtime', available: false, enabled: true, revision: 1, version: '0.3.322', needsSetup: false },
+  { name: 'a disabled old runtime', available: false, enabled: false, revision: 1, needsSetup: false },
+  { name: 'the current installed runtime', available: true, enabled: true, revision: 1, needsSetup: false },
+  { name: 'a first-time missing runtime', available: false, enabled: true, revision: 0, needsSetup: true },
+  { name: 'a first-time installed runtime', available: true, enabled: true, revision: 0, needsSetup: true },
+  { name: 'a stale numeric revision', available: true, enabled: true, revision: 2, needsSetup: true },
+])('applies runtime-specific startup approval for $name', async ({ available, enabled, revision, version, needsSetup }) => {
+  const install = vi.fn();
+  const dependency: SetupDependency = { id: 'claude-code', extension: 'claudeCode', revision: 1, requiredVersion: '0.3.322', label: 'Claude Code',
+    description: 'Reviewed Claude Agent SDK 0.3.322 installer.', install,
+    check: async () => available ? { available: true, version: '0.3.322' }
+      : { available: false, version: '0.3.293', reason: 'Claude Agent SDK 0.3.293 is installed; 0.3.322 is required.' } };
+  const f = await fixture(undefined, [dependency]);
+  if (revision) await mergeDaemonGlobalSettings(f.owner.target.agentDir, { extensions: [], dependencyDecisions: [
+    { extension: 'claudeCode', enabled, revision, ...(version ? { version } : {}) },
+  ] }, () => f.owner.assertCurrent());
+  const client = await f.client();
+  expect(await client.request('host.setup.catalog', {})).toMatchObject({ outcome: 'accepted', result: { dependencies: [{
+    id: 'claude-code', available, enabled, needsSetup, version: available ? '0.3.322' : '0.3.293',
+    ...(!available ? { reason: 'Claude Agent SDK 0.3.293 is installed; 0.3.322 is required.' } : {}),
+  }] } });
+  expect(install).not.toHaveBeenCalled();
+});
+
+it('remembers a confirmed skip only for its required runtime version and saves a later successful install', async () => {
+  let available = false;
+  const install = vi.fn(async () => { available = true; });
+  const dependency: SetupDependency = { id: 'claude-code', extension: 'claudeCode', revision: 1, requiredVersion: '0.3.322',
+    label: 'Claude Code', description: 'Reviewed installer.', check: async () => ({ available }), install };
+  const f = await fixture(undefined, [dependency]);
+  await mergeDaemonGlobalSettings(f.owner.target.agentDir, { extensions: [], dependencyDecisions: [{ extension: 'claudeCode', revision: 1, enabled: true }] }, () => f.owner.assertCurrent());
+  expect((await f.manager.catalog()).dependencies[0]?.needsSetup).toBe(true);
+  const skipped = f.manager.start({ kind: 'dependencies', choices: [{ id: 'claude-code', action: 'skip' }] }, 'owner');
+  await vi.waitFor(() => expect(f.manager.read(skipped.id, 'owner').state).toBe('completed'));
+  expect((await f.manager.catalog()).dependencies[0]).toMatchObject({ needsSetup: false, enabled: true, available: false });
+  expect(install).not.toHaveBeenCalled();
+  let settings = await readDaemonGlobalSettings(f.owner.target.agentDir, () => f.owner.assertCurrent());
+  expect(isDependencyOnboardingComplete(settings, 'claudeCode', 1, '0.3.322')).toBe(true);
+  dependency.requiredVersion = '0.3.323';
+  expect((await f.manager.catalog()).dependencies[0]?.needsSetup).toBe(true);
+  const installed = f.manager.start({ kind: 'dependencies', choices: [{ id: 'claude-code', action: 'install' }] }, 'owner');
+  await vi.waitFor(() => expect(f.manager.read(installed.id, 'owner').state).toBe('completed'));
+  expect(install).toHaveBeenCalledOnce();
+  settings = await readDaemonGlobalSettings(f.owner.target.agentDir, () => f.owner.assertCurrent());
+  expect(isDependencyOnboardingComplete(settings, 'claudeCode', 1, '0.3.323')).toBe(true);
+  expect((await f.manager.catalog()).dependencies[0]).toMatchObject({ needsSetup: false, available: true, enabled: true });
+});
+
+it.each(['enable', 'disable'] as const)('saves the required runtime version for an explicit %s choice', async action => {
+  const dependency: SetupDependency = { id: 'claude-code', extension: 'claudeCode', revision: 1, requiredVersion: '0.3.322',
+    label: 'Claude Code', description: 'Reviewed installer.', check: async () => ({ available: true }) };
+  const f = await fixture(undefined, [dependency]);
+  const job = f.manager.start({ kind: 'dependencies', choices: [{ id: 'claude-code', action }] }, 'owner');
+  await vi.waitFor(() => expect(f.manager.read(job.id, 'owner').state).toBe('completed'));
+  const settings = await readDaemonGlobalSettings(f.owner.target.agentDir, () => f.owner.assertCurrent());
+  expect(isDependencyOnboardingComplete(settings, 'claudeCode', 1, '0.3.322')).toBe(true);
+  expect((await f.manager.catalog()).dependencies[0]?.enabled).toBe(action === 'enable');
+});
+
+it.each(['failed', 'cancelled'] as const)('does not save runtime approval after a %s install', async state => {
+  const release = gate();
+  const install = vi.fn(async () => { await release.promise; return { reason: 'Download refused.' }; });
+  const dependency: SetupDependency = { id: 'claude-code', extension: 'claudeCode', revision: 1, requiredVersion: '0.3.322',
+    label: 'Claude Code', description: 'Reviewed installer.', check: async () => ({ available: false, version: '0.3.293' }), install };
+  const f = await fixture(undefined, [dependency]);
+  await mergeDaemonGlobalSettings(f.owner.target.agentDir, { extensions: [], dependencyDecisions: [{ extension: 'claudeCode', revision: 1, enabled: true }] }, () => f.owner.assertCurrent());
+  const before = await readDaemonGlobalSettings(f.owner.target.agentDir, () => f.owner.assertCurrent());
+  const job = f.manager.start({ kind: 'dependencies', choices: [{ id: 'claude-code', action: 'install' }] }, 'owner');
+  await vi.waitFor(() => expect(install).toHaveBeenCalledOnce());
+  if (state === 'cancelled') f.manager.cancel(job.id, 'owner');
+  release.resolve();
+  await vi.waitFor(() => expect(f.manager.read(job.id, 'owner').state).toBe(state));
+  expect(await readDaemonGlobalSettings(f.owner.target.agentDir, () => f.owner.assertCurrent())).toEqual(before);
+  expect((await f.manager.catalog()).dependencies[0]?.needsSetup).toBe(true);
 });
 
 it('reports a model provider only for an enabled, available model dependency', async () => {

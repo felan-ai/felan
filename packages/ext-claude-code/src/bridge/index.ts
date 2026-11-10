@@ -2,13 +2,13 @@ import { createAssistantMessageEventStream, type AssistantMessage, type Assistan
 import { builtinProviders } from "@felan-ai/agent-core";
 import type { ExtensionAPI, ExtensionUIContext } from "@felan-ai/agent-core";
 import { claudeAgentSdk } from "../sdk/runtime.js";
-import type { Query, EffortLevel, SDKMessage, SettingSource, Base64ImageSource, ContentBlockParam } from "../sdk/types.js";
+import type { Query, EffortLevel, SDKMessage, SdkModelInfo, SettingSource, Base64ImageSource, ContentBlockParam } from "../sdk/types.js";
 import { createSession, deleteSession, openSession, repairToolPairing } from "cc-session-io";
 import { appendFileSync, mkdirSync, realpathSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { PROVIDER_ID, messageContentToText, convertPiMessages } from "./convert.js";
 import { debugLogPath, diagLogPath, setBridgeAgentDir } from "./log-paths.js";
-import { applyLongContext, buildModels, claudeCodeModelId, type LongContextSettings } from "./models.js";
+import { applyLongContext, buildModels, claudeCodeModelId, selectOfferedModels, type LongContextSettings } from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
@@ -887,6 +887,9 @@ let queryImpl: Query = managedQuery;
 export const __test = {
 	setQuery(fn: Query | null) {
 		queryImpl = fn ?? managedQuery;
+	},
+	resetSupportedModels() {
+		supportedModelsProbe = undefined;
 	},
 	resetSharedSession(piSessionId?: string | null) {
 		// No id: full reset (the pre-map semantics — tests start from a blank slate).
@@ -2558,8 +2561,79 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 
 // --- Extension registration ---
 
+// Felan: Claude Code's model lineup depends on its version, the login's plan and
+// managed availableModels/deniedModels, so ask its control protocol without
+// sending a prompt. A successful answer serves every later activation in this
+// module; a failure is retried by the next activation.
+const SUPPORTED_MODELS_TIMEOUT_MS = 20_000;
+let supportedModelsProbe: { key: string; models: Promise<SdkModelInfo[]> } | undefined;
+
+export function claudeCodeSupportedModels(settings: ClaudeCodeSettings): Promise<SdkModelInfo[]> {
+	const key = JSON.stringify([settings.inheritAnthropicEnvironment ?? false, settings.pathToClaudeCodeExecutable ?? null]);
+	if (supportedModelsProbe?.key !== key) {
+		const probe = { key, models: probeSupportedModels(settings) };
+		probe.models.catch(() => {
+			if (supportedModelsProbe === probe) supportedModelsProbe = undefined;
+		});
+		supportedModelsProbe = probe;
+	}
+	return supportedModelsProbe.models;
+}
+
+// Felan: Claude Code receives most of its /model lineup through its telemetry
+// service; DISABLE_TELEMETRY (part of nonessential traffic) leaves only the base
+// models. The probe therefore leaves that choice to the daemon's environment and
+// still disables the other nonessential traffic.
+function supportedModelsEnv(settings: ClaudeCodeSettings): Record<string, string | undefined> {
+	const env = buildChildEnv(settings);
+	const nonessentialTraffic = process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+	if (nonessentialTraffic === undefined) delete env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC;
+	else env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = nonessentialTraffic;
+	for (const key of ["DISABLE_ERROR_REPORTING", "DISABLE_AUTOUPDATER", "DISABLE_BUG_COMMAND"]) env[key] ??= "1";
+	return env;
+}
+
+async function probeSupportedModels(settings: ClaudeCodeSettings): Promise<SdkModelInfo[]> {
+	const promptStream = makePromptStream();
+	const claudeExecutable = settings.pathToClaudeCodeExecutable;
+	const sdkQuery = queryImpl({
+		prompt: promptStream.stream,
+		options: {
+			cwd: process.cwd(),
+			env: supportedModelsEnv(settings),
+			tools: [],
+			strictMcpConfig: true,
+			persistSession: false,
+			...(claudeExecutable ? { pathToClaudeCodeExecutable: claudeExecutable } : {}),
+			...makeCliDebugOptions("supported-models"),
+		},
+	});
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	try {
+		const rows: unknown = await Promise.race([
+			sdkQuery.supportedModels(),
+			new Promise<never>((_, reject) => {
+				timer = setTimeout(() => reject(new Error(`Claude Code did not list its models within ${SUPPORTED_MODELS_TIMEOUT_MS / 1000}s`)), SUPPORTED_MODELS_TIMEOUT_MS);
+			}),
+		]);
+		if (!Array.isArray(rows)) throw new Error("Claude Code returned an invalid model list");
+		const models = rows
+			.filter((row): row is SdkModelInfo => typeof row?.value === "string")
+			.map(({ value, resolvedModel }) => typeof resolvedModel === "string" ? { value, resolvedModel } : { value });
+		debug(`supported models: ${models.map((m) => `${m.value}=${m.resolvedModel ?? "?"}`).join(", ")}`);
+		return models;
+	} finally {
+		clearTimeout(timer);
+		promptStream.end();
+		sdkQuery.close();
+	}
+}
+
 // Felan: accept the host extension API without requiring unrelated CLI flag APIs.
-export function activateClaudeCodeBridge(pi: Pick<ExtensionAPI, "on" | "registerProvider">, options: { settings: ClaudeCodeSettings; agentDir: string }): void {
+export function activateClaudeCodeBridge(
+	pi: Pick<ExtensionAPI, "on" | "registerProvider">,
+	options: { settings: ClaudeCodeSettings; agentDir: string; supportedModels: readonly SdkModelInfo[] },
+): void {
 	setBridgeAgentDir(options.agentDir);
 	providerSettings = options.settings;
 	// We need these settings to know if we're eligible for 1M context on certain models
@@ -2573,9 +2647,9 @@ export function activateClaudeCodeBridge(pi: Pick<ExtensionAPI, "on" | "register
 		longContextExtraUsage: providerSettings.longContextExtraUsage ?? false,
 		forceTwoHundredK,
 	};
-	const registeredModels = applyLongContext(MODELS, longContextSettings);
+	const registeredModels = applyLongContext(selectOfferedModels(MODELS, options.supportedModels), longContextSettings);
 	if (registeredModels.length === 0) {
-		console.error("claude-code: no models available from the Anthropic catalog — update @felan-ai/agent-core");
+		console.error("claude-code: none of Claude Code's models are in the Anthropic catalog — update @felan-ai/agent-core");
 	}
 
 	// Felan: daemon sessions (including children) have independent lifecycles.

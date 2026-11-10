@@ -12,6 +12,7 @@
  */
 import { describe, it, beforeEach, afterEach } from "vitest";
 import assert from "node:assert/strict";
+import { catalogModelRows } from "./lib/catalog-models.mjs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,7 +28,7 @@ mod.activateClaudeCodeBridge({
 	on: () => {},
 	registerProvider: (_name, config) => { providerConfig = config; },
 	registerTool: () => {},
-}, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR });
+}, { settings: {}, agentDir: process.env.PI_CODING_AGENT_DIR, supportedModels: catalogModelRows });
 const streamSimple = providerConfig.streamSimple;
 const model = providerConfig.models[0];
 

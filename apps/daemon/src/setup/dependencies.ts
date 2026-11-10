@@ -4,6 +4,7 @@ export interface SetupDependency {
   id: string;
   extension: string;
   revision: number;
+  requiredVersion?: string;
   label: string;
   description: string;
   providesModels?: boolean;

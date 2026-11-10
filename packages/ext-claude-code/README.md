@@ -17,14 +17,14 @@ No Claude Code companion modification is required.
 In Felan:
 
 1. Run `/claude-code install` and approve the host's installation request. This
-   downloads Claude Agent SDK **0.3.293** and its approximately **225 MB
+   downloads Claude Agent SDK **0.3.322** and its approximately **330 MB
    per-platform binary**. Linux downloads both glibc and musl variants, roughly
-   **450 MB** in total. [Anthropic's Agent SDK license and
+   **640 MB** in total. [Anthropic's Agent SDK license and
    terms](https://github.com/anthropics/claude-agent-sdk-typescript) apply; the SDK
    and Claude Code are not bundled with this MIT-licensed package.
 2. Start a new session or reload to load the provider.
 3. Use `/model claude-code/<model-id>`, for example
-   `/model claude-code/claude-opus-4-6`, or select a `claude-code` model in `/model`.
+   `/model claude-code/claude-opus-5-5`, or select a `claude-code` model in `/model`.
 4. Run `/claude-code status` to inspect the SDK version, whether the provider is
    registered in this session, and the resolved plan and long-context settings.
 
@@ -34,10 +34,17 @@ Installation delegates `{ id: 'claude-code' }` to the optional
 host. Without that service, status remains available but installation is disabled.
 Activation only inspects and loads an existing installation: it never installs
 anything, executes `npm`, or downloads files. A missing or unloadable SDK is logged
-through the runtime logger and leaves the provider unregistered.
+through the runtime logger and leaves the provider unregistered. Inspection also
+reports a previously installed SDK version when the required version is missing.
+On local interactive startup, Felan offers an update for an enabled provider that
+needs a newer SDK, even if dependency onboarding was completed before. Installation
+requires confirmation. Leaving it unchanged records that choice for the required
+version; cancelling records no choice. Disabled providers are not offered updates.
+Activation then starts Claude Code without a prompt to read its model list (see
+[Models](#models)).
 
 The managed SDK and its pinned dependencies live under
-`<agent-storage>/claude-code/agent-sdk-0.3.293`. The generated ESM entry loads both
+`<agent-storage>/claude-code/agent-sdk-0.3.322`. The generated ESM entry loads both
 the Agent SDK and the MCP implementation from that installation. Host providers
 can import `inspectClaudeCodeRuntime`, `installManagedClaudeAgentSdk`,
 `managedClaudeAgentSdkDirectory`, and `MANAGED_CLAUDE_AGENT_SDK_VERSION` from this
@@ -52,9 +59,30 @@ See [Runtime dependencies](../../docs/reference/runtime-dependencies.md#claude-c
 
 ## Models
 
-Models come from Agent Core's Anthropic catalog. Dated snapshot aliases are
-omitted. Model availability still depends on your Claude plan and Claude Code;
-a catalog entry is not an entitlement guarantee.
+The provider registers the Agent Core Anthropic catalog models that Claude Code
+lists in its own `/model` picker for your login. That list depends on the Claude
+Code version, your plan, and managed `availableModels` and `deniedModels`
+settings. A catalog model Claude Code does not list, such as a model newer than
+the pinned Claude Code, is not registered. A model Claude Code lists but the
+catalog lacks is not registered either; it appears after an Agent Core update.
+Dated snapshot aliases are omitted.
+
+The first activation in a Felan process asks Claude Code for the list, which
+takes about 0.25 seconds warm and 2 seconds on a cold start; later sessions reuse
+the answer until the process restarts or `inheritAnthropicEnvironment` or
+`pathToClaudeCodeExecutable` changes. If Claude Code returns an error or does not
+answer within 20 seconds, the warning is logged, the provider stays unregistered
+in that session, and the next session asks again. Callers of
+`activateClaudeCodeBridge` pass the list from `claudeCodeSupportedModels`.
+
+Claude Code receives most of its `/model` lineup, including older and newly
+rolled-out models, through its telemetry service. The model-list probe therefore
+runs with Claude Code telemetry enabled; error reporting, the autoupdater and the
+bug command stay disabled, and conversation turns keep
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`. Set
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` or `DISABLE_TELEMETRY=1` in Felan's
+environment to keep the probe's telemetry off as well; Claude Code then lists
+only its base models.
 
 Models keep the catalog's Anthropic API prices, so session cost in the footer
 and usage reports is an API-equivalent estimate at list prices, including
@@ -104,9 +132,10 @@ relative executable paths are rejected. Changes take effect on activation in a
 new session or reload. Bridge settings are process-wide: in a shared daemon, the
 latest activation supplies settings for subsequent calls.
 
-Long-context support is model-specific. Opus 4.6 uses 1M context on Max or with
-Extra Usage; Sonnet 4.6 requires Extra Usage. Other supported 1M models use the
-bridge's measured compatibility table. Unknown models default to 200K; use
+Long-context support is model-specific. Fable 5.2 uses the 1M context shown in
+Claude Code and requests `claude-fable-5-2[1m]`. Opus 4.6 uses 1M context on Max
+or with Extra Usage; Sonnet 4.6 requires Extra Usage. Other supported 1M models
+use the bridge's compatibility table. Unknown models default to 200K; use
 `forceTwoHundredK` if the requested larger window is unavailable on your account.
 
 ## Compatibility and limitations

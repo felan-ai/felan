@@ -20,15 +20,21 @@ import extension, {
   claudeCodeSettingsFromConfig,
   setClaudeAgentSdk,
 } from '../src/index.js';
+import { __test as bridgeTest } from '../src/bridge/index.js';
 import packageLock from '../src/managed/agent-sdk-package-lock.json' with { type: 'json' };
 
 type Command = Parameters<FelanExtensionAPI['registerCommand']>[1];
 type Provider = Parameters<FelanExtensionAPI['registerProvider']>[1];
 const directories: string[] = [];
 const shutdowns: Array<() => Promise<void>> = [];
-const fakeEntrySource = `
+const fakeEntryWithModels = (supportedModels: string) => `
 export function query() {
-  return { async *[Symbol.asyncIterator]() {}, async interrupt() {}, close() {} };
+  return {
+    async *[Symbol.asyncIterator]() {},
+    async interrupt() {},
+    close() {},
+    async supportedModels() { ${supportedModels} },
+  };
 }
 export class McpServer {
   server = { setRequestHandler() {} };
@@ -36,6 +42,9 @@ export class McpServer {
 export const CallToolRequestSchema = {};
 export const ListToolsRequestSchema = {};
 `;
+const fakeEntrySource = fakeEntryWithModels(
+  `return [{ value: 'default', resolvedModel: 'claude-opus-5-5' }, { value: 'claude-opus-4-6' }];`,
+);
 
 beforeEach(() => {
   vi.stubEnv('CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC', process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC);
@@ -43,6 +52,7 @@ beforeEach(() => {
 
 afterEach(async () => {
   for (const shutdown of shutdowns.splice(0)) await shutdown();
+  bridgeTest.resetSupportedModels();
   setClaudeAgentSdk(undefined);
   vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -225,8 +235,7 @@ describe('Claude Code extension activation', () => {
     });
     const provider = h.providers.get('claude-code')!;
     expect(provider).toMatchObject({ api: 'claude-code', baseUrl: 'claude-code' });
-    expect(provider.models.length).toBeGreaterThan(0);
-    expect(provider.models.every((model) => !/-20\d{6}$/.test(model.id))).toBe(true);
+    expect(provider.models.map((model) => model.id)).toEqual(['claude-opus-5-5', 'claude-opus-4-6']);
     expect(provider.models.every((model) => model.cost.input > 0 && model.cost.output > 0)).toBe(true);
     const opus = provider.models.find((model) => model.id === 'claude-opus-4-6');
     expect(opus && 'contextWindow' in opus ? opus.contextWindow : undefined).toBe(200_000);
@@ -238,6 +247,23 @@ describe('Claude Code extension activation', () => {
     await h.commands.get('claude-code')!.handler('status', {} as Parameters<Command['handler']>[1]);
     expect(h.notify).toHaveBeenLastCalledWith({
       text: expect.stringMatching(/Provider: registered\nplan=max\nlongContextExtraUsage=true/),
+      level: 'info',
+    });
+  });
+
+  it('registers no provider when Claude Code does not list its models', async () => {
+    const h = await fixture('host', fakeEntryWithModels(`throw new Error('Not logged in');`));
+    expect(h.providers.size).toBe(0);
+    expect(h.handlers.size).toBe(0);
+    expect(h.logger.warn).toHaveBeenCalledWith(
+      { error: 'Not logged in' },
+      expect.stringContaining('Claude Code did not list its models'),
+    );
+    expect(h.logger.error).not.toHaveBeenCalled();
+    expect(h.install).not.toHaveBeenCalled();
+    await h.commands.get('claude-code')!.handler('status', {} as Parameters<Command['handler']>[1]);
+    expect(h.notify).toHaveBeenLastCalledWith({
+      text: expect.stringContaining('Provider: not registered'),
       level: 'info',
     });
   });

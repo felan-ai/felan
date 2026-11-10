@@ -82,9 +82,12 @@ export class HostSetupManager {
       let status: Awaited<ReturnType<SetupDependency['check']>>;
       try { status = await dependency.check(this.options.runtime); }
       catch { status = { available: false, reason: 'Dependency detection failed; inspect the local installation before retrying.' }; }
+      const enabled = isBuiltinExtensionEnabled(settings, dependency.extension);
+      const baselineComplete = isDependencyOnboardingComplete(settings, dependency.extension, dependency.revision);
       return { id: dependency.id, label: dependency.label, description: dependency.description,
-        enabled: isBuiltinExtensionEnabled(settings, dependency.extension), available: status.available, installable: !!dependency.install,
-        needsSetup: !isDependencyOnboardingComplete(settings, dependency.extension, dependency.revision),
+        enabled, available: status.available, installable: !!dependency.install,
+        needsSetup: !baselineComplete || (!!dependency.requiredVersion && enabled && !status.available
+          && !isDependencyOnboardingComplete(settings, dependency.extension, dependency.revision, dependency.requiredVersion)),
         ...(status.version === undefined ? {} : { version: boundedText(clean(status.version), 128) }),
         ...(status.reason === undefined ? {} : { reason: boundedText(clean(status.reason), 4096) }) };
     }));
@@ -236,7 +239,10 @@ export class HostSetupManager {
         enabled = isBuiltinExtensionEnabled(current, dependency.extension);
       }
       job.control.signal.throwIfAborted();
-      await mergeDaemonGlobalSettings(this.options.agentDir, { extensions: [], dependencyDecisions: [{ extension: dependency.extension, revision: dependency.revision, enabled }] }, this.options.assertCurrent);
+      await mergeDaemonGlobalSettings(this.options.agentDir, { extensions: [], dependencyDecisions: [{
+        extension: dependency.extension, revision: dependency.revision, enabled,
+        ...(dependency.requiredVersion === undefined ? {} : { version: dependency.requiredVersion }),
+      }] }, () => { job.control.signal.throwIfAborted(); this.options.assertCurrent(); });
       if (choice.action !== 'skip') report(dependency.label, choice.action === 'install' ? 'installed' : `${choice.action}d`);
     }));
     job.control.signal.throwIfAborted();
