@@ -52,7 +52,7 @@ were not enough to remove coverage.
 | --- | --- |
 | Dead code | Removed ten unreferenced client and extension modules, the unused browser protocol script, an unused upstream log checker and fixture, associated tests, and verified private functions or exports. Public package export maps and the tracked host configuration remain unchanged. |
 | Daemon | Removed private cache and call-count guards. Smaller injected outbox capacities replace megabyte-scale capacity fixtures without changing production limits. Service and transcript fixtures use controlled processes and signals. Completion checks join delivery work. New fixture roots use the isolated temporary directory; pre-existing repository fixtures were preserved. |
-| Client | Removed Markdown cache-spy and reducer serialization guards while retaining output parity and size limits. Width checks share their scenario setup. Browser relay checks await drain events. Timeout checks use controlled timers where possible. Extension fixtures no longer write workspace `node_modules`. |
+| Client | Removed Markdown cache-spy and reducer serialization guards while retaining output parity and size limits. Width checks share their scenario setup. Timeout checks use controlled timers where possible. Extension fixtures no longer write workspace `node_modules`. |
 | Memory | Fixture cleanup awaits coordinator disposal. Comparison cases no longer depend on execution order. Tests await worker entry, cancellation and scheduling follow-ups. Stopped process locks are aged after confirmed exit rather than through a sleep. |
 | Agent Core | Finite descendant writers and readiness signals replace chatty processes and timing guesses. The shell-exit escalation case uses a controlled child and virtual time. Separate real process-group termination cases remain. |
 | Session protocol, title and compaction | Removed internal schema-shape, copy and call-count checks and verified duplicates. Retained hostile prototypes, accessors, byte limits, invalid tails, cancellation and distinct ordinary versus expiry failure behavior. |
@@ -70,6 +70,13 @@ The first combined stress campaign also exposed the shell-exit drain fixture.
 Its second root run failed with `kill EPERM` during cleanup. The replacement
 tests the exited-shell, open-pipe and forced-termination states without trying
 to enter a real 500 ms window. The failed campaign remains in the local reports.
+
+The first CI run after these changes failed on Linux. The audit had replaced
+the browser relay test's 20 ms pause with assertions that a 2 MiB loopback
+write reports backpressure. That holds with macOS socket buffers, but Linux
+loopback buffers absorb the whole write. The test again holds the receiver
+paused for 20 ms and asserts only complete, ordered delivery, which does not
+depend on the pause.
 
 ## Code-mode benchmark repair
 

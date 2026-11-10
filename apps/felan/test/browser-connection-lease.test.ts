@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import { once } from 'node:events';
 import http, { createServer, type IncomingMessage } from 'node:http';
 import { createConnection, type Socket } from 'node:net';
 import type { Duplex } from 'node:stream';
@@ -146,19 +145,19 @@ describe('one-use Chrome connection lease', () => {
 
     const toRemote = Buffer.alloc(2 * 1_024 * 1_024, 0xa7);
     const toLocal = Buffer.alloc(2 * 1_024 * 1_024, 0x9c);
+    // Linux loopback buffers can absorb 2 MiB, so write() need not report backpressure there.
+    // The pause lets the relay hit backpressure where buffers are smaller; the delivery checks do not depend on it.
     upstream.stream.socket.pause();
-    expect(local.socket.write(toRemote)).toBe(false);
-    const localDrained = once(local.socket, 'drain');
+    local.socket.write(toRemote);
+    await delay(20);
     upstream.stream.socket.resume();
-    await localDrained;
     const expectedRemote = Buffer.concat([localHead, toRemote]);
     await vi.waitFor(() => expect(upstream.stream.bytes.length).toBe(expectedRemote.length));
     expect(upstream.stream.bytes.equals(expectedRemote)).toBe(true);
     local.socket.pause();
-    expect(upstream.stream.socket.write(toLocal)).toBe(false);
-    const upstreamDrained = once(upstream.stream.socket, 'drain');
+    upstream.stream.socket.write(toLocal);
+    await delay(20);
     local.socket.resume();
-    await upstreamDrained;
     const expectedLocal = Buffer.concat([remoteHead, toLocal]);
     await vi.waitFor(() => expect(body(local.bytes).length).toBe(expectedLocal.length));
     expect(body(local.bytes).equals(expectedLocal)).toBe(true);
