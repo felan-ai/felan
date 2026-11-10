@@ -37,7 +37,7 @@ function services(options = {}) {
 test('persistent SDK RPC uses scoped models, default effort and no classifier for disabled arm',async () => {
   const workspace=await mkdtemp(join(tmpdir(),'turn-eval-'));
   try {
-    await cp(new URL('../',import.meta.url),workspace,{recursive:true});const fake=services();
+    await cp(new URL('../',import.meta.url),workspace,{recursive:true});
     const servicesFake=services();
     const result=await runScenario({...servicesFake,id:'recovery',mode:'disabled',modelId:'gpt-6.1-sol',workspace,source});
     const {seen}=servicesFake;
@@ -162,10 +162,21 @@ test('enabled injection is explicit; tests never load the provider entrypoint',a
     }finally{await rm(workspace,{recursive:true,force:true});}
   }
 });
-test('persistent drain waits for asynchronous child completion and resumed parent inference',async () => {
-  let pending=true;const session={isStreaming:false};const host={hasPendingWork:()=>pending};
-  const completion=setTimeout(()=>{session.isStreaming=true;pending=false;},5);
-  const parent=setTimeout(()=>{session.isStreaming=false;},55);
-  const started=performance.now();await drain(session,host);assert.ok(performance.now()-started>=50);
-  clearTimeout(completion);clearTimeout(parent);
+test('persistent drain waits for asynchronous child completion and resumed parent inference',async t => {
+  t.mock.timers.enable({apis:['setTimeout']});
+  let pending=true,streaming=false,observed;
+  const session={get isStreaming(){observed?.();return streaming;}};
+  const host={hasPendingWork:()=>pending};
+  const poll=()=>new Promise(resolve=>{observed=resolve;});
+  let settled=false;
+  const firstPoll=poll();
+  const draining=drain(session,host).then(()=>{settled=true;});
+  t.mock.timers.tick(20);await firstPoll;
+  assert.equal(settled,false);
+  pending=false;streaming=true;
+  const resumedPoll=poll();
+  t.mock.timers.tick(20);await resumedPoll;
+  assert.equal(settled,false);
+  streaming=false;t.mock.timers.tick(20);await draining;
+  assert.equal(settled,true);
 });

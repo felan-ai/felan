@@ -34,9 +34,19 @@ representative coding-agent leaderboard.
 
 Use `harness-evals` for scheduling, repetition, isolation, timeouts, usage
 parsing and reports. The adapter selects the per-case fixture and configured mode; the fixture writes
-that mode to isolated Felan settings, creates the shipped local runtime, injects
-only synthetic APIs and emits standard Pi JSONL events. It verifies startup
-activation and never registers or activates the code-mode tool itself. The framework's existing Felan parser handles those events.
+that mode to isolated Felan settings and starts the canonical daemon service.
+A fixture provider calls the installed local session-runtime implementation and
+adds the synthetic APIs. It resolves production modules only from the explicitly
+supplied managing-package installation. The daemon owns admission, registration,
+session storage, activation and shutdown. The fixture disables unrelated
+extensions, skills, secret storage, classifier discovery and process-wide HTTP
+configuration. Each host or session model runtime has fresh registration state.
+
+The headless client submits the explicit provider, model and thinking level
+through admitted daemon commands. It emits native Pi message and tool JSONL
+events, retaining their usage and the existing result JSON format for grading.
+It verifies startup activation and never registers or activates the code-mode
+tool itself. The framework's existing Felan parser handles those events.
 Verifiers consume deterministic grades beside each case.
 
 ```sh
