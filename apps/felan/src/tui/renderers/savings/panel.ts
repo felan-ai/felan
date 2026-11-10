@@ -21,7 +21,7 @@ export interface SavingsPanelState {
 export type SavingsOutcome = UiActionRequest | undefined;
 
 const TAB_LABELS: Record<SavingsTabId, string> = { overview: 'Overview', extensions: 'Extensions', sessions: 'Sessions', projects: 'Projects' };
-const RANGE_LABELS: Record<SavingsRangeId, string> = { today: 'Today', '7d': '7 days', '30d': '30 days', '90d': '90 days', all: 'All time' };
+const RANGE_LABELS: Record<SavingsRangeId, string> = { session: 'This session', '7d': '7 days', '30d': '30 days', '90d': '90 days', all: 'All time' };
 const SESSION_TABLE_OFFSET = 3;
 const integer = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
@@ -57,7 +57,7 @@ export class SavingsPanel implements Component {
     const header = dashboard ? this.header(dashboard) : [this.theme.fg('accent', this.theme.bold(clean(this.element.title))), ''];
     const body = dashboard ? this.cachedBody(dashboard, w) : this.markdown.render(w);
     const footer = [this.theme.fg('dim', this.hints())];
-    const viewport = Math.max(1, this.terminalRows() - header.length - footer.length - 1);
+    const viewport = Math.max(1, this.terminalRows() - header.length - footer.length);
     this.maximum = Math.max(0, body.length - viewport);
     let scroll = Math.min(this.current(), this.maximum);
     if (dashboard && this.state.tab === 'sessions' && this.state.detail === undefined) {
@@ -65,7 +65,8 @@ export class SavingsPanel implements Component {
       scroll = Math.min(this.maximum, Math.max(scroll, row - viewport + 1, 0), row);
     }
     this.state.scroll[this.state.tab] = scroll;
-    return [...header, ...body.slice(scroll, scroll + viewport), ...footer].map(line => truncateToWidth(line, w));
+    const visible = body.slice(scroll, scroll + viewport);
+    return [...header, ...visible, ...Array<string>(viewport - visible.length).fill(''), ...footer].map(line => truncateToWidth(line, w));
   }
 
   handleInput(data: string): void {

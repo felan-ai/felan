@@ -11,7 +11,7 @@ import {
 } from './savings/data.js';
 
 const SAVINGS_COMMAND_EXTENSION_NAME = '@felan-ai/felan/savings';
-const USAGE = 'Usage: /savings [today|7d|30d|90d|all] [project|details]';
+const USAGE = 'Usage: /savings [session|7d|30d|90d|all] [project|details]';
 const TAB_ALIASES: Readonly<Record<string, SavingsTabId>> = { project: 'projects', details: 'extensions' };
 const DOCUMENT_ID = 'savings-dashboard';
 const STALE_ATTEMPTS = 3;

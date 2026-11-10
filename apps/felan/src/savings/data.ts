@@ -3,7 +3,7 @@ import type { UiValues } from '@felan-ai/agent-core';
 export const SAVINGS_DASHBOARD_HINT = Object.freeze({ id: 'felan.savings-dashboard', version: '1' });
 
 export const SAVINGS_ACTIONS = Object.freeze({ refresh: 'refresh', close: 'close' } as const);
-export const SAVINGS_RANGES = ['today', '7d', '30d', '90d', 'all'] as const;
+export const SAVINGS_RANGES = ['session', '7d', '30d', '90d', 'all'] as const;
 export const SAVINGS_TABS = ['overview', 'extensions', 'sessions', 'projects'] as const;
 export const SAVINGS_CATEGORIES = ['output-optimization', 'model-routing', 'context-management', 'other'] as const;
 export const SAVINGS_DEFAULT_RANGE: SavingsRangeId = '30d';
@@ -47,7 +47,7 @@ interface SavingsOperationRow extends SavingsAmount { operation: string; basis: 
 export interface SavingsRangeView {
   id: SavingsRangeId;
   label: string;
-  /** Inclusive UTC days, matching how measurements are stored; `from` is absent for all time. */
+  /** Inclusive UTC days, matching how measurements are stored; `from` is absent for session and all time. */
   from?: string;
   to: string;
   totals: SavingsAmount;
@@ -88,12 +88,13 @@ const bytes = (value: string) => encoder.encode(value).length;
 function invalid(): never { throw new Error('Invalid savings dashboard data.'); }
 
 export function savingsRangeDays(id: SavingsRangeId): number | undefined {
-  return id === 'all' ? undefined : id === 'today' ? 1 : Number(id.slice(0, -1));
+  return id === 'all' || id === 'session' ? undefined : Number(id.slice(0, -1));
 }
 
 export function savingsRangeLabel(id: SavingsRangeId): string {
+  if (id === 'session') return 'This session';
   const days = savingsRangeDays(id);
-  return days === undefined ? 'All time' : days === 1 ? 'Today (UTC)' : `Last ${days} days`;
+  return days === undefined ? 'All time' : `Last ${days} days`;
 }
 
 export function savingsCategoryLabel(category: SavingsCategoryId): string {
@@ -188,7 +189,7 @@ function rangeView(value: unknown, extensionCount: number, sessionCount: number,
   const id = member(source.id, SAVINGS_RANGES);
   const to = day(source.to);
   const from = source.from === undefined ? undefined : day(source.from);
-  if ((from === undefined) !== (id === 'all') || from !== undefined && from > to) invalid();
+  if ((from === undefined) !== (id === 'all' || id === 'session') || from !== undefined && from > to) invalid();
   const unpriced = record(source.unpriced, ['decisions', 'savedTokens']);
   const trend = record(source.trend, ['granularity', 'points']);
   const granularity = member(trend.granularity, ['day', 'month'] as const);

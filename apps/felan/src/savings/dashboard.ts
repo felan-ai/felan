@@ -137,9 +137,11 @@ function rangeModel(id: SavingsRangeId, input: SavingsDashboardInput, to: string
   extensionIndex: ReadonlyMap<string, number>, projectIndex: ReadonlyMap<string, number>): Model['ranges'][number] {
   const length = savingsRangeDays(id);
   const from = length === undefined ? undefined : addDays(to, 1 - length);
-  const buckets = input.buckets.filter(bucket => from === undefined || bucket.day >= from && bucket.day <= to);
+  const buckets = input.buckets.filter(bucket => (id !== 'session' || bucket.sessionId === input.currentSessionId)
+    && (from === undefined || bucket.day >= from && bucket.day <= to));
+  const trendStart = id === 'session' ? buckets.map(bucket => bucket.day).sort()[0] : firstDay;
   const periods = from === undefined
-    ? months(firstDay?.slice(0, 7) ?? to.slice(0, 7), to.slice(0, 7))
+    ? months(trendStart?.slice(0, 7) ?? to.slice(0, 7), to.slice(0, 7))
     : Array.from({ length: length! }, (_, offset) => addDays(from, offset));
   const byPeriod = groupBy(buckets, bucket => from === undefined ? bucket.day.slice(0, 7) : bucket.day);
   return {

@@ -38,6 +38,25 @@ function input(buckets: readonly SavingsBucket[], overrides: Partial<SavingsDash
 const range = (dashboard: SavingsDashboard, id: string) => dashboard.ranges.find(view => view.id === id)!;
 
 describe('savings dashboard', () => {
+  it('includes only the current session across all days in the session view', () => {
+    const { dashboard, data } = createSavingsDashboard(input([
+      bucket({ saved: 2, day: '2026-07-01' }),
+      bucket({ saved: 3 }),
+      bucket({ saved: 100, sessionId: OTHER, projectKey: THERE }),
+    ], { initialRange: 'session' }));
+    const view = range(dashboard, 'session');
+    expect(view.label).toBe('This session');
+    expect(view.totals.savedUsd).toBe(5);
+    expect(view.currentSession).toEqual(view.totals);
+    expect(view.sessions).toEqual([expect.objectContaining({ session: dashboard.currentSession, savedUsd: 5 })]);
+    expect(view.projects).toHaveLength(1);
+    expect(view.extensions[0]!.savedUsd).toBe(5);
+    expect(view.categories[0]!.savedUsd).toBe(5);
+    expect(view.trend.points.reduce((sum, point) => sum + point.savedUsd, 0)).toBe(5);
+    expect(readSavingsDashboard(data)).toEqual(dashboard);
+    expect(savingsDashboardMarkdown(dashboard)).toContain('# Estimated savings — This session');
+  });
+
   it('bounds ranges by inclusive UTC days and keeps all-time totals', () => {
     const { dashboard } = createSavingsDashboard(input([
       bucket({ day: '2026-11-09', saved: 1 }),
@@ -47,7 +66,7 @@ describe('savings dashboard', () => {
       bucket({ day: '2026-08-11', saved: 16 }),
     ]));
     expect(dashboard.ranges.map(view => [view.id, view.from, view.to, view.totals.savedUsd])).toEqual([
-      ['today', '2026-11-09', '2026-11-09', 1],
+      ['session', undefined, '2026-11-09', 31],
       ['7d', '2026-11-03', '2026-11-09', 3],
       ['30d', '2026-10-11', '2026-11-09', 7],
       ['90d', '2026-08-12', '2026-11-09', 15],
@@ -93,7 +112,7 @@ describe('savings dashboard', () => {
       { ...unpriced, baseline: { ...unpricedBaseline, priceSource: 'unavailable' } },
       bucket({ saved: -0.25, tokens: [100, 300] }),
     ]));
-    const view = range(dashboard, 'today');
+    const view = range(dashboard, 'session');
     expect(view.unpriced).toEqual({ decisions: 3, savedTokens: 400 });
     expect(view.totals).toEqual({ savedUsd: -0.25, baselineUsd: 0.75, actualUsd: 1, decisions: 2, savedTokens: -200 });
     expect(formatSavingsUsd(view.totals.savedUsd)).toBe('-$0.25');
@@ -120,7 +139,10 @@ describe('savings dashboard', () => {
   it('lists the current session even before it has measurements', () => {
     const { dashboard } = createSavingsDashboard(input([bucket({ sessionId: OTHER, projectKey: THERE })]));
     expect(dashboard.sessions[dashboard.currentSession!]).toMatchObject({ title: 'Savings dashboard', lastDay: '2026-11-09', extensions: [] });
-    expect(range(dashboard, 'today').currentSession).toEqual({ savedUsd: 0, baselineUsd: 0, actualUsd: 0, decisions: 0, savedTokens: 0 });
+    expect(range(dashboard, 'session').currentSession).toEqual({ savedUsd: 0, baselineUsd: 0, actualUsd: 0, decisions: 0, savedTokens: 0 });
+    expect(range(dashboard, 'session').totals.savedUsd).toBe(0);
+    expect(range(dashboard, 'session').sessions).toEqual([]);
+    expect(range(dashboard, 'session').trend.points).toHaveLength(1);
   });
 
   it('round-trips document data and rejects malformed dashboards', () => {
@@ -155,12 +177,12 @@ describe('savings dashboard', () => {
     const { dashboard, data } = createSavingsDashboard(input(buckets, { sessions }));
     expect(data).toBeDefined();
     expect((data!.dashboard as string).length).toBeLessThanOrEqual(SAVINGS_DASHBOARD_BYTES);
-    const today = range(dashboard, 'today');
-    expect(today.omittedSessions).toBeGreaterThan(0);
-    expect(today.sessions.length + today.omittedSessions).toBe(2_500);
-    expect(today.totals.decisions).toBe(5_000);
-    expect(dashboard.sessions[today.sessions.at(-1)!.session]!.title.endsWith(String(today.omittedSessions))).toBe(true);
-    expect(savingsDashboardMarkdown(dashboard)).toContain(`${today.omittedSessions} smaller sessions are not listed.`);
+    const view = range(dashboard, '30d');
+    expect(view.omittedSessions).toBeGreaterThan(0);
+    expect(view.sessions.length + view.omittedSessions).toBe(2_500);
+    expect(view.totals.decisions).toBe(5_000);
+    expect(dashboard.sessions[view.sessions.at(-1)!.session]!.title.endsWith(String(view.omittedSessions))).toBe(true);
+    expect(savingsDashboardMarkdown(dashboard)).toContain(`${view.omittedSessions} smaller sessions are not listed.`);
   });
 
   it('renders Markdown for clients without the dashboard renderer', () => {

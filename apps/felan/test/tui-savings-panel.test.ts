@@ -64,12 +64,39 @@ const present = (h: ReturnType<typeof harness>, document = documentFor(), signal
 const keys = (h: ReturnType<typeof harness>, ...values: string[]) => { for (const value of values) h.component().handleInput?.(value); };
 
 describe('savings dashboard panel', () => {
+  it('fills the terminal and keeps the footer at the bottom on every tab and in the fallback', () => {
+    const h = harness(50);
+    void present(h, documentFor({ id: 'full-height' }));
+    for (const tab of ['1', '2', '3', '4']) {
+      keys(h, tab);
+      const lines = h.component().render(100);
+      expect(lines).toHaveLength(50);
+      expect(lines.at(-2)).toBe('');
+      expect(lines.at(-1)).toContain('Esc close');
+    }
+    const fallback = harness(50);
+    void present(fallback, documentFor({ id: 'full-height-fallback', data: undefined, markdown: 'Short report' }));
+    expect(fallback.component().render(100)).toHaveLength(50);
+    expect(fallback.component().render(100).at(-1)).toContain('Esc close');
+  });
+
+  it('adapts the full-height viewport when the terminal is resized', () => {
+    let rows = 40;
+    const panel = new SavingsPanel(documentFor(), dashboard, { tab: 'projects', range: '30d', scroll: {}, selected: 0 },
+      { fg: (_name: string, value: string) => value, bold: (value: string) => value } as never,
+      () => rows, vi.fn(), vi.fn());
+    for (rows of [40, 12, 60]) {
+      expect(panel.render(100)).toHaveLength(rows);
+      expect(panel.render(100).at(-1)).toContain('Esc close');
+    }
+  });
+
   it('opens on the initial range and renders every tab', () => {
     const h = harness();
     void present(h);
     expect(text(h)).toContain('Felan Code Savings  Last 30 days · $11.50 saved · 6 decisions · 2 sessions');
     expect(text(h)).toContain('Measurements retained since 2026-10-20.');
-    expect(text(h)).toContain('Range Today · 7 days · [30 days] · 90 days · All time');
+    expect(text(h)).toContain('Range This session · 7 days · [30 days] · 90 days · All time');
     expect(text(h)).toContain('This session $2.50 · 4 decisions   This project (felan) $2.50 · 4 decisions');
     expect(text(h)).toContain('Decisions 6   180 fewer tokens');
     expect(text(h)).toContain('Output optimization');
@@ -101,7 +128,7 @@ describe('savings dashboard panel', () => {
     expect(text(h)).toContain('Savings per month');
     expect(text(h)).toContain('2026-10 → 2026-11');
     keys(h, 'r');
-    expect(text(h)).toContain('Today (UTC) · $3.00 saved · 2 decisions · 1 session');
+    expect(text(h)).toContain('This session · $2.50 saved · 4 decisions · 1 session');
     keys(h, 'r');
     expect(text(h)).toContain('Last 7 days · $2.50 saved');
     expect(text(h)).toContain('-$0.50');

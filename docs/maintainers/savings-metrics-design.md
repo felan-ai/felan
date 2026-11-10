@@ -587,7 +587,7 @@ status so `/savings` can disclose that the report may be incomplete.
 
 ### Interactive command
 
-`/savings [today|7d|30d|90d|all] [project|details]` opens a full-screen
+`/savings [session|7d|30d|90d|all] [project|details]` opens a full-screen
 dashboard. The command is a host-owned Felan extension that the local provider
 binds with the session's generic UI (`SessionExtensionContext.createExtensionUi`),
 so it can present a hinted document from inside the daemon.
@@ -597,8 +597,8 @@ once, and labels sessions and projects from the read-only session history. A
 project label comes from the folder of a listed session whose cwd hashes to the
 bucket's project key, so the store keeps only hashed keys. Without history the
 dashboard falls back to short IDs. `apps/felan/src/savings/dashboard.ts`
-aggregates the buckets for every range (today, 7, 30 and 90 UTC days, and all
-time), so the client switches ranges without another query. Each range carries
+aggregates the buckets for the current session across all days, 7, 30 and 90 UTC
+days, and all time, so the client switches ranges without another query. Each range carries
 totals, the current session and project, categories, extensions with their
 operations, methods and evidence basis, sessions, projects, and a daily or
 monthly trend. Each session also carries its all-time breakdown per extension.

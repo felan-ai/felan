@@ -135,17 +135,17 @@ describe('savings command', () => {
     expect(h.presented[0]!.handle.close).toHaveBeenCalledOnce();
     await expect(h.act(0, {})).rejects.toThrow('Savings action is unavailable.');
     await h.run('all');
-    await h.run('today');
+    await h.run('session');
     expect(h.presented).toHaveLength(3);
     expect(h.presented[1]!.handle.close).toHaveBeenCalledOnce();
     expect(h.presented[2]!.document.revision).toBeGreaterThan(h.presented[1]!.document.revision);
-    expect(readSavingsDashboard(h.presented[2]!.document.data).initialRange).toBe('today');
+    expect(readSavingsDashboard(h.presented[2]!.document.data).initialRange).toBe('session');
   });
 
   it('prints a text report when generic UI is unavailable and reports invalid arguments', async () => {
     const h = harness(await savingsService(), { unavailable: true });
     await h.run('weekly');
-    expect(h.notify).toHaveBeenLastCalledWith('Usage: /savings [today|7d|30d|90d|all] [project|details]', 'warning');
+    expect(h.notify).toHaveBeenLastCalledWith('Usage: /savings [session|7d|30d|90d|all] [project|details]', 'warning');
     await h.run();
     expect(h.notify).toHaveBeenLastCalledWith(expect.stringContaining('Felan Code estimated savings — all'), 'info');
     expect(h.notify).toHaveBeenLastCalledWith(expect.stringContaining('@felan-ai/ext-rtk-optimizer'), 'info');
