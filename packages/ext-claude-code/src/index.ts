@@ -3,8 +3,14 @@ import {
   RUNTIME_DEPENDENCIES_SERVICE,
   type ConfiguredFelanExtension,
   type FelanExtension,
+  type InlineExtension,
 } from '@felan-ai/agent-core';
-import { activateClaudeCodeBridge, claudeCodeSupportedModels, supportsPerTurnEffort } from './bridge/index.js';
+import {
+  activateClaudeCodeBridge,
+  claudeCodeSupportedModels,
+  registerClaudeCodeWorkerHooks,
+  supportsPerTurnEffort,
+} from './bridge/index.js';
 import { registerClaudeCodeCommand } from './command.js';
 import { CLAUDE_CODE_CONFIG, claudeCodeSettingsFromConfig } from './config.js';
 import { inspectClaudeCodeRuntime } from './managed/index.js';
@@ -56,6 +62,12 @@ export default Object.assign(claudeCodeExtension, {
   })) satisfies NonNullable<ConfiguredFelanExtension['execution']>,
 });
 associateExtensionConfig(claudeCodeExtension, CLAUDE_CODE_CONFIG);
+
+export const claudeCodeWorkerExtension: InlineExtension = {
+  name: '@felan-ai/ext-claude-code/worker-session',
+  hidden: true,
+  factory: (pi) => registerClaudeCodeWorkerHooks(pi),
+};
 
 export { activateClaudeCodeBridge, claudeCodeSupportedModels } from './bridge/index.js';
 export type { ClaudeCodeSettings } from './bridge/config.js';

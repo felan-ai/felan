@@ -11,11 +11,15 @@ import type { TuiPreferencesUpdate } from '../src/tui/preferences-schema.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
 import { TERMINAL_INTERACTION_KINDS } from '../src/tui/interactions.js';
 import { FakeTransport, snapshot } from './client-fixtures.js';
-import { checkForFelanUpdate } from '../src/update.js';
+import { checkForFelanUpdate, detectFelanInstallation, felanUpdateCommand } from '../src/update.js';
 import { AgentRailEditor } from '../src/subagents/agent-navigator.js';
 
-vi.mock('../src/update.js', () => ({ checkForFelanUpdate: vi.fn() }));
-beforeEach(() => { vi.mocked(checkForFelanUpdate).mockResolvedValue(undefined); });
+vi.mock('../src/update.js', () => ({ checkForFelanUpdate: vi.fn(), detectFelanInstallation: vi.fn(), felanUpdateCommand: vi.fn() }));
+beforeEach(() => {
+  vi.mocked(checkForFelanUpdate).mockResolvedValue(undefined);
+  vi.mocked(detectFelanInstallation).mockReturnValue({ kind: 'npm-prefix', packageDirectory: '/npm/lib/node_modules/@felan-ai/felan', prefix: '/npm' });
+  vi.mocked(felanUpdateCommand).mockReturnValue('felan update');
+});
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
@@ -128,7 +132,20 @@ it('shows an update notice without waiting for the version check before attachin
   await vi.waitFor(() => expect(checkForFelanUpdate).toHaveBeenCalled());
   complete('99.0.0');
   await vi.waitFor(() => expect(f.text()).toContain('Felan 99.0.0 is available'));
-  expect(f.text()).toContain('felan update');
+  expect(f.controller.notes).toContainEqual(expect.objectContaining({
+    text: 'Felan 99.0.0 is available. Exit Felan Code and run `felan update` to upgrade.',
+  }));
+  expect(felanUpdateCommand).toHaveBeenCalledWith(vi.mocked(detectFelanInstallation).mock.results.at(-1)?.value);
+});
+
+it.each([
+  ['pnpm add --global @felan-ai/felan@latest', 'Felan 99.0.0 is available. Exit Felan Code and run `pnpm add --global @felan-ai/felan@latest` to upgrade.'],
+  [undefined, 'Felan 99.0.0 is available. Update it with the package manager that installed Felan Code.'],
+])('shows the installation-specific update notice for %s', async (command, message) => {
+  vi.mocked(checkForFelanUpdate).mockResolvedValueOnce('99.0.0');
+  vi.mocked(felanUpdateCommand).mockReturnValueOnce(command);
+  const f = await fixture({ provider: true }); f.start();
+  await vi.waitFor(() => expect(f.controller.notes).toContainEqual(expect.objectContaining({ text: message })));
 });
 
 it('cancels the update check on exit and ignores late results', async () => {

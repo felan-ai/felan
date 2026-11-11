@@ -218,7 +218,7 @@ export class SessionClient {
     return this.connecting;
   }
 
-  /** Only a fresh launch-capable client replaces an idle compatible build; established clients must not bounce a newer daemon. */
+  /** Only a fresh launch-capable client replaces an idle differing build; established clients must not bounce a newer daemon. */
   private async open(launch: boolean): Promise<OperationResult<'hello'>> {
     const replaceIdleBuild = !this.established && launch && !!this.options.launch && !this.options.expected;
     try { return await this.openOnce(launch, replaceIdleBuild); }
@@ -281,10 +281,12 @@ export class SessionClient {
       if (buildDiffers) {
         const work = await this.activeWork(result.operations);
         if (this.closed || epoch !== this.epoch) throw new Error('Connection was superseded');
-        if (versionDiffers && replaceIdleBuild && work === 0) {
+        const newerComposition = expectedComposition && (!result.composition || expectedComposition.managerPackage === result.composition.managerPackage
+          && isNewerVersion(expectedComposition.managerVersion, result.composition.managerVersion));
+        if (replaceIdleBuild && work === 0 && (versionDiffers || newerComposition)) {
           this.mismatchedWork = work;
           this.connectionState = 'incompatible';
-          throw new Error('Daemon version differs from the installed package; restart it to continue.');
+          throw new Error('Daemon build differs from the installed package; restart it to continue.');
         }
         this.mismatchedBuild = { daemonVersion: result.daemonVersion,
           ...(this.options.expectedDaemonVersion ? { expectedDaemonVersion: this.options.expectedDaemonVersion } : {}),
@@ -702,6 +704,14 @@ function deepFreeze(value: unknown): void {
   if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return;
   for (const child of Object.values(value)) deepFreeze(child);
   Object.freeze(value);
+}
+
+function isNewerVersion(candidate: string, current: string): boolean {
+  const stable = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+  if ([candidate, current].some(version => version.trim() !== version || !stable.test(version))) return false;
+  const next = candidate.split('.').map(BigInt), previous = current.split('.').map(BigInt);
+  for (let index = 0; index < 3; index++) if (next[index] !== previous[index]) return next[index]! > previous[index]!;
+  return false;
 }
 
 function bounded(value: number, min: number, max: number): number {

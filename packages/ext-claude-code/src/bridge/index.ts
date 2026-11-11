@@ -150,6 +150,7 @@ export function supportsPerTurnEffort(model: Pick<Model<any>, "provider" | "id" 
 // Felan: activations share one daemon module; the latest settings govern subsequent queries.
 let providerSettings: ClaudeCodeSettings = {};
 let longContextSettings: LongContextSettings = { plan: "pro", longContextExtraUsage: false };
+let bridgeActivated = false;
 
 // --- Error handling ---
 
@@ -2652,6 +2653,27 @@ export function activateClaudeCodeBridge(
 		console.error("claude-code: none of Claude Code's models are in the Anthropic catalog — update @felan-ai/agent-core");
 	}
 
+	registerSessionHooks(pi);
+
+	// Felan: every session has its own registry, but all use this shared stream function.
+	const providerConfig = {
+		baseUrl: "claude-code",
+		apiKey: "not-used",
+		api: "claude-code",
+		models: registeredModels,
+		// Cast: the Provider interface passes a TranscriptContext; the bridge takes plain
+		// Context models (toBridgeContext normalizes at the stream entry points).
+		streamSimple: streamClaudeAgentSdk as any,
+	};
+	pi.registerProvider(PROVIDER_ID, providerConfig);
+	bridgeActivated = true;
+}
+
+export function registerClaudeCodeWorkerHooks(pi: Pick<ExtensionAPI, "on">): void {
+	if (bridgeActivated) registerSessionHooks(pi);
+}
+
+function registerSessionHooks(pi: Pick<ExtensionAPI, "on">): void {
 	// Felan: daemon sessions (including children) have independent lifecycles.
 	const clearSession = (event: string, piSessionId: string) => {
 		debug(`${event}: clearing session ${piSessionId}`);
@@ -2773,16 +2795,4 @@ export function activateClaudeCodeBridge(
 	pi.on("session_compact", (event, ctx) =>
 		sponsorMarkRebuildForSession(ctx.sessionManager.getSessionId(), `session_compact:${event.reason}:willRetry=${event.willRetry}`));
 	pi.on("session_tree", (_event, ctx) => sponsorMarkRebuildForSession(ctx.sessionManager.getSessionId(), "session_tree"));
-
-	// Felan: every session has its own registry, but all use this shared stream function.
-	const providerConfig = {
-		baseUrl: "claude-code",
-		apiKey: "not-used",
-		api: "claude-code",
-		models: registeredModels,
-		// Cast: the Provider interface passes a TranscriptContext; the bridge takes plain
-		// Context models (toBridgeContext normalizes at the stream entry points).
-		streamSimple: streamClaudeAgentSdk as any,
-	};
-	pi.registerProvider(PROVIDER_ID, providerConfig);
 }

@@ -27,6 +27,7 @@ import { setupDependencies } from './dependencies.js';
 import { createLocalExecutionServices } from './execution-services.js';
 import { createLocalProcessAdapter } from './process-adapter.js';
 import { COMPACTION_MESSAGE_TYPE, compactionPresentation } from '@felan-ai/ext-session-compaction/view';
+import { claudeCodeWorkerExtension } from '@felan-ai/ext-claude-code';
 import { openHostUrl, prepareLocalInteractionOpen } from './setup-open.js';
 import { parsePiExtensionSettings } from './global-settings.js';
 import { createLocalModelRuntime } from './local-model-runtime.js';
@@ -75,6 +76,7 @@ export function createLocalSessionRuntime(options: {
     openUrl: openHostUrl,
     prepareOpenInteraction: (runtime, request, assertOwnsPath, signal) => prepareLocalInteractionOpen({ runtime, assertOwnsPath }, request, signal),
     bindExtensions: createLocalExecutionServices(),
+    workerExtensions: () => [claudeCodeWorkerExtension],
     projectMessage: (entry, message) => entry.type === 'compaction'
       ? { ...message, customType: COMPACTION_MESSAGE_TYPE, details: { ...compactionPresentation(entry) } } : message,
     async resolveEnvironment(request) {

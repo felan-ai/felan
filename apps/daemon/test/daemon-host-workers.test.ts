@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { HostAgentRuntime, SessionManager, SettingsManager, type HostWorkerOptions } from '@felan-ai/agent-core';
+import { HostAgentRuntime, SessionManager, SettingsManager, type ExtensionAPI, type HostWorkerOptions } from '@felan-ai/agent-core';
 import { createHostMaintenance } from '../src/daemon/maintenance.js';
 import type { HostWorkers } from '../src/daemon/host-workers.js';
 import { createRuntimeStorageRequest } from '../src/runtime-factory.js';
@@ -15,8 +15,13 @@ afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(
 async function fixture(options: Parameters<typeof serverFixture>[0] = {}) {
   const f = await serverFixture(options);
   const identities: unknown[] = []; const wrapped = vi.fn();
+  const workerHooks = { prompts: [] as string[], shutdowns: 0 };
+  const workerExtensions = vi.fn(() => [{ name: 'test/worker-hooks', hidden: true, factory: (pi: ExtensionAPI) => {
+    pi.on('before_agent_start', event => { workerHooks.prompts.push(event.systemPrompt); });
+    pi.on('session_shutdown', () => { workerHooks.shutdowns += 1; });
+  } }]);
   const lifecycle = await createTestSessionLifecycle({ agentDir: f.owner.target.agentDir,
-    composition: { ...createTestSessionRuntime(), wrapWorkerStream: identity => {
+    composition: { ...createTestSessionRuntime(), workerExtensions, wrapWorkerStream: identity => {
       identities.push(identity);
       return original => (...args) => { wrapped(); return original(...args); };
     } },
@@ -42,10 +47,20 @@ async function fixture(options: Parameters<typeof serverFixture>[0] = {}) {
       sessionManager, settingsManager: SettingsManager.create(cwd, f.owner.target.agentDir), model: offlineModel,
       allowedTools: input.allowedTools ?? ['read', 'write', 'edit', 'ls', 'grep'] };
   }
-  return { ...f, models, open, request, identities, wrapped, maintenance, configuration };
+  return { ...f, models, open, request, identities, wrapped, workerExtensions, workerHooks, maintenance, configuration };
 }
 
 describe('daemon host workers', () => {
+  it('runs the composition worker extensions through the worker prompt and shutdown', async () => {
+    const f = await fixture(); const request = await f.request(); const id = request.sessionManager.getSessionId();
+    const worker = await f.open({ ...request, appendSystemPrompt: ['Edit only staged memory.'] });
+    expect(f.workerExtensions).toHaveBeenCalledExactlyOnceWith({ id, root: id });
+    await worker.prompt('Inspect the staged artifact.');
+    expect(f.workerHooks.prompts).toEqual([expect.stringContaining('Edit only staged memory.')]);
+    await worker.dispose();
+    expect(f.workerHooks.shutdowns).toBe(1);
+  });
+
   it('opens with no resident root, wraps file I/O and inference, and never registers a session', async () => {
     const f = await fixture(); const request = await f.request(); const id = request.sessionManager.getSessionId();
     const listed = f.registry.listed();

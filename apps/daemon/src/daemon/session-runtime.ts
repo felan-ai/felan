@@ -1,4 +1,4 @@
-import { defineServiceContract, type AgentRuntime, type AgentSessionRuntimeDiagnostic, type CreateAgentCoreSessionOptions, type ExtensionConfigDefinition, type ExtensionConfigOverride, type ExtensionConfigValue, type Logger, type ModelRuntime, type SessionEntry, type SessionRef } from '@felan-ai/agent-core';
+import { defineServiceContract, type AgentRuntime, type AgentSessionRuntimeDiagnostic, type CreateAgentCoreSessionOptions, type ExtensionConfigDefinition, type ExtensionConfigOverride, type ExtensionConfigValue, type InlineExtension, type Logger, type ModelRuntime, type SessionEntry, type SessionRef } from '@felan-ai/agent-core';
 import type { Interaction, Message } from '@felan-ai/session-protocol';
 import type { HostServices, HostServicesRequest } from './host-services.js';
 import type { ProviderSecretStorage } from './provider.js';
@@ -73,6 +73,7 @@ export interface SessionRuntime {
   prepare(request: SessionCompositionRequest): Promise<SessionComposition>;
   bindExtensions?(context: SessionExtensionContext, port: SessionExecutionPort): Promise<SessionExtensionBindings>;
   wrapWorkerStream?(session: SessionRef): SessionExtensionBindings['wrapStreamFunction'];
+  workerExtensions?(session: SessionRef): readonly InlineExtension[];
 }
 
 export const SESSION_RUNTIME_SERVICE = defineServiceContract<SessionRuntime>('felan.session-runtime', 1);

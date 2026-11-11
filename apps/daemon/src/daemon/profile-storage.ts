@@ -89,15 +89,16 @@ export async function createWorkerBinding(request: SessionOpenRequest, manager: 
   if (!request.rootSessionId || (worker.host ? request.parentSessionId !== undefined || request.rootSessionId !== manager.getSessionId() : !request.parentSessionId)) throw new Error('Worker requires a valid parent or host scope.');
   const runtimeRequest = createRuntimeStorageRequest(request.resources.cwd, request.resources.agentDir, request.rootSessionId);
   const runtime = options.wrapRuntime?.(worker.runtime, runtimeRequest) ?? worker.runtime;
-  const wrapStreamFunction = options.composition.wrapWorkerStream?.({
-    id: manager.getSessionId(), root: request.rootSessionId, ...(request.parentSessionId ? { parent: request.parentSessionId } : {}),
-  });
+  const session = { id: manager.getSessionId(), root: request.rootSessionId, ...(request.parentSessionId ? { parent: request.parentSessionId } : {}) };
+  const wrapStreamFunction = options.composition.wrapWorkerStream?.(session);
+  const inlineExtensions = options.composition.workerExtensions?.(session);
   const factory = createAgentCoreSessionRuntimeFactory(async () => ({ runtime, modelRuntime: worker.modelRuntime,
     settingsManager: worker.settingsManager, model: worker.model,
     ...(wrapStreamFunction ? { wrapStreamFunction } : {}),
     ...(worker.thinkingLevel === undefined ? {} : { thinkingLevel: worker.thinkingLevel }),
     extensionPackages: [], importExtension: async () => { throw new Error('Worker extension discovery is disabled.'); },
     extensionPaths: request.extensionPaths ?? [],
+    ...(inlineExtensions?.length ? { inlineExtensions } : {}),
     ...(worker.customTools === undefined ? {} : { customTools: worker.customTools }),
     ...(worker.appendSystemPrompt === undefined ? {} : { appendSystemPrompt: worker.appendSystemPrompt }),
   }));

@@ -55,8 +55,8 @@ async function fixture(options: Partial<SessionClientOptions> = {}, pinned = fal
 
 describe('daemon build compatibility', () => {
   it.each(['managerPackage', 'managerVersion', 'providerDigest', 'configDigest', 'absent'] as const)(
-    'attaches across %s composition differences without restarting', async field => {
-      const { client, fake, host } = await fixture({ launch: { entrypoint: '/fixture/entrypoint.js' } });
+    'attaches across %s composition differences without launch authority', async field => {
+      const { client, fake, host } = await fixture();
       host.work = 0;
       if (field === 'absent') host.composition = undefined;
       else host.composition![field] = field.endsWith('Digest') ? 'd'.repeat(64) : '@other/manager';
@@ -142,12 +142,89 @@ describe('daemon build compatibility', () => {
     else expect(client.buildMismatch).toMatchObject({ daemonVersion: 'another', activeWork: 0 });
   });
 
-  it('launches only once after draining even when the replacement receipt names another build', async () => {
+  describe.each(['managerVersion', 'providerDigest', 'absent'] as const)('composition-only %s mismatch', field => {
+    it.each(['matching', 'different'] as const)('replaces an idle initial build once, then attaches to a %s replacement build', async replacement => {
+      const expectedComposition = { ...composition(), managerVersion: '2.0.0' };
+      const { client, fake, host } = await fixture({ expectedComposition, launch: { entrypoint: '/fixture/entrypoint.js' } });
+      host.work = 0;
+      if (field === 'absent') host.composition = undefined;
+      else { host.composition!.managerVersion = '1.9.9'; if (field === 'providerDigest') host.composition!.providerDigest = 'd'.repeat(64); }
+      host.onRestart = () => { if (replacement === 'matching') host.composition = { ...expectedComposition }; };
+      await client.connect();
+      expect(client.status).toBe('ready');
+      expect(fake.controls).toMatchObject([{ op: 'host.restart', params: { mode: 'drain' } }, { op: 'host.status' }]);
+      expect(fake.requests.filter(request => request.op === 'hello')).toHaveLength(2);
+      if (replacement === 'matching') expect(client.buildMismatch).toBeUndefined();
+      else expect(client.buildMismatch).toMatchObject({ daemonVersion: 'installed', activeWork: 0 });
+    });
+
+    it.each(['busy', 'unsupported', 'rejected', 'timeout', 'no-launch', 'pinned'] as const)(
+      'attaches without replacement when %s', async guard => {
+        const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon');
+        const { client, fake, host } = await fixture({ expectedComposition: { ...composition(), managerVersion: '2.0.0' },
+          ...(guard === 'no-launch' ? {} : { launch: { entrypoint: '/fixture/entrypoint.js' } }) }, guard === 'pinned');
+        host.work = guard === 'busy' ? 1 : 0;
+        if (field === 'absent') host.composition = undefined;
+        else { host.composition!.managerVersion = '1.9.9'; if (field === 'providerDigest') host.composition!.providerDigest = 'd'.repeat(64); }
+        if (guard === 'unsupported') host.operations = ['attach'];
+        else if (guard === 'rejected' || guard === 'timeout') host.statusReply = guard;
+        await client.connect();
+        expect(client.status).toBe('ready');
+        expect(client.buildMismatch).toMatchObject({ daemonVersion: 'installed', expectedDaemonVersion: 'installed' });
+        expect(client.buildMismatch?.activeWork).toBe(['unsupported', 'rejected', 'timeout'].includes(guard) ? undefined : host.work);
+        expect(fake.controls).toEqual([]); expect(launch).not.toHaveBeenCalled();
+      });
+  });
+
+  it.each([['1.10.0', '1.9.9'], ['1.2.10', '1.2.9']])('replaces an idle older manager %s over %s using numeric version ordering', async (managerVersion, daemonVersion) => {
+    const expectedComposition = { ...composition(), managerVersion };
+    const { client, fake, host } = await fixture({ expectedComposition, launch: { entrypoint: '/fixture/entrypoint.js' } });
+    host.work = 0; host.composition!.managerVersion = daemonVersion;
+    host.onRestart = () => { host.composition = { ...expectedComposition }; };
+    await client.connect();
+    expect(client.status).toBe('ready'); expect(client.buildMismatch).toBeUndefined();
+    expect(fake.controls).toMatchObject([{ op: 'host.restart', params: { mode: 'drain' } }, { op: 'host.status' }]);
+    expect(fake.requests.filter(request => request.op === 'hello')).toHaveLength(2);
+  });
+
+  it.each([
+    ['1.0.0', '2.0.0', '@felan-ai/felan'],
+    ['1.10.0', '1.11.0', '@felan-ai/felan'],
+    ['1.2.9', '1.2.10', '@felan-ai/felan'],
+    ['2.0.0', '2.0.0', '@felan-ai/felan'],
+    ['2.0.0', '1.9.9', '@other/manager'],
+    ['2.0.0-beta.1', '1.9.9', '@felan-ai/felan'],
+    ['2.0.0', '1.9.9-beta.1', '@felan-ai/felan'],
+    ['2.0.0+build', '1.9.9', '@felan-ai/felan'],
+    ['2.0.0', '1.9.9+build', '@felan-ai/felan'],
+    ['installed', '1.9.9', '@felan-ai/felan'],
+    ['2.0.0', 'previous', '@felan-ai/felan'],
+    ['02.0.0', '1.9.9', '@felan-ai/felan'],
+    ['2.0.0', '01.9.9', '@felan-ai/felan'],
+    ['2.0.0\n', '1.9.9', '@felan-ai/felan'],
+    ['2.0.0', '1.9.9\n', '@felan-ai/felan'],
+  ])('keeps an idle %s client attached to manager %s in %s without replacement', async (managerVersion, daemonVersion, managerPackage) => {
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon');
+    const expectedComposition = { ...composition(), managerVersion };
+    const { client, fake, host } = await fixture({ expectedComposition, launch: { entrypoint: '/fixture/entrypoint.js' } });
+    host.work = 0; host.composition = { ...composition(), managerPackage, managerVersion: daemonVersion, providerDigest: 'd'.repeat(64) };
+    await client.connect();
+    expect(client.status).toBe('ready');
+    expect(client.buildMismatch).toEqual({ daemonVersion: 'installed', expectedDaemonVersion: 'installed', activeWork: 0,
+      composition: host.composition, expectedComposition });
+    expect(fake.controls).toEqual([]); expect(launch).not.toHaveBeenCalled();
+    expect(fake.requests.filter(request => request.op === 'hello')).toHaveLength(1);
+  });
+
+  it.each(['daemonVersion', 'managerVersion', 'providerDigest'] as const)('launches only once after draining a differing %s even when the replacement receipt names another build', async field => {
     let connector!: TransportConnector;
     const { client, fake, host, target } = await fixture({ launch: { entrypoint: '/fixture/entrypoint.js' },
+      ...(field === 'daemonVersion' ? {} : { expectedComposition: { ...composition(), managerVersion: '2.0.0' } }),
       connector: receiver => connector(receiver) });
     connector = fake.connector;
-    host.daemonVersion = 'previous'; host.work = 0;
+    if (field === 'daemonVersion') host.daemonVersion = 'previous';
+    else { host.composition!.managerVersion = '1.9.9'; if (field === 'providerDigest') host.composition!.providerDigest = 'd'.repeat(64); }
+    host.work = 0;
     const previous = structuredClone(host.identity);
     const missing = Object.assign(new Error('missing'), { code: 'ENOENT' });
     host.onRestart = () => { connector = async () => { throw missing; }; };

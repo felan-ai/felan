@@ -1,7 +1,7 @@
 import { setImmediate } from 'node:timers/promises';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { activateClaudeCodeBridge, claudeCodeSupportedModels, supportsPerTurnEffort, __test } from '../src/bridge/index.js';
+import { activateClaudeCodeBridge, claudeCodeSupportedModels, registerClaudeCodeWorkerHooks, supportsPerTurnEffort, __test } from '../src/bridge/index.js';
 import { PI_PREAMBLE } from '../src/bridge/prompt-capture.js';
 import { QueryContext, resetCtx } from '../src/bridge/query-state.js';
 import { rememberSessionCwd, sessionCwdFor } from '../src/bridge/session-cwd.js';
@@ -1047,5 +1047,45 @@ describe('Felan process-wide settings', () => {
     }
     expect(calls[0].options.extraArgs).not.toHaveProperty('strict-mcp-config');
     expect(calls[0].options.settings.autoMemoryEnabled).toBe(true);
+  });
+});
+
+describe('Felan Claude Code worker sessions', () => {
+  const tool = { name: 'read', description: 'Read', parameters: { type: 'object', properties: {} } };
+
+  function worker(id, systemPrompt) {
+    const handlers = new Map();
+    registerClaudeCodeWorkerHooks({ on: (event, handler) => handlers.set(event, handler) });
+    const ctx = { cwd: process.env.PI_CODING_AGENT_DIR, ui: { notify: vi.fn() },
+      sessionManager: { getSessionId: () => id }, getSystemPrompt: () => systemPrompt };
+    return { handlers, emit: (event, data = {}) => handlers.get(event)?.(data, ctx) };
+  }
+
+  it('serves a worker that loads only the worker hooks with its own instructions and cwd', async () => {
+    const bridge = activate();
+    const systemPrompt = 'Felan worker test: rendered worker prompt.';
+    const memoryWorker = worker('memory-worker', systemPrompt);
+    await memoryWorker.emit('session_start', { reason: 'resume' });
+    await memoryWorker.emit('before_agent_start', { messageType: 'user', prompt: 'Process the staged input.', systemPrompt,
+      systemPromptOptions: { appendSystemPrompt: 'Edit only staged memory.', selectedTools: ['read'] } });
+    const calls = injectLiveQuery();
+    const output = await run(bridge, { systemPrompt, messages: [user], tools: [tool] }, { sessionId: 'memory-worker' });
+    expect(output.stopReason).toBe('stop');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].options.systemPrompt.append).toContain('Edit only staged memory.');
+    expect(calls[0].options.cwd).toBe(process.env.PI_CODING_AGENT_DIR);
+    expect(calls[0].exited).toBe(false);
+    await memoryWorker.emit('session_shutdown');
+    expect(calls[0].exited).toBe(true);
+    expect(__test.liveQueries.has('memory-worker')).toBe(false);
+    expect(sessionCwdFor('memory-worker')).toBe(process.cwd());
+  });
+
+  it('registers no worker hooks before the provider activates', async () => {
+    vi.resetModules();
+    const fresh = await import('../src/bridge/index.js');
+    const on = vi.fn();
+    fresh.registerClaudeCodeWorkerHooks({ on });
+    expect(on).not.toHaveBeenCalled();
   });
 });

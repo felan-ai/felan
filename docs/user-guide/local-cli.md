@@ -258,9 +258,15 @@ stop the isolated daemon it started.
 In the TUI, `/daemon status`, `/daemon logs`, `/daemon stop`, and `/daemon
 restart` provide the same lifecycle controls. When active work (runs, subagents, interactive PTY or foreground processes, and pending questions) would be
 interrupted, they ask once with the count and then stop or restart immediately.
-A daemon from another Felan version is replaced automatically only when it has
-no active work; otherwise the TUI shows how many active tasks a restart would
-interrupt and asks first. Ctrl+D on an empty editor
+On a new launch, Felan Code replaces a daemon with no active work when its
+daemon package version differs, or when it runs an older Felan Code version of
+the same package. Sessions attached to the replaced daemon reconnect to the new
+one. A daemon running the same or a newer Felan Code version with a different
+provider build or host configuration is not replaced. The TUI warns that a
+different build is running. If the daemon has active work, the TUI warns without
+prompting for a restart or blocking startup. Run `/restart` after that work
+finishes to apply the new build.
+Ctrl+D on an empty editor
 and `/exit` detach the client. Escape interrupts the current run. `/close`
 disposes of the session. These are distinct actions.
 
@@ -318,21 +324,62 @@ felan update
 
 The command checks npm's stable `latest` release without starting the TUI. If
 the global installation is current, it reports that no update is needed. If a
-newer release is available, it installs that exact `@felan-ai/felan` version
-and tells you to restart Felan Code. Registry, installation, and verification
-failures return a non-zero exit status and do not claim success.
-
-Interactive Felan Code checks npm once per launch, asynchronously, with a ten-second
-timeout and no retries. A newer stable release produces a notification to exit
-all Felan Code sessions and run `felan update` for global npm, or use the package
-manager that launched Felan Code. Offline, failed, and malformed responses stay
-silent. Startup checks never install updates. Set
-`FELAN_SKIP_VERSION_CHECK=1` to disable the request.
+newer release is available, it verifies the installation and installs that exact
+`@felan-ai/felan` version. Registry, installation, and verification failures return
+a non-zero exit status and do not claim success.
 
 Self-update is limited to the verified global npm installation that provides
-the running `felan` command. `npx`, local/source, pnpm, yarn, and bun
-installations are not changed; update those with their normal package-manager
-command instead. To send `update` as an initial prompt, use `felan -- update`.
+the running `felan` command. A global npm installation is verified when npm's
+global `felan` command (`<prefix>/bin/felan` on macOS and Linux, or
+`<prefix>\felan.cmd` on Windows) points at the running package. A dependency
+inside a project's `node_modules` is not treated as a global installation. If
+npm's current global prefix differs, for example because Felan Code was
+installed under another Node.js version, the updater verifies the running
+package's own prefix and passes `--prefix` to npm, so it updates that copy rather
+than installing a second one.
+For pnpm, yarn, bun, Volta, or `npx`, it reports the matching update command
+without changing the installation. For linked checkouts, rebuild the checkout
+or unlink it before reinstalling. Unknown layouts require the package manager
+that installed Felan Code. To send `update` as an initial prompt, use
+`felan -- update`.
+
+Before installing a newer release, the updater checks the background daemon.
+It stops a daemon that has no active tasks, runs, or attached sessions, and
+prints `Stopping the idle background daemon...` while the daemon shuts down.
+The next launch starts the daemon with the updated Felan Code build. If no daemon is running, the update proceeds without starting one.
+If installation fails after stopping the daemon, the next launch starts the
+version still installed.
+
+On macOS and Linux, an update can proceed while the daemon has active tasks,
+runs, or attached sessions. Those sessions keep using the old Felan Code build,
+which now runs against the replaced files and can fail when it loads code it had
+not loaded before. Restart the daemon soon after that work finishes with
+`felan daemon restart` or `/restart` in Felan Code. A new launch also replaces
+the old daemon once it has no active work, because the installed Felan Code
+version is newer. If the
+updater cannot inspect or stop the daemon, it installs anyway and tells you to
+run `felan daemon restart` after updating.
+
+On Windows, a busy daemon can hold the installed files open, so the updater
+refuses to install. Finish the active tasks or exit the attached sessions,
+run `felan daemon stop`, and retry `felan update`. Use
+`felan daemon stop --force` only if you intend to interrupt active work.
+
+Interactive Felan Code checks npm once per launch, asynchronously, with a ten-second
+timeout and no retries. For global npm, a newer stable release produces
+``Felan X is available. Exit Felan Code and run `felan update` to upgrade.``
+Other recognized installation methods show their update command instead.
+For linked or unknown installations, the notice says to use the package manager
+that installed Felan Code. Offline, failed, and malformed responses stay silent.
+Startup checks never install updates. Set
+`FELAN_SKIP_VERSION_CHECK=1` to disable the request.
+
+If Windows still reports an `EBUSY` or `EPERM` rename or unlink error, exit other
+Felan Code processes and run `felan daemon stop` before retrying. An antivirus
+scanner or file indexer can also hold the installed directory open. The updater
+runs `npm install` from npm's global directory, not from inside the package.
+Retry `felan update` from another directory, such as `%TEMP%`, if the lock
+persists.
 
 ### Savings
 
@@ -352,17 +399,6 @@ These values are estimated API-equivalent cost avoided by supported
 optimizations, not provider billing or guaranteed subscription savings. See
 [Efficient execution and savings](../concepts/efficient-execution.md) for the
 measurement basis and claim boundaries.
-
-On Windows, exit every running Felan Code process before updating. npm replaces the
-installed package directory, and another Felan Code process, antivirus scanner, or
-file indexer holding a file or the directory can cause an `EBUSY` rename error.
-The updater runs npm from outside that directory; if the error persists, retry
-manually from another directory:
-
-```bat
-cd /d %TEMP%
-npm install --global @felan-ai/felan
-```
 
 Without `--mode`, invocations that start or continue an agent session launch the
 interactive TUI. `felan update` and informational flags exit without starting a

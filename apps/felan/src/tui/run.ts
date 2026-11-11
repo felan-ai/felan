@@ -189,8 +189,13 @@ export async function runDaemonTerminal(controller: TuiSessionController, option
       return false;
     }).then(async () => {
       if (stopped) return;
-      void import('../update.js').then(({ checkForFelanUpdate }) => checkForFelanUpdate({ signal: updateCheck.signal })).then(version => {
-        if (version && !stopped) controller.announce(`Felan ${version} is available. Run felan update to upgrade.`);
+      void import('../update.js').then(async ({ checkForFelanUpdate, detectFelanInstallation, felanUpdateCommand }) => {
+        const version = await checkForFelanUpdate({ signal: updateCheck.signal });
+        if (!version || stopped) return;
+        const command = felanUpdateCommand(detectFelanInstallation());
+        controller.announce(command
+          ? `Felan ${version} is available. Exit Felan Code and run \`${command}\` to upgrade.`
+          : `Felan ${version} is available. Update it with the package manager that installed Felan Code.`);
       }).catch(() => {});
       if (startupDeferred) return;
       if (options.verbose) controller.setNotice(`Daemon ${controller.client.capabilities?.daemonVersion ?? 'unavailable'} · ${controller.sessionId ?? 'no session'}`);

@@ -758,7 +758,7 @@ try {
   }
   await assertPackedAcpWire();
   const update = runFelanAllowFailure(['update'], cleanEnvironment);
-  if (update.status === 0 || !update.stderr.includes('only supports a verified global npm installation')) {
+  if (update.status === 0 || !update.stderr.includes('Could not verify the running Felan Code package')) {
     throw new Error('Packed felan update did not reject the isolated non-global installation');
   }
   const versionResult = runFelan(['--version'], cleanEnvironment);

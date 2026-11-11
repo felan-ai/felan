@@ -1,13 +1,71 @@
 import { execFile } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
-import { basename, delimiter, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, posix, resolve, win32 } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import type { DaemonUpdatePreparation } from './update-daemon.js';
 import { FELAN_VERSION } from './version.js';
 
 const PACKAGE_NAME = '@felan-ai/felan';
 const PACKAGE_DIRECTORY = ['@felan-ai', 'felan'] as const;
 const LATEST_RELEASE_URL = 'https://registry.npmjs.org/@felan-ai%2Ffelan/latest';
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10_000;
+
+export type FelanInstallation =
+  | { readonly kind: 'npm-prefix'; readonly packageDirectory: string; readonly prefix: string }
+  | {
+    readonly kind: 'linked' | 'pnpm' | 'bun' | 'yarn' | 'volta' | 'npx' | 'unknown';
+    readonly packageDirectory: string;
+  };
+
+export function detectFelanInstallation(
+  packageDirectory = dirname(dirname(fileURLToPath(import.meta.url))),
+  platform: NodeJS.Platform = process.platform,
+): FelanInstallation {
+  const path = normalizedPath(packageDirectory, platform);
+  const comparisonPath = platform === 'win32' ? path.toLowerCase() : path;
+  const managers = [
+    ['pnpm', /\/pnpm\/global\//u],
+    ['bun', /\/\.bun\/install\/global\//u],
+    ['yarn', /\/(?:yarn\/global|yarn\/data\/global)\//u],
+    ['volta', /\/\.?volta\/tools\/image\//u],
+    ['npx', /\/_npx\//u],
+  ] as const;
+  for (const [kind, pattern] of managers) {
+    if (pattern.test(comparisonPath)) return { kind, packageDirectory };
+  }
+
+  const nodeModulesIndex = comparisonPath.lastIndexOf('/node_modules/');
+  if (isSymbolicLink(packageDirectory) || nodeModulesIndex === -1) {
+    return { kind: 'linked', packageDirectory: canonicalPath(packageDirectory) };
+  }
+  const packageParts = path.slice(nodeModulesIndex + 1).split('/');
+  let parent = path.slice(0, nodeModulesIndex) || '/';
+  for (const part of packageParts) {
+    parent = `${parent.replace(/\/$/u, '')}/${part}`;
+    if (isSymbolicLink(parent)) return { kind: 'linked', packageDirectory: canonicalPath(packageDirectory) };
+  }
+
+  const suffix = platform === 'win32'
+    ? /^(.*)\/node_modules\/@felan-ai\/felan$/iu
+    : /^(.*)\/lib\/node_modules\/@felan-ai\/felan$/u;
+  const prefix = suffix.exec(path)?.[1];
+  return prefix === undefined || !verifiedNpmBin(prefix || '/', packageDirectory, platform)
+    ? { kind: 'unknown', packageDirectory }
+    : { kind: 'npm-prefix', packageDirectory, prefix: prefix || '/' };
+}
+
+export function felanUpdateCommand(installation: FelanInstallation): string | undefined {
+  switch (installation.kind) {
+    case 'npm-prefix': return 'felan update';
+    case 'pnpm': return `pnpm add --global ${PACKAGE_NAME}@latest`;
+    case 'bun': return `bun add --global ${PACKAGE_NAME}@latest`;
+    case 'yarn': return `yarn global add ${PACKAGE_NAME}@latest`;
+    case 'volta': return `volta install ${PACKAGE_NAME}@latest`;
+    case 'npx': return `npx ${PACKAGE_NAME}@latest`;
+    case 'linked':
+    case 'unknown': return undefined;
+  }
+}
 
 export interface NpmResult {
   readonly status: number;
@@ -17,8 +75,10 @@ export interface NpmResult {
 
 export interface RunFelanUpdateOptions {
   readonly packageDirectory?: string;
+  readonly platform?: NodeJS.Platform;
   readonly currentVersion?: string;
   readonly runNpm?: (args: readonly string[], cwd: string) => Promise<NpmResult>;
+  readonly prepareDaemon?: () => Promise<DaemonUpdatePreparation>;
   readonly writeOutput?: (line: string) => void;
   readonly writeError?: (line: string) => void;
 }
@@ -66,23 +126,36 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
   const writeOutput = options.writeOutput ?? ((line) => console.log(line));
   const writeError = options.writeError ?? ((line) => console.error(line));
   const packageDirectory = options.packageDirectory ?? dirname(dirname(fileURLToPath(import.meta.url)));
+  const platform = options.platform ?? process.platform;
+  const installation = detectFelanInstallation(packageDirectory, platform);
   const currentVersion = options.currentVersion ?? FELAN_VERSION;
   const runNpm = options.runNpm ?? runNpmCommand;
 
+  if (installation.kind !== 'npm-prefix' && installation.kind !== 'unknown') {
+    writeError(installationError(installation, ''));
+    return 1;
+  }
   const globalRootResult = await runNpm(['root', '--global'], packageDirectory);
   if (globalRootResult.status !== 0) {
     writeError(`Could not find npm's global installation: ${commandError(globalRootResult)}`);
     return 1;
   }
 
-  const globalRoot = globalRootResult.stdout.trim();
-  const expectedPackageDirectory = join(globalRoot, ...PACKAGE_DIRECTORY);
-  if (!globalRoot || !samePath(packageDirectory, expectedPackageDirectory) || isSymbolicLink(expectedPackageDirectory)) {
-    writeError(
-      'Felan Code update only supports a verified global npm installation. '
-        + 'Run `npm install --global @felan-ai/felan` to update this installation manually.',
-    );
-    return 1;
+  let globalRoot = globalRootResult.stdout.trim();
+  const prefixArguments: string[] = [];
+  if (!verifiedPackageRoot(globalRoot, packageDirectory, platform)) {
+    if (installation.kind === 'npm-prefix') {
+      const prefixResult = await runNpm(['root', '--global', '--prefix', installation.prefix], packageDirectory);
+      const prefixRoot = prefixResult.stdout.trim();
+      if (prefixResult.status === 0 && verifiedPackageRoot(prefixRoot, packageDirectory, platform)) {
+        globalRoot = prefixRoot;
+        prefixArguments.push('--prefix', installation.prefix);
+      }
+    }
+    if (prefixArguments.length === 0) {
+      writeError(installationError(installation, globalRoot));
+      return 1;
+    }
   }
 
   const packageManifest = readPackageManifest(packageDirectory);
@@ -109,18 +182,25 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
     return 0;
   }
 
+  const daemon = await (options.prepareDaemon ?? (async () => {
+    const { prepareDaemonForUpdate } = await import('./update-daemon.js');
+    return prepareDaemonForUpdate({
+      onStopping: () => writeOutput('Stopping the idle background daemon...'),
+    });
+  }))();
+  if (daemon.kind === 'busy' && platform === 'win32') {
+    writeError(`The background daemon has ${daemonActivity(daemon)} holding the installed files. `
+      + 'Finish the tasks or exit the sessions, then run `felan daemon stop` '
+      + 'or `felan daemon stop --force` to interrupt them, and retry `felan update`.');
+    return 1;
+  }
+
   const installResult = await runNpm(
-    ['install', '--global', `${PACKAGE_NAME}@${latestVersion}`],
+    ['install', '--global', `${PACKAGE_NAME}@${latestVersion}`, ...prefixArguments],
     globalRoot,
   );
   if (installResult.status !== 0) {
-    const details = commandError(installResult);
-    writeError(
-      `Felan Code update failed: ${details}`
-        + (isBusyRenameFailure(installResult)
-          ? ' Exit all Felan processes and retry from another directory, such as `%TEMP%`.'
-          : ''),
-    );
+    writeError(installFailure(installResult, globalRoot, platform));
     return 1;
   }
 
@@ -130,8 +210,29 @@ export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promi
     return 1;
   }
 
-  writeOutput(`Updated Felan Code from ${currentVersion} to ${latestVersion}. Restart Felan Code to use the new version.`);
+  const updated = `Updated Felan Code from ${currentVersion} to ${latestVersion}.`;
+  switch (daemon.kind) {
+    case 'stopped':
+      writeOutput(`${updated} The background daemon was stopped and starts with ${latestVersion} the next time you run Felan Code.`);
+      break;
+    case 'absent':
+      writeOutput(`${updated} Start Felan Code to use the new version.`);
+      break;
+    case 'busy':
+      writeOutput(`${updated} The background daemon still runs Felan Code ${currentVersion} against the new files with ${daemonActivity(daemon)}. `
+        + 'Restart it soon with `felan daemon restart` or `/restart` in Felan Code once this work finishes.');
+      break;
+    case 'unavailable':
+      writeOutput(`${updated} ${daemon.message}`);
+      break;
+  }
   return 0;
+}
+
+function daemonActivity(daemon: Extract<DaemonUpdatePreparation, { kind: 'busy' }>): string {
+  return `${daemon.work} active task${daemon.work === 1 ? '' : 's'}, `
+    + `${daemon.runs} active run${daemon.runs === 1 ? '' : 's'}, `
+    + `and ${daemon.attachments} attached session${daemon.attachments === 1 ? '' : 's'}`;
 }
 
 async function runNpmCommand(args: readonly string[], cwd: string): Promise<NpmResult> {
@@ -205,12 +306,53 @@ function isSymbolicLink(path: string): boolean {
   }
 }
 
-function samePath(left: string, right: string): boolean {
+function samePath(left: string, right: string, platform: NodeJS.Platform): boolean {
   const canonicalLeft = canonicalPath(left);
   const canonicalRight = canonicalPath(right);
-  const normalizedLeft = process.platform === 'win32' ? canonicalLeft.toLowerCase() : canonicalLeft;
-  const normalizedRight = process.platform === 'win32' ? canonicalRight.toLowerCase() : canonicalRight;
-  return normalizedLeft === normalizedRight;
+  const normalizedLeft = normalizedPath(canonicalLeft, platform);
+  const normalizedRight = normalizedPath(canonicalRight, platform);
+  return platform === 'win32'
+    ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase()
+    : normalizedLeft === normalizedRight;
+}
+
+function normalizedPath(path: string, platform: NodeJS.Platform): string {
+  const paths = platform === 'win32' ? win32 : posix;
+  return paths.normalize(path.replace(/\\/gu, '/')).replace(/\\/gu, '/').replace(/\/$/u, '');
+}
+
+function verifiedPackageRoot(root: string, packageDirectory: string, platform: NodeJS.Platform): boolean {
+  const expectedPackageDirectory = join(root, ...PACKAGE_DIRECTORY);
+  return Boolean(root)
+    && samePath(packageDirectory, expectedPackageDirectory, platform)
+    && detectFelanInstallation(expectedPackageDirectory, platform).kind === 'npm-prefix';
+}
+
+function verifiedNpmBin(prefix: string, packageDirectory: string, platform: NodeJS.Platform): boolean {
+  try {
+    if (platform === 'win32') {
+      return /node_modules[\\/]@felan-ai[\\/]felan[\\/]dist[\\/]cli\.js/iu.test(
+        readFileSync(join(prefix, 'felan.cmd'), 'utf8'),
+      );
+    }
+    return realpathSync(join(prefix, 'bin', 'felan')) === realpathSync(join(packageDirectory, 'dist', 'cli.js'));
+  } catch {
+    return false;
+  }
+}
+
+function installationError(installation: FelanInstallation, globalRoot: string): string {
+  if (installation.kind === 'linked') {
+    return `Felan Code is running from a linked installation at ${installation.packageDirectory}. `
+      + 'Update and rebuild that checkout, or unlink it before reinstalling with your package manager.';
+  }
+  const command = felanUpdateCommand(installation);
+  if (command && installation.kind !== 'npm-prefix') {
+    return `Felan Code was installed with ${installation.kind}. Update this installation with \`${command}\`.`;
+  }
+  return `Could not verify the running Felan Code package at ${installation.packageDirectory} `
+    + `against npm's global root at ${globalRoot || '(empty)'}. `
+    + 'Update it with the package manager that installed it.';
 }
 
 function canonicalPath(path: string): string {
@@ -236,13 +378,37 @@ function compareVersions(left: string, right: string): number {
 }
 
 function commandError(result: NpmResult): string {
-  return result.stderr.trim() || result.stdout.trim() || `npm exited with status ${result.status}`;
+  return commandErrorLines(result).slice(0, 4).join('; ') || `npm exited with status ${result.status}`;
 }
 
-function isBusyRenameFailure(result: NpmResult): boolean {
-  return result.status === -4082 || /\bEBUSY\b|resource busy|resource is locked/iu.test(
-    `${result.stderr}\n${result.stdout}`,
-  );
+function commandErrorLines(result: NpmResult): string[] {
+  const details = result.stderr.trim() || result.stdout.trim();
+  return details.split(/\r?\n/u)
+    .map((line) => line.replace(/^npm\s+(?:error|ERR!|warn)\s*/u, '').trim())
+    .filter((line) => line && !/^(?:at\s|A complete log|Log files?:)|[/\\]_logs[/\\]/iu.test(line));
+}
+
+function installFailure(result: NpmResult, globalRoot: string, platform: NodeJS.Platform): string {
+  const details = commandErrorLines(result).join('\n');
+  const syscall = /^syscall\s+(\S+)/imu.exec(details)?.[1];
+  const removesOrRenames = syscall
+    ? /^(?:rename|unlink|rmdir)$/iu.test(syscall)
+    : /\bEPERM\b[^\n]*\b(?:rename|unlink|rmdir)\b/iu.test(details);
+  const locked = result.status === -4082 || /\bEBUSY\b|-4082\b|resource busy|resource is locked/iu.test(details)
+    || (platform === 'win32' && /\bEPERM\b/iu.test(details) && removesOrRenames);
+  if (locked) {
+    return `Felan Code update failed: ${commandError(result)} `
+      + 'A running Felan Code process is using the installed files. Exit all Felan Code sessions, '
+      + 'run `felan daemon stop`, then retry'
+      + (platform === 'win32' ? ' from another directory, such as `%TEMP%`.' : '.');
+  }
+  if (/\b(?:EACCES|EPERM)\b/iu.test(details)) {
+    const path = /^path\s+(.+)$/imu.exec(details)?.[1]?.trim() || globalRoot;
+    return `Felan Code update failed: npm cannot modify ${path} because access was denied. `
+      + "Fix permissions of npm's global directory or rerun with the account that installed Felan Code. "
+      + 'See https://docs.npmjs.com/resolving-eacces-permissions-errors-when-installing-packages-globally.';
+  }
+  return `Felan Code update failed: ${commandError(result)}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
