@@ -6,12 +6,14 @@ import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
+import { windowsProcessElevated } from '@felan-ai/daemon/client';
 import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
 import { builtinExtensionPackages } from '../src/providers/extensions.js';
 import { clientDaemonTarget } from '../src/client-application.js';
 import { SessionClient, type SessionClientOptions } from '../src/client/client.js';
 import { runCli } from '../src/cli-main.js';
 import { runDaemonCommand } from '../src/daemon-command.js';
+import { ELEVATED_DAEMON_WARNING } from '../src/client/diagnostics.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllEnvs(); });
@@ -47,6 +49,22 @@ it.each(['status', 'start', 'stop', 'restart', 'logs'])('reports an elevation mi
   expect(await runDaemonCommand([action, '--daemon-runtime', directory], io, { createClient })).toBe(1);
   expect(io.writeError.mock.calls).toEqual([[error.message]]); expect(io.writeOutput).not.toHaveBeenCalled();
   expect(createClient).toHaveBeenCalledOnce(); expect(connector).toHaveBeenCalledOnce();
+});
+
+it.each(['start', 'restart'])('routes a daemon %s launch warning to the command error channel without refusing it', async action => {
+  const createClient = (options: SessionClientOptions) => ({ identity: { instanceId: 'started' }, close() {},
+    connect: async () => {
+      if (!options.launch) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      options.diagnostics!({ event: 'daemon.launch.elevated', message: ELEVATED_DAEMON_WARNING });
+    },
+    request: async () => ({ outcome: 'accepted', result: { daemonVersion: 'fixture', state: 'ready',
+      active: { sessions: 0, runs: 0, work: 0, attachments: 0 }, setupNeeds: [] } }),
+  }) as unknown as SessionClient;
+  const io = output();
+  expect(await runDaemonCommand([action], io, { createClient })).toBe(0);
+  expect(io.writeError).toHaveBeenCalledExactlyOnceWith(ELEVATED_DAEMON_WARNING);
+  expect(io.writeOutput).toHaveBeenCalled();
+  expect(io.writeOutput.mock.calls.flat().some(line => line.includes(ELEVATED_DAEMON_WARNING))).toBe(false);
 });
 
 it.runIf(process.platform === 'win32')('shares the foreground console without forwarding Ctrl+C through TerminateProcess', async () => {
@@ -115,7 +133,8 @@ it('starts and restarts the actual daemon with a shared launch environment and r
   expect(second.identity?.instanceId).not.toBe(original?.instanceId); await second.attach(id);
   expect(second.getAttachment(id)?.state.snapshot?.session).toBe(id);
   expect(await environment(second)).toBe('second');
-  expect(io.writeError).not.toHaveBeenCalled();
+  expect(io.writeError.mock.calls).toEqual(process.platform === 'win32' && windowsProcessElevated()
+    ? [[ELEVATED_DAEMON_WARNING], [ELEVATED_DAEMON_WARNING]] : []);
 }, 20_000);
 
 it('runs the emitted foreground command until its daemon is explicitly stopped', async () => {

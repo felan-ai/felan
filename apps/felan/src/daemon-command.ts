@@ -52,6 +52,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
       client?.close();
       const expectedComposition = dependencies.createClient ? undefined : await resolveClientHostComposition(target, hostConfigPath);
       client = makeClient({ target, clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}), kind: 'tui', reconnectAttempts: 0,
+        diagnostics: event => { if (event.event === 'daemon.launch.elevated') io.writeError(event.message); },
         ...(launch ? { launch: { entrypoint: resolveInstalledDaemonEntrypoint(), ...(hostConfigPath ? { hostConfigPath } : {}), ...(replacing ? { replacing } : {}) } } : {}) });
       try { await client.connect(); }
       catch (error) { if (client.status !== 'incompatible' || !client.identity) throw error; }

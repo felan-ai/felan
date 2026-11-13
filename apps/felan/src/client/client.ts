@@ -6,11 +6,11 @@ import {
   type ClientEnvelope, type ControlRequest, type ControlResponse, type DaemonIdentity, type Interaction,
   type Operation, type OperationParams, type OperationResult, type PresentationEvent, type Response, type ResponseFor,
 } from '@felan-ai/session-protocol';
-import { spawnDetachedDaemon } from '@felan-ai/daemon/client';
+import { spawnDetachedDaemon, windowsProcessElevated } from '@felan-ai/daemon/client';
 import { assertTargetIdentity, protocolTarget, resolveDaemonTarget, type DaemonTarget, type ResolvedDaemonTarget } from '@felan-ai/daemon/client';
 import { waitForDaemonStop } from './daemon-stop.js';
 import { createSessionState, reduceSession, type SessionState } from './reducer.js';
-import { diagnosticText, type AttachTrigger, type BlockedReason, type ClientDiagnostic } from './diagnostics.js';
+import { ELEVATED_DAEMON_WARNING, diagnosticText, type AttachTrigger, type BlockedReason, type ClientDiagnostic } from './diagnostics.js';
 import { localConnector, type ClientTransport, type TransportConnector } from './transport.js';
 
 export function newRequestId(now = Date.now()): string {
@@ -49,6 +49,7 @@ export interface SessionClientOptions {
   expected?: DaemonIdentity;
   connector?: TransportConnector;
   launch?: { entrypoint: string; timeoutMs?: number; replacing?: DaemonIdentity; hostConfigPath?: string };
+  windowsProcessElevated?: () => boolean;
   requestTimeoutMs?: number;
   retries?: number;
   /** Automatic reconnect attempts after an established connection drops; unlimited by default, 0 disables. */
@@ -56,7 +57,7 @@ export interface SessionClientOptions {
   /** First automatic reconnect delay; later attempts double it up to `reconnectMaxDelayMs`. */
   reconnectDelayMs?: number;
   reconnectMaxDelayMs?: number;
-  /** Receives connection and attachment transitions for troubleshooting; must not throw. */
+  /** Receives launch warnings and connection and attachment transitions for troubleshooting; must not throw. */
   diagnostics?: (event: ClientDiagnostic) => void;
 }
 export interface DaemonBuildMismatch {
@@ -251,6 +252,9 @@ export class SessionClient {
         const code = (error as { code?: string }).code;
         if (!launch || this.options.expected || !this.options.launch || !['ENOENT', 'stale_endpoint', 'unavailable'].includes(code ?? '')) throw error;
         try {
+          if (process.platform === 'win32' && (this.options.windowsProcessElevated ?? windowsProcessElevated)()) {
+            this.diagnose({ event: 'daemon.launch.elevated', message: ELEVATED_DAEMON_WARNING });
+          }
           const receipt = await this.whileOpen(spawnDetachedDaemon({ target: this.options.target, ...this.options.launch, ...(this.replacing ? { replacing: this.replacing } : {}) }));
           if (this.closed) throw new Error('Client is closed');
           assertTargetIdentity(this.target, receipt.identity, receipt.identity);
@@ -591,7 +595,10 @@ export class SessionClient {
   }
 
   private diagnose(event: ClientDiagnostic): void {
-    try { this.options.diagnostics?.(event); } catch { /* Diagnostics never affect the protocol. */ }
+    try {
+      if (this.options.diagnostics) this.options.diagnostics(event);
+      else if (event.event === 'daemon.launch.elevated') process.stderr.write(`${event.message}\n`);
+    } catch { /* Diagnostics never affect the protocol. */ }
   }
 
   /** Like connection backoff, the recovery budget renews only after the attachment stayed live longer than the longest reconnect delay, so a flapping session cannot resnapshot forever. */

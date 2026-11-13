@@ -5,6 +5,7 @@ import { clientDaemonTarget, resumeCommand, runDaemonFelan } from '../src/client
 import { resolveInstalledDaemonEntrypoint } from '../src/daemon-entrypoint.js';
 import { snapshot } from './client-fixtures.js';
 import type { RestartProcessOptions } from '../src/process-restart.js';
+import { ELEVATED_DAEMON_WARNING } from '../src/client/diagnostics.js';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -40,6 +41,24 @@ it('restarts the daemon in place and reconnects the same terminal with the previ
   expect(control).toHaveBeenCalledWith('host.restart', 'drain');
   expect(waitForStop).toHaveBeenCalledOnce(); expect(connect).toHaveBeenCalledExactlyOnceWith({ replacing: oldIdentity });
   expect(notices).toEqual(['Daemon restarting…', 'Daemon restarted']); expect(close).toHaveBeenCalledOnce();
+});
+
+it('keeps each elevated-launch warning in the transcript through startup and an in-place restart', async () => {
+  const identity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
+  const createClient = (options: SessionClientOptions) => ({ subscribe: () => () => {}, close() {}, identity,
+    connect: async () => { options.diagnostics!({ event: 'daemon.launch.elevated', message: ELEVATED_DAEMON_WARNING }); return {}; },
+    control: async () => ({ outcome: 'accepted' }),
+  }) as unknown as SessionClient;
+  await runDaemonFelan({ agentDir: '/agent' }, { createClient, waitForStop: async () => {}, runTerminal: async (controller, options) => {
+    await controller.client.connect();
+    expect(controller.notes).toMatchObject([{ text: ELEVATED_DAEMON_WARNING, level: 'warning' }]);
+    expect(await options.onDaemonAction!('restart', false, '')).toBe(false);
+    expect(controller.notice).toBe('Daemon restarted');
+    expect(controller.notes.filter(note => note.level === 'warning')).toEqual([
+      { text: ELEVATED_DAEMON_WARNING, level: 'warning', status: false },
+      { text: ELEVATED_DAEMON_WARNING, level: 'warning', status: false },
+    ]);
+  } });
 });
 
 it('re-executes /restart after verified shutdown without reconnecting the old client to the new build', async () => {

@@ -9,8 +9,11 @@ export type BlockedReason =
   | { kind: 'recovery_limit'; cause?: RecoveryCause }
   | { kind: 'attach_failed'; outcome: 'rejected' | 'indeterminate' | 'error'; code?: string; message?: string };
 
-/** Connection and attachment transitions; never message content. */
+export const ELEVATED_DAEMON_WARNING = 'Warning: The daemon will run elevated. Non-elevated Felan clients cannot attach until it is stopped from an elevated terminal.';
+
+/** Launch warnings and connection and attachment transitions; never message content. */
 export type ClientDiagnostic =
+  | { event: 'daemon.launch.elevated'; message: string }
   | { event: 'connection.ready'; daemonVersion: string; instanceId: string }
   | { event: 'connection.failed'; error: string }
   | { event: 'connection.lost'; reason: string; error?: string }

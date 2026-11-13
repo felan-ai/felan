@@ -12,7 +12,7 @@ import { listenLocalIpc } from '../../daemon/src/daemon/ipc.js';
 import type { ClientTransport, TransportConnector } from '../src/client/transport.js';
 import * as supervisor from '@felan-ai/daemon/client';
 import { FakeTransport, delta, snapshot } from './client-fixtures.js';
-import { clientDiagnosticsLog, describeBlocked, type ClientDiagnostic } from '../src/client/diagnostics.js';
+import { ELEVATED_DAEMON_WARNING, clientDiagnosticsLog, describeBlocked, type ClientDiagnostic } from '../src/client/diagnostics.js';
 import { waitForDaemonAttachment, waitForDaemonRun } from '../src/acp/daemon-session.js';
 
 const clients: SessionClient[] = [];
@@ -361,6 +361,58 @@ describe('shared session client', () => {
     clients.push(client);
     const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon').mockResolvedValue({ target: { kind: 'isolated', directory: '/fixture', namespaceId: 'client-test' }, identity, daemonVersion: 'fixture' });
     await client.connect(); expect(launch).toHaveBeenCalledTimes(1); expect(client.identity).toEqual(identity);
+  });
+  it.runIf(process.platform === 'win32').each([
+    ['tui', true], ['tui', false], ['acp', true], ['acp', false], ['headless', true], ['headless', false],
+  ] as const)('warns once per Windows %s launch or replacement only when elevated (%s)', async (kind, elevated) => {
+    let delegate!: TransportConnector;
+    const windowsProcessElevated = vi.fn(() => elevated); const diagnostics: ClientDiagnostic[] = [];
+    const { client, fake, identity } = await fixture({ kind, reconnectAttempts: 0, windowsProcessElevated,
+      launch: { entrypoint: '/fixture/entrypoint.js' }, connector: receiver => delegate(receiver), diagnostics: event => diagnostics.push(event) });
+    const absent = async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); };
+    delegate = absent;
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon').mockImplementation(async () => {
+      delegate = fake.connector; return { target: { kind: 'isolated', directory: '/fixture', namespaceId: 'client-test' }, identity, daemonVersion: 'fixture' };
+    });
+    const warning = { event: 'daemon.launch.elevated', message: ELEVATED_DAEMON_WARNING };
+    await Promise.all([client.connect(), client.connect()]);
+    expect(launch).toHaveBeenCalledOnce(); expect(windowsProcessElevated).toHaveBeenCalledOnce(); expect(client.status).toBe('ready');
+    expect(diagnostics.filter(event => event.event === 'daemon.launch.elevated')).toEqual(elevated ? [warning] : []);
+    await client.connect(); expect(windowsProcessElevated).toHaveBeenCalledOnce();
+    fake.lose(); delegate = absent;
+    await client.connect({ replacing: identity });
+    expect(launch).toHaveBeenCalledTimes(2); expect(launch.mock.calls[1]?.[0].replacing).toEqual(identity);
+    expect(windowsProcessElevated).toHaveBeenCalledTimes(2); expect(client.status).toBe('ready');
+    expect(diagnostics.filter(event => event.event === 'daemon.launch.elevated')).toEqual(elevated ? [warning, warning] : []);
+  });
+  it.skipIf(process.platform === 'win32')('does not query elevation or warn when launching on POSIX', async () => {
+    const windowsProcessElevated = vi.fn(() => true); const diagnostics: ClientDiagnostic[] = [];
+    let calls = 0;
+    const { client, fake, identity } = await fixture({ windowsProcessElevated, launch: { entrypoint: '/fixture/entrypoint.js' },
+      connector: receiver => ++calls === 1 ? Promise.reject(Object.assign(new Error('missing'), { code: 'ENOENT' })) : fake.connector(receiver),
+      diagnostics: event => diagnostics.push(event) });
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon').mockResolvedValue({ target: { kind: 'isolated', directory: '/fixture', namespaceId: 'client-test' }, identity, daemonVersion: 'fixture' });
+    await client.connect();
+    expect(launch).toHaveBeenCalledOnce(); expect(windowsProcessElevated).not.toHaveBeenCalled();
+    expect(diagnostics.some(event => event.event === 'daemon.launch.elevated')).toBe(false);
+  });
+  it('does not query elevation or warn when attaching to an existing daemon', async () => {
+    const windowsProcessElevated = vi.fn(() => true); const diagnostics: ClientDiagnostic[] = [];
+    const { client } = await fixture({ windowsProcessElevated, launch: { entrypoint: '/fixture/entrypoint.js' }, diagnostics: event => diagnostics.push(event) });
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon');
+    await client.connect();
+    expect(launch).not.toHaveBeenCalled(); expect(windowsProcessElevated).not.toHaveBeenCalled();
+    expect(diagnostics.some(event => event.event === 'daemon.launch.elevated')).toBe(false);
+  });
+  it.runIf(process.platform === 'win32').each(['acp', 'headless'] as const)('writes an elevated %s launch warning only to stderr without a diagnostic observer', async kind => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockReturnValue(true); const stdout = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+    let calls = 0;
+    const { client, fake, identity } = await fixture({ kind, windowsProcessElevated: () => true, launch: { entrypoint: '/fixture/entrypoint.js' },
+      connector: receiver => ++calls === 1 ? Promise.reject(Object.assign(new Error('missing'), { code: 'ENOENT' })) : fake.connector(receiver) });
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon').mockResolvedValue({ target: { kind: 'isolated', directory: '/fixture', namespaceId: 'client-test' }, identity, daemonVersion: 'fixture' });
+    await client.connect();
+    expect(client.status).toBe('ready'); expect(launch).toHaveBeenCalledOnce();
+    expect(stderr).toHaveBeenCalledExactlyOnceWith(`${ELEVATED_DAEMON_WARNING}\n`); expect(stdout).not.toHaveBeenCalled();
   });
   it.each(['tui', 'acp', 'headless'] as const)('does not launch or retry an elevation mismatch on the initial %s connection', async kind => {
     const error = Object.assign(new Error('The running daemon is elevated. Stop it from an elevated terminal, then retry.'), { code: 'elevation_mismatch' });
