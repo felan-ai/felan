@@ -4,6 +4,28 @@
 It owns CLI, TUI, ACP, headless presentation, and local themes. The daemon owns
 credentials, settings, storage, session/process execution, and lifecycle.
 
+## Native Windows
+
+Windows x64 and arm64 support the same daemon-backed TUI, ACP and headless
+clients. The production runtime lives at
+`<OS account profile>\AppData\Local\felan-daemon-v1\production`, normally under
+`%LOCALAPPDATA%`. The daemon constructs this path from the OS account profile,
+not environment overrides. Its `ipc-endpoint.json` contains a per-launch pipe
+name and secret. Do not share that file or remove lock files to force startup.
+Changing `FELAN_AGENT_DIR` does not create another production daemon.
+
+Install Git for Windows for POSIX-dependent tools such as background Bash.
+Ordinary shell calls default to `cmd.exe`; Felan selects same-host Git Bash
+for POSIX calls. WSL is an alternative Linux environment, not an automatic
+fallback. See [runtime dependencies](../reference/runtime-dependencies.md).
+
+Use `felan daemon stop` for graceful shutdown. Interrupting `felan daemon
+foreground` can terminate the child immediately on Windows rather than drain
+its work. Detached startup hides the daemon window and defaults child-process
+`windowsHide` to `true` unless explicitly overridden. CI does not verify
+interactive console-window behavior or a standard non-admin account. See
+[native ownership](../maintainers/session-daemon-native-ownership.md#verification).
+
 ## Programmatic migration
 
 The prepared, unpublished `@felan-ai/felan` 0.29.0 release removes legacy

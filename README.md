@@ -63,6 +63,14 @@ npm install --global @felan-ai/felan
 felan
 ```
 
+The local daemon supports macOS, glibc Linux and native Windows on x64 and
+arm64. Native Windows supports TUI, ACP and headless clients without WSL.
+Install Git for Windows to supply Git Bash for POSIX-dependent tools such as
+background Bash. WSL is an alternative Linux environment, not an automatic
+fallback for a native Windows daemon. Some optional managed dependencies remain
+macOS/Linux-only. See [runtime dependencies](docs/reference/runtime-dependencies.md)
+and the [Windows coverage limits](docs/maintainers/session-daemon-native-ownership.md#verification).
+
 Connect a provider inside the TUI with `/login`, then start working:
 
 ```sh
@@ -263,6 +271,11 @@ pnpm install --frozen-lockfile
 pnpm build
 node apps/felan/dist/cli.js
 ```
+
+On Windows, run repository commands in Git Bash. Before building, configure
+pnpm's script shell for the installed Bash executable. CI uses
+`pnpm config set script-shell 'C:\Program Files\Git\bin\bash.exe' --location project`.
+This setting applies to repository scripts, not Felan's ordinary shell calls.
 
 Run the complete build, type-check, test, license, packaging, and packed
 installation suite with:

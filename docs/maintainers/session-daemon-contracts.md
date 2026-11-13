@@ -119,9 +119,13 @@ POSIX endpoint length is a separate bound from general paths: at most 103 UTF-8
 bytes on Darwin and 107 on Linux, excluding the NUL terminator. S1.03 validates
 the actual platform limit and rejects an overlong path before bind. Use a short,
 owner-private runtime directory; never silently move it to shared `/tmp` or TCP.
-Windows pipe names use a conservative 240-character application limit and must
-still pass native validation/DACL checks. Length probes are platform-specific,
-not evidence that the other OS has been tested.
+Windows uses a generated `\\.\pipe\felan-daemon-<32 lowercase hex characters>`
+name published in the private `ipc-endpoint.json`, not a configurable pipe path
+or a 240-character application limit. The client validates the exact name form
+and authenticates with the per-launch secret; Node retains its default pipe
+DACL. See [ADR 0048](../decisions/0048-authenticate-windows-daemon-ipc-with-a-private-secret.md)
+and [native ownership](session-daemon-native-ownership.md) for the implemented
+transport and Windows CI limits.
 
 Command validation rejects unknown operation/discriminants. Additive optional
 fields in a known version are tolerated but stripped before semantic payload

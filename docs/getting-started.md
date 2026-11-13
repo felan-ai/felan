@@ -7,11 +7,24 @@ an existing project. No Felan account is required.
 
 - Node.js 22.19.0 or newer
 - a supported model-provider account or API credential
-- macOS, Linux, or another environment supported by Felan Code's Node.js and Pi
-  dependencies
+- macOS, glibc Linux, or native Windows on x64 or arm64
 
 Repository development and CI use Node.js 22.23.4 and pnpm 9.15.5. The pinned
 development version is not the minimum supported runtime version.
+
+### Native Windows
+
+Run Felan Code in a Windows terminal with native Node.js. TUI, ACP and headless
+clients use the same persistent Windows daemon. Install Git for Windows if you
+need POSIX-dependent tools such as detached background Bash. Felan discovers
+Git Bash on the same host; it does not install those operating-system utilities.
+Ordinary shell calls still default to `cmd.exe`.
+
+WSL is an alternative Linux environment. Install and run the Linux Node.js and
+Felan packages inside WSL rather than mixing its paths and processes with a
+native Windows daemon. Some optional dependencies, including the managed
+Claude Code bridge, remain macOS/Linux-only. See [runtime dependencies](reference/runtime-dependencies.md)
+and the [Windows coverage limits](maintainers/session-daemon-native-ownership.md#verification).
 
 ## Install or run directly
 

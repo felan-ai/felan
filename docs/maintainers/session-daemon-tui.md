@@ -152,6 +152,8 @@ Daemon-only packaging covered 27 packages without the client, with two
 foreground start/stop/ownership cycles passing.
 
 Three user-approved historical test exceptions remain bounded known risks. Linux
-arm64 has only the documented verification scope; Windows remains deferred and
-untested. Publication, trusted-publisher setup, and independent review are not
-claimed.
+arm64 has only the documented verification scope. This historical baseline
+predates native Windows support. The Windows daemon CI result does not establish
+a full Windows TUI-suite pass or cover interactive console-window behavior or a
+standard non-admin account. See [native ownership](session-daemon-native-ownership.md#verification).
+Publication, trusted-publisher setup, and independent review are not claimed.

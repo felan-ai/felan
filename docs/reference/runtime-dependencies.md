@@ -101,7 +101,9 @@ binary**. Linux downloads both glibc and musl variants, roughly **640 MB** in
 total, although only the host-matched variant is used. It is not a dependency of
 any Felan package; approval installs it
 separately under [Anthropic's SDK license and terms](https://github.com/anthropics/claude-agent-sdk-typescript).
-Non-host runtimes and Windows paths are unsupported. Claude Code authentication
+The managed Claude Code bridge does not support non-host runtimes or native
+Windows paths. This restriction does not apply to the Felan daemon or other
+model providers. Claude Code authentication
 is separate: run `claude`, then `/login`, on the host. Installation does not
 sign in, change the subscription, or guarantee model entitlement.
 
@@ -109,6 +111,11 @@ See the [Claude Code guide](../user-guide/claude-code.md) for settings, privacy,
 and troubleshooting.
 
 ## Platform and operation-level requirements
+
+The local daemon supports native Windows x64 and arm64, including TUI, ACP and
+headless clients. It does not need Git Bash for ownership, named-pipe transport
+or storage. See [native ownership](../maintainers/session-daemon-native-ownership.md)
+for the security model and CI limits.
 
 On native Windows, the ordinary `cmd.exe` shell is not a POSIX runtime. The
 host runtime therefore keeps `cmd.exe` as the default for ordinary shell calls
@@ -119,6 +126,12 @@ path namespace is separate from the native host. If no compatible Git Bash
 installation is available, background process support stays inactive and Felan Code
 does not attempt to install operating-system utilities. Git Bash process inspection
 uses its `ps -l` output when the GNU `ps -o` form is unavailable.
+
+The managed RTK installer supports Linux/macOS only. On Windows, place a
+compatible `rtk.exe` on `PATH` manually; output compaction remains available
+without it. The managed Claude Code bridge also remains macOS/Linux-only.
+To use those Linux installers in WSL, run Linux Node.js and Felan inside WSL;
+do not use WSL as the shell for a native Windows daemon.
 
 Other process calls are not whole-extension startup dependencies. `git` in web
 repository extraction and the powerline is optional per operation; credential

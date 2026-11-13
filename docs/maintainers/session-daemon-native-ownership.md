@@ -1,235 +1,246 @@
 # Local daemon ownership primitives
 
-This is an **internal, nonshipping S1.03 candidate**, not a completed daemon or
-a claim of Windows support. The first implementation targets Unix/macOS/Linux.
-The user explicitly deferred Windows; its unsupported, fail-closed behavior
-and documented follow-up are not current completion blockers. No CLI, registry,
-profile, session server or live store is cut over. The application version
-remains for S1.16 to decide.
+`apps/daemon/src/daemon` owns account identity, canonical store locks, local
+IPC and detached startup. The native backends support macOS, glibc Linux and
+Windows on x64 and arm64. Other platforms, unsupported architectures and
+unavailable native backends fail closed with `platform_blocked`. There is no
+heartbeat-lease or TCP fallback. Windows does not require POSIX emulation for
+these operations.
 
 ## Native choice and packaging
 
-The application pins **Koffi 3.3.2**, MIT, from
-<https://github.com/Koromix/koffi>. Its installed `package.json`, `index.d.ts`,
-`README.md`, `LICENSE.txt` and native loader were inspected. npm lists 3.3.2 as
-released on 2026-09-27; this avoids selecting the same-day 3.3.3 release.
-Koffi is a maintained Node-API v8 FFI with optional, version-matched platform
-packages, including `@koromix/koffi-{darwin,linux,win32}-{x64,arm64}`. Upstream
-support is not proof that Felan's platform adapter was tested.
+`@felan-ai/daemon` pins Koffi 3.3.2, MIT, from
+<https://github.com/Koromix/koffi>. Koffi supplies Node-API bindings and optional,
+version-matched platform packages, including Darwin, Linux and Windows x64/arm64
+prebuilds. Keep optional dependencies when installing or bundling. Koffi remains
+a production dependency; there is no separate Felan native binary to copy into
+`dist`. A source build requires Koffi's documented CMake/compiler toolchain.
+Do not replace a missing native backend with a lease lock.
 
-`native-ownership.ts` uses public libc functions, not private Node handles:
+On POSIX, `native-ownership.ts` calls libc through Koffi for `flock`, Unix socket
+creation, `fcntl`, peer credentials and no-follow socket chmod. Darwin uses
+`getpeereid`; Linux uses `SO_PEERCRED` and requires glibc. Native sockets are
+nonblocking and close-on-exec. Node accepts connections through `net.Server`;
+the adapter reads accepted sockets' native descriptors to check peer UIDs.
 
-- `flock(LOCK_EX | LOCK_NB)` for retained file-descriptor lifetime locks.
-- `socket`, `bind`, `listen`, `accept`, `connect`, `fcntl`, `getsockopt` and
-  Darwin `getpeereid` / Linux `SO_PEERCRED` for native authenticated AF_UNIX
-  transport. Accepted, authenticated descriptors enter Node through the public
-  `new Socket({fd, readable:true, writable:true})` constructor.
-- `FD_CLOEXEC` and `O_NONBLOCK` on native socket descriptors. Node filesystem
-  descriptors are close-on-exec; a real exec-descendant/crash test exercises
-  that they do not prolong the owner's locks.
-- Darwin `lchmod` / Linux `fchmodat(AT_SYMLINK_NOFOLLOW)` to protect the socket
-  without following a substituted symlink.
+On Windows, `native-windows.ts` lazily loads `kernel32.dll` and `advapi32.dll`.
+It reads the process token's user SID, checks filesystem security descriptors
+and protects new private directories. Node owns named-pipe I/O.
+[ADR 0048](../decisions/0048-authenticate-windows-daemon-ipc-with-a-private-secret.md)
+records why pipe authentication uses a private secret instead of native token
+checks.
 
-The install script is
-`node ./cnoke.cjs -P . -D src/koffi --prebuild --release` and is explicitly
-allowed in `pnpm-workspace.yaml`. It selects prebuilds; upstream's source-build
-path requires its documented CMake/compiler toolchain. Do not assume a compiler
-is available or suppress a missing native module with a lease-lock fallback.
-Keep optional dependencies when installing/bundling. There is no Felan native
-binary to copy into `dist`: Koffi and its prebuild remain production dependencies
-in the packed application's dependency closure. Root/application NOTICE and
-the license inventory include the pinned dependency.
+## Account identity and paths
 
-Actual local evidence is Darwin arm64, Node 22.20.0, pnpm 9.15.5. The dependency
-installed and the real native adapter executed. A separate clean temporary
-installation verifies the prebuild without running install scripts. Full packed
-application verification must be serialized by the orchestrator; this task does
-not independently run `pnpm verify` or `pack:all`.
+`resolveDaemonTarget` is read-only. Callers supply either a production target
+with an agent directory and explicit store-root array, or an isolated target
+with a fixture directory and non-production namespace ID. `principal` is the
+POSIX UID as a string or the Windows token SID. Windows retains `uid: -1` for
+compatibility; it does not use that value for authorization. POSIX refuses
+set-ID execution.
 
-## Platform gates
+`os.userInfo().homedir` identifies the OS account profile. `HOME`, `USER`,
+`USERPROFILE`, `LOCALAPPDATA`, `FELAN_AGENT_DIR` and `TMPDIR` do not select the
+account coordinator. Windows constructs its coordinator path from that profile,
+not from a redirected known-folder lookup or the `LOCALAPPDATA` environment
+variable. It normally corresponds to `%LOCALAPPDATA%\felan-daemon-v1`.
+Windows canonicalization uses `realpathSync.native`, which expands short names
+such as `RUNNER~1`.
 
-| Platform | State |
+| Path | Location or name |
 | --- | --- |
-| Darwin arm64 | Real multiprocess ownership, native peer checks, socket protection, stale cleanup, fencing and detached-readiness tests run locally. |
-| Darwin x64 | Adapter present, not executed here. CI/release gate. |
-| Linux glibc arm64 | Candidate build/type-check and all 22 focused tests passed in a disposable Debian Bookworm container, Node 22.20.0/pnpm 9.15.5/glibc 2.36. Four additional production-ledger tests ran only in a separate disposable account/container without host mounts. A real UID 0 server / UID 65534 client probe confirmed kernel `EACCES` denial. This is focused container evidence, not a full Linux application-suite run. |
-| Linux glibc x64 | Not executed here. CI/release gate, including native peer checks, locking, no-follow chmod, inherited descriptors, file identities and socket limits. |
-| Linux musl and other architectures | Fail closed if the verified libc/ABI is unavailable. No claim of support from Koffi's broader matrix. |
-| Windows | **Deferred by explicit user decision; unsupported and fail-closed** with `platform_blocked` before ownership or target creation. Follow-up requires native token/SID identity, lifetime handle locks, pipe DACL, client/server token checks, reparse-safe storage, a Windows transport/launch-channel adapter and actual Windows tests. It is not a current completion blocker. Koffi's Windows prebuild does not implement these. |
+| Darwin account coordinator | `/private/tmp/felan-<uid>-daemon-v1` under the canonical system temporary directory |
+| Linux account coordinator | `/tmp/felan-<uid>-daemon-v1` under the canonical system temporary directory |
+| Windows account coordinator | `<OS account profile>\AppData\Local\felan-daemon-v1` |
+| Production runtime | `<account coordinator>/production` |
+| Isolated runtime | `<fixture directory>/runtime` |
+| Coordination and claims | `claims.lock` and `claims.json` in the account coordinator |
+| Namespace lifetime lock | `production.lock` or `isolated-<SHA-256 of namespace ID>.lock` in the account coordinator |
+| Store lifetime lock | `.felan-store.lock` in each locked store root |
+| POSIX endpoint | `ipc.sock` in the runtime directory |
+| Windows endpoint description | `ipc-endpoint.json` in the runtime directory |
+| Bounded diagnostic files | `stdout.log` and `stderr.log` in the runtime directory |
 
-No TCP path exists. POSIX paths reject NUL and lengths above 103 bytes on Darwin
-or 107 on Linux. The Linux run exercised the actual 107-byte bind boundary,
-native peer checks and locks. Its separate cross-UID probe ran only inside the
-disposable container; it does not prove Darwin cross-user behavior. Linux
-bind-mount aliases and additional architectures remain CI gates. Windows
-execution remains deferred, not implicitly supported. No host account creation
-or user configuration changes were made.
+Production always uses the same account singleton, regardless of selected
+agent directory or roots. Isolated targets cannot contain or use the real
+account's `.felan` or coordinator. Their agent directory, runtime and stores
+must stay inside the canonical fixture. Isolated runtime directories cannot
+redirect through symlinks; canonical root checks reject overlaps and aliases
+held by another live daemon.
 
-### Linux evidence and remaining gates
+## Private paths and configuration
 
-Docker Desktop's local Linux arm64 daemon was available; no missing-runtime
-exception is needed. Only copied S1.03 sources/tests and the protocol dependency
-were supplied to the container. Dependency installation happened during image
-build; tests ran without networking, with a read-only root filesystem and a
-disposable `/tmp` tmpfs. The shared verification lock covered the complete
-build/test block. Test-owned containers and image tags were removed; no user
-containers were started, stopped or modified.
+POSIX private paths require the real UID and owner-only modes. Regular files
+must have one link. On Windows, private paths must be non-reparse directories
+or single-link regular files. Their owner and applicable allow ACEs may name
+only the account SID, SYSTEM or Administrators. A null DACL or unsupported
+allow ACE fails closed with `unsafe_path`. Inherit-only ACEs do not grant access
+to the object being checked.
 
-The first Linux run is retained as a failed run, despite all 19 assertions
-passing. The unhandled resets are emitted by the client sockets when the test
-deliberately removes/replaces the owned endpoint. The user then authorized a
-narrow test-only correction: wait for socket closure and assert that any error
-occurred during the requested teardown and has code `ECONNRESET`. Unexpected
-errors still fail the test; no runtime error is suppressed. The revised checked-in
-candidate passed without unhandled errors, as well as the separate cross-UID
-probe. Subsequent review regressions cover listener setup and accepted-socket
-ownership-loss windows; all 22 focused tests pass on macOS and Linux arm64.
-Full application Linux testing, Linux x64 and bind-mount alias coverage remain
-release/CI work.
+New private Windows directories receive a protected DACL with inheritable full
+control for those three principals. Existing unsafe directories are rejected,
+not silently repaired. Ancestor identities are pinned. Windows additionally
+checks the immediate parent for write grants to other accounts. Store-root
+directories need not be owner-only; this does not waive private runtime or
+managed-file checks.
 
-The failed first run, diagnostic-only diff and final candidate result are
-retained separately under `.artifacts/story1/reviews/S1.03/`. Final Linux
-container inputs, source hashes and dependency lock are in `linux/final-r4/`;
-the review-fix logs are `logs/r4-focused-macos-linux.log` and
-`logs/r4-full-macos.log`. All runs held the shared verification lock. Tests ran
-with networking disabled in the container; the current result does not depend
-on the diagnostic-only copy.
+`host.json` has a different trust rule because it selects executable providers.
+It must be a regular file without write grants outside the account, SYSTEM,
+Administrators and TrustedInstaller. Other accounts may have read access.
+Windows checks the DACL rather than POSIX mode bits. Non-regular files and
+disallowed write grants produce `unsafe_host_config`; native security-descriptor
+read failures and unsupported ACEs propagate `unsafe_path`. Configuration
+precedence remains an explicit absolute path, agent-directory `host.json`, then
+the manager's packaged default. The generic daemon supplies no implicit default.
 
-## Ownership and target contract
+## Lifetime locks and fencing
 
-`resolveDaemonTarget` is read-only. Callers must supply an explicit production
-target (agent directory plus startup custom roots) or an isolated target
-(fixture directory plus a non-production namespace ID). `HOME`,
-`FELAN_AGENT_DIR`, `USER` and `TMPDIR` do not determine account identity or the
-account coordinator. `os.userInfo()` supplies the OS account; set-ID execution
-is rejected. The coordinator is the fixed owner-private
-`/private/tmp/felan-<uid>-daemon-v1` on Darwin or `/tmp/felan-<uid>-daemon-v1`
-on Linux, under the canonical system temporary directory. It is shared by all
-namespaces, not placed in a selectable agent directory.
+`acquireDaemonOwnership` holds the short-lived `claims.lock` while checking the
+ledger and taking namespace/store lifetime locks. Contenders retry coordination
+every 10 ms for up to five seconds, then receive `ownership_busy`. The ledger
+compares canonical paths and device/inode ancestry to reject overlapping stores.
+An unreadable ledger is rebuilt; a claim is live only while its recorded lock
+identity still matches and another process holds that lock.
 
-Production always uses the same `production.lock`, regardless of selected
-roots. Isolated namespace locks are hashed names in the same coordinator.
-Isolated stores, agent directory and runtime must stay within their canonical
-fixture; they cannot contain/use the real account's `.felan`, the coordinator,
-or a root held by a live production daemon. An isolated target may use an
-existing directory; no marker is required. Host tests use only new explicit
-fixture targets and never acquire the host production singleton.
-Production-ledger regressions run solely in an explicitly guarded disposable
-container account, without host mounts. Every instance removes only its own
-claim on settled release and leaves lock inodes intact.
+POSIX uses retained `flock` descriptors. Windows opens lock files with libuv's
+`UV_FS_O_EXLOCK`, share mode zero. Another open, including a plain read, fails
+with `EBUSY`; `tryLockFile` treats that as contention. Never read a held lock
+file to discover its owner. Closing the handle or terminating its process
+releases ownership. Locks are never unlinked to unlock. A live namespace owner
+causes `owner_running`; an overlapping store causes `root_conflict`.
 
-`acquireDaemonOwnership` holds the separate short-lived coordination lock while
-checking claims and taking lifetime namespace/store locks. The bounded private
-ledger is atomic-renamed and fsynced. It compares canonical paths and directory
-inode ancestry to reject exact aliases, parent/child overlaps and inode aliases
-held by another live daemon. All declared roots are acquired before returning
-authority. The agent directory itself is locked, conservatively covering its
-session, task, memory, subagent and shared storage descendants. A custom session
-directory is added with `ownRoot` when a session first resolves it: the owner
-takes its store lock, adds it to its ledger claim and records it in
-`agentDir/daemon-store-roots.json`. Recorded roots remain addressable after a
-restart and are locked again when used.
+The agent directory itself is locked. `ownRoot` acquires custom session
+stores on first use and records them in `agentDir/daemon-store-roots.json`.
+Recorded roots remain addressable after restart and are locked again when used.
 
-Locks are never unlinked to unlock. A claim is live only while its recorded
-lifetime lock inode is still held; missing, replaced or unheld claims are stale
-and dropped, and an unreadable ledger is rebuilt. PID values and readiness files
-are not ownership evidence. Store roots are not required to be owner-only or on
-a local filesystem; the runtime directory, socket and coordinator remain
-owner-only.
+`assertCurrent()` checks retained locks and pinned path identities synchronously;
+a 25 ms interval also checks idle owners. Replacement or removal permanently
+fences the instance with `ownership_lost`. Recreating a pathname does not restore
+authority. Permission changes alone do not trigger this identity fence. POSIX
+refreshes lock timestamps hourly against temporary-directory reapers; Windows
+skips that refresh because its coordinator lives under the account profile.
 
-## Fencing and integration
+Use `assertCurrent()` before admission and after async boundaries before writes.
+`assertOwnsPath()` returns the canonical owned path; use that return value.
+On loss, listeners and connections close. Locks remain held until callers settle
+owned writers and descendants and call idempotent `release()`. Fencing does not
+revoke arbitrary shells, legacy binaries or privileged processes.
 
-- `DaemonOwnership.assertCurrent()` checks retained locks and path identities.
-  Use it synchronously before every admission and after any async boundary
-  before dispatch/write. `assertOwnsPath(path)` additionally canonicalizes and
-  returns a path within the current root set; **use the returned path**.
-- The owner checks identities every 25 ms as an additional idle guard. Deleting
-  or replacing a watched lock/root/endpoint permanently fences that instance;
-  permission changes do not. Recreating the old pathname does not
-  un-fence it. `onLost` closes listeners/connections immediately when detected.
-  The interval is not a promise of instantaneous revocation between arbitrary
-  syscalls, and is not a replacement for synchronous admission checks.
-- Locks remain held after fencing until callers settle their writers and call
-  idempotent `release()`. Do not release while an owned operation or descendant
-  can still write. These primitives do not claim to revoke an already-running
-  shell, unfenced child or old binary. Legacy operator quiescence and S1.06/14
-  descendant settlement remain necessary.
-- `listenLocalIpc(owner, callback)` only gives authenticated same-account
-  sockets to the session server. It caps live connections and closes them on
-  ownership loss. Cleanup owns the native listener throughout path-watch and
-  loss-subscription setup. Accepted sockets are tracked before the ownership
-  recheck or callback transfer, so a failure there closes both peer and listener
-  without removing a replacement endpoint. `connectLocalIpc` checks native server credentials, private
-  endpoint type/mode and stable path identity. A live endpoint is never removed;
-  a stale socket is removed only under ownership after native `ECONNREFUSED`
-  and an unchanged socket inode. Non-sockets and symlinks are not cleaned up.
-- `protocolTarget` maps the internal launch target to the actual public
-  `@felan-ai/session-protocol` target shape. `identityFor` and
-  `assertTargetIdentity` use its full namespace/instance/agent/root tuple.
-  `serveReadiness`/`probeDaemon` implement only bounded, read-only authenticated
-  control status using the package's real parsers. They are not a session server
-  or a version-mismatch management implementation.
-- S1.10 can use `connectLocalIpc`, `protocolTarget` and tuple verification. S1.04
-  can use `assertOwnsPath`, `assertCurrent`, `onLost` and the retained owner.
-  Neither needs a profile dependency. Profile/session replacement is not wired
-  here. New sessions must not silently introduce roots outside the owner.
+## Local IPC
 
-## Detached startup and diagnostics
+POSIX uses an owner-only Unix socket and verifies kernel peer UIDs on both ends.
+Socket paths reject NUL and exceed neither 103 bytes on Darwin nor 107 on Linux.
+Only an unchanged stale socket with native `ECONNREFUSED` is removed under
+ownership. Live endpoints cause `endpoint_live`; unsafe endpoints are not removed.
 
-`spawnDetachedDaemon` resolves the current Node executable and supplied local
-entrypoint, preserves the launch environment and cwd, detaches, and uses a
-private inherited FD 3 channel—not an environment token or a readiness file.
-The child acquires ownership and initializes its services before calling
-`publishDaemonReadiness`. The launcher validates the full tuple, probes the
-live authenticated endpoint, then acknowledges. The child must settle/release
-on an absent acknowledgement or startup error. The launcher never kills a PID
-from a receipt or guesses whether an unrelated process is stale.
+Windows generates `\\.\pipe\felan-daemon-<32 lowercase hex characters>` and a
+fresh 32-byte secret per launch. Binding retries `EADDRINUSE` with a new random
+name, for at most four attempts. After binding, the daemon publishes version 1,
+the pipe name and a base64 secret in `ipc-endpoint.json` through an exclusively
+created private temporary file, file fsync and replacement. The endpoint file
+is pinned and watched; cleanup removes it only while ownership and its pin
+remain current.
 
-Client/launcher exit does not dispose a ready daemon. Closing an unacknowledged
-launch channel only cancels a **cooperative** child; an arbitrary/uncooperative
-entrypoint is not claimed to have stopped. S1.14 must use the cooperative
-entrypoint and lifecycle contract. No provider/account/update requests run in
-these helpers; readiness must stay gated on the later application's real ready
-state. There is no per-session environment provision/patch mechanism.
+The client validates private runtime and endpoint paths, accepts endpoint files
+no larger than 4 KiB, rejects extra fields and validates the exact pipe name and
+32-byte secret.
+Both ends authenticate with fresh nonces and role-specific HMAC-SHA256 proofs
+before the listener passes the socket to the session protocol. The normal pipe
+connect and handshake each have a two-second deadline. The listener caps live
+connections at 64, including pending handshakes. A failed handshake destroys
+only that connection. The client rechecks its path pins after authentication.
 
-Raw detached stdout/stderr go to the null device. The explicit
-`BoundedDaemonLogs` sink keeps separate owner-only bounded diagnostic files;
-callers must pass safe diagnostics, never environment dumps, credentials or raw
-provider errors. The launcher reports fixed sanitized errors rather than
-echoing child output. No control credentials are added to inherited environment.
+Missing endpoint files preserve filesystem `ENOENT`. A published pipe that
+returns `ENOENT` or `ECONNREFUSED` produces `stale_endpoint`; other connection
+failures and authentication timeouts produce `unavailable`. Invalid endpoint
+content produces `unsafe_endpoint`; invalid handshake framing produces
+`invalid_handshake`; a proof mismatch produces `forbidden`.
+`connectLocalIpc` makes one connection attempt; client reconnect policy is
+separate.
+
+At startup, an existing valid endpoint gets a short authenticated probe with
+200 ms connect and handshake deadlines. Success causes `endpoint_live`. A
+`stale_endpoint`, `unavailable`, `forbidden` or `invalid_handshake` result permits
+stale-file removal only under current ownership and unchanged pins. Unsafe or
+malformed endpoint files are not cleaned up automatically.
+
+Windows pipes retain Node's default DACL. Other local accounts may open
+read-only connections without authenticating, so the secret protects protocol
+access rather than pipe opens. Administrators, SYSTEM and same-account code can
+read it. Client opens do not impose `SECURITY_IDENTIFICATION`; mutual
+authentication does not remove named-pipe impersonation or local denial-of-service
+risks. Do not expose the endpoint file as model context, logs or environment.
+
+Readiness and control operations also validate namespace, canonical agent
+directory and instance ID. `assertTargetIdentity` deliberately excludes root-set
+equality because the daemon can acquire more roots after a client declares its
+target. A matching PID or stale readiness record is not authority.
+
+## Detached startup and durability
+
+`spawnDetachedDaemon` resolves the current Node executable and installed local
+entrypoint, preserves cwd/environment, detaches with `windowsHide: true`, and
+uses inherited FD 3 for readiness. Windows uses `overlapped` stdio for this
+bidirectional channel; POSIX uses `pipe`. The launcher defaults to a ten-second
+readiness deadline, validates identity, probes the authenticated endpoint and
+acknowledges the child. Closing an unacknowledged channel cancels only a
+cooperative child. The launcher never kills a PID from a receipt.
+
+`runDaemonProcess` installs Windows console defaults before loading services,
+providers or extensions. It defaults `windowsHide` to `true` for `spawn`,
+`execFile`, `exec`, `fork` and their synchronous variants, then calls
+`syncBuiltinESMExports` so ESM imports use the wrappers. Explicit options such
+as `windowsHide: false` remain intact. Use `felan daemon stop` for graceful
+shutdown; interrupting the foreground launcher can terminate its child
+immediately on Windows.
+
+Raw detached stdout/stderr go to the null device. `BoundedDaemonLogs` retains
+separate private files, each bounded to 32 KiB by default. Callers must supply
+safe diagnostics, not raw provider errors, credentials or environment dumps.
+Client exit does not stop a ready daemon.
+
+`syncDirectory` is a no-op on Windows because directory fsync fails there.
+File fsync remains enabled outside the test-only skip. `replaceFile` retries
+Windows `EPERM`, `EACCES` and `EBUSY` until a two-second deadline, waiting at most
+20 ms per retry, then throws the last error. On POSIX, `replaceFile` renames once
+and `syncDirectory` still flushes directory descriptors. Windows does not copy
+POSIX modes when publishing transcript exports. See
+[control persistence](session-daemon-persistence.md) for SQLite
+crash and power-loss limits; file replacement is not a directory-durability
+guarantee on Windows.
 
 ## Verification
 
-Run after building the TUI (the process fixtures import its emitted modules).
-The entire shared build/type-check/test block must hold an exclusive Python
-`fcntl.flock` on
-`/tmp/felan-story1-verification-01a1249a-2227-7793-828b-19ffb702d139.lock`.
-Use a cleared test environment and disposable HOME/TMPDIR/agent directory, as
-recorded in the serialized verification harness. Do not run these commands
-outside that coordination lock:
+Use Node.js 22.23.4 and pnpm 9.15.5. Build before process-fixture tests because
+they import emitted daemon modules. Run daemon and client tests only through
+`scripts/test-isolated.sh`; use explicit isolated targets, never a production
+singleton under a temporary `HOME`. The script does not redirect the OS account
+coordinator. Run repeated local verification one command at a time with
+`--maxWorkers=2`.
 
-```sh
-pnpm --filter @felan-ai/felan build
-pnpm --filter @felan-ai/felan type-check
-pnpm --filter @felan-ai/felan exec vitest run test/daemon-ownership.test.ts test/daemon-ipc.test.ts
-pnpm --filter @felan-ai/felan test
-pnpm check:licenses
-```
+The Windows CI matrix runs the daemon suite on `windows-latest` x64 and
+`windows-11-arm` with Node.js 22.23.4. Daemon-suite results pass with the known
+platform-assumption fixture fixes. The runner user is an elevated Administrator,
+and created objects can be owned by Administrators. These results do not cover
+a standard non-admin account, a separate local user's actual pipe access or
+interactive console-window behavior. They do not establish a full Windows
+TUI-suite pass.
 
-The focused suite includes five concurrent starters, a SIGSTOP-paused owner,
-SIGKILL/restart with an exec descendant, custom/alias/overlap refusal,
-store/endpoint replacement and deletion, safe socket cleanup, full tuple
-mismatch, forged/failed/timed-out readiness, bounded diagnostics and a real
-launcher-exit/reattach test. Child termination and fixture cleanup are limited to
-test-owned processes/paths. Review snapshots and exact logs live in
-`.artifacts/story1/reviews/S1.03`; mirror them outside `.artifacts` before the
-orchestrator runs packing, which deletes that directory.
+Windows coverage includes token/profile resolution, DACL grants, junctions and
+hard links, cross-process exclusive locks and release on process death, native
+path expansion, bounded replacement retries, endpoint validation, wrong-secret
+rejection, endpoint fencing, pending-handshake capacity and detached readiness.
+Handshake tests also run without Windows using paired streams. Console tests
+check spawn options and real child output, not visible windows on a desktop.
 
-`test/fixtures/daemon-production-ownership.mjs` must run only in a disposable
-Linux UID-0 container with its explicit opt-in, a private `/tmp` tmpfs and no host
-work/config mounts. It refuses other environments before acquiring ownership.
-Its four regressions cover 1,030 unchanged acquisition/release cycles, recovery
-from 1,024 duplicate historical rows, former-root exclusion and distinct inode
-generation exclusion. These are real kernel ownership cycles, not a claim of
-1,030 separately spawned daemon processes. Never run this fixture against the
-host coordinator, even with a temporary HOME.
+Windows skips POSIX-only assumptions such as `SIGSTOP`/`SIGCONT`, chmod modes,
+Unix peer credentials/socket limits, replacing held lock files or their parent
+directories, and hourly temporary-lock refresh. Windows-specific tests cover the
+corresponding DACL, handle-lock and named-pipe behavior where applicable.
+
+Earlier local evidence covered Darwin arm64 native ownership and detached
+readiness on Node.js 22.20.0. Focused Linux glibc arm64 tests ran in disposable
+Debian Bookworm containers, including a separate UID 0/UID 65534 denial probe.
+That is not a full Linux application-suite result or evidence for Darwin x64,
+Linux x64, bind-mount aliases or network filesystems. Koffi's broader prebuild
+matrix alone does not establish Felan coverage.

@@ -69,7 +69,9 @@ or an independent review.
 
 Three user-approved historical test exceptions remain unfixed. They are bounded
 known risks, not a general waiver. Linux arm64 verification is documented at its
-actual scope; Windows remains deferred and must not be represented as tested.
+actual scope. This historical baseline predates native Windows support. See
+[native ownership](session-daemon-native-ownership.md#verification) for the
+current Windows implementation, CI coverage and remaining limits.
 
 ## Acceptance matrix
 
