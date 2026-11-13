@@ -52,7 +52,19 @@ There is no lease-lock, TCP or POSIX-emulation fallback.
   counts pending handshakes, and timeouts release them; local denial of service
   remains possible.
 - Client pipe opens do not impose `SECURITY_IDENTIFICATION`. The handshake does
-  not remove Windows named-pipe impersonation risk.
+  not remove Windows named-pipe impersonation risk. A client checks that another
+  process holds the namespace lifetime lock before opening the pipe. It closes
+  a successful lock probe immediately and treats the endpoint as stale. Startup
+  holds that lifetime lock, validates and removes an old endpoint without
+  connecting to its pipe. An in-process guard rejects repeated listeners for
+  the same owner. These checks avoid contacting an abandoned pipe that another
+  account may have claimed, but cannot make the lock probe and pipe open atomic.
+- The endpoint records the daemon token's elevation state. A non-elevated
+  client refuses an elevated daemon before opening its pipe and tells the user
+  to stop it with `felan daemon stop` from an elevated terminal or run Felan
+  elevated. An elevated client may attach to a non-elevated daemon. The default
+  pipe DACL is never widened to let medium-integrity code control an elevated
+  daemon.
 - Administrators and SYSTEM can read the secret. Same-account code can too.
   This authenticates access to the private endpoint, not trusted client code,
   and does not sandbox tools or defend against a compromised account.

@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { replaceFile, syncDescriptor, syncDirectory } from './durability.js';
-import { assertPrivatePath, DaemonSecurityError, lockStillHeld, tryLockFile } from './native-ownership.js';
+import { assertPrivatePath, DaemonSecurityError, lockStillHeld, tryLockExistingFile, tryLockFile } from './native-ownership.js';
 import { assertPathIdentity, canonicalProspectivePath, identityFor, pathIdentity, pathInside, pathsOverlap, pinPathAncestry, pinPathChain, prepareDaemonTarget, privateDirectory, resolveDaemonTarget, storeDirectory, type DaemonTarget, type PathIdentity, type ResolvedDaemonTarget } from './target.js';
 
 interface Claim {
@@ -63,12 +63,14 @@ function uniqueNodes(pins: readonly PathIdentity[]): NodeIdentity[] {
 /** A claim is live only while another process still holds its registered lifetime lock. */
 function claimActive(target: ResolvedDaemonTarget, claim: Claim): boolean {
   const path = join(target.accountDirectory, claim.lock);
-  let pin: PathIdentity;
-  try { pin = pathIdentity(path); }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
-  if (String(pin.dev) !== claim.lockNode.dev || String(pin.ino) !== claim.lockNode.ino) return false;
-  const fd = tryLockFile(path, target.principal);
-  try { assertPathIdentity(pin); return fd === undefined; }
+  let fd: number | undefined;
+  try { fd = tryLockExistingFile(path); }
+  catch { return false; }
+  try {
+    const pin = pathIdentity(path);
+    if (String(pin.dev) !== claim.lockNode.dev || String(pin.ino) !== claim.lockNode.ino) return false;
+    return fd === undefined;
+  }
   finally { if (fd !== undefined) closeSync(fd); }
 }
 
@@ -257,7 +259,15 @@ export async function acquireDaemonOwnership(input: DaemonTarget): Promise<Daemo
     const candidateNodes = existingNodes(guardedRoots);
     const candidateAncestors = target.pins.map(node);
     const lock = namespaceLockName(target);
-    const lifetime = tryLockFile(join(target.accountDirectory, lock), target.principal);
+    let lifetime = tryLockFile(join(target.accountDirectory, lock), target.principal);
+    if (process.platform === 'win32') {
+      const deadline = performance.now() + 200;
+      while (lifetime === undefined && performance.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+        for (const pin of coordinator.pins) assertPathIdentity(pin);
+        lifetime = tryLockFile(join(target.accountDirectory, lock), target.principal);
+      }
+    }
     if (lifetime === undefined) throw new DaemonSecurityError('owner_running', 'This OS account/namespace already has a daemon. Attach using its pinned roots; do not delete locks.');
     held.push(lifetime);
     const live = readLedger(target.accountDirectory).claims.filter(claim => claim.lock !== lock && claimActive(target, claim));

@@ -48,20 +48,31 @@ export function windowsAccountPrincipal(): string {
   if (!n.openToken(n.currentProcess(), 0x8, token)) failure('OpenProcessToken', 'native_failure');
   try {
     const needed = [0];
-    if (n.tokenInformation(token[0], 1, null, 0, needed) || n.lastError() !== 122 || needed[0]! < koffi.sizeof('void *') || needed[0]! > 65536) failure('GetTokenInformation', 'native_failure');
+    n.tokenInformation(token[0], 1, null, 0, needed);
+    if (needed[0]! < koffi.sizeof('void *') || needed[0]! > 65536) failure('GetTokenInformation', 'native_failure');
     const buffer = Buffer.alloc(needed[0]!);
     if (!n.tokenInformation(token[0], 1, buffer, buffer.length, needed)) failure('GetTokenInformation', 'native_failure');
     return principal = sidString(koffi.decode(buffer, 'void *'));
   } finally { n.closeHandle(token[0]); }
 }
 
-function securityInfo(path: string): { owner: string; allowed: { sid: string; mask: number }[] | null } {
+export function windowsProcessElevated(): boolean {
+  const n = native(); const token: unknown[] = [null];
+  if (!n.openToken(n.currentProcess(), 0x8, token)) failure('OpenProcessToken', 'native_failure');
+  try {
+    const buffer = Buffer.alloc(4); const needed = [0];
+    if (!n.tokenInformation(token[0], 20, buffer, buffer.length, needed) || needed[0] !== buffer.length) failure('GetTokenInformation', 'native_failure');
+    return buffer.readUInt32LE() !== 0;
+  } finally { n.closeHandle(token[0]); }
+}
+
+function securityInfo(path: string, withDacl = true): { owner: string; allowed: { sid: string; mask: number }[] | null } {
   const n = native(); const owner: unknown[] = [null]; const dacl: unknown[] = [null]; const descriptor: unknown[] = [null];
-  const error: number = n.namedSecurity(path, 1, 0x1 | 0x4, owner, null, dacl, null, descriptor);
+  const error: number = n.namedSecurity(path, 1, withDacl ? 0x1 | 0x4 : 0x1, owner, null, withDacl ? dacl : null, null, descriptor);
   if (error !== 0) failure('GetNamedSecurityInfoW', 'unsafe_path', error);
   try {
     const ownerSid = sidString(owner[0]);
-    if (!dacl[0]) return { owner: ownerSid, allowed: null };
+    if (!withDacl || !dacl[0]) return { owner: ownerSid, allowed: null };
     const information = Buffer.alloc(12);
     if (!n.aclInformation(dacl[0], information, information.length, 2)) failure('GetAclInformation');
     const count = information.readUInt32LE(); const used = information.readUInt32LE(4);
@@ -93,6 +104,15 @@ export function assertWindowsPrivatePath(path: string, stat: BigIntStats, owner:
   if ((kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) || stat.isSymbolicLink() || (attributes & 0x400) !== 0 || (kind === 'file' && stat.nlink !== 1n)
     || !trusted.has(security.owner) || security.allowed === null || security.allowed.some(ace => !trusted.has(ace.sid))) {
     throw new DaemonSecurityError('unsafe_path', 'Daemon path must be owner-only, non-reparse and owned by the OS account, SYSTEM or Administrators (regular files require one link).');
+  }
+}
+
+export function assertWindowsOwnedFile(path: string, stat: BigIntStats, owner: string): void {
+  const attributes: number = native().attributes(path);
+  if (attributes === 0xffffffff) failure('GetFileAttributesW');
+  if (!stat.isFile() || stat.isSymbolicLink() || (attributes & 0x400) !== 0 || stat.nlink !== 1n
+    || ![owner, SYSTEM, ADMINISTRATORS].includes(securityInfo(path, false).owner)) {
+    throw new DaemonSecurityError('unsafe_path', 'Expected a non-reparse regular file with one link owned by the OS account, SYSTEM or Administrators.');
   }
 }
 

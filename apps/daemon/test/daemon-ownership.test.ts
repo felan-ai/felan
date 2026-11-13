@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { acquireDaemonOwnership, namespaceLockName, type DaemonOwnership } from '../src/daemon/ownership.js';
 import { canonicalProspectivePath, realAccountLocation, resolveDaemonTarget, type DaemonTarget } from '../src/daemon/target.js';
+import * as nativeOwnership from '../src/daemon/native-ownership.js';
 
 const windows = process.platform === 'win32';
 const supported = ['darwin', 'linux', 'win32'].includes(process.platform);
@@ -41,6 +42,7 @@ const ownershipFixture = `
 `;
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       // The child may exit before the write lands; the exit wait and SIGKILL below cover that case.
@@ -92,6 +94,32 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     const responses = await Promise.all(launched.map(child => child.line().then(line => JSON.parse(line))));
     expect(responses.filter(response => response.ready)).toHaveLength(1);
     expect(responses.filter(response => response.error === 'owner_running')).toHaveLength(4);
+  });
+
+  it('does not recreate a vanished advisory claim lock', async () => {
+    const input = await target(); const child = start(input); expect(JSON.parse(await child.line()).ready).toBeDefined();
+    const exited = once(child.child, 'exit'); child.child.kill('SIGKILL'); await exited;
+    const resolved = resolveDaemonTarget(input); const lock = join(resolved.accountDirectory, namespaceLockName(resolved));
+    await unlink(lock);
+    expect(() => nativeOwnership.tryLockExistingFile(lock)).toThrow(expect.objectContaining({ code: 'ENOENT' }));
+    await acquire({ ...input, namespaceId: randomUUID() });
+    await expect(lstat(lock)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.skipIf(windows)('does not apply runtime privacy policy to advisory POSIX claim probes', async () => {
+    const owner = await acquire(await target()); const lock = join(owner.target.accountDirectory, namespaceLockName(owner.target));
+    await chmod(lock, 0o644);
+    const other = await acquire(await target()); other.assertCurrent(); owner.assertCurrent();
+  });
+
+  it.runIf(windows)('retries a short sharing conflict on the lifetime lock without reporting owner_running', async () => {
+    const input = await target();
+    const probe = nativeOwnership.tryLockFile; let busy = 3;
+    vi.spyOn(nativeOwnership, 'tryLockFile').mockImplementation((path, principal) => {
+      if (path.endsWith(namespaceLockName(resolveDaemonTarget(input))) && busy-- > 0) return undefined;
+      return probe(path, principal);
+    });
+    const owner = await acquire(input); owner.assertCurrent(); expect(busy).toBe(-1);
   });
 
   // Windows has no SIGSTOP/SIGCONT process suspension.

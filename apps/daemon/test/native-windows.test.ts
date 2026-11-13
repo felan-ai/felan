@@ -1,10 +1,10 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { closeSync, existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { tmpdir, userInfo } from 'node:os';
 import { join, parse } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { accountPrincipal, assertPrivatePath, isWritableByOthers, lockStillHeld, protectPrivateDirectory, requireOwnershipPlatform, socketPathLimit, tryLockFile } from '../src/daemon/native-ownership.js';
+import { accountPrincipal, assertOwnedFile, assertPrivatePath, isWritableByOthers, lockStillHeld, protectPrivateDirectory, requireOwnershipPlatform, socketPathLimit, tryLockExistingFile, tryLockFile } from '../src/daemon/native-ownership.js';
 import { canonicalProspectivePath, pinPathChain, privateDirectory, realAccountLocation, resolveDaemonTarget } from '../src/daemon/target.js';
 import { replaceFile, syncDirectory } from '../src/daemon/durability.js';
 
@@ -113,6 +113,37 @@ describe.runIf(process.platform === 'win32')('native Windows ownership', () => {
     expect(isWritableByOthers(root, lstatSync(root, { bigint: true }))).toBe(false);
     const file = join(root, 'inherited'); writeFileSync(file, 'not private');
     expect(() => assertPrivatePath(file, lstatSync(file, { bigint: true }), accountPrincipal(), 'file')).toThrow(/owner-only/);
+  });
+
+  it('checks ownership without requiring private DACLs for store files', () => {
+    const root = fixture(); const file = join(root, 'transcript'); writeFileSync(file, 'shared'); grant(file, 'F');
+    expect(() => assertOwnedFile(file, lstatSync(file, { bigint: true }), accountPrincipal())).not.toThrow();
+    expect(() => assertPrivatePath(file, lstatSync(file, { bigint: true }), accountPrincipal(), 'file')).toThrow(/owner-only/);
+    expect(() => assertOwnedFile(root, lstatSync(root, { bigint: true }), accountPrincipal())).toThrow();
+    const alias = join(root, 'junction'); symlinkSync(root, alias, 'junction');
+    expect(() => assertOwnedFile(alias, lstatSync(alias, { bigint: true }), accountPrincipal())).toThrow();
+    linkSync(file, join(root, 'hardlink'));
+    expect(() => assertOwnedFile(file, lstatSync(file, { bigint: true }), accountPrincipal())).toThrow(/one link/);
+  });
+
+  it('probes only existing lifetime locks and releases a successful probe immediately', async () => {
+    const path = join(fixture(), 'probe.lock');
+    expect(() => tryLockExistingFile(path)).toThrow(expect.objectContaining({ code: 'ENOENT' })); expect(existsSync(path)).toBe(false);
+    writeFileSync(path, ''); grant(path, 'R');
+    const fd = tryLockExistingFile(path); expect(fd).toBeDefined(); closeSync(fd!);
+    const held = await childLock(path, 'hold');
+    expect(held.result).toMatchObject({ error: 'unsafe_path' });
+    const owned = join(fixture(), 'owned.lock'); const lockFd = lock(owned);
+    expect(tryLockExistingFile(owned)).toBeUndefined(); closeSync(lockFd); descriptors.delete(lockFd);
+    const next = tryLockExistingFile(owned); expect(next).toBeDefined(); closeSync(next!);
+  });
+
+  it('probes an existing Windows lock without requesting write access', async () => {
+    const path = join(fixture(), 'readonly.lock'); writeFileSync(path, ''); chmodSync(path, 0o444);
+    try {
+      expect((await childLock(path)).result).toMatchObject({ error: 'EACCES' });
+      const fd = tryLockExistingFile(path); expect(fd).toBeDefined(); closeSync(fd!);
+    } finally { chmodSync(path, 0o600); }
   });
 
   it('rejects junctions and multiply linked private files', () => {

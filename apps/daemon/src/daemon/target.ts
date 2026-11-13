@@ -58,6 +58,8 @@ function canonicalRealpath(path: string): string { return process.platform === '
 
 export function pinPathChain(path: string, principal: string): PathIdentity[] {
   const windows = requireOwnershipPlatform() === 'win32';
+  // Windows drive roots can grant create rights to other accounts without granting delete rights over this private subtree.
+  // Check the immediate parent's write policy and pin every ancestor; full private DACL checks apply to runtime paths themselves.
   const pins: PathIdentity[] = [];
   for (let at = path;; at = dirname(at)) {
     const stat = lstatSync(at, { bigint: true });

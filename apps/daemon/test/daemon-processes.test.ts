@@ -1,5 +1,5 @@
 import { mkdir, rm } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, join, resolve, win32 } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStdioProcess } from '@felan-ai/agent-core';
 import { LIMITS } from '@felan-ai/session-protocol';
@@ -28,12 +28,17 @@ describe.skipIf(!supported)('registry process ownership', () => {
     await processes.refresh(b.rootSessionId);
     expect(inspectDetached).toHaveBeenCalledOnce();
     expect(exec).toHaveBeenCalledOnce();
-    expect(exec.mock.calls[0]![0]).toMatch(/powershell/i);
+    expect(exec.mock.calls[0]![0]).toBe(win32.join(process.env.SystemRoot!, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'));
     expect(JSON.stringify(exec.mock.calls[0]![1])).toContain('42');
     expect(f.store.resource('job')?.state).toBe('running');
     exec.mockResolvedValueOnce({ stdout: 'unrelated process', stderr: '', code: 0, killed: false });
     await processes.refresh(b.rootSessionId);
     expect(f.store.resource('job')?.state).toBe('reconciling');
+    for (const root of [undefined, '', '.', 'C:relative', '\\Windows', '\\\\server\\Windows', 'C:\\bad\u0000root', 'C:\\bad\nroot']) {
+      vi.stubEnv('SystemRoot', root); exec.mockClear();
+      try { await processes.refresh(b.rootSessionId); expect(exec).not.toHaveBeenCalled(); }
+      finally { vi.unstubAllEnvs(); }
+    }
   });
 
   it('does not probe terminal records or renew their timestamps', async () => {

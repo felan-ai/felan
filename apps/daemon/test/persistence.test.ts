@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -466,6 +466,13 @@ describe.skipIf(!supported)('retained ambiguity', () => {
 });
 
 describe.skipIf(!supported)('reviewed persistence boundaries', () => {
+  it.runIf(process.platform === 'win32')('persists and reopens control files under a shared store ACL', async () => {
+    const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
+    execFileSync(join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [owner.target.agentDir, '/grant', '*S-1-1-0:(OI)(CI)F'], { windowsHide: true });
+    const store = reopen(owner); store.database.putRecord('shared', 'record', 'kept'); store.close();
+    const reloaded = reopen(owner); expect(reloaded.database.rebuilt).toBe(false);
+    expect(reloaded.database.record('shared', 'record')).toBe('kept');
+  });
   for (const deletion of ['directory', 'both-files'] as const) it(`rebuilds lost initialized state across owner reacquisition: ${deletion}`, async () => {
     const { owner, store, input } = await open(); const request = prompt();
     store.admit(request, 'owner'); store.markDispatched(request.id);

@@ -12,7 +12,7 @@ import type { ProcessAdapter } from './process-adapter.js';
 import type { SessionRuntime } from './session-runtime.js';
 import type { ControlCommit, DaemonControlStore } from './control-store.js';
 import { ControlStoreError, SessionProfileSchema, type ControlSession, type ControlSessionMetadata, type SessionProfile } from './control-state.js';
-import { assertPrivatePath, DaemonSecurityError } from './native-ownership.js';
+import { assertOwnedFile, DaemonSecurityError } from './native-ownership.js';
 import { LegacySessionIndex, readTranscriptPreview, transcriptHasConversation, transcriptPreview, type LegacySession, type LegacySummary } from './legacy-sessions.js';
 import type { DaemonOwnership } from './ownership.js';
 import type { SessionLifecycle, DaemonSessionServices, SessionOpenRequest, SessionResources, SessionBinding, SessionTargetIdentity, SessionExecutionPolicy } from './session-lifecycle-contracts.js';
@@ -1139,7 +1139,7 @@ export class SessionRegistry {
           const bytes = rows.map(row => JSON.stringify(row)).join('\n') + '\n';
           const fd = openSync(this.options.owner.assertOwnsPath(path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
           try {
-            if (process.platform === 'win32') assertPrivatePath(path, fstatSync(fd, { bigint: true }), this.options.owner.target.principal, 'file');
+            if (process.platform === 'win32') assertOwnedFile(path, fstatSync(fd, { bigint: true }), this.options.owner.target.principal);
             this.options.owner.assertCurrent(); writeFileSync(fd, bytes); syncDescriptor(fd);
           } finally { closeSync(fd); }
           syncOwnedDirectory(this.options.owner, dirname(path));

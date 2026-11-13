@@ -1,20 +1,20 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { closeSync, fstatSync, mkdirSync, openSync, renameSync, writeFileSync } from 'node:fs';
-import { createConnection, createServer, Server } from 'node:net';
-import type { Socket } from 'node:net';
+import { createConnection, createServer, Server, Socket } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import koffi from 'koffi';
-import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
+import { acquireDaemonOwnership, namespaceLockName, type DaemonOwnership } from '../src/daemon/ownership.js';
 import { connectLocalIpc, listenLocalIpc, probeDaemon, serveReadiness, type LocalIpcListener } from '../src/daemon/ipc.js';
 import { BoundedDaemonLogs, spawnDetachedDaemon } from '../src/daemon/supervisor.js';
 import { resolveDaemonTarget, type DaemonTarget } from '../src/daemon/target.js';
 import { connectUnix, listenUnix, protectSocket, socketPathLimit } from '../src/daemon/native-ownership.js';
 import * as nativeOwnership from '../src/daemon/native-ownership.js';
+import * as nativeWindows from '../src/daemon/native-windows.js';
 import { clientHandshake } from '../src/daemon/ipc-handshake.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 
@@ -290,7 +290,8 @@ describe.runIf(process.platform === 'win32')('authenticated Windows named-pipe I
     const { owner } = await fixture(); await serve(owner);
     nativeOwnership.assertPrivatePath(owner.target.endpoint, await lstat(owner.target.endpoint, { bigint: true }), owner.target.principal, 'file');
     const endpoint = JSON.parse(await readFile(owner.target.endpoint, 'utf8'));
-    expect(Object.keys(endpoint).sort()).toEqual(['pipe', 'secret', 'version']); expect(endpoint.version).toBe(1);
+    expect(Object.keys(endpoint).sort()).toEqual(['elevated', 'pipe', 'secret', 'version']); expect(endpoint.version).toBe(1);
+    expect(endpoint.elevated).toBe(nativeWindows.windowsProcessElevated());
     expect(endpoint.pipe).toMatch(/^\\\\\.\\pipe\\felan-daemon-[a-f0-9]{32}$/); expect(Buffer.from(endpoint.secret, 'base64')).toHaveLength(32);
     const socket = await connectLocalIpc(owner.target); socket.destroy();
     expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
@@ -300,7 +301,7 @@ describe.runIf(process.platform === 'win32')('authenticated Windows named-pipe I
 
   it('preserves absent and stale endpoint codes', async () => {
     const { owner } = await fixture(); await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'ENOENT' });
-    await writeFile(owner.target.endpoint, JSON.stringify({ version: 1, pipe: `\\\\.\\pipe\\felan-daemon-${randomBytes(16).toString('hex')}`, secret: randomBytes(32).toString('base64') }), { mode: 0o600 });
+    await writeFile(owner.target.endpoint, JSON.stringify({ version: 1, pipe: `\\\\.\\pipe\\felan-daemon-${randomBytes(16).toString('hex')}`, secret: randomBytes(32).toString('base64'), elevated: false }), { mode: 0o600 });
     await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'stale_endpoint' });
     const before = await readFile(owner.target.endpoint, 'utf8'); const listener = await serve(owner);
     expect(await readFile(owner.target.endpoint, 'utf8')).not.toBe(before); expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
@@ -311,6 +312,44 @@ describe.runIf(process.platform === 'win32')('authenticated Windows named-pipe I
     const { owner } = await fixture(); await serve(owner); const before = await readFile(owner.target.endpoint, 'utf8');
     await expect(listenLocalIpc(owner, () => {})).rejects.toMatchObject({ code: 'endpoint_live' });
     expect(await readFile(owner.target.endpoint, 'utf8')).toBe(before); expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+  });
+
+  it('never contacts an abandoned pipe when the lifetime lock is free, absent or reclaimed for startup', async () => {
+    const { target, owner } = await fixture();
+    const pipe = `\\\\.\\pipe\\felan-daemon-${randomBytes(16).toString('hex')}`;
+    await writeFile(owner.target.endpoint, JSON.stringify({ version: 1, pipe, secret: randomBytes(32).toString('base64'), elevated: false }), { mode: 0o600 });
+    const server = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => server.listen(pipe, resolve));
+    await owner.release(); owners.splice(owners.indexOf(owner), 1);
+    const connect = vi.spyOn(Socket.prototype, 'connect');
+    try {
+      await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'stale_endpoint' });
+      expect(connect).not.toHaveBeenCalled();
+      await unlink(join(owner.target.accountDirectory, namespaceLockName(owner.target)));
+      await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(connect).not.toHaveBeenCalled();
+      const next = await acquireDaemonOwnership(target); owners.push(next);
+      await serve(next); expect(connect).not.toHaveBeenCalled();
+      expect((await probeDaemon(next.target, next.identity)).state).toBe('ready');
+    } finally { await new Promise<void>(resolve => server.close(() => resolve())); }
+  });
+
+  it('refuses a non-elevated client before opening an elevated daemon pipe', async () => {
+    const { owner } = await fixture();
+    vi.spyOn(nativeWindows, 'windowsProcessElevated').mockReturnValue(true); await serve(owner);
+    vi.mocked(nativeWindows.windowsProcessElevated).mockReturnValue(false);
+    const connect = vi.spyOn(Socket.prototype, 'connect');
+    await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'elevation_mismatch', message: expect.stringContaining('felan daemon stop') });
+    expect(connect).not.toHaveBeenCalled();
+    vi.mocked(nativeWindows.windowsProcessElevated).mockReturnValue(true);
+    expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+  });
+
+  it('allows an elevated client to attach to a non-elevated daemon', async () => {
+    const { owner } = await fixture();
+    vi.spyOn(nativeWindows, 'windowsProcessElevated').mockReturnValue(false); await serve(owner);
+    vi.mocked(nativeWindows.windowsProcessElevated).mockReturnValue(true);
+    expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
   });
 
   it('keeps the first listener usable when two calls bind concurrently for the same owner', async () => {
@@ -338,12 +377,14 @@ describe.runIf(process.platform === 'win32')('authenticated Windows named-pipe I
     await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'unsafe_path' });
   });
 
-  it.each(['version', 'pipe', 'secret', 'extra', 'oversize', 'garbage'] as const)('rejects an invalid %s endpoint without deleting it', async invalid => {
+  it.each(['version', 'pipe', 'secret', 'elevation', 'missing_elevation', 'extra', 'oversize', 'garbage'] as const)('rejects an invalid %s endpoint without deleting it', async invalid => {
     const { owner } = await fixture();
-    const value = { version: 1, pipe: `\\\\.\\pipe\\felan-daemon-${randomBytes(16).toString('hex')}`, secret: randomBytes(32).toString('base64') };
+    const value: { version: number; pipe: string; secret: string; elevated?: unknown } = { version: 1, pipe: `\\\\.\\pipe\\felan-daemon-${randomBytes(16).toString('hex')}`, secret: randomBytes(32).toString('base64'), elevated: false };
     if (invalid === 'version') value.version = 2;
     if (invalid === 'pipe') value.pipe = '\\\\remote\\pipe\\felan-daemon-test';
     if (invalid === 'secret') value.secret = randomBytes(31).toString('base64');
+    if (invalid === 'elevation') value.elevated = 'false';
+    if (invalid === 'missing_elevation') delete value.elevated;
     const source = invalid === 'oversize' ? ' '.repeat(4_097) : invalid === 'garbage' ? '{' : JSON.stringify(invalid === 'extra' ? { ...value, extra: true } : value);
     await writeFile(owner.target.endpoint, source, { mode: 0o600 });
     await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'unsafe_endpoint' });

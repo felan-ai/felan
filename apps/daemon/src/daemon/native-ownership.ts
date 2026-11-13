@@ -1,7 +1,7 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, type BigIntStats } from 'node:fs';
 import { Socket } from 'node:net';
 import koffi from 'koffi';
-import { windowsAccountPrincipal, assertWindowsPrivatePath, windowsWritableByOthers, protectWindowsPrivateDirectory } from './native-windows.js';
+import { windowsAccountPrincipal, assertWindowsOwnedFile, assertWindowsPrivatePath, windowsWritableByOthers, protectWindowsPrivateDirectory } from './native-windows.js';
 
 export class DaemonSecurityError extends Error {
   constructor(readonly code: string, message: string) {
@@ -33,7 +33,12 @@ export function assertPrivatePath(path: string, stat: BigIntStats, principal: st
 }
 
 export function isWritableByOthers(path: string, stat: BigIntStats): boolean {
-  return requireOwnershipPlatform() === 'win32' ? windowsWritableByOthers(path) : (stat.mode & 0o022n) !== 0n;
+  return process.platform === 'win32' ? windowsWritableByOthers(path) : (stat.mode & 0o022n) !== 0n;
+}
+
+export function assertOwnedFile(path: string, stat: BigIntStats, principal: string): void {
+  if (requireOwnershipPlatform() === 'win32') { assertWindowsOwnedFile(path, stat, principal); return; }
+  if (!stat.isFile() || stat.nlink !== 1n || stat.uid !== BigInt(principal)) throw new DaemonSecurityError('unsafe_path', 'Expected a regular file with one owned link.');
 }
 
 export function protectPrivateDirectory(path: string, principal: string): void {
@@ -41,11 +46,20 @@ export function protectPrivateDirectory(path: string, principal: string): void {
 }
 
 export function tryLockFile(path: string, principal?: string): number | undefined {
+  return lockFile(path, true, principal);
+}
+
+export function tryLockExistingFile(path: string): number | undefined {
+  return lockFile(path, false);
+}
+
+function lockFile(path: string, create: boolean, principal?: string): number | undefined {
   const platform = requireOwnershipPlatform();
   let fd: number;
   try {
     // UV_FS_O_EXLOCK uses share mode zero. Even plain reads by another process fail while held.
-    fd = openSync(path, constants.O_RDWR | constants.O_CREAT | (platform === 'win32' ? 0x10000000 : constants.O_NOFOLLOW), 0o600);
+    const access = platform === 'win32' && !create ? constants.O_RDONLY : constants.O_RDWR;
+    fd = openSync(path, access | (create ? constants.O_CREAT : 0) | (platform === 'win32' ? 0x10000000 : constants.O_NOFOLLOW), 0o600);
   } catch (error) { if (platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EBUSY') return undefined; throw error; }
   try {
     if (principal !== undefined) {

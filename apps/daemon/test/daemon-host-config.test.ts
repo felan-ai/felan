@@ -2,7 +2,7 @@ import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { loadHostConfig, resolveHostComposition, validPackageSpecifier, type HostConfig } from '../src/daemon/host-config.js';
 
 const roots: string[] = [];
@@ -97,6 +97,17 @@ describe('trusted host configuration', () => {
     expect((await loadHostConfig({ agentDir, explicitPath: link })).source.path).toBe(link);
     const path = join(agentDir, 'host.json'); await writeFile(path, config()); await chmod(path, 0o664);
     await expect(loadHostConfig({ agentDir })).rejects.toThrow('not group or world writable');
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps public host config mode checks independent of daemon platform support', async () => {
+    const root = await fixture(); const agentDir = join(root, 'agent'); const path = join(agentDir, 'host.json');
+    await writeFile(path, config(), { mode: 0o600 });
+    vi.stubGlobal('process', { ...process, platform: 'freebsd', arch: 'ia32' });
+    try {
+      await expect(loadHostConfig({ agentDir })).resolves.toMatchObject({ source: { kind: 'agent-directory', path } });
+      await chmod(path, 0o664);
+      await expect(loadHostConfig({ agentDir })).rejects.toThrow('not group or world writable');
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it.runIf(process.platform === 'win32')('accepts a private host.json and rejects an Everyone write ACL', async () => {

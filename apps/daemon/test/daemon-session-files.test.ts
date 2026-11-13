@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, symlink, link, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { prepareExport, prepareTranscriptDeletion, publishExport, readOwnedOutputRange, stageImport } from '../src/daemon/session-files.js';
@@ -43,6 +44,17 @@ describe('identity-checked daemon host file ports', () => {
     const f = await fixture(); const path = join(f.owned, 'output.log'); await writeFile(path, 'output');
     const alias = join(f.owned, 'alias'); await symlink(path, alias);
     expect(() => readOwnedOutputRange(f.owner, alias, 0, 1)).toThrow();
+    await link(path, join(f.owned, 'hardlink'));
+    expect(() => readOwnedOutputRange(f.owner, path, 0, 1)).toThrow();
+  });
+
+  it.runIf(process.platform === 'win32')('reads output and stages imports in a store with an inherited Everyone ACL', async () => {
+    const f = await fixture(); const command = join(process.env.SystemRoot!, 'System32', 'icacls.exe');
+    execFileSync(command, [f.owned, '/grant', '*S-1-1-0:(OI)(CI)F'], { windowsHide: true });
+    const path = join(f.owned, 'output.log'); await writeFile(path, 'shared output');
+    expect(new TextDecoder().decode(readOwnedOutputRange(f.owner, path, 0, 6))).toBe('shared');
+    const source = join(f.external, 'legacy.jsonl'); await writeFile(source, JSON.stringify({ type: 'session' }) + '\n');
+    const staged = stageImport(f.owner, f.owned, source); expect(await readFile(staged.path, 'utf8')).toContain('session'); staged.dispose();
     await link(path, join(f.owned, 'hardlink'));
     expect(() => readOwnedOutputRange(f.owner, path, 0, 1)).toThrow();
   });

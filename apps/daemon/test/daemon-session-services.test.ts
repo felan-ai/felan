@@ -1,5 +1,6 @@
 import { appendFile, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -232,6 +233,15 @@ describe('host sessions history', () => {
 
 describe.skipIf(!supported)('registry sessions history', () => {
   afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
+
+  it.runIf(process.platform === 'win32')('creates and reads a transcript under a shared store ACL', async () => {
+    const f = await registryFixture();
+    execFileSync(join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [f.owner.target.agentDir, '/grant', '*S-1-1-0:(OI)(CI)F'], { windowsHide: true });
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    root.runtime.session.sessionManager.appendMessage({ role: 'user', content: 'shared transcript', timestamp: 0 });
+    const history = createHostSessionsHistory(f.registry, { kind: 'all' });
+    expect((await history.history(root.sessionId)).entries).toEqual([expect.objectContaining({ type: 'message', message: expect.objectContaining({ role: 'user', content: 'shared transcript' }) })]);
+  });
 
   it('refreshes loaded root and child transcripts without a registry commit', async () => {
     const f = await registryFixture();

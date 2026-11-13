@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { isDeepStrictEqual, stripVTControlCharacters } from 'node:util';
 import { DEFAULT_MAX_BYTES, getShellConfig, truncateTail } from '@earendil-works/pi-coding-agent';
@@ -14,6 +14,12 @@ import { readOwnedOutputRange } from './session-files.js';
 import { pathInside } from './target.js';
 
 const FOREGROUND_RESOURCE_PREFIX = 'foreground:';
+
+async function inspectWindowsProcess(runtime: AgentRuntime, pid: number) {
+  const root = process.env.SystemRoot;
+  if (!root || !/^[a-z]:[\\/]/iu.test(root) || /[\u0000-\u001f\u007f]/u.test(root)) throw new Error('The Windows system directory is unavailable.');
+  return runtime.exec(win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object -ExpandProperty CommandLine`]);
+}
 
 interface Scope { session: string; root: string }
 interface Lifetime { scope: Scope; runtime: AgentRuntime; draining: boolean; revoked: boolean }
@@ -404,7 +410,7 @@ export class RegistryProcesses {
       }
       const pid = job.pid;
       const inspection = pid && Number.isSafeInteger(pid) && pid > 0 ? await (process.platform === 'win32' && runtime.kind === 'host'
-        ? runtime.exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object -ExpandProperty CommandLine`])
+        ? inspectWindowsProcess(runtime, pid)
         : runtime.exec('ps', ['-o', 'command=', '-p', String(pid)])).catch(() => null) : undefined;
       this.options.assertCurrent();
       if (inspection === null) continue;

@@ -4,8 +4,8 @@ import { createRequire } from 'node:module';
 import { basename, dirname, join } from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { DaemonOwnership } from './ownership.js';
-import { durableWrites, syncDescriptor, syncDirectory } from './durability.js';
-import { assertPrivatePath } from './native-ownership.js';
+import { durableWrites, syncDescriptor } from './durability.js';
+import { assertOwnedFile } from './native-ownership.js';
 import { assertPathIdentity, pathIdentity, pathInside, pinPathAncestry, storeDirectory, type PathIdentity } from './target.js';
 import { ControlStoreError } from './control-state.js';
 
@@ -40,7 +40,7 @@ export function guardOwnedPaths(owner: DaemonOwnership, paths: readonly string[]
 export function syncOwnedDirectory(owner: DaemonOwnership, directory: string): void {
   const path = owner.assertOwnsPath(directory);
   const check = guardOwnedPaths(owner, [path]);
-  if (process.platform === 'win32') { check(); syncDirectory(path); check(); return; }
+  if (process.platform === 'win32') { check(); return; }
   const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(fd, { bigint: true }); const pin = pathIdentity(path);
@@ -388,7 +388,7 @@ export class ControlDatabase implements RemoteDatabase {
     finally { closeSync(fd); }
   }
   private assertFile(fd: number, path: string): void {
-    if (process.platform === 'win32') assertPrivatePath(path, fstatSync(fd, { bigint: true }), this.owner.target.principal, 'file');
+    if (process.platform === 'win32') assertOwnedFile(path, fstatSync(fd, { bigint: true }), this.owner.target.principal);
   }
   private syncDirectory(): void {
     syncOwnedDirectory(this.owner, this.directory);

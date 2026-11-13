@@ -5,7 +5,7 @@ import { AbsolutePathSchema, IdSchema } from '@felan-ai/session-protocol';
 import { Type } from 'typebox';
 import type { DaemonOwnership } from './ownership.js';
 import { replaceFile, syncDescriptor, syncDirectory } from './durability.js';
-import { assertPrivatePath } from './native-ownership.js';
+import { assertOwnedFile } from './native-ownership.js';
 import { guardOwnedPaths, prepareControlDirectory, syncOwnedDirectory } from './persistence.js';
 import { assertPathIdentity, pathIdentity, pathInside, type PathIdentity } from './target.js';
 
@@ -25,7 +25,7 @@ function owned(owner: DaemonOwnership, path: string): string {
 }
 function regular(path: string, stat: BigIntStats, owner: DaemonOwnership): void {
   if (!stat.isFile() || stat.nlink !== 1n || process.platform !== 'win32' && stat.uid !== BigInt(owner.target.principal)) throw error('invalid_request', 'Expected an unchanged regular file with one owned link.');
-  if (process.platform === 'win32') assertPrivatePath(path, stat, owner.target.principal, 'file');
+  if (process.platform === 'win32') assertOwnedFile(path, stat, owner.target.principal);
 }
 function sameFile(stat: BigIntStats, pin: PathIdentity): void {
   if (stat.dev !== pin.dev || stat.ino !== pin.ino) throw error('ownership_lost', 'File identity changed.');
@@ -79,7 +79,7 @@ export function stageImport(owner: DaemonOwnership, directory: string, source: s
   let pin: PathIdentity | undefined;
   try {
     pin = pathIdentity(path);
-    if (process.platform === 'win32') assertPrivatePath(path, fstatSync(output, { bigint: true }), owner.target.principal, 'file');
+    if (process.platform === 'win32') assertOwnedFile(path, fstatSync(output, { bigint: true }), owner.target.principal);
     check(); writeFileSync(output, prepared.bytes); syncDescriptor(output); check();
   }
   catch (cause) { owner.assertCurrent(); if (pin) unlinkPinned(path, pin); throw cause; }

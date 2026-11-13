@@ -1,12 +1,14 @@
 import { closeSync, constants, fstatSync, lstatSync, openSync, readSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createServer, Socket, type Server } from 'node:net';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { join } from 'node:path';
 import { CONTROL_VERSION, PROTOCOL_VERSION, JsonLineDecoder, encodeFrame, parseControlRequest, parseControlResponse, type ControlResponse, type DaemonIdentity } from '@felan-ai/session-protocol';
-import { assertPrivatePath, connectUnix, DaemonSecurityError, listenUnix, peerUid, protectSocket } from './native-ownership.js';
+import { assertPrivatePath, connectUnix, DaemonSecurityError, listenUnix, peerUid, protectSocket, tryLockExistingFile } from './native-ownership.js';
+import { windowsProcessElevated } from './native-windows.js';
 import { assertPathIdentity, assertTargetIdentity, pathIdentity, pinPathChain, type ResolvedDaemonTarget } from './target.js';
 import { replaceFile, syncDescriptor, syncDirectory } from './durability.js';
 import { clientHandshake, serverHandshake } from './ipc-handshake.js';
-import type { DaemonOwnership } from './ownership.js';
+import { namespaceLockName, type DaemonOwnership } from './ownership.js';
 
 function endpointExists(path: string): boolean { try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; } }
 function validateSocket(target: ResolvedDaemonTarget) {
@@ -90,6 +92,16 @@ export async function listenLocalIpc(owner: DaemonOwnership, onConnection: (sock
 export async function connectLocalIpc(target: ResolvedDaemonTarget): Promise<Socket> {
   if (process.platform === 'win32') {
     const endpoint = readWindowsEndpoint(target);
+    const locks = pinPathChain(target.accountDirectory, target.principal);
+    assertPrivatePath(target.accountDirectory, lstatSync(target.accountDirectory, { bigint: true }), target.principal, 'directory');
+    const lock = join(target.accountDirectory, namespaceLockName(target)); const pin = pathIdentity(lock);
+    const stat = lstatSync(lock, { bigint: true });
+    if (!stat.isFile() || stat.nlink !== 1n) throw new DaemonSecurityError('unsafe_path', 'Namespace lifetime lock must be a regular file with one link.');
+    const fd = tryLockExistingFile(lock);
+    if (fd !== undefined) { closeSync(fd); throw new DaemonSecurityError('stale_endpoint', 'No daemon holds the namespace lifetime lock.'); }
+    endpoint.pins.push(...locks, pin);
+    for (const pin of endpoint.pins) assertPathIdentity(pin);
+    if (endpoint.elevated && !windowsProcessElevated()) throw new DaemonSecurityError('elevation_mismatch', 'The running daemon was started from an Administrator terminal. Stop it from an elevated terminal with `felan daemon stop` or run Felan elevated.');
     const socket = await connectWindowsEndpoint(endpoint, 2_000);
     try { for (const pin of endpoint.pins) assertPathIdentity(pin); return socket; }
     catch (error) { socket.destroy(); throw error; }
@@ -100,7 +112,7 @@ export async function connectLocalIpc(target: ResolvedDaemonTarget): Promise<Soc
   catch (error) { socket.destroy(); throw error; }
 }
 
-interface WindowsEndpoint { pipe: string; secret: Buffer; pins: ReturnType<typeof pinPathChain> }
+interface WindowsEndpoint { pipe: string; secret: Buffer; elevated: boolean; pins: ReturnType<typeof pinPathChain> }
 function readWindowsEndpoint(target: ResolvedDaemonTarget): WindowsEndpoint {
   const pins = pinPathChain(target.runtimeDirectory, target.principal);
   assertPrivatePath(target.runtimeDirectory, lstatSync(target.runtimeDirectory, { bigint: true }), target.principal, 'directory');
@@ -119,12 +131,13 @@ function readWindowsEndpoint(target: ResolvedDaemonTarget): WindowsEndpoint {
   let value: unknown;
   try { if (size > 4_096) throw new Error('oversize'); value = JSON.parse(bytes.subarray(0, size).toString('utf8')); }
   catch { throw new DaemonSecurityError('unsafe_endpoint', 'Malformed or oversized IPC endpoint.'); }
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 3
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 4
     || !('version' in value) || value.version !== 1 || !('pipe' in value) || typeof value.pipe !== 'string' || !/^\\\\\.\\pipe\\felan-daemon-[a-f0-9]{32}$/.test(value.pipe)
-    || !('secret' in value) || typeof value.secret !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(value.secret)) throw new DaemonSecurityError('unsafe_endpoint', 'Invalid IPC endpoint fields.');
+    || !('secret' in value) || typeof value.secret !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(value.secret)
+    || !('elevated' in value) || typeof value.elevated !== 'boolean') throw new DaemonSecurityError('unsafe_endpoint', 'Invalid IPC endpoint fields.');
   const secret = Buffer.from(value.secret, 'base64');
   if (secret.length !== 32 || secret.toString('base64') !== value.secret) throw new DaemonSecurityError('unsafe_endpoint', 'Invalid IPC endpoint secret.');
-  return { pipe: value.pipe, secret, pins };
+  return { pipe: value.pipe, secret, elevated: value.elevated, pins };
 }
 
 async function connectWindowsEndpoint(endpoint: WindowsEndpoint, timeoutMs: number): Promise<Socket> {
@@ -147,16 +160,21 @@ async function connectWindowsEndpoint(endpoint: WindowsEndpoint, timeoutMs: numb
   } catch (error) { socket.destroy(); throw error; }
 }
 
+const windowsListeners = new WeakMap<DaemonOwnership, object>();
 async function listenWindowsIpc(owner: DaemonOwnership, onConnection: (socket: Socket) => void): Promise<LocalIpcListener> {
+  owner.assertCurrent();
+  if (windowsListeners.has(owner)) throw new DaemonSecurityError('endpoint_live', 'This owner already has an IPC listener.');
+  const registration = {}; windowsListeners.set(owner, registration);
+  const release = () => { if (windowsListeners.get(owner) === registration) windowsListeners.delete(owner); };
+  try { return await bindWindowsIpc(owner, onConnection, release); }
+  catch (error) { release(); throw error; }
+}
+
+async function bindWindowsIpc(owner: DaemonOwnership, onConnection: (socket: Socket) => void, release: () => void): Promise<LocalIpcListener> {
   owner.assertCurrent(); const target = owner.target;
   if (endpointExists(target.endpoint)) {
     const stale = readWindowsEndpoint(target);
-    try {
-      const live = await connectWindowsEndpoint(stale, 200); live.destroy();
-      throw new DaemonSecurityError('endpoint_live', 'A live endpoint exists; never unlink it to force startup.');
-    } catch (error) {
-      if (!(error instanceof DaemonSecurityError) || !['stale_endpoint', 'unavailable', 'forbidden', 'invalid_handshake'].includes(error.code)) throw error;
-    }
+    // The lifetime lock excludes a live daemon. Never send a handshake to a stale pipe another account may own.
     owner.assertCurrent(); for (const pin of stale.pins) assertPathIdentity(pin); unlinkSync(target.endpoint);
   }
   const secret = randomBytes(32); const connections = new Set<Socket>();
@@ -170,7 +188,7 @@ async function listenWindowsIpc(owner: DaemonOwnership, onConnection: (socket: S
     connections.clear();
     try { owner.assertCurrent(); if (pin) { assertPathIdentity(pin); unwatch(); unlinkSync(target.endpoint); } }
     catch { /* Never remove a replacement endpoint or clean up after ownership loss. */ }
-    finally { unwatch(); }
+    finally { unwatch(); release(); }
   }
   function acceptConnection(socket: Socket) {
     socket.on('error', () => {}); socket.once('close', () => connections.delete(socket));
@@ -208,7 +226,7 @@ async function listenWindowsIpc(owner: DaemonOwnership, onConnection: (socket: S
         tempPin = pathIdentity(temp); const opened = fstatSync(fd, { bigint: true });
         assertPrivatePath(temp, opened, target.principal, 'file');
         if (opened.dev !== tempPin.dev || opened.ino !== tempPin.ino) throw new DaemonSecurityError('ownership_lost', 'IPC endpoint changed while creating.');
-        writeFileSync(fd, JSON.stringify({ version: 1, pipe, secret: secret.toString('base64') })); syncDescriptor(fd);
+        writeFileSync(fd, JSON.stringify({ version: 1, pipe, secret: secret.toString('base64'), elevated: windowsProcessElevated() })); syncDescriptor(fd);
       }
       finally { closeSync(fd); }
       owner.assertCurrent(); assertPathIdentity(tempPin);
