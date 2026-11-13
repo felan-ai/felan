@@ -46,7 +46,18 @@ describe('BackgroundBashManager', () => {
 
     const result = await manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS);
 
-    expect(result.timedOut).toBe(false);
+    let diagnostic: string | undefined;
+    if (result.timedOut) {
+      const storage = runtime.storage('session');
+      const paths = await storage.listFiles(started.meta.jobDir, { recursive: true }).catch(error => String(error));
+      const files = await Promise.all(['info.json', 'completion.json', 'runner-heartbeat', 'output.log'].map(async name => {
+        try { return [name, new TextDecoder().decode(await storage.readFile(join(started.meta.jobDir, name)))]; }
+        catch (error) { return [name, String(error)]; }
+      }));
+      const inspection = await runtime.shell(`ps -o pid= -o ppid= -o pgid= -o stat= -o command= -p ${started.meta.pid} 2>/dev/null || ps -l -p ${started.meta.pid}`, { shellFlavor: 'posix', timeout: 2_000 }).catch(error => String(error));
+      diagnostic = JSON.stringify({ platform: process.platform, status: result.job.status, paths, files, inspection });
+    }
+    expect(result.timedOut, diagnostic).toBe(false);
     expect(result.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
     expect(started.meta.logPath).toContain(join(runtime.storage('session').root, 'background-bash'));
     expect(started.meta.logPath).not.toContain(`${join('.pi', 'background-bash')}`);

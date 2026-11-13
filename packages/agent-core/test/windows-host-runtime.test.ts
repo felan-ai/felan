@@ -84,7 +84,7 @@ it.runIf(process.platform === 'win32')('does not create a symlink target inserte
     await symlink('missing-target', join(cwd, 'file'));
     return actualFiles.open(path, flags, mode);
   });
-  await expect(runtime.files.append('file', new Uint8Array([2]))).rejects.toMatchObject({ code: 'EEXIST' });
+  await expect(runtime.files.append('file', new Uint8Array([2]))).rejects.toMatchObject({ code: 'ELOOP' });
   await expect(lstat(join(cwd, 'missing-target'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 

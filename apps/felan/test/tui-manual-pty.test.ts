@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
-import { getTerminalColorMode, stripTerminalSequences } from '@earendil-works/pi-tui';
+import { backgroundAnsi, getTerminalColorMode, parseColor, stripTerminalSequences } from '@earendil-works/pi-tui';
 import { createAssistantMessageEventStream, type ModelRuntime } from '@felan-ai/agent-core';
 import { clientDaemonTarget } from '../src/client-application.js';
 import { resolveClientHostComposition } from '../src/daemon-entrypoint.js';
@@ -100,6 +100,10 @@ class Capture {
 
 async function captureManualTerminal(output: string): Promise<void> {
   const checkpoints: Record<string, unknown>[] = [];
+  const [darkCanvas, lightCanvas] = await Promise.all(['felan-dark', 'felan-light'].map(async name => {
+    const { vars } = JSON.parse(await readFile(new URL(`../src/themes/${name}.json`, import.meta.url), 'utf8'));
+    return backgroundAnsi(parseColor(vars.bg), getTerminalColorMode());
+  }));
   const firstDelta = gate(); const allowSecondDelta = gate(); const secondDelta = gate(); const release = gate();
   const questionAbort = new AbortController();
   const providerEvents: Array<{ type: string; delta?: string }> = [];
@@ -156,7 +160,8 @@ async function captureManualTerminal(output: string): Promise<void> {
     await terminal.wait('initial connected frame', () => idle() && terminal.screen.includes('Felan Code')
       && terminal.screen.split('\n').at(-2) === '─'.repeat(terminal.grid.screenColumns));
     expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getFgAnsi('text'));
-    expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getBgAnsi('customMessageBg'));
+    expect(terminal.raw).toContain(darkCanvas);
+    if (process.platform !== 'win32') expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getBgAnsi('customMessageBg'));
     expect(terminal.screen.split('\n').at(-2)).toBe('─'.repeat(terminal.grid.screenColumns));
     expect(terminal.screen.split('\n').at(-1)?.trim()).toBe('');
     await terminal.snapshot('01-dark-wide-idle');
@@ -187,7 +192,8 @@ async function captureManualTerminal(output: string): Promise<void> {
     const paletteOffset = terminal.frameRaw.length;
     terminal.send('\x1b[B\r'); await terminal.wait('light palette applied immediately', () => /Theme\s+felan-light/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved')
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getFgAnsi('text'))
-      && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg')));
+      && terminal.frameRaw.slice(paletteOffset).includes(lightCanvas)
+      && (process.platform === 'win32' || terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg'))));
     expect(JSON.parse(await readFile(join(f.directory, 'client', 'tui', 'settings.json'), 'utf8')).theme).toBe('felan-light');
     expect(JSON.parse(await readFile(join(f.owner.target.agentDir, 'settings.json'), 'utf8'))).not.toHaveProperty('theme');
     terminal.send('\x1b'); await terminal.wait('general settings closed after theme change', () => terminal.screen.includes('General settings'));

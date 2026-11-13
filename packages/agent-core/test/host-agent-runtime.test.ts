@@ -862,6 +862,29 @@ describe('HostAgentRuntime', { timeout: 15_000 }, () => {
     }
   });
 
+  it('preserves Unicode PTY input with platform newline handling', async () => {
+    const cwd = await createTemporaryDirectory('workspace');
+    const runtime = await createHostRuntime(cwd);
+    const content = new TextEncoder().encode('Здравей, 世界 🐈\n\r\n');
+    const expected = process.platform === 'win32' ? new TextEncoder().encode('Здравей, 世界 🐈\r\n\r\n') : content;
+    const script = [
+      'process.stdin.setRawMode(true)',
+      'const chunks = []',
+      `process.stdin.on('data', chunk => { chunks.push(chunk); if (Buffer.concat(chunks).length >= ${expected.length}) {
+        require('node:fs').writeFileSync('received.bin', Buffer.concat(chunks)); process.exit(0);
+      } })`.replaceAll('\n', ' '),
+      "process.stdout.write('ready\\n')",
+    ].join(';');
+    const terminal = await runtime.terminals.startShell(`${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`);
+    try {
+      await readUntil(terminal, snapshot => new TextDecoder().decode(snapshot.output).includes('ready'));
+      await terminal.write(content);
+      const completed = await readUntil(terminal, snapshot => !snapshot.running);
+      expect(completed).toMatchObject({ running: false, exitCode: 0 });
+      await expect(runtime.readFile('received.bin')).resolves.toEqual(expected);
+    } finally { await terminal.dispose(); }
+  });
+
   it.skipIf(process.platform === 'win32')('interrupts a pipe-backed process group with SIGINT', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
     const script = [

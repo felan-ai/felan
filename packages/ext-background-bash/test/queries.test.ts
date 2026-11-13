@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, symlink, writeFile, access, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { createLocalRuntimeStorage, HostAgentRuntime, type AgentRuntime, type AgentRuntimeStorage, type AgentRuntimeListFilesOptions } from '@felan-ai/agent-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundBashJobStore, getBackgroundBashJobsDir, type BackgroundBashPage } from '../src/job-store.js';
@@ -273,7 +273,7 @@ function id(n: number): string { return `bash-20260101000000-${n.toString(16).pa
 function fixture(count: number) {
   const storage = new FixtureStorage();
   const runtime = {
-    cwd: '/fixture/workspace', storage: () => storage,
+    cwd: resolve('/fixture/workspace'), storage: () => storage,
     shell: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', killed: false })),
     exec: vi.fn(async (_command: string, args: readonly string[]) => {
       await storage.remove(join(args[2]!, args[3]!), { recursive: true });
@@ -286,7 +286,7 @@ function fixture(count: number) {
 }
 
 function seed(storage: FixtureStorage, jobsDir: string, n: number, status = 'completed', command = `command ${n}`, completedAt = Date.now() - 60 * 60 * 1_000) {
-  const info = { id: id(n), command, cwd: '/fixture/workspace', status, startedAt: completedAt - 1, updatedAt: completedAt, completedAt };
+  const info = { id: id(n), command, cwd: resolve('/fixture/workspace'), status, startedAt: completedAt - 1, updatedAt: completedAt, completedAt };
   storage.files.set(join(jobsDir, id(n), 'info.json'), encoder.encode(JSON.stringify(info)));
   storage.files.set(join(jobsDir, id(n), 'completion.json'), encoder.encode(JSON.stringify(info)));
 }
@@ -303,7 +303,7 @@ function maintenance(runtime: AgentRuntime, storage: FixtureStorage, jobsDir: st
 }
 
 class FixtureStorage implements AgentRuntimeStorage {
-  readonly root = `/fixture/state-${Math.random()}`;
+  readonly root = resolve(`/fixture/state-${Math.random()}`);
   readonly files = new Map<string, Uint8Array>();
   readFile = vi.fn(async (path: string) => {
     const bytes = this.files.get(path);
