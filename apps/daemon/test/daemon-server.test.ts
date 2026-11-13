@@ -16,7 +16,7 @@ import { SessionServer, type BrokerDispatchPort, type SessionServerOptions } fro
 import { protocolTarget } from '../src/daemon/target.js';
 import { gate, serverFixture } from './fixtures/server.js';
 import { LegacySessionIndex, legacySessionDirectoryName } from '../src/daemon/legacy-sessions.js';
-import { acquireDaemonOwnership } from '../src/daemon/ownership.js';
+import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -24,18 +24,26 @@ const configDefinition = defineExtensionConfig({ id: 'codex', title: 'Synthetic 
 
 async function fixture(options: { processAdapter?: ProcessAdapter; onStream?: () => Promise<void>; release?: () => void; broker?: BrokerDispatchPort; now?: () => number; extension?: (pi: ExtensionAPI) => void;
   prepareRoot?: SessionServerOptions['prepareRoot'];
-  compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean;
+  compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean; storeOwnership?: boolean;
   composition?: { managerPackage: string; managerVersion: string; providerDigest: string; configDigest: string };
   currentComposition?: () => Promise<{ managerPackage: string; managerVersion: string; providerDigest: string; configDigest: string }> } = {}) {
   const f = await serverFixture({ ...(options.processAdapter ? { processAdapter: options.processAdapter } : {}), now: options.now ?? Date.now, ...(options.onStream ? { onStream: options.onStream } : {}), ...(options.extension ? { extension: options.extension } : {}),
     ...(options.compaction ? { compaction: options.compaction } : {}), ...(options.skill ? { skill: true } : {}) });
+  let storeOwner: DaemonOwnership | undefined;
   const clients: SessionClient[] = []; const sockets: Awaited<ReturnType<typeof connectLocalIpc>>[] = [];
   const configuration = new DaemonConfiguration({ definitions: [configDefinition], assertCurrent: () => f.registry.assertAdmission() });
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'fixture',
     ...(options.composition ? { composition: options.composition } : {}), ...(options.currentComposition ? { currentComposition: options.currentComposition } : {}),
     ...(options.prepareRoot ? { prepareRoot: options.prepareRoot } : {}),
     ...(options.broker ? { broker: options.broker } : {}), ...(options.now ? { now: options.now } : {}) });
-  cleanups.push(async () => { options.release?.(); for (const client of clients) client.close(); for (const socket of sockets) socket.destroy(); server.close(); await f.dispose(); });
+  cleanups.push(async () => { options.release?.(); for (const client of clients) client.close(); for (const socket of sockets) socket.destroy(); server.close(); await storeOwner?.release(); await f.dispose(); });
+  if (options.storeOwnership) {
+    const owner = await acquireDaemonOwnership({ kind: 'isolated', directory: f.directory,
+      namespaceId: process.platform === 'win32' ? `${f.owner.target.namespaceId}-stores` : f.owner.target.namespaceId, storeRoots: [] });
+    storeOwner = owner;
+    vi.spyOn(f.owner, 'ownRoot').mockImplementation(directory => owner.ownRoot(directory));
+    vi.spyOn(f.owner, 'assertOwnsPath').mockImplementation(path => owner.assertOwnsPath(path));
+  }
   await server.start();
   async function client(kind: 'tui' | 'acp' | 'headless' = 'tui', interactionKinds: OperationParams<'hello'>['interactionKinds'] = []) {
     const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
@@ -53,7 +61,7 @@ async function fixture(options: { processAdapter?: ProcessAdapter; onStream?: ()
       return new Promise(resolve => { pending.set(frame.id, resolve); socket.write(encodeFrame(frame)); });
     } };
   }
-  return { ...f, server, client, raw };
+  return { ...f, server, client, raw, storeOwner };
 }
 
 it.each([
@@ -393,11 +401,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
   });
 
   it('adopts a custom-directory transcript in place and owns its directory before appending', async () => {
-    const f = await fixture(); const client = await f.client(); const id = 'custom-directory';
-    const owner = await acquireDaemonOwnership({ kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [] });
-    cleanups.push(() => owner.release());
-    vi.spyOn(f.owner, 'ownRoot').mockImplementation(directory => owner.ownRoot(directory));
-    vi.spyOn(f.owner, 'assertOwnsPath').mockImplementation(path => owner.assertOwnsPath(path));
+    const f = await fixture({ storeOwnership: true }); const client = await f.client(); const id = 'custom-directory'; const owner = f.storeOwner!;
     const sessionDir = join(f.directory, 'custom-sessions'); await mkdir(sessionDir);
     const path = join(sessionDir, 'fixture.jsonl'); const timestamp = '2026-01-01T00:00:00.000Z';
     const original = [{ type: 'session', version: 3, id, timestamp, cwd: f.cwd },
@@ -441,11 +445,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
   });
 
   for (const kind of ['directory', 'transcript-symlink'] as const) it.skipIf(process.platform === 'win32' && kind === 'transcript-symlink')(`rejects a non-owned ${kind} during custom-directory adoption (symlink requires POSIX privileges)`, async () => {
-    const f = await fixture(); const client = await f.client(); const id = 'outside-fixture';
-    const owner = await acquireDaemonOwnership({ kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [] });
-    cleanups.push(() => owner.release());
-    vi.spyOn(f.owner, 'ownRoot').mockImplementation(directory => owner.ownRoot(directory));
-    vi.spyOn(f.owner, 'assertOwnsPath').mockImplementation(path => owner.assertOwnsPath(path));
+    const f = await fixture({ storeOwnership: true }); const client = await f.client(); const id = 'outside-fixture';
     const outside = realpathSync.native(await mkdtemp(join(tmpdir(), 'outside-session-')));
     cleanups.push(() => rm(outside, { recursive: true, force: true }));
     const path = join(outside, 'fixture.jsonl');

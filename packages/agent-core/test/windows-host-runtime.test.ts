@@ -367,25 +367,66 @@ it.runIf(process.platform === 'win32').each(['shell', 'stdio'] as const)(
   'waits for taskkill to finish before timing out forced %s termination', async kind => {
     const { runtime } = await fixture();
     const taskkill = join(systemRoot!, 'System32', 'taskkill.exe');
-    vi.mocked(spawn).mockImplementation((command, args, options) => {
-      if (command !== taskkill) return actualProcesses.spawn(command, args!, options!);
-      const script = `setTimeout(() => {
-        const child = require('node:child_process').spawn(${JSON.stringify(taskkill)}, ${JSON.stringify(args)}, { stdio: 'ignore', windowsHide: true });
-        child.once('error', () => process.exit(1));
-        child.once('close', code => process.exit(code ?? 1));
-      }, 1300);`;
-      return actualProcesses.spawn(process.execPath, ['-e', script], options!);
-    });
-    const handle = kind === 'shell'
-      ? await runtime.processes.startShell(`${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`)
-      : await runtime.processes.startStdio!(process.execPath, ['-e', 'setInterval(() => {}, 1000)']);
+    const stdout = new PassThrough(), stderr = new PassThrough();
+    const child = Object.assign(new EventEmitter(), { pid: 424242, stdout, stderr, stdin: null, exitCode: null, signalCode: null }) as unknown as ChildProcess;
+    const killer = new EventEmitter() as ChildProcess;
+    vi.mocked(spawn).mockReturnValueOnce(child).mockReturnValue(killer);
+    vi.useFakeTimers();
+    let handle: AgentRuntimeProcess | undefined;
     try {
-      await handle.terminate('SIGKILL');
+      handle = kind === 'shell' ? await runtime.processes.startShell('command') : await runtime.processes.startStdio!('command', []);
+      let settled = false;
+      const termination = handle.terminate('SIGKILL').then(() => { settled = true; });
+      expect(spawn).toHaveBeenLastCalledWith(taskkill, ['/pid', '424242', '/T', '/F'], expect.objectContaining({ timeout: 5_000 }));
+      await vi.advanceTimersByTimeAsync(1_300);
+      expect(settled).toBe(false);
+      expect((await handle.read(0)).running).toBe(true);
+      child.emit('close', 1, null);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(false);
+      killer.emit('close', 0, null);
+      await termination;
+      expect(settled).toBe(true);
       expect((await handle.read(0)).running).toBe(false);
-    } finally { await handle.dispose(); }
+    } finally {
+      child.emit('close', 1, null); killer.emit('close', 0, null);
+      try { await handle?.dispose(); }
+      finally {
+        stdout.destroy(); stderr.destroy();
+        vi.useRealTimers();
+      }
+    }
   },
-  10_000,
 );
+
+it.runIf(process.platform === 'win32').each([
+  ['shell', false], ['shell', true], ['stdio', false], ['stdio', true],
+] as const)('handles a signalled taskkill for %s with target exited=%s', async (kind, exited) => {
+  const { runtime } = await fixture();
+  const stdout = new PassThrough(), stderr = new PassThrough();
+  const child = Object.assign(new EventEmitter(), { pid: 424242, stdout, stderr, stdin: null, exitCode: null, signalCode: null }) as unknown as ChildProcess;
+  const killer = new EventEmitter() as ChildProcess;
+  vi.mocked(spawn).mockReturnValueOnce(child).mockReturnValue(killer);
+  vi.useFakeTimers();
+  let handle: AgentRuntimeProcess | undefined;
+  try {
+    handle = kind === 'shell' ? await runtime.processes.startShell('command') : await runtime.processes.startStdio!('command', []);
+    const result = handle.terminate('SIGKILL').then(() => undefined, error => error as Error);
+    await vi.advanceTimersByTimeAsync(5_000);
+    if (exited) { Object.assign(child, { exitCode: 1 }); child.emit('exit', 1, null); child.emit('close', 1, null); }
+    killer.emit('close', null, 'SIGTERM');
+    if (exited) expect(await result).toBeUndefined();
+    else {
+      expect(await result).toEqual(new Error('taskkill exited with code null'));
+      expect((await handle.read(0)).running).toBe(true);
+    }
+  } finally {
+    child.emit('close', 1, null);
+    await handle?.dispose().catch(() => {});
+    stdout.destroy(); stderr.destroy();
+    vi.useRealTimers();
+  }
+});
 
 it.runIf(process.platform === 'win32').each(['taskkill', 'CMD.EXE', 'explorer.exe', 'curl', 'tar.exe'])('pins Windows %s to the system directory instead of searching the project cwd', async command => {
   const { runtime } = await fixture();

@@ -18,7 +18,9 @@ const FOREGROUND_RESOURCE_PREFIX = 'foreground:';
 async function inspectWindowsProcess(runtime: AgentRuntime, pid: number) {
   const root = process.env.SystemRoot;
   if (!root || !/^[a-z]:[\\/]/iu.test(root) || /[\u0000-\u001f\u007f]/u.test(root)) throw new Error('The Windows system directory is unavailable.');
-  return runtime.exec(win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object -ExpandProperty CommandLine`]);
+  const executable = win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  if ((await runtime.files?.inspect(executable))?.kind !== 'file') throw new Error('The Windows process inspection executable is unavailable.');
+  return runtime.exec(executable, ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object -ExpandProperty CommandLine`]);
 }
 
 interface Scope { session: string; root: string }

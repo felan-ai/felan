@@ -34,9 +34,13 @@ describe.skipIf(!supported)('registry process ownership', () => {
     exec.mockResolvedValueOnce({ stdout: 'unrelated process', stderr: '', code: 0, killed: false });
     await processes.refresh(b.rootSessionId);
     expect(f.store.resource('job')?.state).toBe('reconciling');
-    for (const root of [undefined, '', '.', 'C:relative', '\\Windows', '\\\\server\\Windows', 'C:\\bad\u0000root', 'C:\\bad\nroot']) {
+    await mkdir(win32.join(f.cwd, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), { recursive: true });
+    for (const root of [undefined, '', '.', 'C:relative', '\\Windows', '\\\\server\\Windows', 'C:\\bad\u0000root', 'C:\\bad\nroot', join(f.directory, 'missing-system'), f.cwd]) {
       vi.stubEnv('SystemRoot', root); exec.mockClear();
-      try { await processes.refresh(b.rootSessionId); expect(exec).not.toHaveBeenCalled(); }
+      try {
+        await processes.refresh(b.rootSessionId); expect(exec).not.toHaveBeenCalled();
+        expect(f.store.resource('job')?.state).toBe('reconciling'); expect(processes.list(b.rootSessionId)[0]?.controllable).toBe(false);
+      }
       finally { vi.unstubAllEnvs(); }
     }
   });

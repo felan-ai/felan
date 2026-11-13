@@ -70,7 +70,7 @@ class ConPtyGrid extends ManualTerminalGrid {
 }
 
 class Capture {
-  readonly grid = process.platform === 'win32' ? new ConPtyGrid(120, 32) : new ManualTerminalGrid(120, 32);
+  readonly grid: ManualTerminalGrid;
   raw = '';
   frameRaw = '';
   error: unknown;
@@ -79,7 +79,9 @@ class Capture {
   private readonly listeners = new Set<() => void>();
   readonly terminal: ReturnType<typeof native.spawn>;
   private readonly subscriptions: Array<{ dispose(): void }>;
-  constructor(private readonly output: string, private readonly checkpoints: Record<string, unknown>[], directory: string, cwd: string, sessionId: string) {
+  constructor(private readonly output: string, private readonly checkpoints: Record<string, unknown>[], directory: string, cwd: string, sessionId: string,
+    conpty = process.platform === 'win32') {
+    this.grid = conpty ? new ConPtyGrid(120, 32) : new ManualTerminalGrid(120, 32);
     this.terminal = native.spawn(process.execPath, [fileURLToPath(new URL('apps/felan/dist/cli.js', root)), '--daemon-runtime', directory,
       '--session', sessionId], { name: 'xterm-256color', cols: 120, rows: 32, cwd,
       env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', COLORFGBG: '15;0',
@@ -130,7 +132,7 @@ class Capture {
   }
 }
 
-async function captureManualTerminal(output: string): Promise<void> {
+async function captureManualTerminal(output: string, conpty = process.platform === 'win32'): Promise<void> {
   const checkpoints: Record<string, unknown>[] = [];
   const [darkCanvas, lightCanvas] = await Promise.all(['felan-dark', 'felan-light'].map(async name => {
     const { vars } = JSON.parse(await readFile(new URL(`../src/themes/${name}.json`, import.meta.url), 'utf8'));
@@ -186,13 +188,16 @@ async function captureManualTerminal(output: string): Promise<void> {
     await writeFile(join(f.directory, 'client', 'tui', 'settings.json'), JSON.stringify({ theme: 'felan-dark' }), { mode: 0o600 });
     await preferences.update({ keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } });
     // An empty transcript paints only the canvas. Truecolor keeps customMessageBg distinct from that canvas.
-    if (process.platform === 'win32') f.root.runtime.session.sessionManager.appendCompaction('QA palette sample', null, 100);
-    await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId); const terminal = pty;
+    if (conpty) {
+      const manager = f.root.runtime.session.sessionManager;
+      manager.appendMessage({ role: 'user', content: '<skill name="qa-palette" location="/fixture/SKILL.md">\nQA palette sample\n</skill>', timestamp: Date.now() });
+    }
+    await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId, conpty); const terminal = pty;
     const idle = () => f.store.session(f.root.sessionId).run.state === 'idle' && !terminal.screen.includes('Working');
     const modelSelector = () => /Model\s+>\s+→ ✓ fixture \[offline\]/u.test(terminal.screen);
     const settingsSelector = () => terminal.screen.includes('Type to search');
     await terminal.wait('initial connected frame', () => idle() && terminal.screen.includes('Felan Code')
-      && (process.platform !== 'win32' || terminal.screen.includes('Context compacted'))
+      && (!conpty || terminal.screen.includes('[skill] qa-palette'))
       && terminal.screen.split('\n').at(-2) === '─'.repeat(terminal.grid.screenColumns));
     expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getFgAnsi('text'));
     expect(terminal.raw).toContain(darkCanvas);
@@ -228,12 +233,12 @@ async function captureManualTerminal(output: string): Promise<void> {
     terminal.send('\x1b[B\r'); await terminal.wait('light palette applied immediately', () => /Theme\s+felan-light/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved')
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getFgAnsi('text'))
       && terminal.frameRaw.slice(paletteOffset).includes(lightCanvas)
-      && (process.platform === 'win32' || terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg'))));
+      && (conpty || terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg'))));
     expect(JSON.parse(await readFile(join(f.directory, 'client', 'tui', 'settings.json'), 'utf8')).theme).toBe('felan-light');
     expect(JSON.parse(await readFile(join(f.owner.target.agentDir, 'settings.json'), 'utf8'))).not.toHaveProperty('theme');
     terminal.send('\x1b'); await terminal.wait('general settings closed after theme change', () => terminal.screen.includes('General settings'));
     terminal.send('\x1b'); await terminal.wait('theme settings closed', () => !settingsSelector());
-    if (process.platform === 'win32') await terminal.wait('light custom message background', () => terminal.screen.includes('Context compacted')
+    if (conpty) await terminal.wait('light custom message background', () => terminal.screen.includes('[skill] qa-palette')
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg')));
     await terminal.snapshot('07-light-wide-idle');
 
@@ -344,6 +349,12 @@ it('commits complete ConPTY output without inserting a frame marker into an unfi
   expect(grid.screen.split('\n')[1]?.trim()).toBe('second'); expect(grid.pendingOutput).toBe('');
   expect(() => grid.feed('\x1b[1z')).toThrow('Unsupported CSI: 1z');
 });
+
+it('exercises the ConPTY capture and palette fixture through the full emitted-CLI flow on any platform', async () => {
+  const output = await mkdtemp(join(tmpdir(), 'felan-conpty-flow-'));
+  try { await captureManualTerminal(output, true); }
+  finally { await rm(output, { recursive: true, force: true }); }
+}, 90_000);
 
 it('captures emitted-CLI layout, palettes, shortcuts, resize and live model deltas under a focused broker dialog', async () => {
   const retain = process.env.FELAN_TEST_DIST_SMOKE === '1';

@@ -248,7 +248,7 @@ it('opens the report only after host confirmation and reports declined, unavaila
   await vi.waitFor(() => expect(readInsightsDashboard(h.documents.at(-1)!.data).notice?.level).toBe('warning'));
   expect(h.exec).toHaveBeenCalledTimes(1);
 
-  h.exec.mockResolvedValueOnce({ code: 1, stdout: '', stderr: '' });
+  h.exec.mockResolvedValueOnce({ code: process.platform === 'win32' ? 2 : 1, stdout: '', stderr: '' });
   await invoke(h, h.documents.at(-1)!, 'open-browser');
   await vi.waitFor(() => expect(readInsightsDashboard(h.documents.at(-1)!.data).notice?.text).toBe('The HTML report could not be opened in the browser.'));
   await h.host.dispose();

@@ -469,7 +469,7 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
   it.runIf(process.platform === 'win32')('persists and reopens control files under a shared store ACL', async () => {
     const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
     execFileSync(join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [owner.target.agentDir, '/grant', '*S-1-1-0:(OI)(CI)F'], { windowsHide: true });
-    const store = reopen(owner); store.database.putRecord('shared', 'record', 'kept'); store.close();
+    const store = reopen(owner); store.database.transaction(() => store.database.putRecord('shared', 'record', 'kept')); store.close();
     const reloaded = reopen(owner); expect(reloaded.database.rebuilt).toBe(false);
     expect(reloaded.database.record('shared', 'record')).toBe('kept');
   });

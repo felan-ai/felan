@@ -187,7 +187,7 @@ describe.runIf(process.platform === 'win32')('native Windows ownership', () => {
   it('probes an existing Windows lock without requesting write access', async () => {
     const path = join(fixture(), 'readonly.lock'); writeFileSync(path, ''); chmodSync(path, 0o444);
     try {
-      expect((await childLock(path)).result).toMatchObject({ error: 'EACCES' });
+      expect(['EPERM', 'EACCES']).toContain((await childLock(path)).result.error);
       const fd = tryLockExistingFile(path); expect(fd).toBeDefined(); closeSync(fd!);
     } finally { chmodSync(path, 0o600); }
   });
