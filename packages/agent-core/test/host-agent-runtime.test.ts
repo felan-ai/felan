@@ -908,13 +908,19 @@ describe('HostAgentRuntime', { timeout: 15_000 }, () => {
 
   it('supports explicit forced termination for persistent processes', async () => {
     const runtime = await createHostRuntime(await createTemporaryDirectory('workspace'));
+    const script = process.platform === 'win32' ? 'setTimeout(() => process.exit(99), 5000)' : 'setInterval(() => {}, 1000)';
     const processHandle = await runtime.processes.startShell(
-      `${JSON.stringify(process.execPath)} -e "setInterval(() => {}, 1000)"`,
+      `${JSON.stringify(process.execPath)} -e "${script}"`,
     );
-    await processHandle.terminate('SIGKILL');
-    const completed = await processHandle.read(0);
-    expect(completed.running).toBe(false);
-    await processHandle.dispose();
+    try {
+      await processHandle.terminate('SIGKILL');
+      const completed = await processHandle.read(0);
+      expect(completed.running).toBe(false);
+      if (process.platform === 'win32') expect(completed.exitCode).not.toBe(99);
+    } finally {
+      if (process.platform === 'win32') await readUntil(processHandle, snapshot => !snapshot.running);
+      await processHandle.dispose();
+    }
   });
 
   it.skipIf(process.platform === 'win32')('reports PTY Ctrl-C as exit code 130', async () => {

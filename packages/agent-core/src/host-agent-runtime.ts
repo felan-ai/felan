@@ -301,7 +301,7 @@ export class HostAgentRuntime implements AgentRuntime {
       : windowsSystemCommand(options?.shell ?? defaultShell());
     const useShellOption = process.platform === 'win32' && isCmdShell(shell);
     const args = shellArguments(shell, command, options?.login ?? true);
-    const taskkill = windowsSystemCommand('taskkill.exe');
+    const taskkill = captureTaskkill();
     const child = spawn(useShellOption ? command : shell, useShellOption ? [] : args, {
       cwd,
       detached: process.platform !== 'win32',
@@ -319,7 +319,7 @@ export class HostAgentRuntime implements AgentRuntime {
     options?: AgentRuntimeStdioProcessOptions,
   ): Promise<AgentRuntimeStdioProcess> {
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
-    const taskkill = windowsSystemCommand('taskkill.exe');
+    const taskkill = captureTaskkill();
     const child = spawn(windowsSystemCommand(command), [...args], {
       cwd,
       detached: process.platform !== 'win32',
@@ -418,7 +418,7 @@ export class HostAgentRuntime implements AgentRuntime {
     const captureLimit = maxBuffer === undefined
       ? maxOutputBytes
       : Math.min(maxOutputBytes ?? maxBuffer, maxBuffer);
-    const taskkill = windowsSystemCommand('taskkill.exe');
+    const taskkill = captureTaskkill();
 
     return new Promise((resolveResult) => {
       const child = spawn(shell ? command : windowsSystemCommand(command), args, {
@@ -596,11 +596,11 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
 
 class HostRuntimeProcess extends HostBufferedProcess {
   readonly #child: ChildProcess;
-  readonly #taskkill: string;
+  readonly #taskkill: TaskkillCommand;
   #drainTimer: NodeJS.Timeout | undefined;
   #terminating = false;
 
-  constructor(child: ChildProcess, taskkill: string) {
+  constructor(child: ChildProcess, taskkill: TaskkillCommand) {
     super();
     this.#child = child;
     this.#taskkill = taskkill;
@@ -660,12 +660,12 @@ class HostRuntimeProcess extends HostBufferedProcess {
 
 class HostRuntimeStdioProcess extends HostBufferedProcess implements AgentRuntimeStdioProcess {
   readonly #child: ChildProcess;
-  readonly #taskkill: string;
+  readonly #taskkill: TaskkillCommand;
   readonly #stdout = new HostProcessOutput();
   readonly #stderr = new HostProcessOutput();
   #inputClosed = false;
 
-  constructor(child: ChildProcess, taskkill: string) {
+  constructor(child: ChildProcess, taskkill: TaskkillCommand) {
     super();
     this.#child = child;
     this.#taskkill = taskkill;
@@ -1283,11 +1283,21 @@ function isMissingPathError(error: unknown): boolean {
     && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
 }
 
-function killChild(child: ChildProcess, signal: NodeJS.Signals, taskkill: string, waitForExit = false): void | Promise<void> {
+interface TaskkillCommand {
+  readonly command: string;
+  readonly env: NodeJS.ProcessEnv | undefined;
+}
+
+function captureTaskkill(): TaskkillCommand {
+  return { command: windowsSystemCommand('taskkill.exe'), env: process.platform === 'win32' ? { ...process.env } : undefined };
+}
+
+function killChild(child: ChildProcess, signal: NodeJS.Signals, taskkill: TaskkillCommand, waitForExit = false): void | Promise<void> {
   if (child.pid === undefined) return;
 
   if (process.platform === 'win32') {
-    const killer = spawn(taskkill, ['/pid', String(child.pid), '/T', '/F'], {
+    const killer = spawn(taskkill.command, ['/pid', String(child.pid), '/T', '/F'], {
+      env: taskkill.env,
       stdio: 'ignore',
       windowsHide: true,
       timeout: 5_000,
@@ -1436,11 +1446,28 @@ async function createNoFollowFile(path: string, mode?: number): Promise<import('
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) throw new Error('Expected a regular staging file');
-    await link(staging, path);
+    try { await link(staging, path); }
+    catch (error) {
+      if (!(error instanceof Error) || !('code' in error)
+        || error.code !== 'EISDIR' && error.code !== 'ENOTSUP' && error.code !== 'EXDEV') throw error;
+      const direct = await open(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, mode);
+      try { return await direct.stat(); }
+      finally { await direct.close(); }
+    }
     return stat;
   } finally {
     try { await handle.close(); }
-    finally { await rm(staging, { force: true }); }
+    finally {
+      // Crashes or persistent removal failures may leave staging names. Sweeping by prefix could delete another active creator's file.
+      for (let attempt = 0; ; attempt++) {
+        try { await rm(staging, { force: true }); break; }
+        catch (error) {
+          if (attempt === 3 || !(error instanceof Error) || !('code' in error)
+            || error.code !== 'EPERM' && error.code !== 'EACCES' && error.code !== 'EBUSY') break;
+          await delay(10 * 2 ** attempt);
+        }
+      }
+    }
   }
 }
 
