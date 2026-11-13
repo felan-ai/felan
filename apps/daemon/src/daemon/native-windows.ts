@@ -1,4 +1,4 @@
-import type { BigIntStats } from 'node:fs';
+import { lstatSync, type BigIntStats } from 'node:fs';
 import koffi from 'koffi';
 import { DaemonSecurityError, requireOwnershipPlatform } from './native-ownership.js';
 
@@ -57,6 +57,7 @@ export function windowsAccountPrincipal(): string {
 }
 
 export function windowsProcessElevated(): boolean {
+  if (process.platform !== 'win32') return false;
   const n = native(); const token: unknown[] = [null];
   if (!n.openToken(n.currentProcess(), 0x8, token)) failure('OpenProcessToken', 'native_failure');
   try {
@@ -96,6 +97,11 @@ function securityInfo(path: string, withDacl = true): { owner: string; allowed: 
   } finally { n.localFree(descriptor[0]); }
 }
 
+function assertPathStat(path: string, stat: BigIntStats): void {
+  const current = lstatSync(path, { bigint: true });
+  if (current.dev !== stat.dev || current.ino !== stat.ino) throw new DaemonSecurityError('unsafe_path', 'Daemon path changed while checking Windows security.');
+}
+
 export function assertWindowsPrivatePath(path: string, stat: BigIntStats, owner: string, kind: 'file' | 'directory'): void {
   const attributes: number = native().attributes(path);
   if (attributes === 0xffffffff) failure('GetFileAttributesW');
@@ -105,6 +111,7 @@ export function assertWindowsPrivatePath(path: string, stat: BigIntStats, owner:
     || !trusted.has(security.owner) || security.allowed === null || security.allowed.some(ace => !trusted.has(ace.sid))) {
     throw new DaemonSecurityError('unsafe_path', 'Daemon path must be owner-only, non-reparse and owned by the OS account, SYSTEM or Administrators (regular files require one link).');
   }
+  assertPathStat(path, stat);
 }
 
 export function assertWindowsOwnedFile(path: string, stat: BigIntStats, owner: string): void {
@@ -114,6 +121,7 @@ export function assertWindowsOwnedFile(path: string, stat: BigIntStats, owner: s
     || ![owner, SYSTEM, ADMINISTRATORS].includes(securityInfo(path, false).owner)) {
     throw new DaemonSecurityError('unsafe_path', 'Expected a non-reparse regular file with one link owned by the OS account, SYSTEM or Administrators.');
   }
+  assertPathStat(path, stat);
 }
 
 export function windowsWritableByOthers(path: string): boolean {

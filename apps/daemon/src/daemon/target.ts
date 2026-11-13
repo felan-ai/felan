@@ -1,4 +1,4 @@
-import { constants, fstatSync, lstatSync, mkdirSync, openSync, closeSync, realpathSync } from 'node:fs';
+import { constants, fstatSync, lstatSync, mkdirSync, openSync, closeSync, realpathSync, statSync } from 'node:fs';
 import { userInfo } from 'node:os';
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import type { DaemonIdentity, DaemonTarget as ProtocolDaemonTarget } from '@felan-ai/session-protocol';
@@ -50,7 +50,14 @@ export function privateDirectory(path: string, principal: string): string {
 }
 /** Creates a store directory without imposing permissions on an existing user directory. */
 export function storeDirectory(path: string): string {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
+  if (process.platform === 'win32') {
+    const parent = dirname(path);
+    if (parent !== path && !exists(parent)) storeDirectory(parent);
+    let created = false;
+    try { mkdirSync(path, { mode: 0o700 }); created = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !statSync(path).isDirectory()) throw error; }
+    if (created) protectPrivateDirectory(path, accountPrincipal());
+  } else mkdirSync(path, { recursive: true, mode: 0o700 });
   return canonicalRealpath(path);
 }
 function exists(path: string): boolean { try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; } }

@@ -110,6 +110,42 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     const owner = await acquire(await target()); const lock = join(owner.target.accountDirectory, namespaceLockName(owner.target));
     await chmod(lock, 0o644);
     const other = await acquire(await target()); other.assertCurrent(); owner.assertCurrent();
+    const ledger = JSON.parse(await readFile(join(owner.target.accountDirectory, 'claims.json'), 'utf8'));
+    expect(ledger.claims.some((claim: { instanceId: string }) => claim.instanceId === owner.instanceId)).toBe(true);
+    await expect(acquireDaemonOwnership({ kind: 'isolated', directory: join(owner.target.agentDir, 'nested'), namespaceId: randomUUID() })).rejects.toMatchObject({ code: 'root_conflict' });
+  });
+
+  it.skipIf(windows)('propagates an unexpected kernel error from an advisory POSIX claim probe', async () => {
+    const owner = await acquire(await target()); const input = await target();
+    const error = new nativeOwnership.DaemonSecurityError('native_failure', 'synthetic flock failure');
+    const probe = vi.spyOn(nativeOwnership, 'lockStillHeld').mockImplementationOnce(() => { throw error; });
+    try { await expect(acquireDaemonOwnership(input)).rejects.toBe(error); expect(probe).toHaveBeenCalledOnce(); }
+    finally { probe.mockRestore(); }
+    owner.assertCurrent();
+  });
+
+  it.runIf(windows).each(['{', ' '.repeat(4_097), JSON.stringify({ version: 1, obsolete: true })])('removes a private stale endpoint without parsing it during ownership acquisition', async source => {
+    const input = await target(); const first = await acquire(input); await first.release(); owners.splice(owners.indexOf(first), 1);
+    await writeFile(first.target.endpoint, source, { mode: 0o600 });
+    const next = await acquire(input); expect(next.lockStamp).not.toBe(first.lockStamp);
+    await expect(lstat(next.target.endpoint)).rejects.toMatchObject({ code: 'ENOENT' }); next.assertCurrent();
+  });
+
+  it.runIf(windows)('refuses an existing endpoint with a public DACL before removing it at startup', async () => {
+    const input = await target(); const first = await acquire(input); await first.release(); owners.splice(owners.indexOf(first), 1);
+    await writeFile(first.target.endpoint, '{', { mode: 0o600 });
+    const { spawnSync } = await import('node:child_process');
+    const result = spawnSync('icacls.exe', [first.target.endpoint, '/grant', '*S-1-1-0:R'], { windowsHide: true, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    await expect(acquireDaemonOwnership(input)).rejects.toMatchObject({ code: 'unsafe_path' });
+    expect(await readFile(first.target.endpoint, 'utf8')).toBe('{');
+  });
+
+  it.runIf(windows)('keeps the namespace lock generation stable while ownership remains held', async () => {
+    const owner = await acquire(await target()); const lock = join(owner.target.accountDirectory, namespaceLockName(owner.target));
+    expect(owner.lockStamp).toBe((await lstat(lock, { bigint: true })).mtimeNs.toString());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(owner.lockStamp).toBe((await lstat(lock, { bigint: true })).mtimeNs.toString()); owner.assertCurrent();
   });
 
   it.runIf(windows)('retries a short sharing conflict on the lifetime lock without reporting owner_running', async () => {

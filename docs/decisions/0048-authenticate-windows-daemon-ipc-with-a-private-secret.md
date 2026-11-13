@@ -53,16 +53,28 @@ There is no lease-lock, TCP or POSIX-emulation fallback.
   remains possible.
 - Client pipe opens do not impose `SECURITY_IDENTIFICATION`. The handshake does
   not remove Windows named-pipe impersonation risk. A client checks that another
-  process holds the namespace lifetime lock before opening the pipe. It closes
-  a successful lock probe immediately and treats the endpoint as stale. Startup
-  holds that lifetime lock, validates and removes an old endpoint without
-  connecting to its pipe. An in-process guard rejects repeated listeners for
-  the same owner. These checks avoid contacting an abandoned pipe that another
-  account may have claimed, but cannot make the lock probe and pipe open atomic.
+  process holds the namespace lifetime lock with a shared read probe before
+  opening the pipe. A successful open means the endpoint is stale. Concurrent
+  shared probes do not exclude each other. Each acquisition sets a random mtime
+  through the exclusive lock handle. Endpoint version 2 records that generation
+  as `lockStamp`, which must match the lock's nanosecond mtime. Startup validates
+  privacy and removes any old endpoint immediately after taking the lock,
+  without parsing its contents or contacting its pipe. A fenced daemon rejects
+  connections but keeps its pipe bound until its lock handles close. A normal
+  close removes the endpoint before releasing the pipe name. An in-process
+  guard rejects repeated listeners for the same owner.
+- The lock probe and pipe open are not atomic. A microsecond-scale race remains
+  if the daemon exits after the checks, or another daemon's brief exclusive
+  claim probe or an exclusive third-party handle makes the lock appear held.
+  Generation checks reject an older endpoint during startup, but cannot prove
+  the identity of every exclusive handle holder.
 - The endpoint records the daemon token's elevation state. A non-elevated
   client refuses an elevated daemon before opening its pipe and tells the user
   to stop it with `felan daemon stop` from an elevated terminal or run Felan
-  elevated. An elevated client may attach to a non-elevated daemon. The default
+  elevated. Launching from an elevated client makes the daemon elevated too.
+  An elevated client may attach to a non-elevated daemon, so medium-integrity
+  same-user code that can read the endpoint secret may serve that client.
+  Authentication does not establish the server's integrity level. The default
   pipe DACL is never widened to let medium-integrity code control an elevated
   daemon.
 - Administrators and SYSTEM can read the secret. Same-account code can too.

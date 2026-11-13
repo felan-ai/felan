@@ -3,7 +3,7 @@ import { createServer, Socket, type Server } from 'node:net';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { CONTROL_VERSION, PROTOCOL_VERSION, JsonLineDecoder, encodeFrame, parseControlRequest, parseControlResponse, type ControlResponse, type DaemonIdentity } from '@felan-ai/session-protocol';
-import { assertPrivatePath, connectUnix, DaemonSecurityError, listenUnix, peerUid, protectSocket, tryLockExistingFile } from './native-ownership.js';
+import { assertPrivatePath, connectUnix, DaemonSecurityError, listenUnix, peerUid, protectSocket } from './native-ownership.js';
 import { windowsProcessElevated } from './native-windows.js';
 import { assertPathIdentity, assertTargetIdentity, pathIdentity, pinPathChain, type ResolvedDaemonTarget } from './target.js';
 import { replaceFile, syncDescriptor, syncDirectory } from './durability.js';
@@ -92,19 +92,24 @@ export async function listenLocalIpc(owner: DaemonOwnership, onConnection: (sock
 export async function connectLocalIpc(target: ResolvedDaemonTarget): Promise<Socket> {
   if (process.platform === 'win32') {
     const endpoint = readWindowsEndpoint(target);
-    const locks = pinPathChain(target.accountDirectory, target.principal);
-    assertPrivatePath(target.accountDirectory, lstatSync(target.accountDirectory, { bigint: true }), target.principal, 'directory');
-    const lock = join(target.accountDirectory, namespaceLockName(target)); const pin = pathIdentity(lock);
-    const stat = lstatSync(lock, { bigint: true });
-    if (!stat.isFile() || stat.nlink !== 1n) throw new DaemonSecurityError('unsafe_path', 'Namespace lifetime lock must be a regular file with one link.');
-    const fd = tryLockExistingFile(lock);
-    if (fd !== undefined) { closeSync(fd); throw new DaemonSecurityError('stale_endpoint', 'No daemon holds the namespace lifetime lock.'); }
-    endpoint.pins.push(...locks, pin);
-    for (const pin of endpoint.pins) assertPathIdentity(pin);
-    if (endpoint.elevated && !windowsProcessElevated()) throw new DaemonSecurityError('elevation_mismatch', 'The running daemon was started from an Administrator terminal. Stop it from an elevated terminal with `felan daemon stop` or run Felan elevated.');
-    const socket = await connectWindowsEndpoint(endpoint, 2_000);
-    try { for (const pin of endpoint.pins) assertPathIdentity(pin); return socket; }
-    catch (error) { socket.destroy(); throw error; }
+    try {
+      const locks = pinPathChain(target.accountDirectory, target.principal);
+      assertPrivatePath(target.accountDirectory, lstatSync(target.accountDirectory, { bigint: true }), target.principal, 'directory');
+      const lock = join(target.accountDirectory, namespaceLockName(target)); const pin = pathIdentity(lock);
+      try {
+        closeSync(openSync(lock, 'r'));
+        throw new DaemonSecurityError('stale_endpoint', 'No daemon holds the namespace lifetime lock.');
+      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EBUSY') throw error; }
+      const stat = lstatSync(lock, { bigint: true });
+      if (!stat.isFile() || stat.nlink !== 1n) throw new DaemonSecurityError('unsafe_path', 'Namespace lifetime lock must be a regular file with one link.');
+      if (stat.mtimeNs.toString() !== endpoint.lockStamp) throw new DaemonSecurityError('stale_endpoint', 'IPC endpoint belongs to a different namespace lock generation.');
+      endpoint.pins.push(...locks, pin);
+      if (endpoint.elevated && !windowsProcessElevated()) throw new DaemonSecurityError('elevation_mismatch', 'The running daemon was started from an Administrator terminal. Stop it from an elevated terminal with `felan daemon stop` or run Felan elevated.');
+      assertWindowsEndpointPins(endpoint.pins);
+      const socket = await connectWindowsEndpoint(endpoint, 2_000);
+      try { assertWindowsEndpointPins(endpoint.pins); return socket; }
+      catch (error) { socket.destroy(); throw error; }
+    } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new DaemonSecurityError('stale_endpoint', 'IPC endpoint or namespace lock vanished.'); throw error; }
   }
   const pins = [...pinPathChain(target.runtimeDirectory, target.principal), validateSocket(target)];
   const socket = await connectUnix(target.endpoint, target.uid);
@@ -112,7 +117,15 @@ export async function connectLocalIpc(target: ResolvedDaemonTarget): Promise<Soc
   catch (error) { socket.destroy(); throw error; }
 }
 
-interface WindowsEndpoint { pipe: string; secret: Buffer; elevated: boolean; pins: ReturnType<typeof pinPathChain> }
+interface WindowsEndpoint { pipe: string; secret: Buffer; elevated: boolean; lockStamp: string; pins: ReturnType<typeof pinPathChain> }
+function assertWindowsEndpointPins(pins: WindowsEndpoint['pins']): void {
+  for (const pin of pins) {
+    let current: ReturnType<typeof pathIdentity>;
+    try { current = pathIdentity(pin.path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new DaemonSecurityError('stale_endpoint', 'IPC endpoint or namespace lock vanished.'); throw error; }
+    if (current.dev !== pin.dev || current.ino !== pin.ino) throw new DaemonSecurityError('ownership_lost', 'A daemon-owned path was replaced or removed. Stop this instance before recovery.');
+  }
+}
 function readWindowsEndpoint(target: ResolvedDaemonTarget): WindowsEndpoint {
   const pins = pinPathChain(target.runtimeDirectory, target.principal);
   assertPrivatePath(target.runtimeDirectory, lstatSync(target.runtimeDirectory, { bigint: true }), target.principal, 'directory');
@@ -127,17 +140,19 @@ function readWindowsEndpoint(target: ResolvedDaemonTarget): WindowsEndpoint {
     if (opened.dev !== pin.dev || opened.ino !== pin.ino) throw new DaemonSecurityError('ownership_lost', 'IPC endpoint changed while opening.');
     while (size < bytes.length) { const count = readSync(fd, bytes, size, bytes.length - size, null); if (!count) break; size += count; }
   } finally { closeSync(fd); }
-  for (const p of pins) assertPathIdentity(p);
+  assertWindowsEndpointPins(pins);
   let value: unknown;
   try { if (size > 4_096) throw new Error('oversize'); value = JSON.parse(bytes.subarray(0, size).toString('utf8')); }
   catch { throw new DaemonSecurityError('unsafe_endpoint', 'Malformed or oversized IPC endpoint.'); }
-  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 4
-    || !('version' in value) || value.version !== 1 || !('pipe' in value) || typeof value.pipe !== 'string' || !/^\\\\\.\\pipe\\felan-daemon-[a-f0-9]{32}$/.test(value.pipe)
+  if (value && typeof value === 'object' && 'version' in value && value.version !== 2) throw new DaemonSecurityError('stale_endpoint', 'IPC endpoint uses an unsupported version.');
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).length !== 5
+    || !('version' in value) || value.version !== 2 || !('pipe' in value) || typeof value.pipe !== 'string' || !/^\\\\\.\\pipe\\felan-daemon-[a-f0-9]{32}$/.test(value.pipe)
     || !('secret' in value) || typeof value.secret !== 'string' || !/^[A-Za-z0-9+/]{43}=$/.test(value.secret)
-    || !('elevated' in value) || typeof value.elevated !== 'boolean') throw new DaemonSecurityError('unsafe_endpoint', 'Invalid IPC endpoint fields.');
+    || !('elevated' in value) || typeof value.elevated !== 'boolean'
+    || !('lockStamp' in value) || typeof value.lockStamp !== 'string' || !/^(0|[1-9]\d{0,23})$/.test(value.lockStamp)) throw new DaemonSecurityError('unsafe_endpoint', 'Invalid IPC endpoint fields.');
   const secret = Buffer.from(value.secret, 'base64');
   if (secret.length !== 32 || secret.toString('base64') !== value.secret) throw new DaemonSecurityError('unsafe_endpoint', 'Invalid IPC endpoint secret.');
-  return { pipe: value.pipe, secret, elevated: value.elevated, pins };
+  return { pipe: value.pipe, secret, elevated: value.elevated, lockStamp: value.lockStamp, pins };
 }
 
 async function connectWindowsEndpoint(endpoint: WindowsEndpoint, timeoutMs: number): Promise<Socket> {
@@ -172,24 +187,24 @@ async function listenWindowsIpc(owner: DaemonOwnership, onConnection: (socket: S
 
 async function bindWindowsIpc(owner: DaemonOwnership, onConnection: (socket: Socket) => void, release: () => void): Promise<LocalIpcListener> {
   owner.assertCurrent(); const target = owner.target;
-  if (endpointExists(target.endpoint)) {
-    const stale = readWindowsEndpoint(target);
-    // The lifetime lock excludes a live daemon. Never send a handshake to a stale pipe another account may own.
-    owner.assertCurrent(); for (const pin of stale.pins) assertPathIdentity(pin); unlinkSync(target.endpoint);
-  }
+  if (endpointExists(target.endpoint)) throw new DaemonSecurityError('endpoint_live', 'An endpoint appeared after ownership acquisition; never replace it to force startup.');
   const secret = randomBytes(32); const connections = new Set<Socket>();
-  let closed = false; let ready = false; let server: Server | undefined; let pin: ReturnType<typeof pathIdentity> | undefined;
+  let closed = false; let ready = false; let handlesReleased = false; let unbound = false; let server: Server | undefined; let pin: ReturnType<typeof pathIdentity> | undefined;
   let unwatch = () => {}; let unsubscribe = () => {};
   function close() {
     unsubscribe();
-    if (closed) { unwatch(); return; }
-    closed = true; server?.close();
-    for (const socket of connections) socket.destroy();
-    connections.clear();
-    try { owner.assertCurrent(); if (pin) { assertPathIdentity(pin); unwatch(); unlinkSync(target.endpoint); } }
-    catch { /* Never remove a replacement endpoint or clean up after ownership loss. */ }
-    finally { unwatch(); release(); }
+    if (!closed) {
+      closed = true;
+      for (const socket of connections) socket.destroy();
+      connections.clear();
+      try { owner.assertCurrent(); if (pin) { assertPathIdentity(pin); unwatch(); unlinkSync(target.endpoint); } }
+      catch { /* Never remove a replacement endpoint or clean up after ownership loss. */ }
+      finally { unwatch(); }
+    }
+    // A fenced process still holds its lock, so it must retain the pipe name until those handles close.
+    if (handlesReleased) { if (server && !unbound) { unbound = true; server.close(); } release(); }
   }
+  owner.onReleased(() => { handlesReleased = true; close(); });
   function acceptConnection(socket: Socket) {
     socket.on('error', () => {}); socket.once('close', () => connections.delete(socket));
     if (closed || !ready) { socket.destroy(); return; }
@@ -226,7 +241,8 @@ async function bindWindowsIpc(owner: DaemonOwnership, onConnection: (socket: Soc
         tempPin = pathIdentity(temp); const opened = fstatSync(fd, { bigint: true });
         assertPrivatePath(temp, opened, target.principal, 'file');
         if (opened.dev !== tempPin.dev || opened.ino !== tempPin.ino) throw new DaemonSecurityError('ownership_lost', 'IPC endpoint changed while creating.');
-        writeFileSync(fd, JSON.stringify({ version: 1, pipe, secret: secret.toString('base64'), elevated: windowsProcessElevated() })); syncDescriptor(fd);
+        if (!owner.lockStamp) throw new DaemonSecurityError('ownership_lost', 'Namespace lock generation is unavailable.');
+        writeFileSync(fd, JSON.stringify({ version: 2, pipe, secret: secret.toString('base64'), elevated: windowsProcessElevated(), lockStamp: owner.lockStamp })); syncDescriptor(fd);
       }
       finally { closeSync(fd); }
       owner.assertCurrent(); assertPathIdentity(tempPin);

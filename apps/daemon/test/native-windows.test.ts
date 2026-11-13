@@ -1,11 +1,11 @@
 import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { chmodSync, closeSync, existsSync, linkSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { tmpdir, userInfo } from 'node:os';
 import { join, parse } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { accountPrincipal, assertOwnedFile, assertPrivatePath, isWritableByOthers, lockStillHeld, protectPrivateDirectory, requireOwnershipPlatform, socketPathLimit, tryLockExistingFile, tryLockFile } from '../src/daemon/native-ownership.js';
-import { canonicalProspectivePath, pinPathChain, privateDirectory, realAccountLocation, resolveDaemonTarget } from '../src/daemon/target.js';
+import { canonicalProspectivePath, pinPathChain, privateDirectory, realAccountLocation, resolveDaemonTarget, storeDirectory } from '../src/daemon/target.js';
 import { replaceFile, syncDirectory } from '../src/daemon/durability.js';
 
 const roots: string[] = [];
@@ -45,6 +45,11 @@ function fixture(): string {
 function grant(path: string, rights: string): void {
   const result = spawnSync('icacls.exe', [path, '/grant', `*S-1-1-0:${rights}`], { windowsHide: true, encoding: 'utf8' });
   expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+}
+function acl(path: string): string {
+  const result = spawnSync('icacls.exe', [path], { windowsHide: true, encoding: 'utf8' });
+  expect(result.error).toBeUndefined(); expect(result.status).toBe(0);
+  return result.stdout;
 }
 async function childLock(path: string, mode = 'lock') {
   const child = spawn(process.execPath, ['--input-type=module', '-e', childSource, mode, path], { windowsHide: true, stdio: 'pipe' });
@@ -94,6 +99,27 @@ describe.runIf(process.platform === 'win32')('native Windows ownership', () => {
     expect(isWritableByOthers(file, lstatSync(file, { bigint: true }))).toBe(false);
   });
 
+  it('protects every new store directory beneath a permissive inherited DACL', () => {
+    const root = fixture(); grant(root, '(OI)(CI)F');
+    const directories = [join(root, 'store'), join(root, 'store', 'nested'), join(root, 'store', 'nested', 'control')];
+    expect(storeDirectory(directories[2]!)).toBe(directories[2]);
+    for (const directory of directories) {
+      expect(() => assertPrivatePath(directory, lstatSync(directory, { bigint: true }), accountPrincipal(), 'directory')).not.toThrow();
+      expect(isWritableByOthers(directory, lstatSync(directory, { bigint: true }))).toBe(false);
+    }
+    const file = join(directories[2]!, 'state'); writeFileSync(file, 'private');
+    expect(() => assertPrivatePath(file, lstatSync(file, { bigint: true }), accountPrincipal(), 'file')).not.toThrow();
+  });
+
+  it('preserves DACLs on existing store directories', () => {
+    const root = fixture(); grant(root, '(OI)(CI)F'); const existing = join(root, 'existing'); mkdirSync(existing);
+    const before = acl(existing); const parentBefore = acl(root);
+    expect(isWritableByOthers(existing, lstatSync(existing, { bigint: true }))).toBe(true);
+    expect(storeDirectory(existing)).toBe(existing); storeDirectory(join(existing, 'new', 'child'));
+    expect(acl(existing)).toBe(before); expect(acl(root)).toBe(parentBefore);
+    expect(isWritableByOthers(existing, lstatSync(existing, { bigint: true }))).toBe(true);
+  });
+
   it('rejects an applicable Everyone allow ACE and distinguishes read access from write access', () => {
     const root = fixture(); const directory = privateDirectory(join(root, 'private'), accountPrincipal());
     grant(directory, '(OI)(CI)R');
@@ -124,6 +150,26 @@ describe.runIf(process.platform === 'win32')('native Windows ownership', () => {
     expect(() => assertOwnedFile(alias, lstatSync(alias, { bigint: true }), accountPrincipal())).toThrow();
     linkSync(file, join(root, 'hardlink'));
     expect(() => assertOwnedFile(file, lstatSync(file, { bigint: true }), accountPrincipal())).toThrow(/one link/);
+  });
+
+  it('rejects replacement paths for open owned and private files', () => {
+    const root = fixture(); const file = join(root, 'state'); writeFileSync(file, 'original');
+    const fd = openSync(file, 'r'); descriptors.add(fd); const stat = fstatSync(fd, { bigint: true }); const principal = accountPrincipal();
+    expect(() => assertOwnedFile(file, stat, principal)).not.toThrow();
+    expect(() => assertPrivatePath(file, stat, principal, 'file')).not.toThrow();
+    renameSync(file, join(root, 'original')); writeFileSync(file, 'replacement');
+    expect(readFileSync(fd, 'utf8')).toBe('original');
+    expect(() => assertOwnedFile(file, stat, principal)).toThrow(expect.objectContaining({ code: 'unsafe_path' }));
+    expect(() => assertPrivatePath(file, stat, principal, 'file')).toThrow(expect.objectContaining({ code: 'unsafe_path' }));
+    const current = lstatSync(file, { bigint: true });
+    expect(() => assertOwnedFile(file, current, principal)).not.toThrow();
+    expect(() => assertPrivatePath(file, current, principal, 'file')).not.toThrow();
+  });
+
+  it('rejects replacement private directories', () => {
+    const root = fixture(); const directory = privateDirectory(join(root, 'private'), accountPrincipal()); const stat = lstatSync(directory, { bigint: true });
+    renameSync(directory, join(root, 'original')); privateDirectory(directory, accountPrincipal());
+    expect(() => assertPrivatePath(directory, stat, accountPrincipal(), 'directory')).toThrow(expect.objectContaining({ code: 'unsafe_path' }));
   });
 
   it('probes only existing lifetime locks and releases a successful probe immediately', async () => {

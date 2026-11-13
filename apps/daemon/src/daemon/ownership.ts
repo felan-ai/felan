@@ -1,5 +1,5 @@
-import { closeSync, constants, futimesSync, lstatSync, lutimesSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { createHash, randomUUID } from 'node:crypto';
+import { closeSync, constants, fstatSync, futimesSync, lstatSync, lutimesSync, openSync, readFileSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
+import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 import { replaceFile, syncDescriptor, syncDirectory } from './durability.js';
@@ -64,12 +64,17 @@ function uniqueNodes(pins: readonly PathIdentity[]): NodeIdentity[] {
 function claimActive(target: ResolvedDaemonTarget, claim: Claim): boolean {
   const path = join(target.accountDirectory, claim.lock);
   let fd: number | undefined;
-  try { fd = tryLockExistingFile(path); }
-  catch { return false; }
+  if (process.platform === 'win32') {
+    try { fd = tryLockExistingFile(path); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  } else {
+    try { fd = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW); }
+    catch { return false; }
+  }
   try {
     const pin = pathIdentity(path);
     if (String(pin.dev) !== claim.lockNode.dev || String(pin.ino) !== claim.lockNode.ino) return false;
-    return fd === undefined;
+    return process.platform === 'win32' ? fd === undefined : !lockStillHeld(fd!);
   }
   finally { if (fd !== undefined) closeSync(fd); }
 }
@@ -110,6 +115,32 @@ export function namespaceLockName(target: ResolvedDaemonTarget): string {
   return target.kind === 'production' ? 'production.lock' : `isolated-${createHash('sha256').update(target.namespaceId).digest('hex')}.lock`;
 }
 
+/** @internal */
+export async function acquireNamespaceLifetimeLock(target: ResolvedDaemonTarget, assertCurrent: () => void = () => {}): Promise<{ fd: number; lockStamp?: string }> {
+  const path = join(target.accountDirectory, namespaceLockName(target));
+  let fd = tryLockFile(path, target.principal);
+  if (process.platform === 'win32') {
+    const deadline = performance.now() + 200;
+    while (fd === undefined && performance.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10)); assertCurrent();
+      fd = tryLockFile(path, target.principal);
+    }
+  }
+  if (fd === undefined) throw new DaemonSecurityError('owner_running', 'This OS account/namespace already has a daemon. Attach using its pinned roots; do not delete locks.');
+  try {
+    let lockStamp: string | undefined;
+    if (process.platform === 'win32') {
+      const previous = fstatSync(fd, { bigint: true }).mtimeNs.toString();
+      do {
+        const stamp = new Date(randomInt(0, 2 ** 47));
+        futimesSync(fd, stamp, stamp);
+        lockStamp = fstatSync(fd, { bigint: true }).mtimeNs.toString();
+      } while (lockStamp === previous);
+    }
+    return { fd, ...(lockStamp ? { lockStamp } : {}) };
+  } catch (error) { closeSync(fd); throw error; }
+}
+
 function storeRootAllowed(target: ResolvedDaemonTarget, root: string): boolean {
   if (pathsOverlap(root, target.accountDirectory) || pathsOverlap(root, target.runtimeDirectory)) return false;
   return target.kind !== 'isolated' || pathInside(dirname(target.runtimeDirectory), root);
@@ -145,13 +176,15 @@ export class DaemonOwnership {
   private releasePromise: Promise<void> | undefined;
   private timer: NodeJS.Timeout;
   private listeners = new Set<(error: DaemonSecurityError) => void>();
+  private releaseListeners = new Set<() => void>();
+  private handlesReleased = false;
   private extraPins: PathIdentity[] = [];
   private current: ResolvedDaemonTarget;
   private readonly owning = new Map<string, Promise<void>>();
   private refreshedAt = 0;
 
   constructor(target: ResolvedDaemonTarget, readonly instanceId: string, private readonly fds: number[], private readonly pins: readonly PathIdentity[],
-    private readonly lockedRoots: string[] = [...target.rootSet]) {
+    private readonly lockedRoots: string[] = [...target.rootSet], readonly lockStamp?: string) {
     this.current = target;
     const identity = identityFor(target, instanceId); Object.freeze(identity.rootSet);
     this.identity = Object.freeze(identity);
@@ -231,6 +264,9 @@ export class DaemonOwnership {
     if (this.lost) listener(this.lost);
     return () => this.listeners.delete(listener);
   }
+  onReleased(listener: () => void): void {
+    if (this.handlesReleased) listener(); else this.releaseListeners.add(listener);
+  }
   release(): Promise<void> { return this.releasePromise ??= this.releaseOnce(); }
   private async releaseOnce(): Promise<void> {
     // Call only after all owned writers have settled, including after loss.
@@ -245,6 +281,9 @@ export class DaemonOwnership {
     } finally {
       for (const fd of this.fds.splice(0).reverse()) closeSync(fd);
       if (coordinator) closeSync(coordinator.fd);
+      this.handlesReleased = true;
+      for (const listener of this.releaseListeners) { try { listener(); } catch { /* A failed observer must not suppress the remaining releases. */ } }
+      this.releaseListeners.clear();
       this.listeners.clear();
     }
   }
@@ -259,17 +298,22 @@ export async function acquireDaemonOwnership(input: DaemonTarget): Promise<Daemo
     const candidateNodes = existingNodes(guardedRoots);
     const candidateAncestors = target.pins.map(node);
     const lock = namespaceLockName(target);
-    let lifetime = tryLockFile(join(target.accountDirectory, lock), target.principal);
+    const { fd: lifetime, lockStamp } = await acquireNamespaceLifetimeLock(target, () => { for (const pin of coordinator.pins) assertPathIdentity(pin); });
+    held.push(lifetime);
     if (process.platform === 'win32') {
-      const deadline = performance.now() + 200;
-      while (lifetime === undefined && performance.now() < deadline) {
-        await new Promise(resolve => setTimeout(resolve, 10));
-        for (const pin of coordinator.pins) assertPathIdentity(pin);
-        lifetime = tryLockFile(join(target.accountDirectory, lock), target.principal);
+      for (const pin of target.pins) assertPathIdentity(pin);
+      let stale: BigIntStats | undefined;
+      try { stale = lstatSync(target.endpoint, { bigint: true }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      if (stale) {
+        assertPrivatePath(target.runtimeDirectory, lstatSync(target.runtimeDirectory, { bigint: true }), target.principal, 'directory');
+        assertPrivatePath(target.endpoint, stale, target.principal, 'file');
+        const pin = pathIdentity(target.endpoint);
+        if (pin.dev !== stale.dev || pin.ino !== stale.ino) throw new DaemonSecurityError('ownership_lost', 'IPC endpoint changed during startup.');
+        for (const pin of target.pins) assertPathIdentity(pin);
+        assertPathIdentity(pin); unlinkSync(target.endpoint);
       }
     }
-    if (lifetime === undefined) throw new DaemonSecurityError('owner_running', 'This OS account/namespace already has a daemon. Attach using its pinned roots; do not delete locks.');
-    held.push(lifetime);
     const live = readLedger(target.accountDirectory).claims.filter(claim => claim.lock !== lock && claimActive(target, claim));
     for (const claim of live) {
       if (claim.roots.some(root => guardedRoots.some(other => pathsOverlap(root, other))) || nodesIntersect(claim.nodes, candidateAncestors) || nodesIntersect(candidateNodes, claim.ancestors)) {
@@ -291,7 +335,7 @@ export async function acquireDaemonOwnership(input: DaemonTarget): Promise<Daemo
     const lockedRoots = [...target.rootSet];
     const known = [...new Set(readKnownRoots(target))].filter(root => !lockedRoots.some(owned => pathInside(owned, root)));
     const owned = known.length ? Object.freeze({ ...target, rootSet: Object.freeze([...target.rootSet, ...known]) }) : target;
-    return new DaemonOwnership(owned, instanceId, held, [...coordinator.pins, ...target.pins, ...lockPins], lockedRoots);
+    return new DaemonOwnership(owned, instanceId, held, [...coordinator.pins, ...target.pins, ...lockPins], lockedRoots, lockStamp);
   } catch (error) { for (const fd of held.reverse()) closeSync(fd); throw error; }
   finally { closeSync(coordinator.fd); }
 }

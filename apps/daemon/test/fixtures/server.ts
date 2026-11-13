@@ -2,19 +2,19 @@ import type { HostConfiguration } from '../../src/daemon/host-services.js';
 import type { ProcessAdapter } from '../../src/daemon/process-adapter.js';
 import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { closeSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream, type ExtensionAPI, type ExtensionConfigDefinition } from '@felan-ai/agent-core';
 import { DaemonControlStore, type ControlCapacity } from '../../src/daemon/control-store.js';
 import { createTestSessionLifecycle } from './session-runtime.js';
 import type { SessionExtensionBindings as ProfileExtensionBindings, SessionExtensionContext as ProfileExtensionContext } from '../../src/daemon/session-execution.js';
-import type { DaemonOwnership } from '../../src/daemon/ownership.js';
+import { acquireNamespaceLifetimeLock, type DaemonOwnership } from '../../src/daemon/ownership.js';
 import type { SessionRuntime } from '../../src/daemon/session-runtime.js';
 import type { SessionLifecycleOptions } from '../../src/daemon/session-lifecycle.js';
 import type { RuntimeFactory } from '../../src/runtime-factory.js';
 import { SessionRegistry, type RegistryOptions } from '../../src/daemon/registry.js';
-import { canonicalProspectivePath, identityFor, resolveDaemonTarget } from '../../src/daemon/target.js';
+import { canonicalProspectivePath, identityFor, privateDirectory, resolveDaemonTarget } from '../../src/daemon/target.js';
 import { assistant, now, offlineModel } from './registry.js';
 
 export { now, requestId } from './registry.js';
@@ -52,9 +52,19 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
     await writeFile(join(skills, 'SKILL.md'), '---\nname: shared-test-skill\ndescription: Private fixture skill\n---\nLoaded skill instructions from private fixture.\n');
   }
   const target = resolveDaemonTarget({ kind: 'isolated', directory, namespaceId: options.namespace?.(directory) ?? randomUUID(), storeRoots: [directory] });
-  // The fixture exercises real profile/control files without acquiring account-wide OS ownership.
+  // Windows IPC requires a real namespace lock even when store ownership is synthetic.
+  let lifetime = process.platform === 'win32' ? await (async () => {
+    privateDirectory(target.accountDirectory, target.principal);
+    return acquireNamespaceLifetimeLock(target);
+  })() : undefined;
+  let released = false; const releaseListeners = new Set<() => void>();
+  function release() {
+    if (released) return;
+    if (lifetime) closeSync(lifetime.fd);
+    released = true; for (const listener of releaseListeners) listener(); releaseListeners.clear();
+  }
   const owner = {
-    target, identity: identityFor(target, randomUUID()),
+    target, identity: identityFor(target, randomUUID()), get lockStamp() { return lifetime?.lockStamp; },
     assertCurrent() {},
     assertOwnsPath(input: string) {
       const path = canonicalProspectivePath(input); const child = relative(directory, path);
@@ -63,46 +73,53 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
     },
     async ownRoot(input: string) { owner.assertOwnsPath(input); },
     watchPath: () => () => {}, onLost: () => () => {},
+    onReleased(listener: () => void) { if (released) listener(); else releaseListeners.add(listener); },
   } as unknown as DaemonOwnership;
-  let registry: SessionRegistry | undefined;
-  const store = new DaemonControlStore(owner, { now: options.now ?? (() => now), ...(options.capacity ? { capacity: options.capacity } : {}) });
-  await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
-    ...(options.compaction ? { compaction: options.compaction } : {}) }));
-  const runtimeFactory: RuntimeFactory = request => registry!.wrapOpeningRuntime(new HostAgentRuntime(request.cwd, request), request.rootSessionId);
-  const composition = options.createComposition?.(runtimeFactory) ?? options.composition;
-  const profile = await createTestSessionLifecycle({ agentDir, homeDir: directory, ...(options.deferActivation ? { deferActivation: true } : {}),
-    ...(options.extensionPackages ? { extensionAllowlist: options.extensionPackages } : {}),
-    ...(composition ? { composition } : {}), definitions: options.configDefinitions ?? [],
-    ...(options.openServiceScope ? { openServiceScope: options.openServiceScope } : {}),
-    ...(options.skill ? { skillPaths: [join(cwd, '.agents', 'skills')] } : {}),
-    runtimeFactory,
-    ...(options.configuration ? { configuration: () => options.configuration! } : {}),
-    createModelRuntime: async () => {
-      const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
-      models.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel], streamSimple: () => {
-        const stream = createAssistantMessageEventStream();
-        void Promise.resolve().then(options.onStream).then(() => stream.push({ type: 'done', reason: 'stop', message: assistant() }));
-        return stream;
+  try {
+    let registry: SessionRegistry | undefined;
+    const store = new DaemonControlStore(owner, { now: options.now ?? (() => now), ...(options.capacity ? { capacity: options.capacity } : {}) });
+    await writeFile(join(agentDir, 'settings.json'), JSON.stringify({
+      ...(options.compaction ? { compaction: options.compaction } : {}) }));
+    const runtimeFactory: RuntimeFactory = request => registry!.wrapOpeningRuntime(new HostAgentRuntime(request.cwd, request), request.rootSessionId);
+    const composition = options.createComposition?.(runtimeFactory) ?? options.composition;
+    const profile = await createTestSessionLifecycle({ agentDir, homeDir: directory, ...(options.deferActivation ? { deferActivation: true } : {}),
+      ...(options.extensionPackages ? { extensionAllowlist: options.extensionPackages } : {}),
+      ...(composition ? { composition } : {}), definitions: options.configDefinitions ?? [],
+      ...(options.openServiceScope ? { openServiceScope: options.openServiceScope } : {}),
+      ...(options.skill ? { skillPaths: [join(cwd, '.agents', 'skills')] } : {}),
+      runtimeFactory,
+      ...(options.configuration ? { configuration: () => options.configuration! } : {}),
+      createModelRuntime: async () => {
+        const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
+        models.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel], streamSimple: () => {
+          const stream = createAssistantMessageEventStream();
+          void Promise.resolve().then(options.onStream).then(() => stream.push({ type: 'done', reason: 'stop', message: assistant() }));
+          return stream;
+        } });
+        return models;
       } });
-      return models;
-    } });
-  let installedServices: RegistryOptions['services'] | undefined;
-  registry = new SessionRegistry({ owner, store, lifecycle: profile, now: options.now ?? (() => now), idleMs: 0,
-    ...(composition?.acquireRun ? { acquireRun: composition.acquireRun.bind(composition) } : {}),
-    ...(options.processAdapter ?? composition?.processAdapter ? { processAdapter: options.processAdapter ?? composition!.processAdapter! } : {}),
-    services: input => {
-      if (options.servicesFactory) return (installedServices ??= options.servicesFactory(registry!))(input);
-      return { getExecutionPolicy: input.getExecutionPolicy, extensions: {
-      configuration: async () => options.configDefinitions ?? [], bind: async context => {
-        options.onBind?.(context);
-        const ui = options.extensionUi?.(context, registry!);
-        return { importExtension: context.importExtension, dispose: async () => { await ui?.dispose(); },
-          ...(ui ? { uiContext: ui.context } : {}),
-          ...(options.extension ? { inlineExtensions: [{ name: 'synthetic', factory: options.extension }] } : {}) };
+    let installedServices: RegistryOptions['services'] | undefined;
+    registry = new SessionRegistry({ owner, store, lifecycle: profile, now: options.now ?? (() => now), idleMs: 0,
+      ...(composition?.acquireRun ? { acquireRun: composition.acquireRun.bind(composition) } : {}),
+      ...(options.processAdapter ?? composition?.processAdapter ? { processAdapter: options.processAdapter ?? composition!.processAdapter! } : {}),
+      services: input => {
+        if (options.servicesFactory) return (installedServices ??= options.servicesFactory(registry!))(input);
+        return { getExecutionPolicy: input.getExecutionPolicy, extensions: {
+        configuration: async () => options.configDefinitions ?? [], bind: async context => {
+          options.onBind?.(context);
+          const ui = options.extensionUi?.(context, registry!);
+          return { importExtension: context.importExtension, dispose: async () => { await ui?.dispose(); },
+            ...(ui ? { uiContext: ui.context } : {}),
+            ...(options.extension ? { inlineExtensions: [{ name: 'synthetic', factory: options.extension }] } : {}) };
+        },
+        } };
+      } });
+    const root = await registry.create({ cwd, target: { kind: 'new' }, model: offlineModel });
+    return { directory, cwd, store, owner, profile, registry, root,
+      async resetIpcOwnership() {
+        if (process.platform !== 'win32') return;
+        release(); lifetime = await acquireNamespaceLifetimeLock(target); released = false;
       },
-      } };
-    } });
-  const root = await registry.create({ cwd, target: { kind: 'new' }, model: offlineModel });
-  return { directory, cwd, store, owner, profile, registry, root,
-    async dispose() { await registry!.shutdown(); store.close(); await profile.dispose(); await rm(directory, { recursive: true, force: true }); } };
+      async dispose() { await registry!.shutdown(); store.close(); await profile.dispose(); release(); await rm(directory, { recursive: true, force: true }); } };
+  } catch (error) { release(); throw error; }
 }
