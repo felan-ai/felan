@@ -23,7 +23,7 @@ export function createMemoryPresentation(pi: FelanExtensionAPI, environment: Mem
       signal.throwIfAborted();
       const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
       const opened = await pi.runtime.exec(command, [directory]);
-      if (opened.code !== 0) throw new Error('Memory directory could not be opened.');
+      if (opened.code !== 0 && !(process.platform === 'win32' && opened.code === 1 && !opened.killed && !opened.stderr)) throw new Error('Memory directory could not be opened.');
     },
     async showHistory(ctx, agentDir, status, callerSignal) {
       if (active) { await pi.ui.notify({ text: 'A memory view is already open for this session.', level: 'warning' }); return; }

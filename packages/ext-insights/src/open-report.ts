@@ -31,5 +31,5 @@ export async function openReportOnHost(options: {
   signal.throwIfAborted();
   const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
   const opened = await runtime.exec(command, [path]);
-  return opened.code === 0 ? 'opened' : 'failed';
+  return opened.code === 0 || process.platform === 'win32' && opened.code === 1 && !opened.killed && !opened.stderr ? 'opened' : 'failed';
 }

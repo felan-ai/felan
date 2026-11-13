@@ -7,6 +7,46 @@ import { createMemoryPresentation } from '../../src/local/ui.js';
 
 vi.mock('../../src/local/history.js', () => ({ listLocalSessionHistory: vi.fn(), readMemoryHistorySnapshot: vi.fn() }));
 
+function directoryFixture(code = 0, stderr = '', killed = false) {
+  const exec = vi.fn(async () => ({ code, stderr, killed, stdout: '' }));
+  const request = vi.fn<ExtensionUi['request']>().mockResolvedValue({ state: 'answered', answer: { kind: 'form', outcome: 'submit', actionId: 'open', values: {} } });
+  const pi = { ui: { request }, runtime: { exec } } as unknown as FelanExtensionAPI;
+  return { exec, request, presentation: createMemoryPresentation(pi, {} as MemoryContext), signal: new AbortController().signal };
+}
+
+describe('open memory directory', () => {
+  it('uses literal argv only after host confirmation', async () => {
+    const { exec, request, presentation, signal } = directoryFixture();
+    await presentation.openDirectory('memory with spaces', signal);
+    const command = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'explorer.exe' : 'xdg-open';
+    expect(exec).toHaveBeenCalledWith(command, ['memory with spaces']);
+    expect(request).toHaveBeenCalledWith(expect.anything(), { audience: 'host', signal });
+    exec.mockClear();
+    request.mockResolvedValue({ state: 'answered', answer: { kind: 'form', outcome: 'cancel', actionId: 'close', values: {} } });
+    await presentation.openDirectory('memory with spaces', signal);
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it('reports an opener failure', async () => {
+    const { presentation, signal } = directoryFixture(17);
+    await expect(presentation.openDirectory('memory', signal)).rejects.toThrow('Memory directory could not be opened.');
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps exit code 1 as a failure on POSIX', async () => {
+    const { presentation, signal } = directoryFixture(1);
+    await expect(presentation.openDirectory('memory', signal)).rejects.toThrow('Memory directory could not be opened.');
+  });
+
+  it.runIf(process.platform === 'win32')('accepts Explorer exit code 1 without treating spawn errors or termination as success', async () => {
+    const { presentation, signal } = directoryFixture(1);
+    await expect(presentation.openDirectory('memory', signal)).resolves.toBeUndefined();
+    for (const [stderr, killed] of [['spawn ENOENT', false], ['', true]] as const) {
+      const failure = directoryFixture(1, stderr, killed);
+      await expect(failure.presentation.openDirectory('memory', failure.signal)).rejects.toThrow('Memory directory could not be opened.');
+    }
+  });
+});
+
 describe('memory history actions', () => {
   it.each([false, true])('omits inspect when empty (filtered: %s) but retains search and refresh recovery', async filtered => {
     const row = { name: 'Saved run', id: 'run', cwd: '/project', firstMessage: 'hello',
