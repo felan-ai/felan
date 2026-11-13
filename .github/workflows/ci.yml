@@ -14,27 +14,55 @@ concurrency:
 
 jobs:
   check:
-    name: ${{ matrix.name }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: ${{ matrix.name }}${{ matrix.os != 'ubuntu-latest' && format(' ({0})', matrix.os) || '' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.os == 'ubuntu-latest' && 30 || 60 }}
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         include:
           # Each job runs the root Vitest config so its projects share one worker pool.
           - name: test daemon
+            os: ubuntu-latest
             run: pnpm test -- --project @felan-ai/daemon
           - name: test felan
+            os: ubuntu-latest
             run: pnpm test -- --project @felan-ai/felan
           - name: test packages
+            os: ubuntu-latest
             run: pnpm test -- --project '@felan-ai/ext-*' --project @felan-ai/agent-core --project @felan-ai/session-protocol
           # Build compiles every workspace with the same sources and options as type-check.
           - name: packed install
+            os: ubuntu-latest
             run: pnpm check:licenses && pnpm pack:all && pnpm test:packed-bin && pnpm test:dist
           - name: release versions
+            os: ubuntu-latest
             run: pnpm check:proposed-version
+          - name: test daemon
+            os: windows-latest
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon
+          - name: test felan
+            os: windows-latest
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/felan
+          - name: test packages
+            os: windows-latest
+            run: scripts/test-isolated.sh pnpm test -- --project '@felan-ai/ext-*' --project @felan-ai/agent-core --project @felan-ai/session-protocol
+          - name: packed install
+            os: windows-latest
+            run: scripts/test-isolated.sh bash -c 'pnpm check:licenses && pnpm pack:all && pnpm test:packed-bin && pnpm test:dist'
+          - name: test daemon
+            os: windows-11-arm
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon
     steps:
       - uses: actions/checkout@v4
+        # Git Bash scripts and the shrinkwrap parser require LF before any run step.
+        env:
+          GIT_CONFIG_COUNT: ${{ runner.os == 'Windows' && '1' || '0' }}
+          GIT_CONFIG_KEY_0: core.autocrlf
+          GIT_CONFIG_VALUE_0: 'false'
       - uses: pnpm/action-setup@v4
         with:
           version: 9.15.5
@@ -42,8 +70,15 @@ jobs:
         with:
           node-version: 22.23.4
           cache: pnpm
+      - name: Configure Windows script shell
+        if: runner.os == 'Windows'
+        run: pnpm config set script-shell 'C:\Program Files\Git\bin\bash.exe' --location project
       - run: pnpm install --frozen-lockfile
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
+        if: runner.os == 'Linux'
+      - name: Install Windows ripgrep
+        if: runner.os == 'Windows'
+        run: choco install ripgrep --no-progress -y && rg --version
       - run: pnpm dead-code
         if: matrix.name == 'packed install'
       - run: pnpm build

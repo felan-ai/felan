@@ -1,5 +1,10 @@
+import { execFile } from 'node:child_process';
+import { win32 } from 'node:path';
+import { promisify } from 'node:util';
 import type { AgentRuntime } from '@felan-ai/agent-core';
 import type { Interaction } from '@felan-ai/session-protocol';
+
+const execFileAsync = promisify(execFile);
 
 export async function openHostUrl(runtime: AgentRuntime, value: string, signal: AbortSignal): Promise<void> {
   const url = new URL(value);
@@ -17,6 +22,15 @@ export function prepareLocalInteractionOpen(_options: {
 
 async function openTarget(runtime: AgentRuntime, value: string, signal: AbortSignal): Promise<void> {
   signal.throwIfAborted();
+  if (process.platform === 'win32') {
+    if (runtime.kind !== 'host') throw new Error('Opening local applications requires a host runtime.');
+    const root = process.env.SystemRoot;
+    if (!root || !/^[a-z]:[\\/]/iu.test(root) || /[\u0000-\u001f\u007f]/u.test(root)) throw new Error('The Windows system directory is unavailable.');
+    try {
+      await execFileAsync(win32.join(root, 'System32', 'rundll32.exe'), ['url.dll,FileProtocolHandler', value], { signal, timeout: 5000, maxBuffer: 4096, windowsHide: false });
+    } catch { signal.throwIfAborted(); throw new Error('The local application could not be opened.'); }
+    signal.throwIfAborted(); return;
+  }
   const command = process.platform === 'darwin' ? '/usr/bin/open' : process.platform === 'linux' ? 'xdg-open' : undefined;
   if (!command) throw new Error('Opening local applications is unsupported on this platform.');
   const result = await runtime.exec(command, process.platform === 'darwin' ? ['--', value] : [value], { signal, timeout: 5000, maxOutputBytes: 4096 });
@@ -25,9 +39,10 @@ async function openTarget(runtime: AgentRuntime, value: string, signal: AbortSig
 }
 
 export async function openBrowserSetup(runtime: AgentRuntime, applicationPath: string, signal: AbortSignal): Promise<void> {
-  if (runtime.kind !== 'host' || !applicationPath.startsWith('/') || /[\u0000-\u001f\u007f]/u.test(applicationPath)) throw new Error('Chrome setup requires a valid local application.');
+  if (runtime.kind !== 'host' || /[\u0000-\u001f\u007f]/u.test(applicationPath)) throw new Error('Chrome setup requires a valid local application.');
   signal.throwIfAborted();
   if (process.platform !== 'darwin') throw new Error('Chrome setup is not supported on this platform.');
+  if (!applicationPath.startsWith('/')) throw new Error('Chrome setup requires a valid local application.');
   const result = await runtime.exec('/usr/bin/open', ['-a', applicationPath, 'chrome://inspect/#remote-debugging'], { signal, timeout: 5000, maxOutputBytes: 4096 });
   signal.throwIfAborted();
   if (result.code !== 0 || result.killed || result.truncated) throw new Error('Chrome setup could not be opened.');

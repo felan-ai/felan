@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile, symlink, link, realpath } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile, symlink, link, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { colorToHex } from '@earendil-works/pi-tui';
 import { ClientThemes } from '../src/tui/theme-config.js';
@@ -20,15 +20,15 @@ async function install(path: string, name = 'custom', accent = '#123456') {
 }
 
 it('keeps the production root explicit and isolated client configuration below daemon-runtime', () => {
-  expect(clientConfigurationRoot({ agentDir: '/explicit-agent' })).toBe('/explicit-agent');
-  expect(clientConfigurationRoot({ agentDir: '/host-agent', daemonRuntime: '/disposable' })).toBe('/disposable/client');
+  expect(clientConfigurationRoot({ agentDir: resolve('/explicit-agent') })).toBe(resolve('/explicit-agent'));
+  expect(clientConfigurationRoot({ agentDir: resolve('/host-agent'), daemonRuntime: resolve('/disposable') })).toBe(join(resolve('/disposable'), 'client'));
 });
 
 it('loads packaged client themes with their actual palettes', async () => {
   const themes = new ClientThemes(await root()); await themes.load();
   expect(themes.names).toEqual(expect.arrayContaining(['felan-dark', 'felan-light', 'dark', 'light']));
   expect(colorToHex(themes.theme.colors.accent)).toBe('#75a58a');
-  expect(FELAN_THEME_PATHS.every(path => path.includes('/apps/felan/src/themes/'))).toBe(true);
+  expect(FELAN_THEME_PATHS.every(path => path.includes(join('apps', 'felan', 'src', 'themes')))).toBe(true);
 });
 
 it('loads legacy theme preferences without changing shared settings and writes only client-owned settings', async () => {
@@ -101,7 +101,8 @@ it.each(['../outside', '/absolute', 'x/y/z', '..', 'bad\\path'])('rejects traver
   const themes = new ClientThemes(await root()); await expect(themes.update(name)).rejects.toThrow();
 });
 
-it('rejects client symlinks and skips legacy symlinks without reading their targets', async () => {
+// Windows symlink creation requires privileges that ordinary users do not have.
+it.skipIf(process.platform === 'win32')('rejects client symlinks and skips legacy symlinks without reading their targets', async () => {
   const path = await root(); const outside = await root(); await install(outside);
   await symlink(join(outside, 'themes'), join(path, 'themes'));
   await expect(new ClientThemes(path).load()).rejects.toThrow('Unsafe');
@@ -115,7 +116,7 @@ it('rejects client symlinks and skips legacy symlinks without reading their targ
   expect(await readFile(sensitive, 'utf8')).toBe(JSON.stringify({ theme: 'light' }));
 });
 
-it('ignores symlinked, hardlinked, oversized, mismatched and cyclic theme files', async () => {
+it.skipIf(process.platform === 'win32')('ignores symlinked, hardlinked, oversized, mismatched and cyclic theme files', async () => {
   const path = await root(); const outside = await root(); await mkdir(join(path, 'themes'));
   const external = join(outside, 'external.json'); await writeFile(external, await palette('external'));
   await symlink(external, join(path, 'themes', 'external.json')); await link(external, join(path, 'themes', 'linked.json'));
@@ -125,6 +126,19 @@ it('ignores symlinked, hardlinked, oversized, mismatched and cyclic theme files'
   await writeFile(join(path, 'themes', 'cycle.json'), JSON.stringify(cyclic));
   const themes = new ClientThemes(path); await themes.load(); expect(themes.names).not.toContain('external');
   expect(themes.names).not.toContain('another'); expect(themes.warnings).toHaveLength(5);
+});
+
+it.runIf(process.platform === 'win32')('loads Windows user palettes and ignores hardlinked, oversized and non-file entries', async () => {
+  const path = await root(); await install(path, 'felan-dark', '#abcdef');
+  await chmod(join(path, 'themes'), 0o777);
+  const packaged = [FELAN_THEME_PATHS[1]!];
+  expect(getLocalThemePaths(path, packaged)).toEqual([join(await realpath(path), 'themes')]);
+  const themes = new ClientThemes(path); await themes.load();
+  expect(colorToHex(themes.theme.colors.accent)).toBe('#abcdef');
+  await link(join(path, 'themes', 'felan-dark.json'), join(path, 'linked-theme.json'));
+  await writeFile(join(path, 'themes', 'large.json'), ' '.repeat(128 * 1024 + 1));
+  await mkdir(join(path, 'themes', 'directory.json'));
+  expect(getLocalThemePaths(path, packaged)).toEqual([join(await realpath(path), 'themes'), ...packaged]);
 });
 
 it('rejects invalid colors and missing tokens but skips oversized legacy settings', async () => {

@@ -1,7 +1,8 @@
-import { appendFile, mkdir, rename, stat } from 'node:fs/promises';
+import { appendFile, mkdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Operation } from '@felan-ai/session-protocol';
 import type { RecoveryCause } from './reducer.js';
+import { replaceFile } from '../file-replace.js';
 
 export type AttachTrigger = 'attach' | 'retry' | 'recovery' | 'reconnect';
 export type BlockedReason =
@@ -54,7 +55,7 @@ export function clientDiagnosticsLog(directory: string, maxBytes = 1_048_576): {
         try {
           await mkdir(directory, { recursive: true, mode: 0o700 });
           const size = await stat(path).then(info => info.size, () => 0);
-          if (size > 0 && size + Buffer.byteLength(line) > maxBytes) await rename(path, join(directory, 'client.previous.jsonl'));
+          if (size > 0 && size + Buffer.byteLength(line) > maxBytes) await replaceFile(path, join(directory, 'client.previous.jsonl'));
           await appendFile(path, line, { encoding: 'utf8', mode: 0o600 });
         } catch { /* Diagnostics never affect the client. */ }
       });

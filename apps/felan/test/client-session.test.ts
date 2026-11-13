@@ -717,6 +717,6 @@ describe('client diagnostics', () => {
     await log.flush();
     expect((await stat(join(directory, 'client.jsonl'))).size).toBeLessThanOrEqual(300);
     expect((await readFile(join(directory, 'client.previous.jsonl'), 'utf8')).length).toBeGreaterThan(0);
-    expect((await stat(join(directory, 'client.jsonl'))).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect((await stat(join(directory, 'client.jsonl'))).mode & 0o777).toBe(0o600);
   });
 });

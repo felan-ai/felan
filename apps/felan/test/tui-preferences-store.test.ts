@@ -1,4 +1,5 @@
-import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { defaultPresentationPreferences } from '../src/tui/preferences-schema.js';
@@ -37,17 +38,37 @@ it('merges concurrent field updates and preserves unrelated settings and onboard
   expect(await (f.preferences.load().then(() => f.preferences.values))).toMatchObject({ outputPad: 3, showImages: false, keybindings: { 'app.exit': [] } });
 });
 
-it('rejects invalid updates before writing and skips unsafe legacy keybinding sources', async () => {
+it('rejects invalid updates before writing', async () => {
   const f = await fixture(); const before = await readFile(f.file, 'utf8');
   for (const value of [{ theme: 'invalid/name/parts' }, { token: 'not-a-preference' }, { outputPad: 100 }, { keybindings: { 'app.exit': '\u001b' } }]) {
     await expect(f.preferences.update(value as never)).rejects.toThrow();
   }
   expect(await readFile(f.file, 'utf8')).toBe(before);
+});
+
+// Windows symlink creation requires privileges that ordinary users do not have.
+it.skipIf(process.platform === 'win32')('skips unsafe legacy keybinding sources', async () => {
+  const f = await fixture();
   const target = join(f.directory, 'untrusted.json'); await writeFile(target, '{}');
   await symlink(target, join(f.owner.target.agentDir, 'keybindings.json'));
   await f.preferences.load();
   expect(f.preferences.values.keybindings).toEqual({});
   expect(f.preferences.warnings).toHaveLength(1);
+});
+
+it.runIf(process.platform === 'win32')('loads and updates Windows settings without POSIX ownership, modes or directory fsync', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'client-settings-win-')); cleanup.push(() => rm(root, { recursive: true, force: true }));
+  await chmod(root, 0o777);
+  const preferences = new ClientPreferencesStore(root); await preferences.load();
+  await preferences.update({ outputPad: 3, theme: 'felan-light' });
+  const reopened = new ClientPreferencesStore(root); await reopened.load();
+  expect(reopened.values).toMatchObject({ outputPad: 3, theme: 'felan-light' });
+  expect(reopened.warnings).toEqual([]);
+  const path = join(root, 'tui', 'settings.json');
+  await link(path, join(root, 'linked-settings.json'));
+  await expect(reopened.load()).rejects.toThrow('Unsafe');
+  await rm(join(root, 'linked-settings.json')); await rm(path); await mkdir(path);
+  await expect(reopened.load()).rejects.toThrow('Unsafe');
 });
 
 it('persists terminal controls in client settings and reads them after reconstruction', async () => {

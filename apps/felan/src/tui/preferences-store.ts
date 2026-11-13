@@ -1,4 +1,4 @@
-import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, type Stats } from 'node:fs';
+import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readSync, realpathSync, unlinkSync, writeFileSync, type Stats } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { Type } from 'typebox';
@@ -6,6 +6,7 @@ import { assertJson, parseSchema } from '@felan-ai/session-protocol';
 import { TuiPreferencesSchema, defaultPresentationPreferences, validatePresentationPreferences, type TuiPreferences, type TuiPreferencesUpdate } from './preferences-schema.js';
 import { parseClientKeybindings } from './keybindings.js';
 import { themeSetting } from './theme.js';
+import { replaceFileSync } from '../file-replace.js';
 
 const SETTINGS_BYTES = 256 * 1024;
 const SettingsSchema = Type.Partial(Type.Object({ ...TuiPreferencesSchema.properties, presentation: Type.Unknown(), theme: Type.String() }), { additionalProperties: false });
@@ -36,14 +37,18 @@ export class ClientPreferencesStore {
       const contents = `${JSON.stringify({ ...document, ...next }, null, 2)}\n`;
       if (Buffer.byteLength(contents) > SETTINGS_BYTES) throw new Error('Client settings exceed their size limit.');
       const temporary = join(local, `.settings-${randomUUID()}.tmp`);
-      const handle = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      let handle: number | undefined = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
       try {
         writeFileSync(handle, contents, 'utf8'); fsyncSync(handle);
-        if (directorySync(join(root, 'tui'), false) !== local) throw new Error('Client configuration directory changed.');
-        renameSync(temporary, join(local, 'settings.json'));
-        const parent = openSync(local, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-        try { fsyncSync(parent); } finally { closeSync(parent); }
-      } finally { closeSync(handle); try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
+        if (process.platform === 'win32') { closeSync(handle); handle = undefined; }
+        replaceFileSync(temporary, join(local, 'settings.json'), { beforeRename() {
+          if (directorySync(join(root, 'tui'), false) !== local) throw new Error('Client configuration directory changed.');
+        } });
+        if (process.platform !== 'win32') {
+          const parent = openSync(local, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+          try { fsyncSync(parent); } finally { closeSync(parent); }
+        }
+      } finally { if (handle !== undefined) closeSync(handle); try { unlinkSync(temporary); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
       this.stored = next;
     } else this.stored = { ...this.stored, ...patch };
     this.loaded = true;
@@ -162,18 +167,24 @@ function directorySync(path: string, create: boolean): string | undefined {
   if (create) mkdirSync(path, { recursive: true, mode: 0o700 });
   const stat = statOrUndefined(path);
   if (!stat) return undefined;
-  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o022)) throw new Error('Unsafe client configuration directory.');
-  return realpathSync(resolve(path));
+  const uid = process.getuid?.();
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (uid !== undefined && (stat.uid !== uid || (stat.mode & 0o022)))) throw new Error('Unsafe client configuration directory.');
+  return (process.platform === 'win32' ? realpathSync.native : realpathSync)(resolve(path));
 }
 
 function readBoundedSync(path: string, limit: number): string | undefined {
   if (directorySync(dirname(path), false) !== resolve(dirname(path))) throw new Error('Client configuration directory changed.');
+  const before = statOrUndefined(path);
+  if (!before) return undefined;
+  if (!before.isFile() || before.isSymbolicLink()) throw new Error('Unsafe client configuration file.');
   let file;
   try { file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK); }
   catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; throw error; }
   try {
     const stat = fstatSync(file);
-    if (!stat.isFile() || stat.nlink !== 1 || stat.uid !== process.getuid?.() || stat.size > limit) throw new Error('Unsafe or oversized client configuration file.');
+    const uid = process.getuid?.();
+    if (!stat.isFile() || stat.nlink !== 1 || (uid !== undefined && stat.uid !== uid) || stat.size > limit
+      || stat.dev !== before.dev || stat.ino !== before.ino) throw new Error('Unsafe or oversized client configuration file.');
     const bytes = Buffer.alloc(limit + 1); let size = 0;
     while (size < bytes.length) { const read = readSync(file, bytes, size, bytes.length - size, size); if (!read) break; size += read; }
     if (size > limit) throw new Error('Client configuration file exceeds its size limit.');

@@ -215,7 +215,8 @@ function fixture(mode = 'tui', options: { selected?: string; policy?: 'ask' | 'a
 
 beforeEach(() => openTarget.mockClear());
 
-it.each(['relative.app', '/Applications/Chrome.app\n'])('rejects invalid native application paths: %j', async path => {
+// Native application paths belong to the macOS-only Chrome setup flow.
+it.runIf(process.platform === 'darwin').each(['relative.app', '/Applications/Chrome.app\n'])('rejects invalid native application paths: %j', async path => {
   await expect(openBrowserSetup({ kind: 'host', exec: openTarget } as unknown as AgentRuntime, path, new AbortController().signal)).rejects.toThrow('valid local application');
   expect(openTarget).not.toHaveBeenCalled();
 });

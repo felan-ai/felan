@@ -27,12 +27,13 @@ it('rejects --force outside stop/restart before constructing a client', async ()
 });
 
 it('routes daemon arguments separately from prompts and preserves the explicit isolated target', async () => {
+  const directory = join(tmpdir(), 'explicit-target');
   const launchDaemon = vi.fn(async () => 0);
-  expect(await runCli(['daemon', 'status', '--daemon-runtime', '/tmp/explicit-target'], { launchDaemon })).toBe(0);
-  expect(launchDaemon).toHaveBeenCalledWith(['status', '--daemon-runtime', '/tmp/explicit-target']);
+  expect(await runCli(['daemon', 'status', '--daemon-runtime', directory], { launchDaemon })).toBe(0);
+  expect(launchDaemon).toHaveBeenCalledWith(['status', '--daemon-runtime', directory]);
   const foreground = vi.fn(async () => 7);
-  expect(await runDaemonCommand(['foreground', '--daemon-runtime', '/tmp/explicit-target'], output(), { foreground })).toBe(7);
-  expect(foreground).toHaveBeenCalledWith(expect.objectContaining({ kind: 'isolated', directory: '/tmp/explicit-target', storeRoots: ['/tmp/explicit-target'] }), undefined);
+  expect(await runDaemonCommand(['foreground', '--daemon-runtime', directory], output(), { foreground })).toBe(7);
+  expect(foreground).toHaveBeenCalledWith(expect.objectContaining({ kind: 'isolated', directory, storeRoots: [directory] }), undefined);
 });
 
 it('starts and restarts the actual daemon with a shared launch environment and retained session IDs', async () => {
@@ -60,7 +61,8 @@ it('starts and restarts the actual daemon with a shared launch environment and r
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   const id = created.result.sessionId; await first.attach(id);
   async function environment(client: SessionClient): Promise<string> {
-    const result = await client.request('shell.execute', { command: 'printf "%s" "$FELAN_DAEMON_TEST_LAUNCH"', includeInContext: false }, { session: id });
+    const command = process.platform === 'win32' ? `"${process.execPath}" -p "process.env.FELAN_DAEMON_TEST_LAUNCH"` : 'printf "%s" "$FELAN_DAEMON_TEST_LAUNCH"';
+    const result = await client.request('shell.execute', { command, includeInContext: false }, { session: id });
     expect(result.outcome).toBe('accepted'); if (result.outcome !== 'accepted') throw new Error('Shell rejected');
     let text = '';
     await vi.waitFor(async () => {
@@ -68,7 +70,7 @@ it('starts and restarts the actual daemon with a shared launch environment and r
       expect(read.outcome).toBe('accepted'); if (read.outcome !== 'accepted') return;
       expect(read.result.state).toBe('exited'); text = Buffer.from(read.result.data, 'base64').toString('utf8');
     });
-    return text;
+    return process.platform === 'win32' ? text.trimEnd() : text;
   }
   expect(await environment(first)).toBe('first');
   vi.stubEnv('FELAN_DAEMON_TEST_LAUNCH', 'second');
@@ -84,7 +86,7 @@ it('starts and restarts the actual daemon with a shared launch environment and r
 it('runs the emitted foreground command until its daemon is explicitly stopped', async () => {
   const directory = await mkdtemp(join(tmpdir(), 's14f-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const args = ['--daemon-runtime', directory]; const target = clientDaemonTarget({ daemonRuntime: directory });
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/cli.js', import.meta.url)), 'daemon', 'foreground', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/cli.js', import.meta.url)), 'daemon', 'foreground', ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let text = ''; let finished = false;
   child.stdout.on('data', bytes => { text = (text + String(bytes)).slice(-8192); });
   child.stderr.on('data', bytes => { text = (text + String(bytes)).slice(-8192); });

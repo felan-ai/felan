@@ -62,7 +62,7 @@ function packedManifest(tarball) {
 }
 
 function packedEntries(tarball) {
-  return tar(['-tzf', tarball]).split('\n');
+  return tar(['-tzf', tarball]).split(/\r?\n/u);
 }
 
 function tar(args) {
