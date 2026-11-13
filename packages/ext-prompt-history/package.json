@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-prompt-history",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "description": "TUI prompt-history picker for Felan",
   "license": "MIT",
   "type": "module",
