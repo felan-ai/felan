@@ -150,7 +150,18 @@ export class SessionRegistry {
     if (!opening) throw new Error('Runtime factories must run inside lifecycle.openSession.');
     const scope = { session: opening.workerSession ?? '', root };
     opening.scope = scope;
-    return this.processes.wrap(runtime, scope);
+    return this.processes.wrap(runtime, scope, { changed: tasks => {
+      this.taskGraphs.set(root, tasks.map(({ id, title, status, blockedBy }) => ({ id, title, status, blockedBy: [...blockedBy] })));
+      for (const row of this.list()) if (row.root === root) {
+        this.publish({ v: 1, session: row.id, rev: Math.max(1, this.options.store.sessionMetadata(row.id).revision), change: { type: 'tasks.updated' } });
+      }
+    } });
+  }
+
+  private readonly taskGraphs = new Map<string, readonly import('@felan-ai/agent-core').AgentRuntimeTask[]>();
+
+  taskSnapshot(root: string): readonly import('@felan-ai/agent-core').AgentRuntimeTask[] | undefined {
+    return this.taskGraphs.get(root);
   }
 
   assertAdmission(): void {

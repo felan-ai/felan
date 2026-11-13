@@ -34,6 +34,7 @@ const changes = [
   Type.Object({ type: Type.Literal('child.updated'), child: ChildSchema }),
   Type.Object({ type: Type.Literal('executions.changed'), generation: text(64, 64) }),
   Type.Object({ type: Type.Literal('process.updated'), process: ProcessSchema }),
+  Type.Object({ type: Type.Literal('tasks.updated') }),
   Type.Object({ type: Type.Literal('presentation.updated'), presentation: PresentationSchema }),
   Type.Object({ type: Type.Literal('presentation.removed'), id: IdSchema }),
   Type.Object({ type: Type.Literal('catalog.updated'), catalog: CatalogSchema }),

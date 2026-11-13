@@ -35,6 +35,7 @@ export type {
   AgentRuntimeStdioProcessOptions,
   AgentRuntimeStorage,
   AgentRuntimeStorageScope,
+  AgentRuntimeTask,
   AgentRuntimeTerminals,
   AgentRuntimeTerminalOptions,
   ExecOptions,

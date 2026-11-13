@@ -77,7 +77,7 @@ describe('daemon host workers', () => {
     expect(binding.rootSessionId).toBe(id); expect(binding.parentSessionId).toBeUndefined();
     expect(f.identities).toEqual([{ id, root: id }]);
     expect(binding.agentRuntime).not.toBe(request.runtime);
-    expect(wrap).toHaveBeenCalledWith(request.runtime, { session: id, root: id });
+    expect(wrap).toHaveBeenCalledWith(request.runtime, { session: id, root: id }, { changed: expect.any(Function) });
     const content = new TextEncoder().encode('host worker artifact');
     await binding.agentRuntime.writeFile('artifact.txt', content);
     expect(await binding.agentRuntime.readFile('artifact.txt')).toEqual(content);

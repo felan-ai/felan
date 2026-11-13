@@ -55,6 +55,18 @@ describe('published sessions and hosts', () => {
     expect(() => parsePublishedSession({ ...row, processes: [{ ...process, command: 'x'.repeat(1025) }] })).toThrow();
     expect(() => parsePublishedSession({ ...row, processes: Array.from({ length: LIMITS.pageEntries + 1 }, () => process) })).toThrow();
   });
+  it('parses bounded task graphs while omitting private and unknown task fields', () => {
+    const row = { schemaVersion: 1, session, directory: 'felan', shared: true, title: 'Fix login', state: 'open', runState: 'idle' };
+    const task = { id: 'T-ABC123', title: 'Review change', status: 'pending', blockedBy: [], description: 'private', ownerSessionId: session, updatedAt: 'today' };
+    expect(parsePublishedSession({ ...row, tasks: [] })).toEqual({ ...row, tasks: [] });
+    expect(parsePublishedSession({ ...row, tasks: [task] })).toEqual({ ...row, tasks: [{ id: task.id, title: task.title, status: task.status, blockedBy: [] }] });
+    expect(parsePublishedSession({ ...row, tasks: Array.from({ length: 256 }, (_, i) => ({ ...task, id: `T-${String(i).padStart(6, '0')}` })) }).tasks).toHaveLength(256);
+    expect(() => parsePublishedSession({ ...row, tasks: Array.from({ length: 257 }, () => task) })).toThrow();
+    expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, title: 'é'.repeat(201) }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, title: 'é'.repeat(401) }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, status: 'ready' }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, blockedBy: Array.from({ length: 33 }, (_, i) => `T-${String(i).padStart(6, '0')}`) }] })).toThrow();
+  });
   it('rejects duplicate host projects', () => {
     const project = { id: 'p1', name: 'felan', path: '/work/felan' };
     const registration = { name: 'MacBook', daemonVersion: '0.29.0', rowSchemaVersion: 1, capabilities: { operations: ['prompt'], interactionKinds: ['confirm'] }, projects: [project] };

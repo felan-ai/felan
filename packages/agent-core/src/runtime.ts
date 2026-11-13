@@ -149,6 +149,13 @@ export interface AgentRuntimeListFilesOptions {
   readonly signal?: AbortSignal;
 }
 
+export interface AgentRuntimeTask {
+  readonly id: string;
+  readonly title: string;
+  readonly status: 'pending' | 'in_progress' | 'blocked' | 'completed' | 'cancelled';
+  readonly blockedBy: readonly string[];
+}
+
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind;
   readonly cwd: string;
@@ -161,6 +168,9 @@ export interface AgentRuntime {
   readonly privateRuntime?: AgentRuntimePrivateRuntime;
   readonly terminals?: AgentRuntimeTerminals;
   readonly files?: RuntimeFiles;
+  readonly tasks?: {
+    changed?(tasks: readonly AgentRuntimeTask[]): void;
+  };
 
   storage(scope?: AgentRuntimeStorageScope): AgentRuntimeStorage;
 

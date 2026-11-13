@@ -681,6 +681,18 @@ Existing and user-set titles are unchanged. No published data links a child to
 the spawning tool call, so sessions created before this change keep an empty
 title; they are not backfilled.
 
+## 26. Root session task graph on shared session rows
+
+**What:** Publish the current root-session task graph in the optional `tasks` field of each shared `PublishedSession` row. `ROW_SCHEMA_VERSION` remains 1. Each task contains only `id`, `title`, `status` and `blockedBy`; titles are at most 200 characters. The array accepts at most 256 entries and each task has at most 32 prerequisite IDs. Supported statuses are `pending`, `in_progress`, `blocked`, `completed` and `cancelled`.
+
+**Why:** The web Tasks tab needs the graph's current state for the root session and all its subagent views, without replaying task history as session events.
+
+**Source and update:** `ext-tasks` reports the root-shared store's task snapshot through the Agent Runtime task-change hook after successful mutations and when a session loads or resumes. The daemon owns the hook boundary and publishes the resulting root snapshot on every shared row in that session tree. `tasks.updated` is a row-refresh signal only; it is not a published event. Changes republish affected rows with `p_events: []`, without waiting for another session event.
+
+**Meaning and privacy:** An absent `tasks` field means the host does not know the graph and leaves the stored value unchanged. An empty array means the graph has no tasks. Unshared rows never carry the field. Descriptions, acceptance criteria, notes, results, blocked reasons, owners and timestamps are never published. No task edit operation is added to the remote protocol.
+
+**Platform work:** Add a `tasks jsonb` column to `host_sessions` and update `publish_session_events` to validate the bounded task shape, preserve the column when the key is absent, clear it for unshared sessions, and issue the existing row realtime hint when the value changes. No session-event replay or row-schema bump is needed.
+
 ## Daemon status for platform change requests
 
 These refer to `platform-cr-N` in the same contract, not the daemon CR numbers

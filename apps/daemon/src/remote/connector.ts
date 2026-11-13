@@ -113,7 +113,7 @@ export class RemoteConnector {
   private readonly reauthorizedPublications = new Set<string>();
   private readonly publicationGaps = new Map<string, { lastSeq: number; fastForwarded: boolean }>();
   private readonly rowChanged = new Set<string>();
-  private readonly publishedResources = new Map<string, { skills?: string; processes?: string }>();
+  private readonly publishedResources = new Map<string, { skills?: string; processes?: string; tasks?: string }>();
   private outboxErrorsWired = false;
   private readonly blocked = new Map<string, string>();
   private readonly recordingIssues = new Map<string, string>();
@@ -566,7 +566,7 @@ export class RemoteConnector {
       if (stateChange && !this.stopped && (!this.configured || this.recordingBlocked.has(event.session))) this.markStateUnrecorded(event.session);
       if (this.stopped || !this.configured || !('change' in event) && (!this.platform || this.state !== 'connected')) return;
       // Skills and processes are published as current values on the session row, never as events.
-      if ('change' in event && (event.change.type === 'catalog.updated' || event.change.type === 'process.updated')) { this.markRowChanged(event.session); return; }
+      if ('change' in event && (event.change.type === 'catalog.updated' || event.change.type === 'process.updated' || event.change.type === 'tasks.updated')) { this.markRowChanged(event.session); return; }
       if ('change' in event && !isPublishedChangeType(event.change.type)) return;
       if (this.recordingBlocked.has(event.session)) return;
       const root = this.rootId(event.session);
@@ -743,10 +743,11 @@ export class RemoteConnector {
     if (!sharing || !sessionShared(sharing) || !sharing.record?.backfilled || this.backfilling.has(session)) return;
     this.rowChanged.add(session); this.wakePublish();
   }
-  private rowResources(session: string, root: string): Pick<PublishedSessionInput, 'skills' | 'processes'> {
+  private rowResources(session: string, root: string): Pick<PublishedSessionInput, 'skills' | 'processes' | 'tasks'> {
     const registry = this.options.registry;
     // Only a live session has a resource loader; an absent `skills` keeps the published value.
-    return { processes: registry.processes.list(root), ...(registry.binding(session) ? { skills: registry.projection(session).skills() } : {}) };
+    const tasks = registry.taskSnapshot(root);
+    return { processes: registry.processes.list(root), ...(tasks ? { tasks } : {}), ...(registry.binding(session) ? { skills: registry.projection(session).skills() } : {}) };
   }
   private wakePublish(): void {
     if (!this.platform || this.stopped) return;
@@ -825,10 +826,12 @@ export class RemoteConnector {
       const previous = this.publishedResources.get(id);
       const skills = session.skills ? JSON.stringify(session.skills) : previous?.skills;
       const processes = session.processes ? JSON.stringify(session.processes) : previous?.processes;
-      const resources = { ...(skills === undefined ? {} : { skills }), ...(processes === undefined ? {} : { processes }) };
-      const resourcesChanged = resources.skills !== previous?.skills || resources.processes !== previous?.processes;
+      const tasks = session.tasks ? JSON.stringify(session.tasks) : previous?.tasks;
+      const resources = { ...(skills === undefined ? {} : { skills }), ...(processes === undefined ? {} : { processes }), ...(tasks === undefined ? {} : { tasks }) };
+      const resourcesChanged = resources.skills !== previous?.skills || resources.processes !== previous?.processes || resources.tasks !== previous?.tasks;
       if (shared && !pending.length && !record.sharedPending && this.indexed.has(id) && !resourcesChanged) { this.publicationGaps.delete(id); return false; }
-      const batch = publicationBatches(session, pending.map(entry => publishedEvent(id, entry)))[0]!;
+      const rowOnly = this.rowChanged.has(id) && resourcesChanged;
+      const batch = publicationBatches(session, rowOnly ? [] : pending.map(entry => publishedEvent(id, entry)))[0]!;
       const host = this.host; const generation = this.generation;
       try {
         if (!record.uploadAttempted) this.store.setSession(id, { ...record, uploadAttempted: true, ...(host ? { hostId: host } : {}) });

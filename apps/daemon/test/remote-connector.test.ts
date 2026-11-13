@@ -366,6 +366,37 @@ describe('RemoteConnector publication', () => {
     expect(f.platform.publish).not.toHaveBeenCalled();
   });
 
+  it('publishes subagent task snapshots on every shared root row without events', async () => {
+    const f = await fixture();
+    const child = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: f.id, rootSessionId: f.id, model: offlineModel }));
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    f.platform.publish.mockClear();
+    const runtime = f.registry.binding(child.sessionId)!.agentRuntime;
+    const task = { id: 'T-ABC123', title: 'Subagent task', status: 'in_progress' as const, blockedBy: ['T-DEF456'], description: 'secret details', ownerSessionId: child.sessionId };
+    runtime.tasks!.changed!([task]); await f.clock.tick(0);
+    const rows = f.platform.publish.mock.calls.map(([session, events]) => ({ session, events }));
+    expect(rows).toHaveLength(2);
+    expect(rows.map(({ session }) => session.tasks)).toEqual([
+      [{ id: task.id, title: task.title, status: task.status, blockedBy: task.blockedBy }],
+      [{ id: task.id, title: task.title, status: task.status, blockedBy: task.blockedBy }],
+    ]);
+    expect(rows.every(({ events }) => events.length === 0)).toBe(true);
+    expect(JSON.stringify(rows)).not.toContain('secret details');
+    f.platform.publish.mockClear();
+    runtime.tasks!.changed!([task]); await f.clock.tick(0);
+    expect(f.platform.publish).not.toHaveBeenCalled();
+    f.platform.publish.mockClear();
+    f.change('ordinary event pending');
+    runtime.tasks!.changed!([{ ...task, title: 'Task update beside an event' }]);
+    await f.clock.tick(0);
+    expect(f.platform.publish.mock.calls.filter(([, events]) => events.length === 0).map(([session]) => session.tasks?.[0]?.title))
+      .toEqual(['Task update beside an event', 'Task update beside an event']);
+    expect(f.platform.publish.mock.calls.some(([, events]) => events.length === 1 && events[0]?.change.type === 'metadata.updated')).toBe(true);
+    f.connector.setShared(f.id, false); await f.clock.tick(0); f.platform.publish.mockClear();
+    runtime.tasks!.changed!([{ ...task, title: 'Changed while unshared' }]); await f.clock.tick(0);
+    expect(f.platform.publish).not.toHaveBeenCalled();
+  });
+
   it('indexes legacy shared sessions with an acknowledged cursor but no successful-index marker once', async () => {
     const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick(0);
     const record = f.connector.store.session(f.id)!; delete record.indexedHostId; f.connector.store.setSession(f.id, record);
