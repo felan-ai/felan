@@ -53,6 +53,12 @@ const cleanEnvironment = Object.fromEntries(
     !/(TOKEN|API_KEY|AUTH|PASSWORD|SECRET|CREDENTIAL|COOKIE|SESSION|(^|_)KEY$)/i.test(name)
   )),
 );
+const windowsEnvironment = process.platform === 'win32' ? Object.fromEntries(
+  Object.entries(cleanEnvironment).filter(([name]) => [
+    'SYSTEMROOT', 'WINDIR', 'COMSPEC', 'PATHEXT', 'PROGRAMFILES', 'PROGRAMFILES(X86)',
+    'PROGRAMDATA', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
+  ].includes(name.toUpperCase())),
+) : {};
 
 function configuredNpmCache() {
   const result = spawnSync(npm, [...npmArguments, 'config', 'get', 'cache'], { encoding: 'utf8' });
@@ -113,11 +119,10 @@ try {
   assertManagedClaudeSdkIsNotBundled();
   await assertPackedDaemonOnly(tarballs);
 
-  run(process.execPath, [
-    '--input-type=module',
-    '--eval',
-    `
+  const runtimeSmoke = join(installDir, 'runtime-smoke.mjs');
+  writeFileSync(runtimeSmoke, `
       import { readFile } from 'node:fs/promises';
+      import { join } from 'node:path';
       const packageNames = ${JSON.stringify(packageNames)};
       await Promise.all(packageNames.map((name) => import(name)));
       const agentCore = await import('@felan-ai/agent-core');
@@ -594,7 +599,7 @@ try {
       const fs = await import('node:fs/promises');
       const ptySessionStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-session';
       const ptyAgentStorage = process.env.PACKED_SMOKE_WORKSPACE + '/.pty-agent';
-      const explicitExtensionPath = process.env.PACKED_SMOKE_WORKSPACE + '/packed-extension.mjs';
+      const explicitExtensionPath = join(process.env.PACKED_SMOKE_WORKSPACE, 'packed-extension.mjs');
       await fs.writeFile(explicitExtensionPath, 'export default (pi) => pi.registerCommand("packed-extension", { description: "packed extension", handler: async () => {} });');
       await Promise.all([
         fs.mkdir(ptySessionStorage, { recursive: true }),
@@ -714,8 +719,8 @@ try {
         }
       }
       process.exit(0);
-    `,
-  ], cleanEnvironment);
+    `);
+  run(process.execPath, [runtimeSmoke], cleanEnvironment);
 
   const piVersion = JSON.parse(readFileSync(
     join(installDir, 'node_modules', '@earendil-works', 'pi-coding-agent', 'package.json'),
@@ -887,6 +892,8 @@ async function assertPackedDaemonOnly(tarballs) {
     environment = {
       PATH: `${join(prefix, 'node_modules', '.bin')}${delimiter}${searchPath}`,
       ...(cleanEnvironment.SystemRoot ? { SystemRoot: cleanEnvironment.SystemRoot } : {}),
+      ...windowsEnvironment,
+      ...(process.platform === 'win32' ? { APPDATA: join(home, 'config'), LOCALAPPDATA: join(home, 'cache') } : {}),
       ...(cleanEnvironment.LANG ? { LANG: cleanEnvironment.LANG } : {}),
       HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, 'config'), XDG_CACHE_HOME: join(home, 'cache'), XDG_DATA_HOME: join(home, 'data'),
       TMPDIR: temporary, TMP: temporary, TEMP: temporary, FELAN_AGENT_DIR: agent,
@@ -966,7 +973,23 @@ async function assertPackedDaemonOnly(tarballs) {
       const daemon = await import('@felan-ai/daemon');
       const protocol = await import('@felan-ai/session-protocol');
       if (daemon.DAEMON_VERSION !== ${JSON.stringify(sourcePackagesByName.get('@felan-ai/daemon').version)} || protocol.PROTOCOL_VERSION !== 1 || typeof protocol.encodeFrame !== 'function') throw new Error('Packed daemon/protocol imports are incomplete');
-      if (process.argv[2] === 'inspect') {
+      if (process.argv[2] === 'stop') {
+        const { connectLocalIpc, resolveDaemonTarget } = await import('@felan-ai/daemon/client');
+        const { readControlFrame } = await import(new URL('./daemon/ipc.js', import.meta.resolve('@felan-ai/daemon')));
+        const socket = await connectLocalIpc(resolveDaemonTarget(target));
+        try {
+          const identity = readControlFrame(socket, 5_000);
+          socket.write(protocol.encodeFrame({ v: 2, id: 'identity', op: 'hello', params: { protocol: 2, clientVersion: 'packed-smoke' } }));
+          const hello = await identity;
+          if (hello.outcome !== 'mismatch') throw new Error('Daemon identity handshake failed');
+          const stamp = Date.now().toString(16).padStart(12, '0');
+          const id = stamp.slice(0, 8) + '-' + stamp.slice(8) + '-7000-8000-000000000000';
+          const stopped = readControlFrame(socket, 15_000);
+          socket.write(protocol.encodeFrame({ control: 1, id, op: 'host.stop', params: { expected: hello.identity, mode: 'drain' } }));
+          if ((await stopped).outcome !== 'accepted') throw new Error('Daemon control stop was rejected');
+        } finally { socket.destroy(); }
+        console.log('stopped');
+      } else if (process.argv[2] === 'inspect') {
         const { acquireDaemonOwnership } = await import(new URL('./daemon/ownership.js', import.meta.resolve('@felan-ai/daemon')));
         const owner = await acquireDaemonOwnership(target);
         const runtimeDirectory = owner.target.runtimeDirectory;
@@ -999,8 +1022,12 @@ async function assertPackedDaemonOnly(tarballs) {
       const record = start(installed.entrypoint, target);
       await ready(record, installed.version);
       if (runHere(process.execPath, [probe, 'busy']).trim() !== 'busy') throw new Error('Missing live ownership proof');
-      if (record.child.exitCode !== null || record.child.signalCode !== null || !record.child.kill('SIGTERM')) throw new Error('Foreground daemon did not remain alive until SIGTERM');
-      const result = await deadline(record.closed, 'SIGTERM join', 15_000);
+      if (record.child.exitCode !== null || record.child.signalCode !== null) throw new Error('Foreground daemon did not remain alive until shutdown');
+      // Windows terminates a process on SIGTERM without running its shutdown handlers.
+      if (process.platform === 'win32') {
+        if (runHere(process.execPath, [probe, 'stop']).trim() !== 'stopped') throw new Error('Daemon control stop was not acknowledged');
+      } else if (!record.child.kill('SIGTERM')) throw new Error('Foreground daemon did not receive SIGTERM');
+      const result = await deadline(record.closed, 'shutdown join', 15_000);
       if (record.fault || result.code !== 0 || result.signal !== null) throw record.fault ?? new Error(`Daemon-only stop failed: ${JSON.stringify(result)}\n${record.stderr}`);
       if (runHere(process.execPath, [probe, 'released']).trim() !== 'released') throw new Error('Daemon ownership was not released');
     }

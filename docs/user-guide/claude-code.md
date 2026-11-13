@@ -11,7 +11,10 @@ continues to use the ordinary Anthropic provider.
 
 ## Requirements and setup
 
-- A macOS or Linux Felan host. Windows and non-host runtimes are unsupported.
+- A macOS or Linux Felan host. The managed Claude Code bridge does not support
+  native Windows or non-host runtimes; the Felan daemon and other model providers
+  support native Windows. WSL is an alternative when Felan and Node.js both run
+  inside its Linux environment.
 - `npm` on that host's `PATH` and network access for the managed installation.
 - Claude Code installed and signed in on the same machine with a compatible
   Claude plan. In a terminal, run `claude`, then run `/login` inside Claude Code.

@@ -6,6 +6,11 @@ export function guardAuthenticationParent(parent = process.ppid): Worker {
     const { workerData } = require('node:worker_threads');
     setInterval(() => {
       if (process.ppid !== workerData.parent) process.kill(process.pid, 'SIGKILL');
+      if (process.platform === 'win32') {
+        // Windows keeps ppid after exit; PID reuse between checks can hide parent death.
+        try { process.kill(workerData.parent, 0); }
+        catch (error) { if (error.code === 'ESRCH') process.kill(process.pid, 'SIGKILL'); }
+      }
     }, 100);
   `, { eval: true, workerData: { parent } });
   guard.unref();

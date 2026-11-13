@@ -214,12 +214,13 @@ it('runs the public custom-manager bootstrap without a TTY or keyring, then drai
   const created = await client.request('sessions.create', { cwd: root, model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome, JSON.stringify(created)).toBe('accepted');
   if (created.outcome !== 'accepted') throw new Error('Headless session unavailable');
+  if (process.platform === 'win32') expect((await client.control('host.stop', 'drain')).outcome).toBe('accepted');
+  else expect(worker.child.kill('SIGTERM')).toBe(true);
   client.close();
-  expect(worker.child.kill('SIGTERM')).toBe(true);
   expect(await deadline(worker.exited, 'foreground shutdown'), worker.output()).toEqual({ code: 0, signal: null });
 
   const events = (await readFile(join(root, 'events.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-  expect(events).toContainEqual({ event: 'process', pid: worker.child.pid, uid: process.getuid?.(), platform: process.platform, tty: [false, false, false] });
+  expect(events).toContainEqual({ event: 'process', pid: worker.child.pid, ...(process.getuid ? { uid: process.getuid() } : {}), platform: process.platform, tty: [false, false, false] });
   if (process.getuid && process.getuid() !== 0) expect(events.find(event => event.event === 'process').uid).toBeGreaterThan(0);
   expect(events).toContainEqual({ event: 'exports', names: ['createLocalSessionRuntime', 'createLocalModelsService', 'createLocalSecretsService'] });
   expect(events.filter(event => event.event === 'resolve-provider').map(event => event.specifier)).toEqual(expect.arrayContaining(Object.keys(providerPaths)));
@@ -233,7 +234,7 @@ it('runs the public custom-manager bootstrap without a TTY or keyring, then drai
   expect(events.some(event => event.event === 'keyring-attempt')).toBe(false);
   const secretFile = join(root, 'file-secrets', Buffer.from(JSON.stringify(['headless-manager', created.result.sessionId])).toString('hex'));
   expect(await readFile(secretFile, 'utf8')).toBe('synthetic-headless-secret');
-  expect((await stat(secretFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== 'win32') expect((await stat(secretFile)).mode & 0o777).toBe(0o600);
   await expect(stat(join(root, 'agent', 'host.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   await expect(stat(join(root, 'runtime', 'ipc.sock'))).rejects.toMatchObject({ code: 'ENOENT' });
   const owner = await acquireDaemonOwnership(target);
@@ -241,13 +242,14 @@ it('runs the public custom-manager bootstrap without a TTY or keyring, then drai
 }, 30_000);
 
 it('routes the CLI foreground entry with its explicit runtime and host configuration', async () => {
-  const args = ['foreground', '--daemon-runtime', '/tmp/headless-manager-cli', '--host-config', '/tmp/headless-manager-host.json'];
+  const directory = join(tmpdir(), 'headless-manager-cli'); const hostConfigPath = join(tmpdir(), 'headless-manager-host.json');
+  const args = ['foreground', '--daemon-runtime', directory, '--host-config', hostConfigPath];
   const launchDaemon = vi.fn(async () => 0);
   expect(await runCli(['daemon', ...args], { launchDaemon })).toBe(0);
   expect(launchDaemon).toHaveBeenCalledExactlyOnceWith(args);
   const foreground = vi.fn(async () => 0);
   const io = { writeOutput: vi.fn(), writeError: vi.fn() };
   expect(await runDaemonCommand(args, io, { foreground })).toBe(0);
-  expect(foreground).toHaveBeenCalledExactlyOnceWith(clientDaemonTarget({ daemonRuntime: '/tmp/headless-manager-cli' }), '/tmp/headless-manager-host.json');
+  expect(foreground).toHaveBeenCalledExactlyOnceWith(clientDaemonTarget({ daemonRuntime: directory }), hostConfigPath);
   expect(io.writeError).not.toHaveBeenCalled();
 });

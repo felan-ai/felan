@@ -1,8 +1,9 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { expect, it } from 'vitest';
 
 const root = resolve(import.meta.dirname, '../../..');
+const portablePath = (path: string) => path.split(sep).join('/');
 
 interface Boundary {
   reason: string;
@@ -104,16 +105,16 @@ it('enforces package ownership and portable execution boundaries', () => {
       }
     };
     for (const path of boundary.paths) for (const file of files(resolve(root, path))) visit(file);
-    const paths = [...selected].filter(path => !boundary.exclude?.test(relative(root, path)));
+    const paths = [...selected].filter(path => !boundary.exclude?.test(portablePath(relative(root, path))));
     expect(paths.length, boundary.reason).toBeGreaterThan(0);
     for (const path of paths) {
       const label = `${boundary.reason}: ${relative(root, path)}`;
-      if (boundary.forbiddenFiles) expect(path, label).not.toMatch(boundary.forbiddenFiles);
+      if (boundary.forbiddenFiles) expect(portablePath(path), label).not.toMatch(boundary.forbiddenFiles);
       for (const forbidden of boundary.forbidden ?? []) expect(source(path), label).not.toMatch(forbidden);
       if (boundary.allowedImports) for (const match of source(path).matchAll(imports)) expect(match[2], label).toMatch(boundary.allowedImports);
     }
     const combined = paths.map(source).join('\n');
     for (const required of boundary.required ?? []) expect(combined, boundary.reason).toMatch(required);
-    for (const required of boundary.requiredFiles ?? []) expect(paths.some(path => required.test(path)), boundary.reason).toBe(true);
+    for (const required of boundary.requiredFiles ?? []) expect(paths.some(path => required.test(portablePath(path))), boundary.reason).toBe(true);
   }
 });

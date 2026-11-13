@@ -9,6 +9,30 @@ Importing this package does not start a daemon. A managing package launches the
 installed entrypoint with trusted configuration. Provider modules resolve from
 that installation, never from the working directory or project content.
 
+## Supported platforms
+
+The native ownership backend supports macOS, glibc Linux and Windows on x64
+and arm64. Other platforms or unavailable native backends fail closed with
+`platform_blocked`; there is no TCP or lease-lock fallback. Keep Koffi's optional
+platform packages when installing or bundling the daemon.
+
+Windows uses the process token SID, exclusive-share file handles and
+secret-authenticated Node named pipes. The production endpoint file is
+`<OS account profile>\AppData\Local\felan-daemon-v1\production\ipc-endpoint.json`.
+The coordinator path does not follow `HOME`, `USERPROFILE` or `LOCALAPPDATA`
+overrides. Private path DACLs allow the account, SYSTEM and Administrators.
+The pipe retains Node's default DACL, so authentication depends on the private
+secret, not a same-SID pipe check. See [ADR 0048](../../docs/decisions/0048-authenticate-windows-daemon-ipc-with-a-private-secret.md)
+for residual access and impersonation risks.
+
+Windows skips directory fsync, but retains file fsync. File replacements retry
+`EPERM`, `EACCES` and `EBUSY` for up to two seconds. Daemon startup defaults
+child-process `windowsHide` to `true` unless the caller sets it. Windows CI
+exercises x64 and arm64 under an elevated Administrator account; it does not
+cover a standard non-admin account or interactive console-window behavior.
+See [native ownership](../../docs/maintainers/session-daemon-native-ownership.md)
+for paths, failure codes and verification scope.
+
 ## Contracts and configuration
 
 - `.` exports `DAEMON_VERSION` and the configured `SESSION_RUNTIME_SERVICE`.
@@ -39,6 +63,10 @@ the manual 0.0.0 bootstrap and trusted-publisher setup in the
 `host.json` selects providers, extensions and policy. Precedence is an explicit
 absolute path, the agent-directory file, then a packaged default supplied by
 the manager. The generic daemon has no implicit local provider configuration.
+On Windows, configuration trust checks the file's DACL rather than POSIX mode
+bits. Write grants outside the account, SYSTEM, Administrators and
+TrustedInstaller cause `unsafe_host_config`. Native security-descriptor read
+failures and unsupported ACEs propagate `unsafe_path` instead.
 Provider changes require restart. Session configuration and storage identities
 are checked on restore; changed or missing identities require explicit reload.
 Control state uses version 1. Invalid or unsupported data fails closed and is

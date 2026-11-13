@@ -358,7 +358,7 @@ function installationError(installation: FelanInstallation, globalRoot: string):
 function canonicalPath(path: string): string {
   const resolved = resolve(path);
   try {
-    return realpathSync(resolved);
+    return process.platform === 'win32' ? realpathSync.native(resolved) : realpathSync(resolved);
   } catch {
     return resolved;
   }

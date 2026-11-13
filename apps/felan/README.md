@@ -65,6 +65,14 @@ used by Azure model definitions.
 Felan Code supports Node.js 22.19.0 or newer. Repository development and CI use
 Node.js 22.23.4 with pnpm 9.15.5.
 
+Native Windows x64 and arm64 use the same daemon-backed TUI, ACP and headless
+clients. Git Bash supplies POSIX-dependent tools; WSL is an alternative Linux
+environment, not an automatic fallback. Optional dependency limits are listed
+in [runtime dependencies](../../docs/reference/runtime-dependencies.md).
+Windows daemon CI uses an elevated Administrator account and does not cover a
+standard non-admin account or interactive console-window behavior. See
+[native ownership](../../docs/maintainers/session-daemon-native-ownership.md#verification).
+
 ```sh
 felan
 /login

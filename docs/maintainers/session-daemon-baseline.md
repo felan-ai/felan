@@ -6,6 +6,12 @@ Darwin 25.6.0 arm64, Node `v22.20.0`, pnpm `9.15.5`, Python `3.9.6`.
 The original `ext-subagents` README/source/test edits were present throughout;
 this is a baseline of that worktree, not a falsely pristine HEAD checkout.
 
+This historical baseline predates native Windows support. See
+[native ownership](session-daemon-native-ownership.md) and
+[ADR 0048](../decisions/0048-authenticate-windows-daemon-ipc-with-a-private-secret.md)
+for the current Windows design and CI limits. The POSIX probes below do not
+verify Windows behavior.
+
 ## Existing regression baseline
 
 One complete retained `pnpm verify` log passed (exit 0): licenses, all workspace builds, all type checks,
@@ -178,9 +184,10 @@ route the CLI through the daemon; no exemption follows merely from its name.
    dependency was added by S1.01. Prove Node-facing integration, cross-user denial,
    crash/stale/replace races, prebuild/install/pack/license behavior and process
    termination on every supported OS. Darwin kernel feasibility passes;
-   Linux/macOS x64/Windows runners were unavailable here and remain release gates.
-   Windows requires equivalent pipe DACL/token identity and lifetime locks, not a
-   blanket success based on POSIX probing. Do not silently drop a supported OS.
+   Linux/macOS x64/Windows runners were unavailable for this baseline. The current
+   Windows backend uses SID/DACL filesystem checks, exclusive-share handle locks
+   and secret-authenticated Node named pipes, not pipe token checks. Its separate
+   CI evidence and limits are in [native ownership](session-daemon-native-ownership.md#verification).
 2. **S1.05/09:** use the shared daemon launch environment without per-session
    global mutation; preserve provider/credential behavior and separate session
    cwd/config/model registrations. Prove startup-only proxy setup and require

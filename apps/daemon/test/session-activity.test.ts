@@ -7,7 +7,7 @@ import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/owne
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { readControlDatabase, writeControlDatabase } from './fixtures/control-database.js';
 
-const supported = ['darwin', 'linux'].includes(process.platform);
+const supported = ['darwin', 'linux', 'win32'].includes(process.platform);
 const roots: string[] = [];
 const owners: DaemonOwnership[] = [];
 const stores: DaemonControlStore[] = [];

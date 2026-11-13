@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, symlink, writeFile, access, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { createLocalRuntimeStorage, HostAgentRuntime, type AgentRuntime, type AgentRuntimeStorage, type AgentRuntimeListFilesOptions } from '@felan-ai/agent-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundBashJobStore, getBackgroundBashJobsDir, type BackgroundBashPage } from '../src/job-store.js';
@@ -30,7 +30,7 @@ describe('bounded process queries', () => {
     const { store, storage } = fixture(27);
     const first = await store.query({ limit: 7 });
     seed(storage, store.jobsDir, 99);
-    storage.files.delete(`${store.jobsDir}/${id(19)}/info.json`);
+    storage.files.delete(join(store.jobsDir, id(19), 'info.json'));
     const result = first.jobs.map(job => job.meta.id);
     let cursor = first.nextCursor;
     while (cursor) {
@@ -116,8 +116,8 @@ describe('incremental terminal retention', () => {
       for (let n = 0; n < RETENTION_INTERVAL; n++) await retention.recordMutation();
     }
     expect(storage.remove).toHaveBeenCalledTimes(30);
-    expect([...storage.files.keys()].filter(path => path.endsWith('/info.json'))).toHaveLength(1_000);
-    expect(storage.files.has(`${store.jobsDir}/${id(30)}/info.json`)).toBe(true);
+    expect([...storage.files.keys()].filter(path => path.endsWith(`${sep}info.json`))).toHaveLength(1_000);
+    expect(storage.files.has(join(store.jobsDir, id(30), 'info.json'))).toBe(true);
   });
 
   it.each([
@@ -132,23 +132,23 @@ describe('incremental terminal retention', () => {
     }
     const retention = maintenance(runtime, storage, store.jobsDir);
     for (let n = 0; n < 32 * RETENTION_INTERVAL; n++) await retention.recordMutation();
-    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(`${store.jobsDir}/${id(0)}`, { recursive: true });
-    expect(storage.files.has(`${store.jobsDir}/${id(0)}/info.json`)).toBe(false);
-    expect(storage.files.has(`${store.jobsDir}/${id(count)}/info.json`)).toBe(true);
+    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(join(store.jobsDir, id(0)), { recursive: true });
+    expect(storage.files.has(join(store.jobsDir, id(0), 'info.json'))).toBe(false);
+    expect(storage.files.has(join(store.jobsDir, id(count), 'info.json'))).toBe(true);
   });
 
   it('triggers at 32 mutations, expiring only verified inactive terminal records', async () => {
     const { store, storage, runtime } = fixture(0);
     for (let n = 0; n < 7; n++) seed(storage, store.jobsDir, n, n === 1 ? 'unknown' : n === 2 ? 'running' : 'completed', undefined, Date.now() - TERMINAL_MAX_AGE_MS - 1);
-    storage.files.delete(`${store.jobsDir}/${id(3)}/completion.json`);
+    storage.files.delete(join(store.jobsDir, id(3), 'completion.json'));
     patch(storage, store.jobsDir, 4, { pid: 123 });
     patch(storage, store.jobsDir, 5, { pid: -1 });
-    storage.files.set(`${store.jobsDir}/${id(6)}/completion.json`, encoder.encode('{"id":"../outside","status":"completed"}'));
+    storage.files.set(join(store.jobsDir, id(6), 'completion.json'), encoder.encode('{"id":"../outside","status":"completed"}'));
     const retention = maintenance(runtime, storage, store.jobsDir);
     for (let n = 0; n < RETENTION_INTERVAL - 1; n++) await retention.recordMutation();
     expect(storage.readFile).not.toHaveBeenCalled();
     await retention.recordMutation();
-    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(`${store.jobsDir}/${id(0)}`, { recursive: true });
+    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(join(store.jobsDir, id(0)), { recursive: true });
   });
 
   it('protects recent completions even beyond the count limit', async () => {
@@ -173,7 +173,7 @@ describe('incremental terminal retention', () => {
       code: command.startsWith('ps -p ') ? 1 : 0, stdout: command.startsWith('ps -p ') ? '' : '456\n', stderr: '', killed: false,
     }));
     for (let n = 0; n < RETENTION_INTERVAL; n++) await retention.recordMutation();
-    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(`${store.jobsDir}/${id(0)}`, { recursive: true });
+    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(join(store.jobsDir, id(0)), { recursive: true });
   });
 
   it('expires an old terminal attached job once its PID and process group are absent', async () => {
@@ -188,7 +188,7 @@ describe('incremental terminal retention', () => {
     for (let n = 0; n < RETENTION_INTERVAL; n++) await retention.recordMutation();
     expect(runtime.shell).toHaveBeenCalledWith("ps -p '123' -o pid=", { shellFlavor: 'posix' });
     expect(runtime.shell).toHaveBeenCalledWith('ps -eo pgid=', { shellFlavor: 'posix' });
-    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(`${store.jobsDir}/${id(0)}`, { recursive: true });
+    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(join(store.jobsDir, id(0)), { recursive: true });
   });
 
   it('runs natural-operation maintenance on writes, never on recent reads', async () => {
@@ -198,7 +198,7 @@ describe('incremental terminal retention', () => {
     expect(storage.remove).not.toHaveBeenCalled();
     for (let n = 0; n < 32; n++) await store.createJob('running fixture');
     for (let n = 0; n < 32; n++) await store.createJob('another running fixture');
-    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(`${store.jobsDir}/${id(0)}`, { recursive: true });
+    expect(storage.remove).toHaveBeenCalledExactlyOnceWith(join(store.jobsDir, id(0)), { recursive: true });
   });
 
   it('does not follow a symlinked workspace ancestor inside the session root', async () => {
@@ -224,7 +224,8 @@ describe('incremental terminal retention', () => {
     await expect(access(jobDir)).resolves.toBeUndefined();
   });
 
-  it('removes only known flat files using no-follow descriptor-relative operations', async () => {
+  // Python's directory descriptors and O_NOFOLLOW are POSIX-only. Windows must retain the job.
+  it.skipIf(process.platform === 'win32')('removes only known flat files using no-follow descriptor-relative operations', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'process-retention-safe-')));
     temporaryPaths.push(root);
     const runtime = new HostAgentRuntime(root, { sessionStorageRoot: root, agentStorageRoot: join(root, 'agent') });
@@ -246,6 +247,17 @@ describe('incremental terminal retention', () => {
     await expect(access(jobDir)).rejects.toThrow();
   });
 
+  it.runIf(process.platform === 'win32')('retains Windows jobs when descriptor-relative removal is unavailable', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'process-retention-windows-')));
+    temporaryPaths.push(root);
+    const runtime = new HostAgentRuntime(root, { sessionStorageRoot: root, agentStorageRoot: join(root, 'agent') });
+    const jobDir = join(getBackgroundBashJobsDir(root, root), id(0));
+    await mkdir(jobDir, { recursive: true });
+    await writeFile(join(jobDir, 'info.json'), '{}');
+    await expect(removeRetainedJob(runtime, root, jobDir)).resolves.toBe(false);
+    await expect(access(join(jobDir, 'info.json'))).resolves.toBeUndefined();
+  });
+
   it('retains jobs when the optional no-follow removal runtime is unavailable', async () => {
     const { runtime, store, storage } = fixture(0);
     seed(storage, store.jobsDir, 0, 'completed', undefined, Date.now() - TERMINAL_MAX_AGE_MS - 1);
@@ -261,7 +273,7 @@ function id(n: number): string { return `bash-20260101000000-${n.toString(16).pa
 function fixture(count: number) {
   const storage = new FixtureStorage();
   const runtime = {
-    cwd: '/fixture/workspace', storage: () => storage,
+    cwd: resolve('/fixture/workspace'), storage: () => storage,
     shell: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', killed: false })),
     exec: vi.fn(async (_command: string, args: readonly string[]) => {
       await storage.remove(join(args[2]!, args[3]!), { recursive: true });
@@ -274,13 +286,13 @@ function fixture(count: number) {
 }
 
 function seed(storage: FixtureStorage, jobsDir: string, n: number, status = 'completed', command = `command ${n}`, completedAt = Date.now() - 60 * 60 * 1_000) {
-  const info = { id: id(n), command, cwd: '/fixture/workspace', status, startedAt: completedAt - 1, updatedAt: completedAt, completedAt };
-  storage.files.set(`${jobsDir}/${id(n)}/info.json`, encoder.encode(JSON.stringify(info)));
-  storage.files.set(`${jobsDir}/${id(n)}/completion.json`, encoder.encode(JSON.stringify(info)));
+  const info = { id: id(n), command, cwd: resolve('/fixture/workspace'), status, startedAt: completedAt - 1, updatedAt: completedAt, completedAt };
+  storage.files.set(join(jobsDir, id(n), 'info.json'), encoder.encode(JSON.stringify(info)));
+  storage.files.set(join(jobsDir, id(n), 'completion.json'), encoder.encode(JSON.stringify(info)));
 }
 
 function patch(storage: FixtureStorage, jobsDir: string, n: number, value: object) {
-  const path = `${jobsDir}/${id(n)}/info.json`;
+  const path = join(jobsDir, id(n), 'info.json');
   storage.files.set(path, encoder.encode(JSON.stringify({ ...JSON.parse(new TextDecoder().decode(storage.files.get(path))), ...value })));
 }
 
@@ -291,7 +303,7 @@ function maintenance(runtime: AgentRuntime, storage: FixtureStorage, jobsDir: st
 }
 
 class FixtureStorage implements AgentRuntimeStorage {
-  readonly root = `/fixture/state-${Math.random()}`;
+  readonly root = resolve(`/fixture/state-${Math.random()}`);
   readonly files = new Map<string, Uint8Array>();
   readFile = vi.fn(async (path: string) => {
     const bytes = this.files.get(path);
@@ -303,9 +315,9 @@ class FixtureStorage implements AgentRuntimeStorage {
   mkdir = vi.fn(async () => {});
   listFiles = vi.fn(async (path: string, options?: AgentRuntimeListFilesOptions) => {
     expect(options).toMatchObject({ recursive: false, includeDirectories: true });
-    return [...new Set([...this.files.keys()].filter(value => value.startsWith(`${path}/`)).map(value => value.slice(path.length + 1).split('/')[0]!))];
+    return [...new Set([...this.files.keys()].filter(value => value.startsWith(`${path}${sep}`)).map(value => value.slice(path.length + 1).split(sep)[0]!))];
   });
   remove = vi.fn(async (path: string, _options?: { recursive?: boolean }) => {
-    for (const key of this.files.keys()) if (key.startsWith(`${path}/`)) this.files.delete(key);
+    for (const key of this.files.keys()) if (key.startsWith(`${path}${sep}`)) this.files.delete(key);
   });
 }

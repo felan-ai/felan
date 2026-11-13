@@ -1,25 +1,53 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { acquireDaemonOwnership, namespaceLockName, type DaemonOwnership } from '../src/daemon/ownership.js';
-import { realAccountLocation, resolveDaemonTarget, type DaemonTarget } from '../src/daemon/target.js';
+import { canonicalProspectivePath, realAccountLocation, resolveDaemonTarget, type DaemonTarget } from '../src/daemon/target.js';
+import * as nativeOwnership from '../src/daemon/native-ownership.js';
 
-const supported = ['darwin', 'linux'].includes(process.platform);
+const windows = process.platform === 'win32';
+const supported = ['darwin', 'linux', 'win32'].includes(process.platform);
 const roots: string[] = [];
 const owners: DaemonOwnership[] = [];
 const children: ChildProcessWithoutNullStreams[] = [];
 const fixture = new URL('./fixtures/daemon-owner.mjs', import.meta.url);
+const ownershipFixture = `
+  import { spawn } from 'node:child_process';
+  import { acquireDaemonOwnership } from ${JSON.stringify(new URL('../dist/daemon/ownership.js', import.meta.url).href)};
+  const target = JSON.parse(process.argv[1]);
+  if (target.kind !== 'isolated') throw new Error('Fixture refuses production');
+  let owner;
+  try {
+    owner = await acquireDaemonOwnership(target);
+    process.stdout.write(JSON.stringify({ ready: owner.identity }) + '\\n');
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', async command => {
+      if (command.trim() === 'stop') { await owner.release(); process.exit(0); }
+      if (command.trim() === 'check') { owner.assertCurrent(); process.stdout.write('current\\n'); }
+      if (command.trim() === 'spawn-descendant') {
+        spawn(process.execPath, ['-e', 'setTimeout(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true }).unref();
+        process.stdout.write('spawned\\n');
+      }
+    });
+  } catch (error) {
+    await owner?.release();
+    process.stdout.write(JSON.stringify({ error: error.code ?? 'fixture_failure' }) + '\\n');
+    process.exitCode = 1;
+  }
+`;
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const child of children.splice(0)) {
     if (child.exitCode === null && child.signalCode === null) {
       // The child may exit before the write lands; the exit wait and SIGKILL below cover that case.
       child.stdin.on('error', () => {});
-      const exited = once(child, 'exit'); child.kill('SIGCONT'); child.stdin.write('stop\n');
+      const exited = once(child, 'exit'); if (!windows) child.kill('SIGCONT'); child.stdin.write('stop\n');
       await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 1_000))]);
       if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await exited; }
     }
@@ -29,12 +57,13 @@ afterEach(async () => {
 });
 
 async function target(): Promise<Extract<DaemonTarget, { kind: 'isolated' }>> {
-  const directory = await mkdtemp(join(tmpdir(), 's103-')); roots.push(directory);
+  const directory = canonicalProspectivePath(await mkdtemp(join(tmpdir(), 's103-'))); roots.push(directory);
   return { kind: 'isolated', directory, namespaceId: randomUUID() };
 }
 async function acquire(input: DaemonTarget) { const owner = await acquireDaemonOwnership(input); owners.push(owner); return owner; }
 function start(input: DaemonTarget) {
-  const child = spawn(process.execPath, [fixture.pathname, JSON.stringify(input)], { stdio: 'pipe', env: { PATH: process.env.PATH, HOME: '/deliberately-not-the-os-home', FELAN_AGENT_DIR: '/not-the-production-account', ...(process.env.S103_DAEMON_BUILD ? { S103_DAEMON_BUILD: process.env.S103_DAEMON_BUILD } : {}) } });
+  const args = windows ? ['--input-type=module', '-e', ownershipFixture, JSON.stringify(input)] : [fileURLToPath(fixture), JSON.stringify(input)];
+  const child = spawn(process.execPath, args, { stdio: 'pipe', windowsHide: true, env: { ...(windows ? process.env : { PATH: process.env.PATH }), HOME: '/deliberately-not-the-os-home', FELAN_AGENT_DIR: '/not-the-production-account', ...(process.env.S103_DAEMON_BUILD ? { S103_DAEMON_BUILD: process.env.S103_DAEMON_BUILD } : {}) } });
   children.push(child);
   const lines: string[] = []; let pending = ''; const waiters: ((line: string) => void)[] = [];
   child.stdout.setEncoding('utf8');
@@ -59,13 +88,80 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     expect(namespaceLockName(a)).toBe('production.lock'); expect(namespaceLockName(b)).toBe(namespaceLockName(a));
   });
 
-  it('admits exactly one owner under simultaneous launches, including while SIGSTOP-paused', async () => {
+  it('admits exactly one owner under simultaneous launches', async () => {
     const input = await target();
     const launched = Array.from({ length: 5 }, () => start(input));
     const responses = await Promise.all(launched.map(child => child.line().then(line => JSON.parse(line))));
     expect(responses.filter(response => response.ready)).toHaveLength(1);
     expect(responses.filter(response => response.error === 'owner_running')).toHaveLength(4);
-    const winner = launched[responses.findIndex(response => response.ready)]!;
+  });
+
+  it('does not recreate a vanished advisory claim lock', async () => {
+    const input = await target(); const child = start(input); expect(JSON.parse(await child.line()).ready).toBeDefined();
+    const exited = once(child.child, 'exit'); child.child.kill('SIGKILL'); await exited;
+    const resolved = resolveDaemonTarget(input); const lock = join(resolved.accountDirectory, namespaceLockName(resolved));
+    await unlink(lock);
+    expect(() => nativeOwnership.tryLockExistingFile(lock)).toThrow(expect.objectContaining({ code: 'ENOENT' }));
+    await acquire({ ...input, namespaceId: randomUUID() });
+    await expect(lstat(lock)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it.skipIf(windows)('does not apply runtime privacy policy to advisory POSIX claim probes', async () => {
+    const owner = await acquire(await target()); const lock = join(owner.target.accountDirectory, namespaceLockName(owner.target));
+    await chmod(lock, 0o644);
+    const other = await acquire(await target()); other.assertCurrent(); owner.assertCurrent();
+    const ledger = JSON.parse(await readFile(join(owner.target.accountDirectory, 'claims.json'), 'utf8'));
+    expect(ledger.claims.some((claim: { instanceId: string }) => claim.instanceId === owner.instanceId)).toBe(true);
+    await expect(acquireDaemonOwnership({ kind: 'isolated', directory: join(owner.target.agentDir, 'nested'), namespaceId: randomUUID() })).rejects.toMatchObject({ code: 'root_conflict' });
+  });
+
+  it.skipIf(windows)('propagates an unexpected kernel error from an advisory POSIX claim probe', async () => {
+    const owner = await acquire(await target()); const input = await target();
+    const error = new nativeOwnership.DaemonSecurityError('native_failure', 'synthetic flock failure');
+    const probe = vi.spyOn(nativeOwnership, 'lockStillHeld').mockImplementationOnce(() => { throw error; });
+    try { await expect(acquireDaemonOwnership(input)).rejects.toBe(error); expect(probe).toHaveBeenCalledOnce(); }
+    finally { probe.mockRestore(); }
+    owner.assertCurrent();
+  });
+
+  it.runIf(windows).each(['{', ' '.repeat(4_097), JSON.stringify({ version: 1, obsolete: true })])('removes a private stale endpoint without parsing it during ownership acquisition', async source => {
+    const input = await target(); const first = await acquire(input); await first.release(); owners.splice(owners.indexOf(first), 1);
+    await writeFile(first.target.endpoint, source, { mode: 0o600 });
+    const next = await acquire(input); expect(next.lockStamp).not.toBe(first.lockStamp);
+    await expect(lstat(next.target.endpoint)).rejects.toMatchObject({ code: 'ENOENT' }); next.assertCurrent();
+  });
+
+  it.runIf(windows)('refuses an existing endpoint with a public DACL before removing it at startup', async () => {
+    const input = await target(); const first = await acquire(input); await first.release(); owners.splice(owners.indexOf(first), 1);
+    await writeFile(first.target.endpoint, '{', { mode: 0o600 });
+    const { spawnSync } = await import('node:child_process');
+    const result = spawnSync('icacls.exe', [first.target.endpoint, '/grant', '*S-1-1-0:R'], { windowsHide: true, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    await expect(acquireDaemonOwnership(input)).rejects.toMatchObject({ code: 'unsafe_path' });
+    expect(await readFile(first.target.endpoint, 'utf8')).toBe('{');
+  });
+
+  it.runIf(windows)('keeps the namespace lock generation stable while ownership remains held', async () => {
+    const owner = await acquire(await target()); const lock = join(owner.target.accountDirectory, namespaceLockName(owner.target));
+    expect(owner.lockStamp).toBe((await lstat(lock, { bigint: true })).mtimeNs.toString());
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(owner.lockStamp).toBe((await lstat(lock, { bigint: true })).mtimeNs.toString()); owner.assertCurrent();
+  });
+
+  it.runIf(windows)('retries a short sharing conflict on the lifetime lock without reporting owner_running', async () => {
+    const input = await target();
+    const probe = nativeOwnership.tryLockFile; let busy = 3;
+    vi.spyOn(nativeOwnership, 'tryLockFile').mockImplementation((path, principal) => {
+      if (path.endsWith(namespaceLockName(resolveDaemonTarget(input))) && busy-- > 0) return undefined;
+      return probe(path, principal);
+    });
+    const owner = await acquire(input); owner.assertCurrent(); expect(busy).toBe(-1);
+  });
+
+  // Windows has no SIGSTOP/SIGCONT process suspension.
+  it.skipIf(windows)('refuses a contender while the owner is SIGSTOP-paused', async () => {
+    const input = await target(); const winner = start(input);
+    expect(JSON.parse(await winner.line()).ready).toBeDefined();
     winner.child.kill('SIGSTOP');
     const contender = start(input); expect(JSON.parse(await contender.line()).error).toBe('owner_running');
     winner.child.kill('SIGCONT'); winner.child.stdin.write('check\n'); expect(await winner.line()).toBe('current');
@@ -74,13 +170,13 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
   it('covers custom stores, canonical aliases and ancestor/descendant overlaps across namespaces', async () => {
     const input = await target(); const store = join(input.directory, 'shared');
     const owner = await acquire({ ...input, storeRoots: [store] });
-    const alias = join(input.directory, 'alias'); await symlink(store, alias);
+    const alias = join(input.directory, 'alias'); await symlink(store, alias, windows ? 'junction' : 'dir');
     await expect(acquireDaemonOwnership({ ...input, namespaceId: randomUUID(), storeRoots: [alias] })).rejects.toMatchObject({ code: 'root_conflict' });
     await expect(acquireDaemonOwnership({ ...input, namespaceId: randomUUID(), storeRoots: [join(store, 'nested')] })).rejects.toMatchObject({ code: 'root_conflict' });
     owner.assertCurrent();
-    expect(owner.assertOwnsPath(join(alias, 'new-data.json'))).toBe(join(await realpath(store), 'new-data.json'));
+    expect(owner.assertOwnsPath(join(alias, 'new-data.json'))).toBe(join(canonicalProspectivePath(store), 'new-data.json'));
     expect(() => owner.assertOwnsPath(join(input.directory, 'outside'))).toThrow(/outside/);
-    const external = await target(); await symlink(external.directory, join(store, 'escape'));
+    const external = await target(); await symlink(external.directory, join(store, 'escape'), windows ? 'junction' : 'dir');
     expect(() => owner.assertOwnsPath(join(store, 'escape', 'file'))).toThrow(/outside/);
   });
 
@@ -89,7 +185,7 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     const owner = await acquire(input); await chmod(owner.target.agentDir, 0o775);
     expect(() => owner.assertOwnsPath(join(sessions, 'a.jsonl'))).toThrow(/outside/);
     await Promise.all([owner.ownRoot(sessions), owner.ownRoot(sessions)]);
-    const canonical = join(await realpath(sessions), 'a.jsonl');
+    const canonical = join(canonicalProspectivePath(sessions), 'a.jsonl');
     expect(owner.assertOwnsPath(join(sessions, 'a.jsonl'))).toBe(canonical);
     const outside = await target();
     await expect(owner.ownRoot(outside.directory)).rejects.toMatchObject({ code: 'root_not_owned' });
@@ -99,14 +195,16 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     await restarted.ownRoot(sessions); restarted.assertCurrent();
   });
 
-  it('fences replaced store directories and supports idempotent concurrent release', async () => {
+  // Windows exclusive-share handles prohibit replacing a directory containing a held lock.
+  it.skipIf(windows)('fences replaced store directories and supports idempotent concurrent release', async () => {
     const input = await target(); const owner = await acquire(input);
     await rename(owner.target.agentDir, `${owner.target.agentDir}.old`); await mkdir(owner.target.agentDir, { mode: 0o700 });
     expect(() => owner.assertCurrent()).toThrow(/fenced/);
     await Promise.all([owner.release(), owner.release()]);
   });
 
-  it.each(['replace', 'delete'] as const)('fences admission on store-lock %s without treating it as kernel unlock', async action => {
+  // Windows exclusive-share handles prohibit renaming or deleting a held lock.
+  it.skipIf(windows).each(['replace', 'delete'] as const)('fences admission on store-lock %s without treating it as kernel unlock', async action => {
     const input = await target(); const owner = await acquire(input); const file = join(owner.target.agentDir, '.felan-store.lock');
     let lost = 0; owner.onLost(() => lost++);
     if (action === 'replace') { await rename(file, `${file}.old`); await writeFile(file, '', { mode: 0o600 }); }
@@ -118,7 +216,8 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     expect(() => owner.assertCurrent()).toThrow(/fenced/);
   });
 
-  it('keeps pinned lock files fresh so temp reapers cannot fence a long-lived owner', async () => {
+  // Windows coordinator files live under AppData\\Local, outside POSIX temp reapers.
+  it.skipIf(windows)('keeps pinned lock files fresh so temp reapers cannot fence a long-lived owner', async () => {
     const input = await target(); await (await acquireDaemonOwnership(input)).release();
     const resolved = resolveDaemonTarget(input);
     const namespace = join(resolved.accountDirectory, namespaceLockName(resolved)); const store = join(resolved.agentDir, '.felan-store.lock');
@@ -140,7 +239,8 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     owner.assertCurrent();
   });
 
-  it('refuses unsafe runtime, root permissions and symlinked lock files without altering them', async () => {
+  // Windows privacy uses DACLs rather than chmod modes; native-windows.test.ts covers it.
+  it.skipIf(windows)('refuses unsafe runtime, root permissions and symlinked lock files without altering them', async () => {
     const input = await target(); await mkdir(join(input.directory, 'runtime'), { mode: 0o777 }); await chmod(join(input.directory, 'runtime'), 0o777);
     await expect(acquireDaemonOwnership(input)).rejects.toThrow(/owner-only/);
     expect((await lstat(join(input.directory, 'runtime'))).mode & 0o777).toBe(0o777);
@@ -160,12 +260,19 @@ describe.skipIf(!supported)('kernel-backed daemon ownership', () => {
     expect(await readFile(join(input.directory, 'existing-store'), 'utf8')).toBe('leave alone');
   });
 
+  it('keeps principal strings stable and supports idempotent concurrent release', async () => {
+    const owner = await acquire(await target());
+    expect(windows ? /^S-1-/.test(owner.target.principal) : owner.target.principal === String(owner.target.uid)).toBe(true);
+    expect(owner.target.endpoint).toBe(join(owner.target.runtimeDirectory, windows ? 'ipc-endpoint.json' : 'ipc.sock'));
+    owner.assertCurrent(); await Promise.all([owner.release(), owner.release()]);
+  });
+
   it('rejects isolated agent/runtime symlinks that escape the fixture even with no custom stores', async () => {
     const input = await target(); const outside = await target();
-    await symlink(outside.directory, join(input.directory, 'runtime'));
+    await symlink(outside.directory, join(input.directory, 'runtime'), windows ? 'junction' : 'dir');
     expect(() => resolveDaemonTarget(input)).toThrow(/must not be a symlink/);
     await unlink(join(input.directory, 'runtime'));
-    await symlink(outside.directory, join(input.directory, 'agent'));
+    await symlink(outside.directory, join(input.directory, 'agent'), windows ? 'junction' : 'dir');
     expect(() => resolveDaemonTarget({ ...input, storeRoots: [] })).toThrow(/inside the canonical fixture/);
   });
 

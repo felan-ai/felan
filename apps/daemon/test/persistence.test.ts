@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -12,10 +12,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, parseInteraction } from '@felan-ai/session-protocol';
 import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../src/daemon/control-store.js';
-import { ControlDatabase, type PersistenceBoundary } from '../src/daemon/persistence.js';
+import { ControlDatabase, syncOwnedDirectory, type PersistenceBoundary } from '../src/daemon/persistence.js';
 import { controlDatabasePath, execControlDatabase, readControlDatabase, writeControlDatabase } from './fixtures/control-database.js';
 
-const supported = ['darwin', 'linux'].includes(process.platform);
+const supported = ['darwin', 'linux', 'win32'].includes(process.platform);
 const roots: string[] = [];
 const owners: DaemonOwnership[] = [];
 const stores: DaemonControlStore[] = [];
@@ -176,7 +176,7 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
       expect((await readdir(reopened.directory)).some(name => name.startsWith('control-corrupt-'))).toBe(true);
     });
   }
-  it.each(['torn', 'delete', 'version', 'foreign', 'symlink'])('starts empty after a %s control file instead of restoring old revisions', async mode => {
+  for (const mode of ['torn', 'delete', 'version', 'foreign', 'symlink']) it.skipIf(process.platform === 'win32' && mode === 'symlink')(`starts empty after a ${mode} control file (symlink requires POSIX privileges)`, async () => {
       const { owner, store } = await open(); store.close(); const path = controlDatabasePath(store.directory);
       if (mode === 'torn') await writeFile(path, 'SQLite format 3\0torn');
       if (mode === 'delete') await rm(path);
@@ -305,7 +305,7 @@ describe.skipIf(!supported)('shared remote persistence', () => {
 
 describe.skipIf(!supported)('real crashed-process recovery without execution replay', () => {
   for (const mode of ['intent', 'dispatch', 'effect', 'outcome', 'answer-ready', 'answer-intent', 'answer-effect', 'answer-completed', 'pi-content-first', 'pi-control-first', 'pi-both']) {
-    it(`recovers ${mode} from actual SIGKILL persisted files`, async () => {
+    it.skipIf(process.platform === 'win32')(`recovers ${mode} from POSIX SIGKILL persisted files`, async () => {
       const input = await target(); const id = requestId(Date.now());
       const child = spawn(process.execPath, [new URL('./fixtures/persistence-crash.mjs', import.meta.url).pathname, input.directory, input.namespaceId, id, mode], { stdio: ['ignore', 'pipe', 'pipe'], env: { PATH: process.env.PATH } });
       children.push(child);
@@ -438,7 +438,7 @@ describe.skipIf(!supported)('control retention and cancellation boundaries', () 
     store.putInteraction(pending('expires')); expect(() => store.cancelInteraction('expires', 'timeout')).toThrow(/not expired/);
     time += 100; expect(store.cancelInteraction('expires', 'timeout').value).toMatchObject({ state: 'expired', result: { reason: 'timeout' } });
   });
-  it('drops a row whose transcript was substituted by a symlink without quarantining the state', async () => {
+  it.skipIf(process.platform === 'win32')('drops a row whose transcript was substituted by a POSIX symlink without quarantining the state', async () => {
     const { owner, store } = await open();
     const other = join(owner.target.agentDir, 'other.jsonl'); await writeFile(other, 'other');
     await symlink(other, join(owner.target.agentDir, 's.jsonl'));
@@ -466,6 +466,13 @@ describe.skipIf(!supported)('retained ambiguity', () => {
 });
 
 describe.skipIf(!supported)('reviewed persistence boundaries', () => {
+  it.runIf(process.platform === 'win32')('persists and reopens control files under a shared store ACL', async () => {
+    const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
+    execFileSync(join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [owner.target.agentDir, '/grant', '*S-1-1-0:(OI)(CI)F'], { windowsHide: true });
+    const store = reopen(owner); store.database.transaction(() => store.database.putRecord('shared', 'record', 'kept')); store.close();
+    const reloaded = reopen(owner); expect(reloaded.database.rebuilt).toBe(false);
+    expect(reloaded.database.record('shared', 'record')).toBe('kept');
+  });
   for (const deletion of ['directory', 'both-files'] as const) it(`rebuilds lost initialized state across owner reacquisition: ${deletion}`, async () => {
     const { owner, store, input } = await open(); const request = prompt();
     store.admit(request, 'owner'); store.markDispatched(request.id);
@@ -479,7 +486,7 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
     const rebuilt = reopen(nextOwner);
     expect(rebuilt.snapshot().sessions).toEqual([]); expect(rebuilt.needsRecovery).toBe(false);
   });
-  it('syncs new control directory entries in their parent unless tests disable durable writes', async () => {
+  it.skipIf(process.platform === 'win32')('syncs POSIX control directory entries unless tests disable durable writes', async () => {
     const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
     const agent = fs.statSync(owner.target.agentDir);
     const parentSyncs = (directory: string, skipFsync: string | undefined) => {
@@ -496,6 +503,40 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
     };
     expect(parentSyncs(join(owner.target.agentDir, 'new', 'control'), undefined)).toEqual(expect.arrayContaining(['initialization-parent', 'parent-after-create']));
     expect(parentSyncs(join(owner.target.agentDir, 'other-control'), '1')).toEqual([]);
+  });
+  it.skipIf(process.platform === 'win32')('rejects a substituted POSIX directory descriptor while its named path stays unchanged', async () => {
+    const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
+    const path = join(owner.target.agentDir, 'directory'); const other = join(owner.target.agentDir, 'other-directory');
+    await mkdir(path); await mkdir(other);
+    const original = fs.openSync;
+    fs.openSync = (...args: Parameters<typeof fs.openSync>) => {
+      if (args[0] === path) args[0] = other;
+      return original(...args);
+    }; syncBuiltinESMExports();
+    try { expect(() => syncOwnedDirectory(owner, path)).toThrowError(expect.objectContaining({ code: 'ownership_lost', message: 'Directory changed while syncing.' })); }
+    finally { fs.openSync = original; syncBuiltinESMExports(); }
+  });
+  it.runIf(process.platform === 'win32')('persists and reopens control state without opening directories for sync', async () => {
+    const input = await target(); const owner = await acquireDaemonOwnership(input); owners.push(owner);
+    const original = fs.openSync; const openedDirectories: string[] = [];
+    fs.openSync = (...args: Parameters<typeof fs.openSync>) => {
+      try { if (fs.statSync(args[0]).isDirectory()) openedDirectories.push(String(args[0])); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      return original(...args);
+    }; syncBuiltinESMExports();
+    vi.stubEnv('FELAN_TEST_SKIP_FSYNC', undefined);
+    try {
+      const store = new DaemonControlStore(owner); stores.push(store);
+      expect(store.needsRecovery).toBe(false);
+      const before = store.snapshot(); store.close();
+      const reloaded = reopen(owner);
+      expect(reloaded.database.rebuilt).toBe(false);
+      expect(reloaded.snapshot()).toEqual(before);
+      expect(reloaded.needsRecovery).toBe(true);
+      reloaded.recover();
+      expect(reloaded.needsRecovery).toBe(false);
+      expect(openedDirectories).toEqual([]);
+    } finally { fs.openSync = original; syncBuiltinESMExports(); vi.unstubAllEnvs(); }
   });
   it('persists a large valid terminal interaction', async () => {
     const { owner, store } = await open();
@@ -598,7 +639,7 @@ describe.skipIf(!supported)('control file recovery', () => {
     expect(await corrupt(directory)).toEqual([]);
   });
 
-  it.skipIf(process.getuid?.() === 0)('fails retryably without quarantine when the control file cannot be read', async () => {
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)('fails retryably without quarantine when POSIX permissions deny access to the control file', async () => {
     const { owner, store } = await open(); const directory = store.directory; const path = controlDatabasePath(directory); store.close();
     const before = await readFile(path); await chmod(path, 0o000);
     try { expect(() => reopen(owner)).toThrow(expect.objectContaining({ code: 'storage_failure', message: expect.stringContaining('EACCES') })); }

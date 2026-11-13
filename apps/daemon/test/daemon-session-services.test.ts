@@ -1,10 +1,13 @@
-import { appendFile, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionsServiceError, type HostSessionsSelector } from '@felan-ai/agent-core';
 import type { SessionRegistry } from '../src/daemon/registry.js';
 import { createHostSessionsHistory, createRegistrySessionsService } from '../src/daemon/session-services.js';
+import { accountPrincipal } from '../src/daemon/native-ownership.js';
 import { deferred, fixture as registryFixture, fixtures, requestId, supported } from './fixtures/registry.js';
 
 function fixture() {
@@ -72,7 +75,7 @@ describe('host sessions history', () => {
   afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
   async function historyFixture(selector: HostSessionsSelector = { kind: 'project', cwd: '/project' }) {
-    const directory = await realpath(await mkdtemp(join(tmpdir(), 'host-history-')));
+    const directory = realpathSync.native(await mkdtemp(join(tmpdir(), 'host-history-')));
     directories.push(directory);
     const timestamp = '2026-08-24T10:00:00.000Z';
     const rows = [
@@ -86,7 +89,7 @@ describe('host sessions history', () => {
     await Promise.all(rows.map(row => writeFile(row.piPath, [
       { type: 'session', version: 3, id: row.id, cwd: row.cwd, timestamp }, entries.get(row.id),
     ].map(value => JSON.stringify(value)).join('\n'))));
-    const owner = { assertOwnsPath: vi.fn((path: string) => path), assertCurrent: vi.fn(), target: { uid: process.getuid!() } };
+    const owner = { assertOwnsPath: vi.fn((path: string) => path), assertCurrent: vi.fn(), target: { principal: accountPrincipal() } };
     const loaded = new Set<string>();
     const registry = { assertAdmission: vi.fn(), assertServiceAccess: vi.fn(), listed: vi.fn(() => rows),
       binding: vi.fn((id: string) => loaded.has(id) ? {} : undefined),
@@ -230,6 +233,15 @@ describe('host sessions history', () => {
 
 describe.skipIf(!supported)('registry sessions history', () => {
   afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
+
+  it.runIf(process.platform === 'win32')('creates and reads a transcript under a shared store ACL', async () => {
+    const f = await registryFixture();
+    execFileSync(join(process.env.SystemRoot!, 'System32', 'icacls.exe'), [f.owner.target.agentDir, '/grant', '*S-1-1-0:(OI)(CI)F'], { windowsHide: true });
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    root.runtime.session.sessionManager.appendMessage({ role: 'user', content: 'shared transcript', timestamp: 0 });
+    const history = createHostSessionsHistory(f.registry, { kind: 'all' });
+    expect((await history.history(root.sessionId)).entries).toEqual([expect.objectContaining({ type: 'message', message: expect.objectContaining({ role: 'user', content: 'shared transcript' }) })]);
+  });
 
   it('refreshes loaded root and child transcripts without a registry commit', async () => {
     const f = await registryFixture();

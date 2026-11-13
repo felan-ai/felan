@@ -86,7 +86,7 @@ export class InteractionBroker {
       throw new Error('Interaction hold must be a positive integer number of seconds.');
     }
     this.now = options.now ?? Date.now;
-    this.ownerPrincipal = options.ownerPrincipal ?? `local:${options.store.owner.target.uid}:${options.store.owner.target.namespaceId}`;
+    this.ownerPrincipal = options.ownerPrincipal ?? `local:${options.store.owner.target.principal}:${options.store.owner.target.namespaceId}`;
     for (const item of this.pending()) {
       if (item.scope.kind === 'host' && item.scope.recipient !== undefined) this.cancel(item.id, 'restart');
     }

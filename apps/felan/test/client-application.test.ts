@@ -5,6 +5,7 @@ import { clientDaemonTarget, resumeCommand, runDaemonFelan } from '../src/client
 import { resolveInstalledDaemonEntrypoint } from '../src/daemon-entrypoint.js';
 import { snapshot } from './client-fixtures.js';
 import type { RestartProcessOptions } from '../src/process-restart.js';
+import { ELEVATED_DAEMON_WARNING } from '../src/client/diagnostics.js';
 
 afterEach(() => vi.unstubAllEnvs());
 
@@ -14,9 +15,9 @@ it('constructs the installed-daemon client and forwards only declarative startup
   const runTerminal = vi.fn(async () => {});
   await runDaemonFelan({ cwd: '/workspace', agentDir: '/agent', sessionId: 'chosen', sessionDir: './fixtures/../sessions', initialMessage: 'hello', extensionPaths: ['/extension.ts'] },
     { createClient, runTerminal });
-  expect(createClient).toHaveBeenCalledWith(expect.objectContaining({ kind: 'tui', target: { kind: 'production', agentDir: '/agent', storeRoots: [] },
+  expect(createClient).toHaveBeenCalledWith(expect.objectContaining({ kind: 'tui', target: { kind: 'production', agentDir: resolve('/agent'), storeRoots: [] },
     launch: { entrypoint: resolveInstalledDaemonEntrypoint() } }));
-  expect(runTerminal).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cwd: '/workspace', sessionId: 'chosen', sessionDir: resolve('./sessions'), initialMessage: 'hello', extensions: ['/extension.ts'] }));
+  expect(runTerminal).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ cwd: resolve('/workspace'), sessionId: 'chosen', sessionDir: resolve('./sessions'), initialMessage: 'hello', extensions: [resolve('/extension.ts')] }));
   expect(close).toHaveBeenCalledOnce();
 });
 
@@ -40,6 +41,24 @@ it('restarts the daemon in place and reconnects the same terminal with the previ
   expect(control).toHaveBeenCalledWith('host.restart', 'drain');
   expect(waitForStop).toHaveBeenCalledOnce(); expect(connect).toHaveBeenCalledExactlyOnceWith({ replacing: oldIdentity });
   expect(notices).toEqual(['Daemon restarting…', 'Daemon restarted']); expect(close).toHaveBeenCalledOnce();
+});
+
+it('keeps each elevated-launch warning in the transcript through startup and an in-place restart', async () => {
+  const identity = { namespaceId: 'production', instanceId: 'old', agentDir: '/agent', rootSet: ['/agent'] };
+  const createClient = (options: SessionClientOptions) => ({ subscribe: () => () => {}, close() {}, identity,
+    connect: async () => { options.diagnostics!({ event: 'daemon.launch.elevated', message: ELEVATED_DAEMON_WARNING }); return {}; },
+    control: async () => ({ outcome: 'accepted' }),
+  }) as unknown as SessionClient;
+  await runDaemonFelan({ agentDir: '/agent' }, { createClient, waitForStop: async () => {}, runTerminal: async (controller, options) => {
+    await controller.client.connect();
+    expect(controller.notes).toMatchObject([{ text: ELEVATED_DAEMON_WARNING, level: 'warning' }]);
+    expect(await options.onDaemonAction!('restart', false, '')).toBe(false);
+    expect(controller.notice).toBe('Daemon restarted');
+    expect(controller.notes.filter(note => note.level === 'warning')).toEqual([
+      { text: ELEVATED_DAEMON_WARNING, level: 'warning', status: false },
+      { text: ELEVATED_DAEMON_WARNING, level: 'warning', status: false },
+    ]);
+  } });
 });
 
 it('re-executes /restart after verified shutdown without reconnecting the old client to the new build', async () => {
@@ -85,7 +104,7 @@ it.each([false, true])('preserves the requested force mode before relaunch (%s)'
   expect(control).toHaveBeenCalledExactlyOnceWith('host.restart', force ? 'force' : 'drain');
   expect(waitForStop).toHaveBeenCalledExactlyOnceWith(client, undefined, { client: 'tui', action: 'restart' });
   expect(restartProcess).toHaveBeenCalledOnce();
-  expect(restartProcess.mock.calls[0]![0]).toEqual({ cwd: '/workspace', replacing: identity });
+  expect(restartProcess.mock.calls[0]![0]).toEqual({ cwd: resolve('/workspace'), replacing: identity });
 });
 
 it('consumes the validated restart identity once and gives the fresh launcher its replacement ownership', async () => {
@@ -148,7 +167,7 @@ it('uses isolated daemon selection only when explicitly supplied, with a stable 
   vi.stubEnv('FELAN_DAEMON_RUNTIME', '/untrusted-ambient-target');
   expect(clientDaemonTarget({ agentDir: '/agent' }).kind).toBe('production');
   expect(clientDaemonTarget({ daemonRuntime: '/tmp/fixture' })).toEqual(clientDaemonTarget({ daemonRuntime: '/tmp/fixture' }));
-  expect(clientDaemonTarget({ daemonRuntime: '/tmp/fixture' })).toMatchObject({ kind: 'isolated', directory: '/tmp/fixture' });
+  expect(clientDaemonTarget({ daemonRuntime: '/tmp/fixture' })).toMatchObject({ kind: 'isolated', directory: resolve('/tmp/fixture') });
 });
 
 it('prints the resume command after a normal quit with an attached session, like Pi, and nothing without one', async () => {
@@ -156,7 +175,7 @@ it('prints the resume command after a normal quit with an attached session, like
   const output: string[] = [];
   await runDaemonFelan({ agentDir: '/agent', daemonRuntime: '/tmp/felan runtime', sessionDir: '/sessions/it\'s' }, { createClient: () => client, writeOutput: text => output.push(text),
     runTerminal: async controller => { vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('01a13dfa-c2dd'); } });
-  expect(output).toEqual([`To resume this session: felan --daemon-runtime '/tmp/felan runtime' --session-dir '/sessions/it'\\''s' --session 01a13dfa-c2dd\n`]);
+  expect(output).toEqual([`To resume this session: felan --daemon-runtime '${resolve('/tmp/felan runtime')}' --session-dir '${resolve('/sessions/it')}'\\''s' --session 01a13dfa-c2dd\n`]);
   output.length = 0;
   await runDaemonFelan({ agentDir: '/agent', daemonRuntime: '/tmp/felan runtime' }, { createClient: () => client, writeOutput: text => output.push(text),
     runTerminal: async controller => { vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('01a13dfb-0000'); vi.spyOn(controller, 'sessionEntry', 'get').mockReturnValue('new'); } });
@@ -167,7 +186,7 @@ it('prints the resume command after a normal quit with an attached session, like
       vi.spyOn(controller, 'sessionId', 'get').mockReturnValue('01a13dfb-0000'); vi.spyOn(controller, 'sessionEntry', 'get').mockReturnValue('new');
       vi.spyOn(controller, 'snapshot', 'get').mockReturnValue({ history: { entries: [{ role: 'user' }] } } as never);
     } });
-  expect(output).toEqual([`To resume this session: felan --daemon-runtime '/tmp/felan runtime' --session 01a13dfb-0000\n`]);
+  expect(output).toEqual([`To resume this session: felan --daemon-runtime '${resolve('/tmp/felan runtime')}' --session 01a13dfb-0000\n`]);
   output.length = 0;
   // A draft reattached by ID after a restart or relaunch is entered as a resume, but its history still decides.
   await runDaemonFelan({ agentDir: '/agent', daemonRuntime: '/tmp/felan runtime' }, { createClient: () => client, writeOutput: text => output.push(text),

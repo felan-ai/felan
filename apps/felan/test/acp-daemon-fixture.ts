@@ -36,7 +36,7 @@ export async function acpDaemonFixture(options: Parameters<typeof serverFixture>
     request: vi.fn(async () => ({ outcome: { outcome: 'selected', optionId: 'allow-once' } })) } as unknown as AgentContext;
   return { ...fixture, broker, server, clients, createClient, editor, updates,
     /** Serves the same daemon identity again after `server.close()`, as a restarted daemon would. */
-    async restartServer() { const next = createServer(); servers.push(next); await next.start(); return next; },
+    async restartServer() { const next = createServer(); servers.push(next); await fixture.resetIpcOwnership(); await next.start(); return next; },
     async dispose() {
       for (const client of clients) client.close();
       for (const item of servers) item.close();

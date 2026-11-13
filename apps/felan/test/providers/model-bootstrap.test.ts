@@ -1,3 +1,4 @@
+import { resolve } from 'node:path';
 import { ModelRuntime, type HostRuntimeService } from '@felan-ai/agent-core';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createLocalModelRuntime } from '../../src/providers/local-model-runtime.js';
@@ -27,7 +28,7 @@ it('initializes the configured session provider once before startup model discov
   const runtime = createLocalSessionRuntime({ initializeProcess: initialize, runtimeService: {} as HostRuntimeService });
   await runtime.createModelRuntime('/fixture');
   await runtime.createModelRuntime('/fixture');
-  expect(initialize).toHaveBeenCalledExactlyOnceWith('/fixture');
+  expect(initialize).toHaveBeenCalledExactlyOnceWith(resolve('/fixture'));
   expect(create).toHaveBeenCalledTimes(2);
   await expect(runtime.createModelRuntime('/other')).rejects.toThrow('restart');
   expect(create).toHaveBeenCalledTimes(2);

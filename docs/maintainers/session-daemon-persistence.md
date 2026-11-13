@@ -3,7 +3,8 @@
 S1.04 supplies internal persistence/recovery primitives, not an entrypoint
 cutover, registry, interaction broker, or execution engine. The existing Pi JSONL
 and tree remain the content authority. No dependency or public export/version is
-added. Windows remains unsupported by the ownership prerequisite.
+added. Native Windows uses the same store through the
+[Windows ownership backend](session-daemon-native-ownership.md).
 
 ## Files and durability
 
@@ -90,6 +91,13 @@ Deleting a session tombstones it and every registered descendant and removes
 all of their transcripts.
 The control directory cannot contain the agent directory/initialization record.
 Initialization syncs created directory entries through their owned parent chain.
+On Windows, `syncDirectory` skips directory fsync because the OS rejects it;
+ownership and path-identity checks still run. File fsync remains enabled.
+The `replaceFile` helper retries Windows `EPERM`, `EACCES` and `EBUSY` failures
+for up to two seconds, with waits of at most 20 ms, then throws the last error.
+This applies to replacements that use the helper, not every filesystem rename.
+Transcript export skips copying POSIX mode bits on Windows. Private managed
+files use DACL checks rather than POSIX UID and mode checks.
 An uncommitted transaction is never visible after a crash. A control-state write
 failure or a remote commit-phase failure permanently poisons that handle, even
 when the commit may have succeeded. Remote callback errors that roll back cleanly

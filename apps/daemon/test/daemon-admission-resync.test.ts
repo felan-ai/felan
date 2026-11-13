@@ -162,14 +162,16 @@ it.each([true, false])('retries explicit confirm=%s with an unpersisted ID after
 
 it('does not wait for an unrelated response write callback before maintenance resync', async () => {
   const f = await fixture(); const client = await f.client(); const first = confirmation(f);
+  const written = gate();
   let release: (() => void) | undefined;
   const send = SessionFanout.prototype.send;
   vi.spyOn(SessionFanout.prototype, 'send').mockImplementation(function (this: SessionFanout, value, afterSend) {
     return send.call(this, value, value && typeof value === 'object' && 're' in value && value.re === first.request.id
-      ? () => { release = afterSend; } : afterSend);
+      ? () => { release = afterSend; written.resolve(); } : afterSend);
   });
   expect(await client.exchange(first.request)).toMatchObject({ outcome: 'accepted' });
   await expect(first.outcome).resolves.toMatchObject({ state: 'answered' });
+  await written.promise;
   expect(release).toBeTypeOf('function');
   const second = confirmation(f); fillTerminalResources(f);
   await expect(client.exchange(second.request)).rejects.toThrow('Connection closed before response');
@@ -290,14 +292,16 @@ it.each(['control', 'command'])('resynchronizes an attached %s management reques
   await expect(initial.exchange(request)).rejects.toThrow('Connection closed before response');
   expect(f.store.request(id)).toBeUndefined(); expect(f.settle).not.toHaveBeenCalled();
   const client = await f.client();
+  const written = gate();
   let release: (() => void) | undefined;
   const send = SessionFanout.prototype.send;
   vi.spyOn(SessionFanout.prototype, 'send').mockImplementation(function (this: SessionFanout, value, afterSend) {
     return send.call(this, value, value && typeof value === 'object' && 're' in value && value.re === id
-      ? () => { release = afterSend; } : afterSend);
+      ? () => { release = afterSend; written.resolve(); } : afterSend);
   });
   const response = await client.exchange(request);
   expect(response).toMatchObject({ outcome: 'accepted' });
+  await written.promise;
   expect(f.settle).not.toHaveBeenCalled(); expect(release).toBeTypeOf('function');
   release!(); await f.stopped.promise;
   expect(f.settle).toHaveBeenCalledOnce();

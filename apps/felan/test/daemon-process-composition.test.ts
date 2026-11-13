@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { DaemonIdentity, Operation, OperationParams, OperationResult, ResponseFor, SessionSnapshot } from '@felan-ai/session-protocol';
 import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
 import { builtinExtensionPackages } from '../src/providers/extensions.js';
@@ -314,7 +314,20 @@ it('keeps a real foreground process alive after its client is killed and lets an
   await a.worker.call('connect', { identity: daemon.ready.identity }); await b.worker.call('connect', { identity: daemon.ready.identity });
   const { sessionId: session } = await accepted(a.worker, 'sessions.create', { cwd: f.directory, model: { provider: 'offline', id: 'fixture' } });
   await attach(a.worker, session); await attach(b.worker, session);
-  const script = `
+  const windows = process.platform === 'win32';
+  const advancePath = join(f.directory, 'advance-process');
+  const script = windows ? `
+    const { existsSync } = require('node:fs');
+    const pid = String(process.pid).padStart(10, '0');
+    const gatePath = ${JSON.stringify(advancePath.replaceAll('\\', '/'))};
+    let advanced = false;
+    setInterval(() => {
+      if (advanced || !existsSync(gatePath)) return;
+      advanced = true;
+      process.stdout.write('AFTER:' + pid + '\\n');
+    }, 50);
+    process.stdout.write('READY:' + pid + '\\n');
+  ` : `
     const pid = String(process.pid).padStart(10, '0');
     let advanced = false;
     const keepAlive = setInterval(() => {}, 60_000);
@@ -331,7 +344,7 @@ it('keeps a real foreground process alive after its client is killed and lets an
     process.stdout.write('READY:' + pid + '\\n');
   `;
   const quote = (text: string) => `'${text.replaceAll("'", "'\\''")}'`;
-  const command = `exec ${quote(process.execPath)} -e ${quote(script)}`;
+  const command = `exec ${quote(windows ? process.execPath.replaceAll('\\', '/') : process.execPath)} -e ${quote(script)}`;
   const run = await accepted(a.worker, 'shell.execute', { command, includeInContext: false }, session);
   const readyBytes = Buffer.byteLength('READY:0000000000\n');
   const readOutput = () => accepted(b.worker, 'processes.read', { root: session, resourceId: run.resourceId, offset: 0, limit: 4096 }, session);
@@ -346,7 +359,7 @@ it('keeps a real foreground process alive after its client is killed and lets an
   expect(before.entries[0]).toMatchObject({ id: run.resourceId, session, root: session, kind: 'foreground', command, state: 'running', controllable: true });
   expect((await a.worker.kill()).signal).toBe('SIGKILL'); expect(daemon.worker.exit).toBeUndefined();
   expect(await readOutput()).toMatchObject({ resourceId: run.resourceId, state: 'running', data: ready.data });
-  process.kill(pid, 'SIGUSR2');
+  if (windows) await writeFile(advancePath, ''); else process.kill(pid, 'SIGUSR2');
   const afterText = `${readyText}AFTER:${match![1]}\n`;
   const progress = await wait(b.worker, { runId: run.runId, runState: 'running', process: { id: run.resourceId, state: 'running', minimumOutput: Buffer.byteLength(afterText) } });
   expect(progress.identity).toEqual(daemon.ready.identity);
@@ -356,13 +369,14 @@ it('keeps a real foreground process alive after its client is killed and lets an
   expect(retained.entries).toHaveLength(1);
   expect(retained.entries[0]).toMatchObject({ id: run.resourceId, startedAt: before.entries[0]!.startedAt, state: 'running', controllable: true });
   await accepted(b.worker, 'processes.stop', { root: session, resourceId: run.resourceId, signal: 'SIGTERM' }, session);
-  const finalText = `${afterText}STOPPED:${match![1]}\n`;
-  await wait(b.worker, { runId: run.runId, runState: 'idle', historyText: `STOPPED:${match![1]}`, process: { id: run.resourceId, state: 'exited', minimumOutput: Buffer.byteLength(finalText) } });
-  const completed = await readOutput(); expect(completed).toMatchObject({ resourceId: run.resourceId, state: 'exited', exitCode: 0, nextOffset: Buffer.byteLength(finalText) });
+  const finalText = windows ? afterText : `${afterText}STOPPED:${match![1]}\n`;
+  await wait(b.worker, { runId: run.runId, runState: 'idle', historyText: windows ? `AFTER:${match![1]}` : `STOPPED:${match![1]}`, process: { id: run.resourceId, state: 'exited', minimumOutput: Buffer.byteLength(finalText) } });
+  const completed = await readOutput(); expect(completed).toMatchObject({ resourceId: run.resourceId, state: 'exited', exitCode: windows ? expect.any(Number) : 0, nextOffset: Buffer.byteLength(finalText) });
   expect(Buffer.from(completed.data, 'base64').toString('utf8')).toBe(finalText);
   const stopped = await accepted(b.worker, 'processes.list', { root: session }, session);
   expect(stopped.entries).toHaveLength(1);
-  expect(stopped.entries[0]).toMatchObject({ id: run.resourceId, startedAt: before.entries[0]!.startedAt, state: 'exited', exitCode: 0, controllable: false });
+  expect(stopped.entries[0]).toMatchObject({ id: run.resourceId, startedAt: before.entries[0]!.startedAt, state: 'exited', exitCode: completed.exitCode, controllable: false });
+  if (windows) await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
   expect((await b.worker.call<ClientView>('state')).sent.filter(item => item.op === 'shell.execute')).toHaveLength(0);
   expect(await daemon.worker.call('stats')).toMatchObject({ calls: 0, live: [], identity: daemon.ready.identity });
   expect(await f.calls()).toEqual([]);

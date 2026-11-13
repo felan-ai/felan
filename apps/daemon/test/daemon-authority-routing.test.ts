@@ -30,7 +30,7 @@ it.each([undefined, 'session', 'owner', 'host'] as const)('routes Core audience 
   });
   cleanups.push(async () => { await broker.drain(); await f.dispose(); });
   expect(ui).toBeDefined();
-  broker.connected({ attachment: 'local-client', principal: `local:${f.owner.target.uid}:${f.owner.target.namespaceId}`, kind: 'acp', localConsole: true,
+  broker.connected({ attachment: 'local-client', principal: `local:${f.owner.target.principal}:${f.owner.target.namespaceId}`, kind: 'acp', localConsole: true,
     sessions: [f.root.sessionId], interactionKinds: ['form'] });
   const controller = new AbortController();
   const answer = ui.request(form, { signal: controller.signal, ...(audience === undefined ? {} : { audience }) });

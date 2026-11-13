@@ -205,9 +205,12 @@ describe('retained memory runs', () => {
     const options = await fixture();
     const run = await LocalMemoryRun.create(options);
     const sessionPath = join(options.sessionDirectory, run.metadata.sessionFile);
-    const file = await open(sessionPath, 'a');
-    await file.truncate(17 * 1_024 * 1_024);
-    await file.close();
+    const file = await open(sessionPath, 'r+');
+    try {
+      await file.truncate(17 * 1_024 * 1_024);
+    } finally {
+      await file.close();
+    }
     const before = await stat(sessionPath);
 
     await expect(LocalMemoryRun.reconcile(options, {

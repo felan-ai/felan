@@ -261,7 +261,8 @@ describe('native codemode offline execution', () => {
     expect(path).toBeDefined();
     if (!path) throw new Error('Expected a path for the codemode image output');
     try {
-      expect((await stat(path)).mode & 0o777).toBe(0o600);
+      expect((await stat(path)).isFile()).toBe(true);
+      if (process.platform !== 'win32') expect((await stat(path)).mode & 0o777).toBe(0o600);
     } finally {
       await rm(path, { force: true });
     }

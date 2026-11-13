@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, constants, fstatSync, openSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { DaemonOwnership } from './ownership.js';
 import type { LegacySummary } from './legacy-sessions.js';
-import { assertPathIdentity, assertPrivateStat, pinPathAncestry } from './target.js';
+import { assertPathIdentity, pinPathAncestry } from './target.js';
+import { assertPrivatePath } from './native-ownership.js';
+import { replaceFile } from './durability.js';
 
 type Owner = Pick<DaemonOwnership, 'target'> & Partial<Pick<DaemonOwnership, 'assertCurrent' | 'assertOwnsPath'>>;
 interface Entry { key: string; version: string; id: string; summary: LegacySummary }
@@ -50,9 +52,12 @@ export class LegacySummaryCache {
       temporary = `${this.path}.${randomUUID()}.tmp`;
       check(); signal.throwIfAborted();
       const fd = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-      try { writeFileSync(fd, data); } finally { closeSync(fd); }
+      try {
+        if (process.platform === 'win32') assertPrivatePath(temporary, fstatSync(fd, { bigint: true }), this.owner.target.principal, 'file');
+        writeFileSync(fd, data);
+      } finally { closeSync(fd); }
       check(); signal.throwIfAborted();
-      renameSync(temporary, this.path);
+      replaceFile(temporary, this.path);
       temporary = undefined;
       this.dirty = false;
     } catch { signal.throwIfAborted(); }
@@ -87,7 +92,7 @@ export class LegacySummaryCache {
       let value: unknown;
       try {
         const info = fstatSync(fd, { bigint: true });
-        assertPrivateStat(info, this.owner.target.uid, false);
+        assertPrivatePath(this.path, info, this.owner.target.principal, 'file');
         if (info.size > BigInt(MAX_BYTES)) return;
         const data = Buffer.alloc(Number(info.size) + 1);
         let length = 0;

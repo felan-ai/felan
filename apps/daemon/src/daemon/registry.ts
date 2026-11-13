@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { closeSync, constants, existsSync, openSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fstatSync, openSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -12,7 +12,7 @@ import type { ProcessAdapter } from './process-adapter.js';
 import type { SessionRuntime } from './session-runtime.js';
 import type { ControlCommit, DaemonControlStore } from './control-store.js';
 import { ControlStoreError, SessionProfileSchema, type ControlSession, type ControlSessionMetadata, type SessionProfile } from './control-state.js';
-import { DaemonSecurityError } from './native-ownership.js';
+import { assertOwnedFile, DaemonSecurityError } from './native-ownership.js';
 import { LegacySessionIndex, readTranscriptPreview, transcriptHasConversation, transcriptPreview, type LegacySession, type LegacySummary } from './legacy-sessions.js';
 import type { DaemonOwnership } from './ownership.js';
 import type { SessionLifecycle, DaemonSessionServices, SessionOpenRequest, SessionResources, SessionBinding, SessionTargetIdentity, SessionExecutionPolicy } from './session-lifecycle-contracts.js';
@@ -25,6 +25,7 @@ import type { createUiVocabulary } from './ui-vocabulary.js';
 import { shutdownStep } from './shutdown-error.js';
 import { HostWorkers } from './host-workers.js';
 import { assertStagedWorker } from './worker.js';
+import { syncOwnedDirectory } from './persistence.js';
 
 /** @internal */
 export const PROJECTION_CLEANUP_LIMIT_MS = 30_000;
@@ -1137,9 +1138,11 @@ export class SessionRegistry {
           if (manager.getEntries().some(row => row.type === 'message' && ['user', 'assistant'].includes(row.message.role))) throw new Error('Conversation transcript was not persisted.');
           const bytes = rows.map(row => JSON.stringify(row)).join('\n') + '\n';
           const fd = openSync(this.options.owner.assertOwnsPath(path), constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-          try { this.options.owner.assertCurrent(); writeFileSync(fd, bytes); syncDescriptor(fd); } finally { closeSync(fd); }
-          const directory = openSync(dirname(path), constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-          try { syncDescriptor(directory); } finally { closeSync(directory); }
+          try {
+            if (process.platform === 'win32') assertOwnedFile(path, fstatSync(fd, { bigint: true }), this.options.owner.target.principal);
+            this.options.owner.assertCurrent(); writeFileSync(fd, bytes); syncDescriptor(fd);
+          } finally { closeSync(fd); }
+          syncOwnedDirectory(this.options.owner, dirname(path));
         }
         if (claim && claim !== path) this.pathClaims.delete(claim);
         claim = path; this.pathClaims.add(path);

@@ -18,6 +18,8 @@ describe('Chrome debugging preflight', () => {
     expect(parseDevToolsActivePort(value)).toBeUndefined();
   });
 
+  // These fixtures emulate macOS ownership and symlinks, which Windows cannot verify.
+  describe.skipIf(process.platform === 'win32')('macOS filesystem metadata', () => {
   it('uses root metadata only when its port belongs to the intended Chrome', async () => {
     const fixture = await setup();
     await writeFile(fixture.portFile, '4141\n/devtools/browser/live\n');
@@ -142,10 +144,11 @@ describe('Chrome debugging preflight', () => {
     await expect(inspectChromeRemoteDebugging(new AbortController().signal, { ...fixture.options, environment: { AGENT_BROWSER_AUTO_CONNECT: '' } })).resolves.toMatchObject({ state: 'unavailable' });
     expect(fixture.run).not.toHaveBeenCalled();
   });
+  });
 
   it.each(['linux', 'win32'] as const)('fails closed where ownership cannot be verified on %s', async operatingSystem => {
     const run = vi.fn();
-    await expect(inspectChromeRemoteDebugging(new AbortController().signal, { operatingSystem, environment: {}, run })).resolves.toMatchObject({ state: 'unavailable' });
+    await expect(inspectChromeRemoteDebugging(new AbortController().signal, { operatingSystem, environment: {}, run })).resolves.toMatchObject({ state: 'unavailable', reason: expect.stringContaining('only on macOS') });
     expect(run).not.toHaveBeenCalled();
   });
 

@@ -83,7 +83,10 @@ export async function runDaemonFelan(options: RunDaemonFelanOptions = {}, depend
   while (!options.signal?.aborted) {
     const target = clientDaemonTarget(options);
     const expectedComposition = dependencies.createClient ? undefined : await resolveClientHostComposition(target, options.hostConfigPath);
-    const client = (dependencies.createClient ?? (options => new SessionClient(options)))({ target, diagnostics: diagnostics.write,
+    const client = (dependencies.createClient ?? (options => new SessionClient(options)))({ target, diagnostics: event => {
+      diagnostics.write(event);
+      if (event.event === 'daemon.launch.elevated') controller.announce(event.message, 'warning');
+    },
       clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}), kind: 'tui', interactionKinds: [...TERMINAL_INTERACTION_KINDS], capabilities: [...TERMINAL_UI_CAPABILITIES],
       launch: { entrypoint: resolveInstalledDaemonEntrypoint(), ...(options.hostConfigPath ? { hostConfigPath: resolve(options.hostConfigPath) } : {}), ...(replacing ? { replacing } : {}) } });
     const controller = new TuiSessionController(client);

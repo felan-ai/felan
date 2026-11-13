@@ -52,6 +52,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
       client?.close();
       const expectedComposition = dependencies.createClient ? undefined : await resolveClientHostComposition(target, hostConfigPath);
       client = makeClient({ target, clientVersion: FELAN_VERSION, expectedDaemonVersion: DAEMON_VERSION, ...(expectedComposition ? { expectedComposition } : {}), kind: 'tui', reconnectAttempts: 0,
+        diagnostics: event => { if (event.event === 'daemon.launch.elevated') io.writeError(event.message); },
         ...(launch ? { launch: { entrypoint: resolveInstalledDaemonEntrypoint(), ...(hostConfigPath ? { hostConfigPath } : {}), ...(replacing ? { replacing } : {}) } } : {}) });
       try { await client.connect(); }
       catch (error) { if (client.status !== 'incompatible' || !client.identity) throw error; }
@@ -107,8 +108,9 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
 }
 
 async function foreground(target: ReturnType<typeof clientDaemonTarget>, hostConfigPath?: string): Promise<number> {
-  const child = spawn(process.execPath, [resolveInstalledDaemonEntrypoint(), JSON.stringify(target), ...(hostConfigPath ? ['--host-config', hostConfigPath] : []), '--foreground'], { stdio: 'inherit' });
-  const stop = () => child.kill('SIGINT');
+  const child = spawn(process.execPath, [resolveInstalledDaemonEntrypoint(), JSON.stringify(target), ...(hostConfigPath ? ['--host-config', hostConfigPath] : []), '--foreground'], { stdio: 'inherit', ...(process.platform === 'win32' ? {} : { windowsHide: true }) });
+  // Windows delivers Ctrl+C to the shared console; child.kill would call TerminateProcess.
+  const stop = () => { if (process.platform !== 'win32') child.kill('SIGINT'); };
   process.once('SIGINT', stop); process.once('SIGTERM', stop);
   try { return await new Promise<number>((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve(code ?? (signal ? 1 : 0))); }); }
   finally { process.off('SIGINT', stop); process.off('SIGTERM', stop); }

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -38,6 +38,10 @@ it('retains symlink identity and refuses no-follow reads and writes', async () =
   await expect(runtime.files.append('link', new Uint8Array([2]))).rejects.toMatchObject({ code: 'ELOOP' });
   await expect(runtime.writeFile('link', new Uint8Array([2]), { noFollow: true })).rejects.toMatchObject({ code: 'ELOOP' });
   expect(new Uint8Array((await runtime.files.snapshot('file', 4)).content)).toEqual(new Uint8Array([1]));
+  await symlink('missing', join(cwd, 'dangling'));
+  await expect(runtime.files.append('dangling', new Uint8Array([2]))).rejects.toMatchObject({ code: 'ELOOP' });
+  await expect(runtime.writeFile('dangling', new Uint8Array([2]), { noFollow: true })).rejects.toMatchObject({ code: 'ELOOP' });
+  await expect(lstat(join(cwd, 'missing'))).rejects.toMatchObject({ code: 'ENOENT' });
 });
 
 it('rejects a conditional append when the original file changed', async () => {

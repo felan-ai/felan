@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { withLocalFileLock } from '@felan-ai/daemon/provider';
+import { replaceFile } from '../file-replace.js';
 
 export type MutableDaemonGlobalSettings = Record<string, unknown>;
 
@@ -61,8 +62,7 @@ async function transactDaemonSettingsStore(
     const temporaryPath = `${path}.${randomUUID()}.tmp`;
     try {
       await writeFile(temporaryPath, `${JSON.stringify(settings, null, 2)}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-      assertCurrent(); lock.throwIfCompromised();
-      await rename(temporaryPath, path);
+      await replaceFile(temporaryPath, path, { beforeRename() { assertCurrent(); lock.throwIfCompromised(); } });
       assertCurrent(); lock.throwIfCompromised();
     } finally {
       await rm(temporaryPath, { force: true }).catch(() => {});

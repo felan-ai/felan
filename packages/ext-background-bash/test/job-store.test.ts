@@ -1,4 +1,5 @@
 import type { AgentRuntime, AgentRuntimeListFilesOptions, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import { join, sep } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BackgroundBashJobStore, getBackgroundBashJobsDir } from '../src/job-store.js';
 
@@ -12,8 +13,8 @@ describe('BackgroundBashJobStore metadata compatibility', () => {
     const storage = new MemoryStorage();
     const cwd = '/workspace/project';
     const jobsDir = getBackgroundBashJobsDir(storage.root, cwd);
-    const jobDir = `${jobsDir}/bash-20260101000000-abcdef`;
-    storage.files.set(`${jobDir}/meta.json`, encoder.encode(JSON.stringify({
+    const jobDir = join(jobsDir, 'bash-20260101000000-abcdef');
+    storage.files.set(join(jobDir, 'meta.json'), encoder.encode(JSON.stringify({
       id: 'bash-20260101000000-abcdef',
       command: 'printf legacy',
       cwd,
@@ -33,8 +34,8 @@ describe('BackgroundBashJobStore metadata compatibility', () => {
     const cwd = '/workspace/project';
     const jobsDir = getBackgroundBashJobsDir(storage.root, cwd);
     const id = 'bash-20260101000000-abcdef';
-    const jobDir = `${jobsDir}/${id}`;
-    storage.files.set(`${jobDir}/info.json`, encoder.encode(JSON.stringify({
+    const jobDir = join(jobsDir, id);
+    storage.files.set(join(jobDir, 'info.json'), encoder.encode(JSON.stringify({
       id,
       command: 'printf pty',
       cwd,
@@ -60,8 +61,8 @@ describe('BackgroundBashJobStore metadata compatibility', () => {
     expect(job.info).toMatchObject({ executionMode: 'attached', startedAt: 0, pid: 1234, processGroupId: 1234, promotedAt: 50 });
     expect(job.meta.processToken).toBeUndefined();
     expect(job.info).not.toHaveProperty('processToken');
-    expect(job.meta.commandPath).toBe(`${job.meta.jobDir}/command.sh`);
-    expect(job.meta.runnerPath).toBe(`${job.meta.jobDir}/runner.sh`);
+    expect(job.meta.commandPath).toBe(join(job.meta.jobDir, 'command.sh'));
+    expect(job.meta.runnerPath).toBe(join(job.meta.jobDir, 'runner.sh'));
     expect([...storage.files.keys()]).toEqual([job.meta.infoPath]);
     await expect(store.readJob(job.meta.id)).resolves.toEqual(job);
   });
@@ -317,10 +318,10 @@ class MemoryStorage implements AgentRuntimeStorage {
 
   async listFiles(path: string, options?: AgentRuntimeListFilesOptions): Promise<string[]> {
     const paths = [...this.files.keys()]
-      .filter((file) => file.startsWith(`${path}/`))
+      .filter((file) => file.startsWith(`${path}${sep}`))
       .map((file) => file.slice(path.length + 1));
     return options?.recursive === false
-      ? [...new Set(paths.map(file => file.split('/')[0]!))]
+      ? [...new Set(paths.map(file => file.split(sep)[0]!))]
       : paths;
   }
   async mkdir(): Promise<void> {}

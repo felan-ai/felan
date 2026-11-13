@@ -199,7 +199,7 @@ describe('Claude Code extension activation', () => {
     expect(h.commands.has('claude-code')).toBe(true);
     expect(h.providers.size).toBe(0);
     expect(h.logger.warn).toHaveBeenCalledWith(
-      { reason: expect.stringContaining('/claude-code install') },
+      { reason: expect.stringContaining(process.platform === 'win32' ? 'Windows paths are not supported' : '/claude-code install') },
       expect.stringContaining('not registered'),
     );
     expect(h.install).not.toHaveBeenCalled();
@@ -209,7 +209,7 @@ describe('Claude Code extension activation', () => {
     expect(h.storage.remove).not.toHaveBeenCalled();
   });
 
-  it('logs a load failure without registering a provider or installing anything', async () => {
+  it.skipIf(process.platform === 'win32')('logs a load failure without registering a provider or installing anything', async () => {
     const h = await fixture('host', 'export const notAnSdk = true;');
     expect(h.commands.has('claude-code')).toBe(true);
     expect(h.providers.size).toBe(0);
@@ -223,7 +223,7 @@ describe('Claude Code extension activation', () => {
     expect(() => claudeAgentSdk()).toThrow('Claude Agent SDK is not installed');
   });
 
-  it('loads a temporary SDK entry and registers models with the resolved settings', async () => {
+  it.skipIf(process.platform === 'win32')('loads a temporary SDK entry and registers models with the resolved settings', async () => {
     const h = await fixture('host', fakeEntrySource, {
       plan: 'max',
       longContextExtraUsage: true,
@@ -247,7 +247,7 @@ describe('Claude Code extension activation', () => {
     });
   });
 
-  it('registers no provider when Claude Code does not list its models', async () => {
+  it.skipIf(process.platform === 'win32')('registers no provider when Claude Code does not list its models', async () => {
     const h = await fixture('host', fakeEntryWithModels(`throw new Error('Not logged in');`));
     expect(h.providers.size).toBe(0);
     expect(h.handlers.size).toBe(0);
@@ -261,6 +261,27 @@ describe('Claude Code extension activation', () => {
     expect(h.notify).toHaveBeenLastCalledWith({
       text: expect.stringContaining('Provider: not registered'),
       level: 'info',
+    });
+  });
+
+  it.runIf(process.platform === 'win32')('rejects an installed SDK without loading or registering it', async () => {
+    const h = await fixture('host', fakeEntrySource);
+    expect(h.commands.has('claude-code')).toBe(true);
+    expect(h.providers.size).toBe(0);
+    expect(h.handlers.size).toBe(0);
+    expect(h.logger.warn).toHaveBeenCalledWith(
+      { reason: expect.stringContaining('Windows paths are not supported') },
+      expect.stringContaining('not registered'),
+    );
+    expect(h.logger.error).not.toHaveBeenCalled();
+    expect(h.storage.readFile).not.toHaveBeenCalled();
+    expect(h.install).not.toHaveBeenCalled();
+    expect(h.runtime.exec).not.toHaveBeenCalled();
+    expect(() => claudeAgentSdk()).toThrow('Claude Agent SDK is not installed');
+    await h.commands.get('claude-code')!.handler('status', {} as Parameters<Command['handler']>[1]);
+    expect(h.notify).toHaveBeenLastCalledWith({
+      text: expect.stringContaining('Windows paths are not supported'),
+      level: 'warning',
     });
   });
 });

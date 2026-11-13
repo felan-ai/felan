@@ -34,7 +34,7 @@ describe('durable project memory control', () => {
     expect(await restarted.readControl()).toEqual({
       version: 1, generation: 0, consecutiveFailures: 0, updatedAt: iso(NOW + 1),
     });
-    expect((await stat(store.controlPath)).mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect((await stat(store.controlPath)).mode & 0o777).toBe(0o600);
   });
 
   it('persists 60s/300s backoff, then disables across checkpoints, projects and restarts', async () => {

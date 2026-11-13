@@ -1,18 +1,22 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import childProcess, { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
+import { windowsProcessElevated } from '@felan-ai/daemon/client';
 import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
 import { builtinExtensionPackages } from '../src/providers/extensions.js';
 import { clientDaemonTarget } from '../src/client-application.js';
-import { SessionClient } from '../src/client/client.js';
+import { SessionClient, type SessionClientOptions } from '../src/client/client.js';
 import { runCli } from '../src/cli-main.js';
 import { runDaemonCommand } from '../src/daemon-command.js';
+import { ELEVATED_DAEMON_WARNING } from '../src/client/diagnostics.js';
 
 const cleanup: Array<() => Promise<void>> = [];
-afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); vi.unstubAllEnvs(); });
+afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllEnvs(); });
 const output = () => ({ writeOutput: vi.fn(), writeError: vi.fn() });
 async function runSuccessfully(args: readonly string[], io = output()): Promise<void> {
   const code = await runDaemonCommand(args, io);
@@ -27,12 +31,62 @@ it('rejects --force outside stop/restart before constructing a client', async ()
 });
 
 it('routes daemon arguments separately from prompts and preserves the explicit isolated target', async () => {
+  const directory = join(tmpdir(), 'explicit-target');
   const launchDaemon = vi.fn(async () => 0);
-  expect(await runCli(['daemon', 'status', '--daemon-runtime', '/tmp/explicit-target'], { launchDaemon })).toBe(0);
-  expect(launchDaemon).toHaveBeenCalledWith(['status', '--daemon-runtime', '/tmp/explicit-target']);
+  expect(await runCli(['daemon', 'status', '--daemon-runtime', directory], { launchDaemon })).toBe(0);
+  expect(launchDaemon).toHaveBeenCalledWith(['status', '--daemon-runtime', directory]);
   const foreground = vi.fn(async () => 7);
-  expect(await runDaemonCommand(['foreground', '--daemon-runtime', '/tmp/explicit-target'], output(), { foreground })).toBe(7);
-  expect(foreground).toHaveBeenCalledWith(expect.objectContaining({ kind: 'isolated', directory: '/tmp/explicit-target', storeRoots: ['/tmp/explicit-target'] }), undefined);
+  expect(await runDaemonCommand(['foreground', '--daemon-runtime', directory], output(), { foreground })).toBe(7);
+  expect(foreground).toHaveBeenCalledWith(expect.objectContaining({ kind: 'isolated', directory, storeRoots: [directory] }), undefined);
+});
+
+it.each(['status', 'start', 'stop', 'restart', 'logs'])('reports an elevation mismatch once for daemon %s without a replacement client', async action => {
+  const directory = await mkdtemp(join(tmpdir(), 'elevation-cli-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const error = Object.assign(new Error('The running daemon is elevated. Stop it from an elevated terminal, then retry.'), { code: 'elevation_mismatch' });
+  const connector = vi.fn(async () => { throw error; });
+  const createClient = vi.fn((options: SessionClientOptions) => new SessionClient({ ...options, connector }));
+  const io = output();
+  expect(await runDaemonCommand([action, '--daemon-runtime', directory], io, { createClient })).toBe(1);
+  expect(io.writeError.mock.calls).toEqual([[error.message]]); expect(io.writeOutput).not.toHaveBeenCalled();
+  expect(createClient).toHaveBeenCalledOnce(); expect(connector).toHaveBeenCalledOnce();
+});
+
+it.each(['start', 'restart'])('routes a daemon %s launch warning to the command error channel without refusing it', async action => {
+  const createClient = (options: SessionClientOptions) => ({ identity: { instanceId: 'started' }, close() {},
+    connect: async () => {
+      if (!options.launch) throw Object.assign(new Error('missing'), { code: 'ENOENT' });
+      options.diagnostics!({ event: 'daemon.launch.elevated', message: ELEVATED_DAEMON_WARNING });
+    },
+    request: async () => ({ outcome: 'accepted', result: { daemonVersion: 'fixture', state: 'ready',
+      active: { sessions: 0, runs: 0, work: 0, attachments: 0 }, setupNeeds: [] } }),
+  }) as unknown as SessionClient;
+  const io = output();
+  expect(await runDaemonCommand([action], io, { createClient })).toBe(0);
+  expect(io.writeError).toHaveBeenCalledExactlyOnceWith(ELEVATED_DAEMON_WARNING);
+  expect(io.writeOutput).toHaveBeenCalled();
+  expect(io.writeOutput.mock.calls.flat().some(line => line.includes(ELEVATED_DAEMON_WARNING))).toBe(false);
+});
+
+it.runIf(process.platform === 'win32')('shares the foreground console without forwarding Ctrl+C through TerminateProcess', async () => {
+  const child = Object.assign(new EventEmitter(), { kill: vi.fn() });
+  const start = vi.spyOn(childProcess, 'spawn').mockReturnValue(child as unknown as childProcess.ChildProcess);
+  syncBuiltinESMExports();
+  const running = runDaemonCommand(['foreground'], output());
+  expect(start).toHaveBeenCalledWith(process.execPath, expect.arrayContaining(['--foreground']), { stdio: 'inherit' });
+  process.listeners('SIGINT').at(-1)!();
+  expect(child.kill).not.toHaveBeenCalled();
+  child.emit('exit', 0, null); expect(await running).toBe(0);
+});
+
+it.skipIf(process.platform === 'win32')('forwards foreground interrupts as SIGINT on POSIX', async () => {
+  const child = Object.assign(new EventEmitter(), { kill: vi.fn() });
+  const start = vi.spyOn(childProcess, 'spawn').mockReturnValue(child as unknown as childProcess.ChildProcess);
+  syncBuiltinESMExports();
+  const running = runDaemonCommand(['foreground'], output());
+  expect(start).toHaveBeenCalledWith(process.execPath, expect.arrayContaining(['--foreground']), { stdio: 'inherit', windowsHide: true });
+  process.listeners('SIGINT').at(-1)!(); process.listeners('SIGTERM').at(-1)!();
+  expect(child.kill.mock.calls).toEqual([['SIGINT'], ['SIGINT']]);
+  child.emit('exit', 0, null); expect(await running).toBe(0);
 });
 
 it('starts and restarts the actual daemon with a shared launch environment and retained session IDs', async () => {
@@ -60,7 +114,8 @@ it('starts and restarts the actual daemon with a shared launch environment and r
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
   const id = created.result.sessionId; await first.attach(id);
   async function environment(client: SessionClient): Promise<string> {
-    const result = await client.request('shell.execute', { command: 'printf "%s" "$FELAN_DAEMON_TEST_LAUNCH"', includeInContext: false }, { session: id });
+    const command = process.platform === 'win32' ? `"${process.execPath}" -p "process.env.FELAN_DAEMON_TEST_LAUNCH"` : 'printf "%s" "$FELAN_DAEMON_TEST_LAUNCH"';
+    const result = await client.request('shell.execute', { command, includeInContext: false }, { session: id });
     expect(result.outcome).toBe('accepted'); if (result.outcome !== 'accepted') throw new Error('Shell rejected');
     let text = '';
     await vi.waitFor(async () => {
@@ -68,7 +123,7 @@ it('starts and restarts the actual daemon with a shared launch environment and r
       expect(read.outcome).toBe('accepted'); if (read.outcome !== 'accepted') return;
       expect(read.result.state).toBe('exited'); text = Buffer.from(read.result.data, 'base64').toString('utf8');
     });
-    return text;
+    return process.platform === 'win32' ? text.trimEnd() : text;
   }
   expect(await environment(first)).toBe('first');
   vi.stubEnv('FELAN_DAEMON_TEST_LAUNCH', 'second');
@@ -78,13 +133,14 @@ it('starts and restarts the actual daemon with a shared launch environment and r
   expect(second.identity?.instanceId).not.toBe(original?.instanceId); await second.attach(id);
   expect(second.getAttachment(id)?.state.snapshot?.session).toBe(id);
   expect(await environment(second)).toBe('second');
-  expect(io.writeError).not.toHaveBeenCalled();
+  expect(io.writeError.mock.calls).toEqual(process.platform === 'win32' && windowsProcessElevated()
+    ? [[ELEVATED_DAEMON_WARNING], [ELEVATED_DAEMON_WARNING]] : []);
 }, 20_000);
 
 it('runs the emitted foreground command until its daemon is explicitly stopped', async () => {
   const directory = await mkdtemp(join(tmpdir(), 's14f-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
   const args = ['--daemon-runtime', directory]; const target = clientDaemonTarget({ daemonRuntime: directory });
-  const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/cli.js', import.meta.url)), 'daemon', 'foreground', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, [fileURLToPath(new URL('../dist/cli.js', import.meta.url)), 'daemon', 'foreground', ...args], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let text = ''; let finished = false;
   child.stdout.on('data', bytes => { text = (text + String(bytes)).slice(-8192); });
   child.stderr.on('data', bytes => { text = (text + String(bytes)).slice(-8192); });

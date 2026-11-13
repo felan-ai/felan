@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
+import { getShellConfig } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntime, AgentRuntimeProcess } from '@felan-ai/agent-core';
 import { LIMITS, canonicalRequestPayload, type OperationParams } from '@felan-ai/session-protocol';
@@ -374,9 +375,10 @@ describe('registry-backed command dispatch', () => {
   it('uses configured shell settings and records a sanitized tail plus the full owned output file', async () => {
     const f = await fixture(); const id = f.root.sessionId; const p = processRuntime(f); f.store.markDispatched(p.request);
     const text = 'first-line\n' + 'line\u001b[31mred\u001b[0m\r\n'.repeat(20000) + '\0last-line'; p.setOutput(new TextEncoder().encode(text));
-    const prepared = f.registry.processes.prepareForeground(id, { shell: '/bin/sh', prefix: 'prefix-line' });
+    const shell = process.platform === 'win32' ? getShellConfig().shell : '/bin/sh';
+    const prepared = f.registry.processes.prepareForeground(id, { shell, prefix: 'prefix-line' });
     const { resourceId } = await f.registry.processes.startForeground(p.request, id, { command: 'synthetic', includeInContext: false }, prepared);
-    expect(p.start).toHaveBeenCalledWith('prefix-line\nsynthetic', expect.objectContaining({ shell: '/bin/sh' }));
+    expect(p.start).toHaveBeenCalledWith('prefix-line\nsynthetic', expect.objectContaining({ shell }));
     await p.process.terminate(); const result = await f.registry.processes.waitForeground(id, resourceId);
     expect(result.truncated).toBe(true); expect(result.output.endsWith('last-line')).toBe(true);
     expect(result.output).not.toContain('first-line'); expect(result.output).not.toMatch(/[\u001b\r\0]/u);

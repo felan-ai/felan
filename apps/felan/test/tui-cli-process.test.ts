@@ -41,7 +41,7 @@ async function fixture(hold = false, version = DAEMON_VERSION, compositionMismat
   async function launch(message: string) {
     const command = [process.execPath, fileURLToPath(new URL('../dist/cli.js', import.meta.url)), '--daemon-runtime', f.directory,
       '--session', f.root.sessionId, message].map(quote).join(' ');
-    const child = await runtime.terminals!.startShell(`exec ${command}`); processes.push(child); return child;
+    const child = await runtime.terminals!.startShell(process.platform === 'win32' ? command : `exec ${command}`); processes.push(child); return child;
   }
   async function client() {
     const value = new SessionClient({ target: clientDaemonTarget({ daemonRuntime: f.directory }), expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui' });
@@ -118,4 +118,4 @@ async function readUntil(process: AgentRuntimeProcess, predicate: (text: string,
   throw new Error(`Terminal did not reach the expected state: ${text}`);
 }
 
-function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
+function quote(value: string): string { return process.platform === 'win32' ? `"${value}"` : `'${value.replaceAll("'", "'\\''")}'`; }

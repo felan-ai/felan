@@ -562,7 +562,7 @@ describe('Agent Core session composition', () => {
     expect(result.session.systemPrompt).not.toContain('Keep Pi package names unchanged.');
     expect(result.session.resourceLoader.getAgentsFiles().agentsFiles).toEqual([]);
     expect(getProjectInstructions(result.session.resourceLoader)).toEqual({
-      path: join(cwd, 'AGENTS.md'),
+      path: join(cwd, 'AGENTS.md').replace(/\\/g, '/'),
       content: 'Keep Pi package names unchanged.',
     });
 

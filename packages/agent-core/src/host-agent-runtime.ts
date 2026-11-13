@@ -1,10 +1,12 @@
 import { constants as bufferConstants } from 'node:buffer';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { closeSync, constants as fsConstants, fstatSync, openSync } from 'node:fs';
 import {
   access,
   appendFile,
   chmod,
+  link,
   lstat,
   mkdir,
   open,
@@ -21,6 +23,7 @@ import {
 import { constants as osConstants, homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { IDisposable, IPty } from '@lydell/node-pty';
 import type {
   AgentRuntime,
@@ -108,7 +111,7 @@ export class HostAgentRuntime implements AgentRuntime {
     this.files = {
       inspect: async value => fileInfo(await lstat(await path(value))),
       canonicalPath: async value => realpath(await path(value)),
-      move: async (source, target) => rename(await path(source, false), await path(target, false)),
+      move: async (source, target) => moveFile(await path(source, false), await path(target, false)),
       removeEmptyDirectory: async value => rmdir(await path(value, false)),
       touch: async (value, modifiedAt) => utimes(await path(value), modifiedAt / 1000, modifiedAt / 1000),
       ensurePrivateDirectory: async (value, options) => {
@@ -120,7 +123,7 @@ export class HostAgentRuntime implements AgentRuntime {
       snapshot: async (value, maxBytes) => {
         if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error('Invalid snapshot byte limit');
         const resolved = await path(value);
-        const handle = await open(resolved, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+        const handle = await openNoFollow(resolved, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
         try {
           const info = fileInfo(await handle.stat());
           if (info.kind !== 'file') throw new Error('Expected a regular file');
@@ -137,7 +140,7 @@ export class HostAgentRuntime implements AgentRuntime {
         } finally { await handle.close(); }
       },
       append: async (value, content, expected) => {
-        const handle = await open(await path(value), fsConstants.O_WRONLY | fsConstants.O_APPEND
+        const handle = await openNoFollow(await path(value), fsConstants.O_WRONLY | fsConstants.O_APPEND
           | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | (expected ? 0 : fsConstants.O_CREAT), 0o600);
         try {
           const info = fileInfo(await handle.stat());
@@ -248,7 +251,7 @@ export class HostAgentRuntime implements AgentRuntime {
       await writeFile(resolvedPath, copiedContent, options?.exclusive ? { flag: 'wx' } : undefined);
       return;
     }
-    const handle = await open(resolvedPath, fsConstants.O_WRONLY | fsConstants.O_CREAT
+    const handle = await openNoFollow(resolvedPath, fsConstants.O_WRONLY | fsConstants.O_CREAT
       | (options.exclusive ? fsConstants.O_EXCL : 0) | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
       options.readOnly ? 0o400 : 0o600);
     try {
@@ -295,9 +298,10 @@ export class HostAgentRuntime implements AgentRuntime {
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
     const shell = options?.shellFlavor === 'posix'
       ? await this.#resolvePosixShell(cwd)
-      : options?.shell ?? defaultShell();
+      : windowsSystemCommand(options?.shell ?? defaultShell());
     const useShellOption = process.platform === 'win32' && isCmdShell(shell);
     const args = shellArguments(shell, command, options?.login ?? true);
+    const taskkill = captureTaskkill();
     const child = spawn(useShellOption ? command : shell, useShellOption ? [] : args, {
       cwd,
       detached: process.platform !== 'win32',
@@ -306,7 +310,7 @@ export class HostAgentRuntime implements AgentRuntime {
       stdio: [options?.stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    return new HostRuntimeProcess(child);
+    return new HostRuntimeProcess(child, taskkill);
   }
 
   async #startStdioProcess(
@@ -315,14 +319,15 @@ export class HostAgentRuntime implements AgentRuntime {
     options?: AgentRuntimeStdioProcessOptions,
   ): Promise<AgentRuntimeStdioProcess> {
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
-    const child = spawn(command, [...args], {
+    const taskkill = captureTaskkill();
+    const child = spawn(windowsSystemCommand(command), [...args], {
       cwd,
       detached: process.platform !== 'win32',
       env: options?.env ? { ...process.env, ...options.env } : process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    return new HostRuntimeStdioProcess(child);
+    return new HostRuntimeStdioProcess(child, taskkill);
   }
 
   async #ensurePrivateRuntimeDirectory(namespace: string): Promise<string> {
@@ -355,7 +360,7 @@ export class HostAgentRuntime implements AgentRuntime {
     const cwd = await this.#resolvePath(options?.cwd ?? this.#cwd);
     const shell = options?.shellFlavor === 'posix'
       ? await this.#resolvePosixShell(cwd)
-      : options?.shell ?? defaultShell();
+      : windowsSystemCommand(options?.shell ?? defaultShell());
     const args = shellArguments(shell, command, options?.login ?? true);
     const env = terminalEnvironment(options?.env);
     const pty = await loadPty();
@@ -413,13 +418,14 @@ export class HostAgentRuntime implements AgentRuntime {
     const captureLimit = maxBuffer === undefined
       ? maxOutputBytes
       : Math.min(maxOutputBytes ?? maxBuffer, maxBuffer);
+    const taskkill = captureTaskkill();
 
     return new Promise((resolveResult) => {
-      const child = spawn(command, args, {
+      const child = spawn(shell ? command : windowsSystemCommand(command), args, {
         cwd,
         detached: process.platform !== 'win32',
         env: env ? { ...process.env, ...env } : process.env,
-        shell,
+        shell: shell && process.platform === 'win32' ? defaultShell() : shell,
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
       });
@@ -437,14 +443,14 @@ export class HostAgentRuntime implements AgentRuntime {
       const kill = (): void => {
         if (killed) return;
         killed = true;
-        killChild(child, 'SIGTERM');
-        forceKillTimeout = setTimeout(() => killChild(child, 'SIGKILL'), 1_000);
+        killChild(child, 'SIGTERM', taskkill);
+        forceKillTimeout = setTimeout(() => killChild(child, 'SIGKILL', taskkill), 1_000);
         forceKillTimeout.unref();
       };
 
       const finish = (code: number | null): void => {
         if (timeout) clearTimeout(timeout);
-        if (killed) killChild(child, 'SIGKILL');
+        if (killed) killChild(child, 'SIGKILL', taskkill);
         if (forceKillTimeout) clearTimeout(forceKillTimeout);
         options?.signal?.removeEventListener('abort', kill);
         const exitCode = code ?? (spawnError ? 1 : 0);
@@ -590,12 +596,14 @@ abstract class HostBufferedProcess implements AgentRuntimeProcess {
 
 class HostRuntimeProcess extends HostBufferedProcess {
   readonly #child: ChildProcess;
+  readonly #taskkill: TaskkillCommand;
   #drainTimer: NodeJS.Timeout | undefined;
   #terminating = false;
 
-  constructor(child: ChildProcess) {
+  constructor(child: ChildProcess, taskkill: TaskkillCommand) {
     super();
     this.#child = child;
+    this.#taskkill = taskkill;
     let exitCode: number | undefined;
     const complete = (code: number): void => {
       clearTimeout(this.#drainTimer);
@@ -638,28 +646,29 @@ class HostRuntimeProcess extends HostBufferedProcess {
     });
   }
 
-  protected sendSignal(signal: NodeJS.Signals): void {
+  protected sendSignal(signal: NodeJS.Signals): void | Promise<void> {
     if (signal !== 'SIGINT') {
       this.#terminating = true;
       clearTimeout(this.#drainTimer);
     }
     if (signal === 'SIGINT' && process.platform === 'win32') {
-      killChild(this.#child, 'SIGTERM');
-      return;
+      return killChild(this.#child, 'SIGTERM', this.#taskkill, true);
     }
-    killChild(this.#child, signal);
+    return killChild(this.#child, signal, this.#taskkill, true);
   }
 }
 
 class HostRuntimeStdioProcess extends HostBufferedProcess implements AgentRuntimeStdioProcess {
   readonly #child: ChildProcess;
+  readonly #taskkill: TaskkillCommand;
   readonly #stdout = new HostProcessOutput();
   readonly #stderr = new HostProcessOutput();
   #inputClosed = false;
 
-  constructor(child: ChildProcess) {
+  constructor(child: ChildProcess, taskkill: TaskkillCommand) {
     super();
     this.#child = child;
+    this.#taskkill = taskkill;
     child.stdout?.on('data', (chunk: Uint8Array) => {
       this.appendOutput(chunk);
       this.#stdout.append(chunk);
@@ -698,12 +707,12 @@ class HostRuntimeStdioProcess extends HostBufferedProcess implements AgentRuntim
     this.#child.stdin?.end();
   }
 
-  protected sendSignal(signal: NodeJS.Signals): void {
+  protected sendSignal(signal: NodeJS.Signals): void | Promise<void> {
     if (signal === 'SIGINT' && process.platform === 'win32') {
-      killChild(this.#child, 'SIGTERM');
+      killChild(this.#child, 'SIGTERM', this.#taskkill);
       return;
     }
-    killChild(this.#child, signal);
+    return killChild(this.#child, signal, this.#taskkill, true);
   }
 
   protected override onDispose(): void {
@@ -1072,8 +1081,26 @@ function terminalEnvironment(overrides?: Readonly<Record<string, string>>): Reco
 }
 
 function defaultShell(): string {
-  if (process.platform === 'win32') return process.env.ComSpec ?? 'cmd.exe';
+  if (process.platform === 'win32') {
+    const shell = process.env.ComSpec ?? process.env.COMSPEC;
+    if (shell === undefined) return windowsSystemCommand('cmd.exe');
+    if (!isWindowsAbsolutePath(shell)) throw new Error('ComSpec must be an absolute Windows path');
+    return shell;
+  }
   return process.env.SHELL ?? '/bin/sh';
+}
+
+function isWindowsAbsolutePath(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/u.test(path) && !path.includes('\0');
+}
+
+function windowsSystemCommand(command: string): string {
+  if (process.platform !== 'win32') return command;
+  const name = command.toLowerCase().replace(/\.exe$/u, '');
+  if (!['cmd', 'taskkill', 'explorer', 'curl', 'tar'].includes(name)) return command;
+  const root = process.env.SystemRoot ?? process.env.SYSTEMROOT;
+  if (!root || !isWindowsAbsolutePath(root)) throw new Error('SystemRoot must be an absolute Windows path');
+  return name === 'explorer' ? join(root, 'explorer.exe') : join(root, 'System32', `${name}.exe`);
 }
 
 function shellArguments(shell: string, command: string, login: boolean): string[] {
@@ -1256,14 +1283,33 @@ function isMissingPathError(error: unknown): boolean {
     && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
 }
 
-function killChild(child: ChildProcess, signal: NodeJS.Signals): void {
+interface TaskkillCommand {
+  readonly command: string;
+  readonly env: NodeJS.ProcessEnv | undefined;
+}
+
+function captureTaskkill(): TaskkillCommand {
+  return { command: windowsSystemCommand('taskkill.exe'), env: process.platform === 'win32' ? { ...process.env } : undefined };
+}
+
+function killChild(child: ChildProcess, signal: NodeJS.Signals, taskkill: TaskkillCommand, waitForExit = false): void | Promise<void> {
   if (child.pid === undefined) return;
 
   if (process.platform === 'win32') {
-    const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+    const killer = spawn(taskkill.command, ['/pid', String(child.pid), '/T', '/F'], {
+      env: taskkill.env,
       stdio: 'ignore',
       windowsHide: true,
+      timeout: 5_000,
     });
+    if (waitForExit) return new Promise<void>((resolveKill, rejectKill) => {
+      killer.once('error', rejectKill);
+      killer.once('close', code => {
+        if (code === 0 || child.exitCode !== null || child.signalCode !== null) resolveKill();
+        else rejectKill(new Error(`taskkill exited with code ${code}`));
+      });
+    });
+    killer.once('error', () => {});
     killer.unref();
     return;
   }
@@ -1345,6 +1391,83 @@ async function readBoundedFile(path: string, maxBytes: number): Promise<Buffer> 
     throw new Error(`File exceeds maximum size of ${maxBytes} bytes`);
   } finally {
     await handle.close();
+  }
+}
+
+async function moveFile(source: string, target: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(source, target); return; }
+    catch (error) {
+      if (process.platform !== 'win32' || attempt === 6 || !(error instanceof Error)
+        || !('code' in error) || error.code !== 'EPERM' && error.code !== 'EBUSY') throw error;
+      // Windows refuses atomic replacement while a snapshot reader still has the target open.
+      await delay(10 * 2 ** attempt);
+    }
+  }
+}
+
+async function openNoFollow(path: string, flags: number, mode?: number): Promise<import('node:fs/promises').FileHandle> {
+  if (process.platform !== 'win32') return open(path, flags, mode);
+  const check = async () => {
+    const stat = await lstat(path);
+    if (stat.isSymbolicLink()) throw Object.assign(new Error(`Refusing to follow symbolic link: ${path}`), { code: 'ELOOP' });
+    return stat;
+  };
+  for (let attempt = 0; ; attempt++) {
+    let before: import('node:fs').Stats | undefined;
+    let created = false;
+    try { before = await check(); } catch (error) { if (!isMissingPathError(error)) throw error; }
+    // Windows has no O_NOFOLLOW. Validate the opened identity before any content I/O.
+    if (before) {
+      if (flags & fsConstants.O_EXCL) throw Object.assign(new Error(`File already exists: ${path}`), { code: 'EEXIST' });
+    } else if (flags & fsConstants.O_CREAT) {
+      try { before = await createNoFollowFile(path, mode === undefined ? undefined : mode | 0o200); created = true; }
+      catch (error) {
+        if (!(flags & fsConstants.O_EXCL) && isAlreadyExists(error) && attempt < 6) continue;
+        throw error;
+      }
+    }
+    const handle = await open(path, flags & ~(fsConstants.O_CREAT | fsConstants.O_EXCL), mode);
+    try {
+      const info = fileInfo(await handle.stat());
+      if (before && info.identity !== fileInfo(before).identity || info.identity !== fileInfo(await check()).identity) throw new Error('File changed while opening');
+      if (created && mode !== undefined) await handle.chmod(mode);
+      return handle;
+    } catch (error) {
+      await handle.close();
+      throw error;
+    }
+  }
+}
+
+async function createNoFollowFile(path: string, mode?: number): Promise<import('node:fs').Stats> {
+  const staging = join(dirname(path), `.felan-${randomUUID()}.tmp`);
+  const handle = await open(staging, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, mode);
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) throw new Error('Expected a regular staging file');
+    try { await link(staging, path); }
+    catch (error) {
+      if (!(error instanceof Error) || !('code' in error)
+        || error.code !== 'EISDIR' && error.code !== 'ENOTSUP' && error.code !== 'EXDEV') throw error;
+      const direct = await open(path, fsConstants.O_WRONLY | fsConstants.O_CREAT | fsConstants.O_EXCL, mode);
+      try { return await direct.stat(); }
+      finally { await direct.close(); }
+    }
+    return stat;
+  } finally {
+    try { await handle.close(); }
+    finally {
+      // Crashes or persistent removal failures may leave staging names. Sweeping by prefix could delete another active creator's file.
+      for (let attempt = 0; ; attempt++) {
+        try { await rm(staging, { force: true }); break; }
+        catch (error) {
+          if (attempt === 3 || !(error instanceof Error) || !('code' in error)
+            || error.code !== 'EPERM' && error.code !== 'EACCES' && error.code !== 'EBUSY') break;
+          await delay(10 * 2 ** attempt);
+        }
+      }
+    }
   }
 }
 

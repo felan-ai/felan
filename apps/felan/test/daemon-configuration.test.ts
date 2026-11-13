@@ -154,7 +154,8 @@ describe('daemon locked configuration', () => {
     expect(await readFile(f.path)).toEqual(original);
   });
 
-  it('writes through a symlinked settings file and accepts agent directory aliases', async () => {
+  // Windows symlink creation requires privileges that ordinary users do not have.
+  it.skipIf(process.platform === 'win32')('writes through a symlinked settings file and accepts agent directory aliases', async () => {
     const f = await fixture(); const dotfile = join(f.directory, 'dotfile.json'); await writeFile(dotfile, '{"keep":true}');
     await rm(f.path); await symlink(dotfile, f.path);
     await f.config.set('global', { extensionConfig: { codex: { fast: true } } });

@@ -1,11 +1,12 @@
 import { appendFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream } from '@felan-ai/agent-core';
 import { FELAN_VERSION } from '../../dist/version.js';
 import { startDaemonService } from '../../../daemon/dist/daemon/service.js';
 
 const { target, journal } = JSON.parse(process.argv[2]);
-if (target.kind !== 'isolated' || journal !== `${target.directory}/provider-calls.jsonl`) throw new Error('Invalid private fixture target');
+if (target.kind !== 'isolated' || journal !== join(target.directory, 'provider-calls.jsonl')) throw new Error('Invalid private fixture target');
 let service;
 let stopping;
 let parentGone = false;

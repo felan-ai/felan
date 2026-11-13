@@ -46,7 +46,18 @@ describe('BackgroundBashManager', () => {
 
     const result = await manager.wait(started.meta.id, INTEGRATION_WAIT_TIMEOUT_SECONDS);
 
-    expect(result.timedOut).toBe(false);
+    let diagnostic: string | undefined;
+    if (result.timedOut) {
+      const storage = runtime.storage('session');
+      const paths = await storage.listFiles(started.meta.jobDir, { recursive: true }).catch(error => String(error));
+      const files = await Promise.all(['info.json', 'completion.json', 'runner-heartbeat', 'output.log'].map(async name => {
+        try { return [name, new TextDecoder().decode(await storage.readFile(join(started.meta.jobDir, name)))]; }
+        catch (error) { return [name, String(error)]; }
+      }));
+      const inspection = await runtime.shell(`ps -o pid= -o ppid= -o pgid= -o stat= -o command= -p ${started.meta.pid} 2>/dev/null || ps -l -p ${started.meta.pid}`, { shellFlavor: 'posix', timeout: 2_000 }).catch(error => String(error));
+      diagnostic = JSON.stringify({ platform: process.platform, status: result.job.status, paths, files, inspection });
+    }
+    expect(result.timedOut, diagnostic).toBe(false);
     expect(result.job.status).toMatchObject({ status: 'completed', exitCode: 0 });
     expect(started.meta.logPath).toContain(join(runtime.storage('session').root, 'background-bash'));
     expect(started.meta.logPath).not.toContain(`${join('.pi', 'background-bash')}`);
@@ -288,7 +299,7 @@ describe('BackgroundBashManager', () => {
     vi.spyOn(runtime, 'storage').mockReturnValue({
       ...storage,
       async writeFile(path, bytes) {
-        if (path.endsWith('info.json') && !failed && JSON.parse(new TextDecoder().decode(bytes)).pid) {
+        if (path.endsWith('info.json') && !failed && JSON.parse(new TextDecoder().decode(bytes)).pid !== undefined) {
           failed = true;
           if (mode === 'detached with terminalized metadata') {
             const info = JSON.parse(new TextDecoder().decode(bytes));
@@ -493,7 +504,10 @@ it('supports a PTY job with stdin and preserves its exit code', async () => {
     .map((path) => mkdir(path, { recursive: true })));
   const runtime = new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
   const manager = new BackgroundBashManager(runtime);
-  const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('ready\\n'); process.stdin.once('data', value => { process.stdout.write('echo:' + value); process.exit(7) })")}`;
+  const executable = process.platform === 'win32' ? process.execPath.replaceAll('\\', '/') : process.execPath;
+  const script = "if (process.platform === 'win32') process.stdin.setRawMode(true); process.stdout.write('ready\\n'); process.stdin.once('data', value => { process.stdout.write('echo:' + value); process.exit(7) })";
+  const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+  const command = `${quote(executable)} -e ${quote(script)}`;
   const started = await manager.startInteractive(command);
   startedJobs.push({ manager, id: started.job.meta.id });
   const ready = await manager.readInteractive(started.job.meta.id, 1_000);

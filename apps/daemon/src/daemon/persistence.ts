@@ -5,6 +5,7 @@ import { basename, dirname, join } from 'node:path';
 import type { DatabaseSync, StatementSync } from 'node:sqlite';
 import type { DaemonOwnership } from './ownership.js';
 import { durableWrites, syncDescriptor } from './durability.js';
+import { assertOwnedFile } from './native-ownership.js';
 import { assertPathIdentity, pathIdentity, pathInside, pinPathAncestry, storeDirectory, type PathIdentity } from './target.js';
 import { ControlStoreError } from './control-state.js';
 
@@ -39,6 +40,7 @@ export function guardOwnedPaths(owner: DaemonOwnership, paths: readonly string[]
 export function syncOwnedDirectory(owner: DaemonOwnership, directory: string): void {
   const path = owner.assertOwnsPath(directory);
   const check = guardOwnedPaths(owner, [path]);
+  if (process.platform === 'win32') { check(); return; }
   const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   try {
     const stat = fstatSync(fd, { bigint: true }); const pin = pathIdentity(path);
@@ -176,7 +178,7 @@ export class ControlDatabase implements RemoteDatabase {
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       this.storeId = randomUUID();
       const fd = openSync(this.initialization, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
-      try { writeFileSync(fd, JSON.stringify({ version: 1, storeId: this.storeId, directory: this.directory })); syncDescriptor(fd); }
+      try { this.assertFile(fd, this.initialization); writeFileSync(fd, JSON.stringify({ version: 1, storeId: this.storeId, directory: this.directory })); syncDescriptor(fd); }
       finally { closeSync(fd); }
       syncOwnedDirectory(owner, owner.target.agentDir);
       prepareControlDirectory(owner, this.directory);
@@ -209,7 +211,8 @@ export class ControlDatabase implements RemoteDatabase {
     });
     if (files.some(stat => stat && !stat.isFile())) { this.quarantineFiles(); return false; }
     if (!files[0]) return false;
-    closeSync(openSync(this.path, constants.O_RDWR | constants.O_NOFOLLOW));
+    const fd = openSync(this.path, constants.O_RDWR | constants.O_NOFOLLOW);
+    try { this.assertFile(fd, this.path); } finally { closeSync(fd); }
     return true;
   }
   private connect(): void {
@@ -239,7 +242,8 @@ export class ControlDatabase implements RemoteDatabase {
   private create(): void {
     // A WAL left without its database would be replayed into the new file.
     if (SIDECARS.some(extension => { try { lstatSync(`${this.path}${extension}`); return true; } catch { return false; } })) this.quarantineFiles();
-    closeSync(openSync(this.path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600));
+    const fd = openSync(this.path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try { this.assertFile(fd, this.path); } finally { closeSync(fd); }
     const db = this.db = new (loadSqlite().DatabaseSync)(this.path);
     db.exec(controlPragmas());
     db.exec(['BEGIN IMMEDIATE', 'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT',
@@ -380,8 +384,11 @@ export class ControlDatabase implements RemoteDatabase {
   private readFile(path: string): string {
     this.owner.assertCurrent();
     const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
-    try { return new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(fd)); }
+    try { this.assertFile(fd, path); return new TextDecoder('utf-8', { fatal: true }).decode(readFileSync(fd)); }
     finally { closeSync(fd); }
+  }
+  private assertFile(fd: number, path: string): void {
+    if (process.platform === 'win32') assertOwnedFile(path, fstatSync(fd, { bigint: true }), this.owner.target.principal);
   }
   private syncDirectory(): void {
     syncOwnedDirectory(this.owner, this.directory);

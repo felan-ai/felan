@@ -1,11 +1,11 @@
 import { ClientPreferencesStore } from '../src/tui/preferences-store.js';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, it } from 'vitest';
-import { getTerminalColorMode, stripTerminalSequences } from '@earendil-works/pi-tui';
+import { backgroundAnsi, getTerminalColorMode, parseColor, stripTerminalSequences } from '@earendil-works/pi-tui';
 import { createAssistantMessageEventStream, type ModelRuntime } from '@felan-ai/agent-core';
 import { clientDaemonTarget } from '../src/client-application.js';
 import { resolveClientHostComposition } from '../src/daemon-entrypoint.js';
@@ -38,8 +38,39 @@ async function bounded<T>(work: Promise<T>, label: string, milliseconds = 12_000
   } finally { clearTimeout(timeout); }
 }
 
+class ConPtyGrid extends ManualTerminalGrid {
+  pendingOutput = '';
+  override feed(data: string): void {
+    this.pendingOutput += data;
+    let end = 0;
+    while (end < this.pendingOutput.length) {
+      const tail = this.pendingOutput.slice(end);
+      if (tail.startsWith('\x1b[')) {
+        const match = /^\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/u.exec(tail);
+        if (!match) { if (tail.length > 256) throw new Error('Unterminated CSI'); break; }
+        end += match[0].length;
+      } else if (/^\x1b[\]P_^]/u.test(tail)) {
+        const match = /\x07|\x1b\\/u.exec(tail);
+        if (!match) { if (tail.length > 64 * 1024) throw new Error('Unterminated terminal string'); break; }
+        end += match.index + match[0].length;
+      } else if (tail.startsWith('\x1b')) {
+        const length = tail[1] === '(' || tail[1] === ')' ? 3 : 2;
+        if (tail.length < length) break;
+        end += length;
+      } else {
+        if (tail.length === 1 && /[\ud800-\udbff]/u.test(tail)) break;
+        end += String.fromCodePoint(tail.codePointAt(0)!).length;
+      }
+    }
+    if (!end) return;
+    super.feed(this.pendingOutput.slice(0, end)); this.pendingOutput = this.pendingOutput.slice(end);
+    // ConPTY forwards synchronized-output markers before it flushes the corresponding cell changes.
+    super.feed('\x1b[?2026l');
+  }
+}
+
 class Capture {
-  readonly grid = new ManualTerminalGrid(120, 32);
+  readonly grid: ManualTerminalGrid;
   raw = '';
   frameRaw = '';
   error: unknown;
@@ -48,7 +79,9 @@ class Capture {
   private readonly listeners = new Set<() => void>();
   readonly terminal: ReturnType<typeof native.spawn>;
   private readonly subscriptions: Array<{ dispose(): void }>;
-  constructor(private readonly output: string, private readonly checkpoints: Record<string, unknown>[], directory: string, cwd: string, sessionId: string) {
+  constructor(private readonly output: string, private readonly checkpoints: Record<string, unknown>[], directory: string, cwd: string, sessionId: string,
+    conpty = process.platform === 'win32') {
+    this.grid = conpty ? new ConPtyGrid(120, 32) : new ManualTerminalGrid(120, 32);
     this.terminal = native.spawn(process.execPath, [fileURLToPath(new URL('apps/felan/dist/cli.js', root)), '--daemon-runtime', directory,
       '--session', sessionId], { name: 'xterm-256color', cols: 120, rows: 32, cwd,
       env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', COLORFGBG: '15;0',
@@ -63,7 +96,8 @@ class Capture {
         this.grid.feed(data);
         if (this.grid.frames > frames) {
           const end = '\x1b[?2026l';
-          this.frameRaw = this.raw.slice(0, this.raw.lastIndexOf(end) + end.length);
+          this.frameRaw = this.raw.slice(0, this.grid instanceof ConPtyGrid ? this.raw.length - this.grid.pendingOutput.length
+            : this.raw.lastIndexOf(end) + end.length);
         }
       } catch (error) { this.error = error; }
       for (const listener of this.listeners) listener();
@@ -98,8 +132,12 @@ class Capture {
   }
 }
 
-async function captureManualTerminal(output: string): Promise<void> {
+async function captureManualTerminal(output: string, conpty = process.platform === 'win32'): Promise<void> {
   const checkpoints: Record<string, unknown>[] = [];
+  const [darkCanvas, lightCanvas] = await Promise.all(['felan-dark', 'felan-light'].map(async name => {
+    const { vars } = JSON.parse(await readFile(new URL(`../src/themes/${name}.json`, import.meta.url), 'utf8'));
+    return backgroundAnsi(parseColor(vars.bg), getTerminalColorMode());
+  }));
   const firstDelta = gate(); const allowSecondDelta = gate(); const secondDelta = gate(); const release = gate();
   const questionAbort = new AbortController();
   const providerEvents: Array<{ type: string; delta?: string }> = [];
@@ -149,13 +187,20 @@ async function captureManualTerminal(output: string): Promise<void> {
     await mkdir(join(f.directory, 'client', 'tui'), { recursive: true, mode: 0o700 });
     await writeFile(join(f.directory, 'client', 'tui', 'settings.json'), JSON.stringify({ theme: 'felan-dark' }), { mode: 0o600 });
     await preferences.update({ keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } });
-    await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId); const terminal = pty;
+    // An empty transcript paints only the canvas. Truecolor keeps customMessageBg distinct from that canvas.
+    if (conpty) {
+      const manager = f.root.runtime.session.sessionManager;
+      manager.appendMessage({ role: 'user', content: '<skill name="qa-palette" location="/fixture/SKILL.md">\nQA palette sample\n</skill>', timestamp: Date.now() });
+    }
+    await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId, conpty); const terminal = pty;
     const idle = () => f.store.session(f.root.sessionId).run.state === 'idle' && !terminal.screen.includes('Working');
     const modelSelector = () => /Model\s+>\s+→ ✓ fixture \[offline\]/u.test(terminal.screen);
     const settingsSelector = () => terminal.screen.includes('Type to search');
     await terminal.wait('initial connected frame', () => idle() && terminal.screen.includes('Felan Code')
+      && (!conpty || terminal.screen.includes('[skill] qa-palette'))
       && terminal.screen.split('\n').at(-2) === '─'.repeat(terminal.grid.screenColumns));
     expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getFgAnsi('text'));
+    expect(terminal.raw).toContain(darkCanvas);
     expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getBgAnsi('customMessageBg'));
     expect(terminal.screen.split('\n').at(-2)).toBe('─'.repeat(terminal.grid.screenColumns));
     expect(terminal.screen.split('\n').at(-1)?.trim()).toBe('');
@@ -187,11 +232,14 @@ async function captureManualTerminal(output: string): Promise<void> {
     const paletteOffset = terminal.frameRaw.length;
     terminal.send('\x1b[B\r'); await terminal.wait('light palette applied immediately', () => /Theme\s+felan-light/u.test(terminal.screen) && terminal.screen.includes('Display preferences saved')
       && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getFgAnsi('text'))
-      && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg')));
+      && terminal.frameRaw.slice(paletteOffset).includes(lightCanvas)
+      && (conpty || terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg'))));
     expect(JSON.parse(await readFile(join(f.directory, 'client', 'tui', 'settings.json'), 'utf8')).theme).toBe('felan-light');
     expect(JSON.parse(await readFile(join(f.owner.target.agentDir, 'settings.json'), 'utf8'))).not.toHaveProperty('theme');
     terminal.send('\x1b'); await terminal.wait('general settings closed after theme change', () => terminal.screen.includes('General settings'));
     terminal.send('\x1b'); await terminal.wait('theme settings closed', () => !settingsSelector());
+    if (conpty) await terminal.wait('light custom message background', () => terminal.screen.includes('[skill] qa-palette')
+      && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg')));
     await terminal.snapshot('07-light-wide-idle');
 
     const beforeResize = terminal.grid.clears;
@@ -248,6 +296,12 @@ async function captureManualTerminal(output: string): Promise<void> {
   } catch (error) {
     failure = error;
     if (pty) await pty.snapshot('failure').catch(() => {});
+    if (pty && process.platform === 'win32') {
+      const end = '\x1b[?2026l'; const lastEnd = pty.raw.lastIndexOf(end);
+      console.error(`PTY failure diagnostics: ${JSON.stringify({ frames: pty.grid.frames, observedBytes: Buffer.byteLength(pty.raw),
+        lastSynchronizedEnd: lastEnd, charactersAfterLastFrame: lastEnd < 0 ? pty.raw.length : pty.raw.length - lastEnd - end.length,
+        rawTail: pty.raw.slice(-16 * 1024) })}`);
+    }
     throw error;
   } finally {
     allowSecondDelta.resolve(); release.resolve(); questionAbort.abort();
@@ -266,9 +320,53 @@ async function captureManualTerminal(output: string): Promise<void> {
   }
 }
 
+it('projects a recorded ConPTY editor update flushed after its synchronized-output end marker', () => {
+  const grid = new ConPtyGrid(120, 32);
+  grid.feed('\x1b[?2026h\x1b[?2026l');
+  grid.feed('\x1b[38;2;192;202;245m\x1b[48;2;26;27;38m\x1b[30;1H QA retained draft\x1b[7m \x1b[27m\x1b[K\x1b[101C');
+  expect(grid.screen.split('\n')[29]?.trim()).toBe('QA retained draft');
+  expect(grid.screenColumns).toBe(120); expect(grid.screenRows).toBe(32);
+  expect(grid.pendingOutput).toBe('');
+});
+
+it.each(['\x1b[2;1H', '\x1b]0;title\x07', '\x1b]0;title\x1b\\', '\x1b(B', '😀'])(
+  'preserves ConPTY output split within %j before committing the visible cells', sequence => {
+    const output = `\x1b[Hfirst${sequence}second`;
+    const expected = new ManualTerminalGrid(24, 4); expected.feed(`${output}\x1b[?2026l`);
+    for (let split = 1; split < output.length; split++) {
+      const grid = new ConPtyGrid(24, 4);
+      grid.feed(output.slice(0, split)); grid.feed(output.slice(split));
+      expect(grid.screen, `split ${split}`).toBe(expected.screen); expect(grid.pendingOutput).toBe('');
+    }
+  });
+
+it('commits complete ConPTY output without inserting a frame marker into an unfinished sequence', () => {
+  const grid = new ConPtyGrid(24, 4);
+  grid.feed('first\x1b[');
+  expect(grid.screen.split('\n')[0]?.trim()).toBe('first'); expect(grid.pendingOutput).toBe('\x1b[');
+  const frames = grid.frames; grid.feed('2;'); expect(grid.frames).toBe(frames);
+  grid.feed('1Hsecond');
+  expect(grid.screen.split('\n')[1]?.trim()).toBe('second'); expect(grid.pendingOutput).toBe('');
+  expect(() => grid.feed('\x1b[1z')).toThrow('Unsupported CSI: 1z');
+});
+
+it('exercises the ConPTY capture and palette fixture through the full emitted-CLI flow on any platform', async () => {
+  const output = await mkdtemp(join(tmpdir(), 'felan-conpty-flow-'));
+  try { await captureManualTerminal(output, true); }
+  finally { await rm(output, { recursive: true, force: true }); }
+}, 90_000);
+
 it('captures emitted-CLI layout, palettes, shortcuts, resize and live model deltas under a focused broker dialog', async () => {
   const retain = process.env.FELAN_TEST_DIST_SMOKE === '1';
   const output = retain ? '/tmp/v/e/manual-pty' : await mkdtemp(join(tmpdir(), 'felan-manual-pty-'));
   try { await captureManualTerminal(output); }
+  catch (error) {
+    if (process.platform === 'win32') {
+      const artifacts = fileURLToPath(new URL(`tmp/windows-test-artifacts/tui-manual-pty-${process.pid}/`, root));
+      await cp(output, artifacts, { recursive: true }).then(() => console.error(`PTY failure artifacts: ${artifacts}`),
+        failure => console.error(`Could not retain PTY failure artifacts: ${String(failure)}`));
+    }
+    throw error;
+  }
   finally { if (!retain) await rm(output, { recursive: true, force: true }); }
 }, 90_000);

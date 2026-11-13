@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { RemoteStatus } from '@felan-ai/session-protocol';
 import { identityFor } from '../../daemon/src/daemon/target.js';
@@ -6,14 +9,18 @@ import type { ClientDiagnostic } from '../src/client/diagnostics.js';
 import { FakeTransport } from './client-fixtures.js';
 
 const clients: SessionClient[] = [];
-afterEach(() => { for (const client of clients.splice(0)) client.close(); vi.restoreAllMocks(); });
+const roots: string[] = [];
+afterEach(async () => { for (const client of clients.splice(0)) client.close(); vi.restoreAllMocks();
+  await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 const token = 'fln_pat_synthetic_private_token';
 const status: RemoteStatus = { configured: true, share: 'on-request', state: 'connected', apiUrl: 'https://app.felan.ai', projects: [], pending: 0, sessions: 0 };
 
 async function fixture() {
   const diagnostics: ClientDiagnostic[] = [];
   const fake = new FakeTransport();
-  const client = new SessionClient({ target: { kind: 'isolated', directory: '/unused', namespaceId: 'remote-test' },
+  const directory = process.platform === 'win32' ? await mkdtemp(join(tmpdir(), 'remote-client-')) : '/unused';
+  if (process.platform === 'win32') roots.push(directory);
+  const client = new SessionClient({ target: { kind: 'isolated', directory, namespaceId: 'remote-test' },
     kind: 'tui', clientVersion: 'fixture', connector: fake.connector, reconnectAttempts: 0, diagnostics: event => diagnostics.push(event) });
   clients.push(client);
   const identity = identityFor(client.target, 'instance');

@@ -26,6 +26,7 @@ const OPERATION_TIMEOUT_MS = 5_000;
 const RESPONSIVE_TIMEOUT_MS = 2_000;
 const FOREGROUND_TIMEOUT_SECONDS = 20;
 const UNICODE_INPUT = 'Здравей, 世界 🐈\n';
+const EXPECTED_UNICODE_INPUT = process.platform === 'win32' ? UNICODE_INPUT.replaceAll('\n', '\r\n') : UNICODE_INPUT;
 const decoder = new TextDecoder();
 
 type ToolResult = {
@@ -94,7 +95,7 @@ describe('registered Background Bash tools with live host processes', () => {
   it('returns the last 2000 foreground lines and spills all output without a job record', async () => {
     await withLiveTools(async ({ runtime, owner }) => {
       const output = Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join('\n') + '\n';
-      const result = await call(owner, 'bash', { command: nodeCommand(`process.stdout.write(${JSON.stringify(output)})`) });
+      const result = await call(owner, 'bash', { command: nodeCommand("process.stdout.write(Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join('\\n') + '\\n')") });
       const details = result.details as { fullOutputPath: string };
       expect(result.details).toEqual({ background: false, exitCode: 0, truncated: true, fullOutputPath: expect.any(String) });
       expect(text(result)).toBe(`Exit: 0\n\n${output.trimEnd().split('\n').slice(-2000).join('\n')}\n\n[Output truncated to the last 2000 lines / 50 KB. Full output: ${details.fullOutputPath}]`);
@@ -107,6 +108,7 @@ describe('registered Background Bash tools with live host processes', () => {
 
   it('promotes the same foreground process and delivers completion without polling tools', async () => {
     await withLiveTools(async ({ runtime, owner, child }) => {
+      const start = vi.spyOn(runtime.processes!, 'startShell');
       const command = "printf 'before\\n'; printf '%s' \"$$\" > bash.pid; while [ ! -f continue ]; do sleep 0.02; done; printf 'after\\n'";
       const result = await call(owner, 'bash', { command, timeout: 0.05 });
       const details = result.details as BackgroundBashDetails;
@@ -114,7 +116,10 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(text(result)).toContain('Started background process.');
       const pid = await eventually(async () => Number(decoder.decode(await runtime.readFile('bash.pid'))),
         value => Number.isSafeInteger(value) && value > 0, 'promoted process writes its PID');
-      expect(details.pid).toBe(pid);
+      expect(start).toHaveBeenCalledOnce();
+      expect(details.pid).toBe((await start.mock.results[0]!.value).pid);
+      // Git Bash's $$ is an MSYS PID, not the native Windows child PID.
+      if (process.platform !== 'win32') expect(details.pid).toBe(pid);
       const info = JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo;
       expect(info).toMatchObject({ executionMode: 'attached', pid: details.pid, startedAt: details.startedAt, promotedAt: expect.any(Number) });
       expect(listedJob(await call(child, 'list_background_bash', {}), details.id).status.status).toBe('running');
@@ -271,9 +276,9 @@ describe('registered Background Bash tools with live host processes', () => {
       await waitForOutput(child, started.id, 'late-output');
 
       await call(child, 'write_background_bash', { id: started.id, chars: UNICODE_INPUT });
-      const output = await waitForOutput(owner, started.id, `received:${JSON.stringify(UNICODE_INPUT)}`);
+      const output = await waitForOutput(owner, started.id, `received:${JSON.stringify(EXPECTED_UNICODE_INPUT)}`);
       expect.soft(output).not.toContain('\uFFFD');
-      expect.soft(output.split(`received:${JSON.stringify(UNICODE_INPUT)}`)).toHaveLength(2);
+      expect.soft(output.split(`received:${JSON.stringify(EXPECTED_UNICODE_INPUT)}`)).toHaveLength(2);
 
       await call(child, 'write_background_bash', {
         id: started.id,
@@ -285,7 +290,7 @@ describe('registered Background Bash tools with live host processes', () => {
       const finalList = await call(child, 'list_background_bash', {});
       expect.soft(listedJob(finalList, started.id).status).toMatchObject({ status: 'failed', exitCode });
       expect(text(await call(child, 'read_background_bash', { id: started.id })))
-        .toContain(`received:${JSON.stringify(UNICODE_INPUT)}`);
+        .toContain(`received:${JSON.stringify(EXPECTED_UNICODE_INPUT)}`);
     });
   }, TEST_TIMEOUT_MS);
 
@@ -360,7 +365,7 @@ describe('registered Background Bash tools with live host processes', () => {
           else expect(result.details).toMatchObject({ id: job.id, status: 'running' });
           if (operation === 'input') {
             await eventually(async () => decoder.decode(await runtime.readFile('received.txt')),
-              (value) => value === UNICODE_INPUT, 'silent PTY receives exact Unicode input');
+              (value) => value === EXPECTED_UNICODE_INPUT, 'silent PTY receives exact Unicode input');
           }
         }
       });
@@ -385,8 +390,13 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(finished.job.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
       expect(finished.job.meta.promotedAt).toBeUndefined();
       expect(job.pid).toEqual(expect.any(Number));
-      await eventually(() => runtime.shell(`kill -0 ${job.pid} 2>/dev/null`, { shellFlavor: 'posix' }),
-        (result) => result.code !== 0, 'cancelled PTY exits');
+      if (process.platform === 'win32') {
+        await eventually(() => runtime.terminals!.attach!(job.id)!.read(0),
+          result => !result.running, 'cancelled PTY exits');
+      } else {
+        await eventually(() => runtime.shell(`kill -0 ${job.pid} 2>/dev/null`, { shellFlavor: 'posix' }),
+          result => result.code !== 0, 'cancelled PTY exits');
+      }
     });
   }, TEST_TIMEOUT_MS);
 
@@ -406,7 +416,7 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(outcome).toMatchObject({ error: expect.objectContaining({ message: expect.stringMatching(/abort|cancel/iu) }) });
       expect(listedJob(await call(owner, 'list_background_bash', {}), started.id).status.status).toBe('running');
       await call(owner, 'write_background_bash', { id: started.id, chars: UNICODE_INPUT });
-      await waitForOutput(child, started.id, `received:${JSON.stringify(UNICODE_INPUT)}`);
+      await waitForOutput(child, started.id, `received:${JSON.stringify(EXPECTED_UNICODE_INPUT)}`);
       await call(owner, 'write_background_bash', { id: started.id, chars: 'exit7\n' });
       expect((await waitForJob(child, started.id)).job.status).toMatchObject({ status: 'failed', exitCode: 7 });
     });
@@ -423,7 +433,7 @@ describe('registered Background Bash tools with live host processes', () => {
       for (const job of [ownerJob, childJob]) {
         expect(listedJob(await call(owner, 'list_background_bash', {}), job.id).status.status).toBe('running');
         await call(owner, 'write_background_bash', { id: job.id, chars: UNICODE_INPUT });
-        await waitForOutput(owner, job.id, `received:${JSON.stringify(UNICODE_INPUT)}`);
+        await waitForOutput(owner, job.id, `received:${JSON.stringify(EXPECTED_UNICODE_INPUT)}`);
         await call(owner, 'write_background_bash', { id: job.id, chars: 'exit7\n' });
         expect((await waitForJob(owner, job.id)).job.status).toMatchObject({ status: 'failed', exitCode: 7 });
       }
@@ -602,16 +612,19 @@ function nodeCommand(script: string): string {
 function interactiveCommand(): string {
   return nodeCommand(`
     setTimeout(() => process.exit(99), 25000);
+    if (process.platform === 'win32') process.stdin.setRawMode(true);
     process.stdin.setEncoding('utf8');
+    const endOfLine = process.platform === 'win32' ? '\\r\\n' : '\\n';
     let pending = '';
     process.stdin.on('data', chunk => {
+      if (process.platform === 'win32' && chunk.includes('\\x03')) process.exit(130);
       pending += chunk;
       let newline;
       while ((newline = pending.indexOf('\\n')) !== -1) {
         const line = pending.slice(0, newline + 1);
         pending = pending.slice(newline + 1);
-        if (line === 'exit7\\n') process.exit(7);
-        if (line === 'late\\n') { process.stdout.write('late-output\\n'); continue; }
+        if (line === 'exit7' + endOfLine) process.exit(7);
+        if (line === 'late' + endOfLine) { process.stdout.write('late-output\\n'); continue; }
         process.stdout.write('received:' + JSON.stringify(line) + '\\n');
       }
     });
@@ -623,6 +636,7 @@ function silentCommand(): string {
   return `stty -echo; ${nodeCommand(`
     const fs = require('node:fs');
     setTimeout(() => process.exit(99), 25000);
+    if (process.platform === 'win32') process.stdin.setRawMode(true);
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', chunk => fs.appendFileSync('received.txt', chunk));
     fs.writeFileSync('silent-ready.txt', String(process.pid));
@@ -659,14 +673,16 @@ async function within<T>(promise: Promise<T>, timeoutMs: number, label: string):
 async function eventually<T>(read: () => Promise<T>, ready: (value: T) => boolean, label: string): Promise<T> {
   const deadline = Date.now() + OPERATION_TIMEOUT_MS;
   let lastError: unknown;
+  let lastValue: T | undefined;
   while (Date.now() < deadline) {
     try {
       const value = await within(read(), Math.max(1, deadline - Date.now()), label);
+      lastValue = value;
       if (ready(value)) return value;
     } catch (error) {
       lastError = error;
     }
     await delay(Math.min(25, Math.max(0, deadline - Date.now())));
   }
-  throw new Error(`${label} exceeded ${OPERATION_TIMEOUT_MS}ms`, { cause: lastError });
+  throw new Error(`${label} exceeded ${OPERATION_TIMEOUT_MS}ms; last value: ${JSON.stringify(lastValue)?.slice(-2_000)}`, { cause: lastError });
 }

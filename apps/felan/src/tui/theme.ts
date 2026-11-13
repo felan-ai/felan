@@ -129,8 +129,9 @@ export function getLocalThemePaths(agentDir: string, packaged: readonly string[]
   const path = join(agentDir, 'themes');
   try {
     const stat = lstatSync(path);
-    if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o022)) return [...packaged];
-    const root = realpathSync(path); const names = new Set<string>(); const directory = opendirSync(root);
+    const uid = process.getuid?.();
+    if (!stat.isDirectory() || stat.isSymbolicLink() || (uid !== undefined && (stat.uid !== uid || (stat.mode & 0o022)))) return [...packaged];
+    const root = (process.platform === 'win32' ? realpathSync.native : realpathSync)(path); const names = new Set<string>(); const directory = opendirSync(root);
     try {
       for (let count = 0; ; count++) {
         const entry = directory.readSync(); if (!entry) break;
@@ -139,9 +140,12 @@ export function getLocalThemePaths(agentDir: string, packaged: readonly string[]
         let file: number | undefined;
         try {
           const name = themeName(entry.name.slice(0, -5));
-          file = openSync(join(root, entry.name), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+          const path = join(root, entry.name); const before = lstatSync(path);
+          if (!before.isFile() || before.isSymbolicLink()) continue;
+          file = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
           const info = fstatSync(file);
-          if (!info.isFile() || info.nlink !== 1 || info.uid !== process.getuid?.() || info.size > THEME_BYTES) continue;
+          if (!info.isFile() || info.nlink !== 1 || (uid !== undefined && info.uid !== uid) || info.size > THEME_BYTES
+            || info.dev !== before.dev || info.ino !== before.ino) continue;
           const bytes = Buffer.alloc(THEME_BYTES + 1); let size = 0;
           while (size < bytes.length) { const read = readSync(file, bytes, size, bytes.length - size, size); if (!read) break; size += read; }
           if (size > THEME_BYTES) continue;

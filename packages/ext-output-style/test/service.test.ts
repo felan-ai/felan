@@ -1,4 +1,5 @@
 import { createExtensionServiceAccess, createFelanServiceRegistry, getExtensionConfigDefinition, type AgentRuntime, type FelanExtensionAPI } from '@felan-ai/agent-core';
+import { resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import extension, { OUTPUT_STYLE_CONFIG } from '../src/extension.js';
 
@@ -30,10 +31,10 @@ it('preserves root configuration and works without optional services for built-i
 it('loads custom instructions through the runtime through core runtime I/O', async () => {
   const h = harness({ style: 'custom', instructionsFile: 'style.md' });
   await extension(h.pi);
-  expect(h.readFile).toHaveBeenCalledWith('/agent/style.md'); expect(h.section()).toContain('Runtime instructions.');
+  expect(h.readFile).toHaveBeenCalledWith(resolve('/agent', 'style.md')); expect(h.section()).toContain('Runtime instructions.');
 });
 
-it.each(['/explicit/style.md', '~/style.md'])("leaves host path authority with the runtime for %s", async path => {
+it.each([resolve('/explicit/style.md'), '~/style.md'])("leaves host path authority with the runtime for %s", async path => {
   const h = harness({ style: 'custom', instructionsFile: path });
   await extension(h.pi); expect(h.readFile).toHaveBeenCalledWith(path);
 });
@@ -41,11 +42,11 @@ it.each(['/explicit/style.md', '~/style.md'])("leaves host path authority with t
 it('preserves precise file failures and registers no partial extension', async () => {
   const missing = harness({ style: 'custom', instructionsFile: 'missing.md' });
   missing.readFile.mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'ENOENT' }));
-  await expect(extension(missing.pi)).rejects.toThrow('outputStyle.instructionsFile not found: /agent/missing.md');
+  await expect(extension(missing.pi)).rejects.toThrow(`outputStyle.instructionsFile not found: ${resolve('/agent', 'missing.md')}`);
   expect(missing.on).not.toHaveBeenCalled();
   const empty = harness({ style: 'custom', instructionsFile: 'empty.md' });
   empty.readFile.mockResolvedValueOnce(new Uint8Array());
-  await expect(extension(empty.pi)).rejects.toThrow('outputStyle.instructionsFile is empty: /agent/empty.md');
+  await expect(extension(empty.pi)).rejects.toThrow(`outputStyle.instructionsFile is empty: ${resolve('/agent', 'empty.md')}`);
   expect(empty.on).not.toHaveBeenCalled();
 });
 

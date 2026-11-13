@@ -1,10 +1,13 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { appendFile, chmod, link, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { basename, join } from 'node:path';
+import { SessionManager } from '@felan-ai/agent-core';
 import { LegacySessionIndex, legacySessionDirectoryName, readTranscriptPreview, transcriptPreview } from '../src/daemon/legacy-sessions.js';
 import { LegacySummaryCache } from '../src/daemon/legacy-summary-cache.js';
 import { canonicalProspectivePath, pathInside } from '../src/daemon/target.js';
+import { accountPrincipal } from '../src/daemon/native-ownership.js';
 
 const reads = vi.hoisted(() => ({ onData: undefined as (() => void) | undefined }));
 vi.mock('node:fs/promises', async importOriginal => {
@@ -28,7 +31,7 @@ afterEach(async () => {
 });
 
 async function stores(persistent = false) {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'legacy-'))); directories.push(directory);
+  const directory = realpathSync.native(await mkdtemp(join(tmpdir(), 'legacy-'))); directories.push(directory);
   const agentDir = join(directory, 'agent'); const custom = join(directory, 'custom');
   const project = join(directory, 'project'); const other = join(directory, 'other');
   const perCwd = join(agentDir, 'sessions', legacySessionDirectoryName(project));
@@ -40,7 +43,7 @@ async function stores(persistent = false) {
     if (![agentDir, custom].some(root => pathInside(root, canonical))) throw new Error('Not owned');
     return canonical;
   });
-  const owner = { target: { agentDir, rootSet: [agentDir, custom], uid: process.getuid!(), namespaceId: 'legacy-test' },
+  const owner = { target: { agentDir, rootSet: [agentDir, custom], principal: accountPrincipal(), namespaceId: 'legacy-test' },
     ...(persistent ? { assertCurrent, assertOwnsPath } : {}) };
   let modifiedAt = Date.UTC(2026, 0, 1);
   const write = async (path: string, id: string, cwd = project, extra = '') => {
@@ -77,7 +80,7 @@ it('limits explicit-directory discovery to top-level headers with the usual ID a
   expect(rows).toEqual([{ id: 'duplicate', path: newest, cwd: s.other, modifiedAt: Math.floor((await stat(newest)).mtimeMs) }]);
 });
 
-it('skips registered, duplicate and invalid files but lists linked transcripts and deleted cwds', async () => {
+it('skips registered, duplicate and invalid files but lists deleted cwds', async () => {
   const s = await stores();
   const registered = await s.write(join(s.perCwd, 'registered.jsonl'), 'registered');
   await s.write(join(s.perCwd, 'registered-id.jsonl'), 'registered-id');
@@ -91,17 +94,31 @@ it('skips registered, duplicate and invalid files but lists linked transcripts a
   const removed = join(s.directory, 'removed');
   await s.write(join(s.custom, 'missing-cwd.jsonl'), 'missing-cwd', removed);
   await s.write(join(s.perCwd, 'not-jsonl.json'), 'wrong-extension');
-  const outside = await s.write(join(s.directory, 'outside.jsonl'), 'linked');
-  await symlink(outside, join(s.perCwd, 'linked.jsonl'));
   await writeFile(join(s.perCwd, 'shared.jsonl'), JSON.stringify({ type: 'session', version: 3, id: 'shared', cwd: s.project }) + '\n', { mode: 0o644 });
   const time = new Date(Date.UTC(2025, 0, 1)); await utimes(join(s.perCwd, 'shared.jsonl'), time, time);
   const found = await s.index.discover([{ id: 'other-id', piPath: registered }, { id: 'registered-id', piPath: join(s.agentDir, 'sessions', 'x.jsonl') }]);
   expect(found.map(row => [row.id, row.path, row.cwd])).toEqual([
-    ['linked', join(s.perCwd, 'linked.jsonl'), s.project],
     ['missing-cwd', join(s.custom, 'missing-cwd.jsonl'), removed],
     ['duplicate', join(s.custom, 'newer-duplicate.jsonl'), s.project],
     ['shared', join(s.perCwd, 'shared.jsonl'), s.project],
   ]);
+});
+
+it.skipIf(process.platform === 'win32')('lists transcripts linked through POSIX symlinks', async () => {
+  const s = await stores(); const outside = await s.write(join(s.directory, 'outside.jsonl'), 'linked');
+  const path = join(s.perCwd, 'linked.jsonl'); await symlink(outside, path);
+  expect((await s.index.discover([])).map(row => [row.id, row.path, row.cwd])).toEqual([['linked', path, s.project]]);
+});
+
+it.runIf(process.platform === 'win32')('matches Pi session directory encoding for Windows paths', async () => {
+  const s = await stores();
+  vi.stubEnv('PI_CODING_AGENT_DIR', s.agentDir);
+  try {
+    for (const cwd of ['C:\\x', s.project]) {
+      expect(basename(SessionManager.create(cwd).getSessionDir())).toBe(legacySessionDirectoryName(cwd));
+    }
+    expect(legacySessionDirectoryName('C:\\x')).toBe('--C--x--');
+  } finally { vi.unstubAllEnvs(); }
 });
 
 it('reads the latest Pi name and the first user message from the whole transcript like Pi', async () => {
@@ -195,7 +212,7 @@ it.each(['mtime', 'size', 'inode', 'id'] as const)('invalidates persistent summa
   else expect((await restarted.summary(rows[0]!)).title).toBe(change === 'size' ? 'After' : 'After!');
 });
 
-it.each(['malformed', 'namespace', 'agentDir', 'entry', 'snippet', 'entry-count', 'oversized', 'permissions', 'hardlink'] as const)('rebuilds a %s cache safely', async kind => {
+for (const kind of ['malformed', 'namespace', 'agentDir', 'entry', 'snippet', 'entry-count', 'oversized', 'permissions', 'hardlink'] as const) it.skipIf(process.platform === 'win32' && (kind === 'permissions' || kind === 'hardlink'))(`rebuilds a ${kind} cache safely (permissions and hardlinks require POSIX semantics)`, async () => {
   const s = await stores(true);
   await s.write(join(s.perCwd, 'safe.jsonl'), 'safe', s.project, '{"type":"session_info","name":"Actual"}\n');
   await s.index.warm(await s.index.discover([]), new AbortController().signal);
@@ -215,14 +232,13 @@ it.each(['malformed', 'namespace', 'agentDir', 'entry', 'snippet', 'entry-count'
   await restarted.warm(rows, new AbortController().signal);
   expect((await restarted.summary(rows[0]!)).title).toBe('Actual');
 
-  expect((await stat(s.cachePath)).mode & 0o777).toBe(0o600);
   const again = new LegacySessionIndex(s.owner);
   const againRows = await again.discover([]);
   await again.warm(againRows, new AbortController().signal);
   expect((await again.summary(againRows[0]!)).title).toBe('Actual');
 });
 
-it('never follows a cache symlink or writes with missing or lost ownership', async () => {
+it.skipIf(process.platform === 'win32')('never follows a POSIX cache symlink', async () => {
   const s = await stores(true);
   await s.write(join(s.perCwd, 'safe.jsonl'), 'safe');
   const outside = join(s.directory, 'outside');
@@ -232,6 +248,11 @@ it('never follows a cache symlink or writes with missing or lost ownership', asy
   expect(await readFile(outside, 'utf8')).toBe('untouched');
   expect((await realpath(s.cachePath))).toBe(outside);
   await rm(s.cachePath);
+});
+
+it('never writes cache with missing or lost ownership', async () => {
+  const s = await stores(true);
+  await s.write(join(s.perCwd, 'safe.jsonl'), 'safe');
   const lost = new LegacySessionIndex(s.owner);
   s.assertCurrent.mockImplementation(() => { throw new Error('Ownership lost'); });
   await lost.warm(await lost.discover([]), new AbortController().signal);
@@ -240,6 +261,13 @@ it('never follows a cache symlink or writes with missing or lost ownership', asy
   await noOwner.write(join(noOwner.perCwd, 'mock.jsonl'), 'mock');
   await noOwner.index.warm(await noOwner.index.discover([]), new AbortController().signal);
   await expect(stat(noOwner.cachePath)).rejects.toMatchObject({ code: 'ENOENT' });
+});
+
+it.skipIf(process.platform === 'win32')('creates the cache with a POSIX owner-only mode', async () => {
+  const s = await stores(true);
+  await s.write(join(s.perCwd, 'safe.jsonl'), 'safe');
+  await s.index.warm(await s.index.discover([]), new AbortController().signal);
+  expect((await stat(s.cachePath)).mode & 0o777).toBe(0o600);
 });
 
 it('cancels active warm reads without saving incomplete work', async () => {

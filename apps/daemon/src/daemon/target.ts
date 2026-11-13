@@ -1,8 +1,8 @@
-import { constants, fstatSync, lstatSync, mkdirSync, openSync, closeSync, realpathSync, type BigIntStats } from 'node:fs';
+import { constants, fstatSync, lstatSync, mkdirSync, openSync, closeSync, realpathSync, statSync } from 'node:fs';
 import { userInfo } from 'node:os';
-import { dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'node:path';
 import type { DaemonIdentity, DaemonTarget as ProtocolDaemonTarget } from '@felan-ai/session-protocol';
-import { DaemonSecurityError, requireOwnershipPlatform, socketPathLimit } from './native-ownership.js';
+import { accountPrincipal, assertPrivatePath, DaemonSecurityError, isWritableByOthers, protectPrivateDirectory, requireOwnershipPlatform, socketPathLimit } from './native-ownership.js';
 
 export type DaemonTarget =
   | { readonly kind: 'production'; readonly agentDir: string; readonly storeRoots: readonly string[] }
@@ -13,6 +13,7 @@ export interface ResolvedDaemonTarget {
   readonly kind: DaemonTarget['kind'];
   readonly namespaceId: string;
   readonly uid: number;
+  readonly principal: string;
   readonly accountDirectory: string;
   readonly runtimeDirectory: string;
   readonly endpoint: string;
@@ -37,31 +38,40 @@ export function assertPathIdentity(pin: PathIdentity): void {
   } catch { /* Missing paths are ownership loss, not permission to recreate them. */ }
   throw new DaemonSecurityError('ownership_lost', 'A daemon-owned path was replaced or removed. Stop this instance before recovery.');
 }
-export function assertPrivateStat(stat: BigIntStats, uid: number, directory: boolean): void {
-  if ((directory ? !stat.isDirectory() : !stat.isFile()) || stat.uid !== BigInt(uid) || (stat.mode & 0o077n) !== 0n || (!directory && stat.nlink !== 1n)) {
-    throw new DaemonSecurityError('unsafe_path', 'Daemon path must be owner-only, non-symlink and owned by the real OS account (regular files require one link).');
-  }
-}
-export function privateDirectory(path: string, uid: number): string {
+export function privateDirectory(path: string, principal: string): string {
   if (!isAbsolute(path) || path.includes('\0')) throw new DaemonSecurityError('unsafe_path', 'Daemon directories must be absolute paths without NUL.');
   const parent = dirname(path);
-  if (parent !== path && !exists(parent)) privateDirectory(parent, uid);
-  try { mkdirSync(path, { mode: 0o700 }); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
-  assertPrivateStat(lstatSync(path, { bigint: true }), uid, true);
-  return realpathSync(path);
+  if (parent !== path && !exists(parent)) privateDirectory(parent, principal);
+  let created = false;
+  try { mkdirSync(path, { mode: 0o700 }); created = true; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+  if (created) protectPrivateDirectory(path, principal);
+  assertPrivatePath(path, lstatSync(path, { bigint: true }), principal, 'directory');
+  return canonicalRealpath(path);
 }
 /** Creates a store directory without imposing permissions on an existing user directory. */
 export function storeDirectory(path: string): string {
-  mkdirSync(path, { recursive: true, mode: 0o700 });
-  return realpathSync(path);
+  if (process.platform === 'win32') {
+    const parent = dirname(path);
+    if (parent !== path && !exists(parent)) storeDirectory(parent);
+    let created = false;
+    try { mkdirSync(path, { mode: 0o700 }); created = true; }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST' || !statSync(path).isDirectory()) throw error; }
+    if (created) protectPrivateDirectory(path, accountPrincipal());
+  } else mkdirSync(path, { recursive: true, mode: 0o700 });
+  return canonicalRealpath(path);
 }
 function exists(path: string): boolean { try { lstatSync(path); return true; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; } }
+function canonicalRealpath(path: string): string { return process.platform === 'win32' ? realpathSync.native(path) : realpathSync(path); }
 
-export function pinPathChain(path: string, uid: number): PathIdentity[] {
+export function pinPathChain(path: string, principal: string): PathIdentity[] {
+  const windows = requireOwnershipPlatform() === 'win32';
+  // Windows drive roots can grant create rights to other accounts without granting delete rights over this private subtree.
+  // Check the immediate parent's write policy and pin every ancestor; full private DACL checks apply to runtime paths themselves.
   const pins: PathIdentity[] = [];
   for (let at = path;; at = dirname(at)) {
     const stat = lstatSync(at, { bigint: true });
-    if (!stat.isDirectory() || (stat.uid !== 0n && stat.uid !== BigInt(uid)) || ((stat.mode & 0o022n) !== 0n && !(stat.uid === 0n && (stat.mode & 0o1000n) !== 0n))) {
+    if (!stat.isDirectory() || (windows ? at === dirname(path) && isWritableByOthers(at, stat)
+      : (stat.uid !== 0n && stat.uid !== BigInt(principal)) || ((stat.mode & 0o022n) !== 0n && !(stat.uid === 0n && (stat.mode & 0o1000n) !== 0n)))) {
       throw new DaemonSecurityError('unsafe_path', 'Daemon path has an untrusted or writable non-sticky ancestor.');
     }
     pins.push(pathIdentity(at));
@@ -79,11 +89,11 @@ export function pinPathAncestry(path: string): PathIdentity[] {
   return pins;
 }
 
-export function openPrivateFile(path: string, uid: number): number {
+export function openPrivateFile(path: string, principal: string): number {
   const fd = openSync(path, constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
   try {
     const stat = fstatSync(fd, { bigint: true });
-    assertPrivateStat(stat, uid, false);
+    assertPrivatePath(path, stat, principal, 'file');
     const pin = pathIdentity(path);
     if (stat.dev !== pin.dev || stat.ino !== pin.ino) throw new DaemonSecurityError('unsafe_path', 'Daemon file changed while opening.');
     return fd;
@@ -91,12 +101,14 @@ export function openPrivateFile(path: string, uid: number): number {
 }
 
 /** @internal */
-export function realAccountLocation(): { uid: number; home: string; directory: string } {
+export function realAccountLocation(): { uid: number; principal: string; home: string; directory: string } {
   const platform = requireOwnershipPlatform();
   const account = userInfo();
-  const home = realpathSync(account.homedir);
+  const home = canonicalRealpath(account.homedir);
+  const principal = accountPrincipal();
+  if (platform === 'win32') return { uid: -1, principal, home, directory: join(home, 'AppData', 'Local', 'felan-daemon-v1') };
   const temp = realpathSync(platform === 'darwin' ? '/private/tmp' : '/tmp');
-  return { uid: account.uid, home, directory: join(temp, `felan-${account.uid}-daemon-v1`) };
+  return { uid: account.uid, principal, home, directory: join(temp, `felan-${account.uid}-daemon-v1`) };
 }
 
 export function resolveDaemonTarget(target: DaemonTarget): ResolvedDaemonTarget {
@@ -125,27 +137,31 @@ export function resolveDaemonTarget(target: DaemonTarget): ResolvedDaemonTarget 
   if (fixtureDirectory && [agentDir, runtimeDirectory, ...rootSet].some(path => !pathInside(fixtureDirectory, path))) throw new DaemonSecurityError('invalid_target', 'Isolated agent, runtime and stores must remain inside the canonical fixture directory.');
   if (!fixtureDirectory && !pathInside(account.directory, runtimeDirectory)) throw new DaemonSecurityError('invalid_target', 'Production runtime cannot be redirected outside the account coordinator.');
   if (rootSet.some(root => pathsOverlap(root, account.directory))) throw new DaemonSecurityError('invalid_target', 'Store roots cannot overlap the account coordinator.');
-  if (exists(runtimeDirectory)) assertPrivateStat(lstatSync(runtimeDirectory, { bigint: true }), account.uid, true);
+  if (exists(runtimeDirectory)) assertPrivatePath(runtimeDirectory, lstatSync(runtimeDirectory, { bigint: true }), account.principal, 'directory');
   const nearest = (path: string) => { while (!exists(path)) path = dirname(path); return path; };
-  const pins = [...pinPathChain(nearest(runtimeDirectory), account.uid), ...rootSet.flatMap(root => pinPathAncestry(nearest(root)))];
-  const endpoint = join(runtimeDirectory, 'ipc.sock');
-  if (Buffer.byteLength(endpoint) > socketPathLimit()) throw new DaemonSecurityError('invalid_endpoint', `Use a shorter explicit runtime directory: endpoint exceeds ${socketPathLimit()} bytes.`);
-  return Object.freeze({ kind: target.kind, uid: account.uid, namespaceId, accountDirectory: account.directory, runtimeDirectory, endpoint, agentDir, rootSet: Object.freeze(rootSet), pins: Object.freeze(pins) });
+  const pins = [...pinPathChain(nearest(runtimeDirectory), account.principal), ...rootSet.flatMap(root => pinPathAncestry(nearest(root)))];
+  const endpoint = join(runtimeDirectory, process.platform === 'win32' ? 'ipc-endpoint.json' : 'ipc.sock');
+  if (process.platform !== 'win32' && Buffer.byteLength(endpoint) > socketPathLimit()) throw new DaemonSecurityError('invalid_endpoint', `Use a shorter explicit runtime directory: endpoint exceeds ${socketPathLimit()} bytes.`);
+  return Object.freeze({ kind: target.kind, uid: account.uid, principal: account.principal, namespaceId, accountDirectory: account.directory, runtimeDirectory, endpoint, agentDir, rootSet: Object.freeze(rootSet), pins: Object.freeze(pins) });
 }
 
 export function prepareDaemonTarget(target: ResolvedDaemonTarget): ResolvedDaemonTarget {
   for (const pin of target.pins) assertPathIdentity(pin);
   for (const root of [target.agentDir, ...target.rootSet]) storeDirectory(root);
-  privateDirectory(target.runtimeDirectory, target.uid);
+  privateDirectory(target.runtimeDirectory, target.principal);
   for (const pin of target.pins) assertPathIdentity(pin);
-  return Object.freeze({ ...target, pins: Object.freeze([...pinPathChain(target.runtimeDirectory, target.uid), ...target.rootSet.flatMap(pinPathAncestry)]) });
+  return Object.freeze({ ...target, pins: Object.freeze([...pinPathChain(target.runtimeDirectory, target.principal), ...target.rootSet.flatMap(pinPathAncestry)]) });
 }
 
 export function canonicalProspectivePath(path: string): string {
   if (typeof path !== 'string' || !isAbsolute(path) || path.includes('\0') || Buffer.byteLength(path) > 4096) throw new DaemonSecurityError('invalid_target', 'Target paths must be bounded absolute paths without NUL.');
   let at = resolve(path); const tail: string[] = [];
-  while (!exists(at)) { tail.unshift(at.slice(dirname(at).length + (dirname(at) === sep ? 0 : 1))); at = dirname(at); }
-  return join(realpathSync(at), ...tail);
+  while (!exists(at)) {
+    const parent = dirname(at);
+    if (parent === at) throw new DaemonSecurityError('invalid_target', 'Target filesystem root does not exist.');
+    tail.unshift(basename(at)); at = parent;
+  }
+  return join(canonicalRealpath(at), ...tail);
 }
 
 export function identityFor(target: ResolvedDaemonTarget, instanceId: string): DaemonIdentity {

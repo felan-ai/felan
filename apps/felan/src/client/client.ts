@@ -6,11 +6,11 @@ import {
   type ClientEnvelope, type ControlRequest, type ControlResponse, type DaemonIdentity, type Interaction,
   type Operation, type OperationParams, type OperationResult, type PresentationEvent, type Response, type ResponseFor,
 } from '@felan-ai/session-protocol';
-import { spawnDetachedDaemon } from '@felan-ai/daemon/client';
+import { spawnDetachedDaemon, windowsProcessElevated } from '@felan-ai/daemon/client';
 import { assertTargetIdentity, protocolTarget, resolveDaemonTarget, type DaemonTarget, type ResolvedDaemonTarget } from '@felan-ai/daemon/client';
 import { waitForDaemonStop } from './daemon-stop.js';
 import { createSessionState, reduceSession, type SessionState } from './reducer.js';
-import { diagnosticText, type AttachTrigger, type BlockedReason, type ClientDiagnostic } from './diagnostics.js';
+import { ELEVATED_DAEMON_WARNING, diagnosticText, type AttachTrigger, type BlockedReason, type ClientDiagnostic } from './diagnostics.js';
 import { localConnector, type ClientTransport, type TransportConnector } from './transport.js';
 
 export function newRequestId(now = Date.now()): string {
@@ -49,6 +49,7 @@ export interface SessionClientOptions {
   expected?: DaemonIdentity;
   connector?: TransportConnector;
   launch?: { entrypoint: string; timeoutMs?: number; replacing?: DaemonIdentity; hostConfigPath?: string };
+  windowsProcessElevated?: () => boolean;
   requestTimeoutMs?: number;
   retries?: number;
   /** Automatic reconnect attempts after an established connection drops; unlimited by default, 0 disables. */
@@ -56,7 +57,7 @@ export interface SessionClientOptions {
   /** First automatic reconnect delay; later attempts double it up to `reconnectMaxDelayMs`. */
   reconnectDelayMs?: number;
   reconnectMaxDelayMs?: number;
-  /** Receives connection and attachment transitions for troubleshooting; must not throw. */
+  /** Receives launch warnings and connection and attachment transitions for troubleshooting; must not throw. */
   diagnostics?: (event: ClientDiagnostic) => void;
 }
 export interface DaemonBuildMismatch {
@@ -115,6 +116,7 @@ export class SessionClient {
   private replacing: DaemonIdentity | undefined;
   private mismatchedWork: number | undefined;
   private mismatchedBuild: DaemonBuildMismatch | undefined;
+  private terminalConnectionError: Error | undefined;
   private negotiated: OperationResult<'hello'> | undefined;
   private connectionState: 'disconnected' | 'connecting' | 'ready' | 'incompatible' | 'blocked' | 'closed' = 'disconnected';
 
@@ -136,6 +138,7 @@ export class SessionClient {
   }
 
   get status() { return this.connectionState; }
+  get connectionError(): Error | undefined { return this.connectionState === 'blocked' ? this.terminalConnectionError : undefined; }
   /** The scheduled automatic reconnect after an established connection dropped; automatic attempts never launch a daemon. */
   get reconnection(): { attempt: number; retryAt: number } | undefined {
     return this.reconnectAt === undefined ? undefined : { attempt: this.reconnectCount + 1, retryAt: this.reconnectAt };
@@ -235,6 +238,7 @@ export class SessionClient {
 
   private async openOnce(launch: boolean, replaceIdleBuild: boolean): Promise<OperationResult<'hello'>> {
     this.queuedInteractions = []; this.queuedInteractionBytes = 0; this.mismatchedWork = undefined; this.mismatchedBuild = undefined;
+    this.terminalConnectionError = undefined;
     // Only an explicit expected identity or this attempt's launch receipt pins the instance; an unpinned client follows daemon restarts.
     this.verifying = this.options.expected && structuredClone(this.options.expected);
     this.connectionState = 'connecting'; this.negotiated = undefined; this.emit();
@@ -248,6 +252,9 @@ export class SessionClient {
         const code = (error as { code?: string }).code;
         if (!launch || this.options.expected || !this.options.launch || !['ENOENT', 'stale_endpoint', 'unavailable'].includes(code ?? '')) throw error;
         try {
+          if (process.platform === 'win32' && (this.options.windowsProcessElevated ?? windowsProcessElevated)()) {
+            this.diagnose({ event: 'daemon.launch.elevated', message: ELEVATED_DAEMON_WARNING });
+          }
           const receipt = await this.whileOpen(spawnDetachedDaemon({ target: this.options.target, ...this.options.launch, ...(this.replacing ? { replacing: this.replacing } : {}) }));
           if (this.closed) throw new Error('Client is closed');
           assertTargetIdentity(this.target, receipt.identity, receipt.identity);
@@ -257,7 +264,8 @@ export class SessionClient {
           // A concurrent starter can win ownership while this launch exits.
           for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt) await wait(this.delay, undefined, { signal: this.lifetime.signal });
-            try { this.transport = await this.connectTransport(receiver); break; } catch { /* Retry only discovery, never the launch. */ }
+            try { this.transport = await this.connectTransport(receiver); break; }
+            catch (error) { if ((error as { code?: string }).code === 'elevation_mismatch') throw error; }
           }
           if (!this.transport) throw launchError;
         }
@@ -309,13 +317,14 @@ export class SessionClient {
       return structuredClone(result);
     } catch (error) {
       this.mismatchedBuild = undefined;
+      if ((error as { code?: string }).code === 'elevation_mismatch') this.terminalConnectionError = error instanceof Error ? error : new Error(diagnosticText(error));
       this.diagnose({ event: 'connection.failed', error: diagnosticText(error) });
       const status = this.connectionState as string;
       // An established client that will retry stays disconnected so observers do not treat a daemon restart as fatal.
-      if (status !== 'incompatible' && !this.closed) this.connectionState = this.established && this.reconnectCount < this.reconnectLimit ? 'disconnected' : 'blocked';
+      if (status !== 'incompatible' && !this.closed) this.connectionState = this.established && !this.terminalConnectionError && this.reconnectCount < this.reconnectLimit ? 'disconnected' : 'blocked';
       this.interactionNotifications.clear(); this.queuedInteractions = []; this.queuedInteractionBytes = 0;
       ++this.epoch; this.transport?.close(); this.transport = undefined;
-      this.settleOutstanding('Daemon connection could not be established; execution may still be running');
+      this.settleOutstanding(this.terminalConnectionError?.message ?? 'Daemon connection could not be established; execution may still be running');
       this.emit(); throw error;
     }
   }
@@ -586,7 +595,10 @@ export class SessionClient {
   }
 
   private diagnose(event: ClientDiagnostic): void {
-    try { this.options.diagnostics?.(event); } catch { /* Diagnostics never affect the protocol. */ }
+    try {
+      if (this.options.diagnostics) this.options.diagnostics(event);
+      else if (event.event === 'daemon.launch.elevated') process.stderr.write(`${event.message}\n`);
+    } catch { /* Diagnostics never affect the protocol. */ }
   }
 
   /** Like connection backoff, the recovery budget renews only after the attachment stayed live longer than the longest reconnect delay, so a flapping session cannot resnapshot forever. */
@@ -634,7 +646,7 @@ export class SessionClient {
   }
   /** Schedules the next automatic attempt; outstanding requests stay pending only until an attempt fails. */
   private retryLater(): boolean {
-    if (this.closed || !this.established || this.connectionState === 'incompatible' || this.reconnectCount >= this.reconnectLimit) return false;
+    if (this.closed || !this.established || this.terminalConnectionError || this.connectionState === 'incompatible' || this.reconnectCount >= this.reconnectLimit) return false;
     if (this.reconnectTimer) return true;
     this.connectionState = 'disconnected';
     const delay = Math.min(this.maxDelay, this.delay * 2 ** Math.min(this.reconnectCount, 30) * (0.9 + Math.random() * 0.2));
@@ -663,8 +675,9 @@ export class SessionClient {
     try {
       return await new Promise<ControlResponse>((resolve, reject) => {
         let settled = false;
-        const fail = () => {
-          if (!settled) { settled = true; clearTimeout(timer); transport?.close(); reject(new Error('Control outcome is indeterminate')); }
+        const fail = (error?: unknown) => {
+          if (!settled) { settled = true; clearTimeout(timer); transport?.close();
+            reject((error as { code?: string } | undefined)?.code === 'elevation_mismatch' ? error : new Error('Control outcome is indeterminate')); }
         };
         onClose = fail;
         this.lifetime.signal.addEventListener('abort', onClose, { once: true });

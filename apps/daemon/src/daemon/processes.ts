@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomUUID } from 'node:crypto';
-import { join, resolve } from 'node:path';
+import { join, resolve, win32 } from 'node:path';
 import { setImmediate as yieldTurn } from 'node:timers/promises';
 import { isDeepStrictEqual, stripVTControlCharacters } from 'node:util';
 import { DEFAULT_MAX_BYTES, getShellConfig, truncateTail } from '@earendil-works/pi-coding-agent';
@@ -14,6 +14,14 @@ import { readOwnedOutputRange } from './session-files.js';
 import { pathInside } from './target.js';
 
 const FOREGROUND_RESOURCE_PREFIX = 'foreground:';
+
+async function inspectWindowsProcess(runtime: AgentRuntime, pid: number) {
+  const root = process.env.SystemRoot;
+  if (!root || !/^[a-z]:[\\/]/iu.test(root) || /[\u0000-\u001f\u007f]/u.test(root)) throw new Error('The Windows system directory is unavailable.');
+  const executable = win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  if ((await runtime.files?.inspect(executable))?.kind !== 'file') throw new Error('The Windows process inspection executable is unavailable.');
+  return runtime.exec(executable, ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object -ExpandProperty CommandLine`]);
+}
 
 interface Scope { session: string; root: string }
 interface Lifetime { scope: Scope; runtime: AgentRuntime; draining: boolean; revoked: boolean }
@@ -403,7 +411,9 @@ export class RegistryProcesses {
         continue;
       }
       const pid = job.pid;
-      const inspection = pid ? await runtime.exec('ps', ['-o', 'command=', '-p', String(pid)]).catch(() => null) : undefined;
+      const inspection = pid && Number.isSafeInteger(pid) && pid > 0 ? await (process.platform === 'win32' && runtime.kind === 'host'
+        ? inspectWindowsProcess(runtime, pid)
+        : runtime.exec('ps', ['-o', 'command=', '-p', String(pid)])).catch(() => null) : undefined;
       this.options.assertCurrent();
       if (inspection === null) continue;
       const verified = inspection?.code === 0 && info.commandIdentity.every(value => inspection.stdout.includes(value)) && inspection.stdout.includes(row.startIdentity);

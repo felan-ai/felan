@@ -72,7 +72,7 @@ async function fixture(initial: { state?: ControlResponse['state']; blocked?: Ho
   });
   const io = { writeOutput: vi.fn<(line: string) => void>(), writeError: vi.fn<(line: string) => void>() };
   return Object.assign(f, {
-    createClient, io, directory, root,
+    createClient, io, directory, root, runtimeArgument: process.platform === 'win32' ? `'${directory}'` : directory,
     controls: () => f.fakes.flatMap(fake => fake.controls) as ControlRequest[],
     run: (args: string[]) => runDaemonCommand([...args, '--daemon-runtime', directory], io, { createClient }),
     connect: async () => {
@@ -88,7 +88,7 @@ describe('blocked daemon CLI', () => {
     expect(await f.run(['status'])).toBe(0);
     expect(f.io.writeOutput.mock.calls).toEqual([
       [expect.stringContaining(': blocked\nSessions: 1; runs: 0; active tasks: 1; attachments: 1')],
-      [`${detail} Use felan daemon restart --force --daemon-runtime ${f.directory} to retry cleanup.`],
+      [`${detail} Use felan daemon restart --force --daemon-runtime ${f.runtimeArgument} to retry cleanup.`],
     ]);
     expect(f.io.writeError).not.toHaveBeenCalled();
     expect(f.controls()).toEqual([]);
@@ -105,7 +105,7 @@ describe('blocked daemon CLI', () => {
     const f = await fixture({ blocked, incompatible: true });
     expect(await f.run(['status'])).toBe(0);
     expect(f.io.writeOutput).toHaveBeenCalledWith(expect.stringContaining('Daemon previous: blocked\n'));
-    expect(f.io.writeOutput).toHaveBeenLastCalledWith(`${detail} Use felan daemon restart --force --daemon-runtime ${f.directory} to retry cleanup.`);
+    expect(f.io.writeOutput).toHaveBeenLastCalledWith(`${detail} Use felan daemon restart --force --daemon-runtime ${f.runtimeArgument} to retry cleanup.`);
     expect(f.controls()).toEqual([]);
   });
 
@@ -115,8 +115,8 @@ describe('blocked daemon CLI', () => {
     expect(f.io.writeOutput.mock.calls[0]?.[0]).toContain(': blocked\nSessions: 1');
     const warning = f.io.writeOutput.mock.calls[1]?.[0];
     expect(warning).toContain(buildMismatch === 'version' ? 'Daemon previous is running; this installation expects' : 'different package/provider build');
-    expect(warning).toContain(`Run felan daemon restart --daemon-runtime ${f.directory} to apply the new build.`);
-    expect(f.io.writeOutput).toHaveBeenLastCalledWith(`${detail} Use felan daemon restart --force --daemon-runtime ${f.directory} to retry cleanup.`);
+    expect(warning).toContain(`Run felan daemon restart --daemon-runtime ${f.runtimeArgument} to apply the new build.`);
+    expect(f.io.writeOutput).toHaveBeenLastCalledWith(`${detail} Use felan daemon restart --force --daemon-runtime ${f.runtimeArgument} to retry cleanup.`);
     expect(f.controls()).toEqual([]); expect(f.io.writeError).not.toHaveBeenCalled();
   });
 
@@ -125,14 +125,14 @@ describe('blocked daemon CLI', () => {
     const config = join(f.root, "host's config.json");
     expect(await f.run(['status', '--host-config', config])).toBe(0);
     expect(f.io.writeOutput.mock.calls[1]?.[0]).toContain(
-      `Run felan daemon restart --daemon-runtime '${f.root}/project'\\''s runtime' --host-config '${f.root}/host'\\''s config.json' to apply the new build.`);
+      `Run felan daemon restart --daemon-runtime '${join(f.root, 'project')}'\\''s runtime' --host-config '${join(f.root, 'host')}'\\''s config.json' to apply the new build.`);
     expect(f.controls()).toEqual([]);
   });
 
   it.each(['stop', 'restart'] as const)('%s without force refuses a recoverable block before sending drain', async action => {
     const f = await fixture();
     expect(await f.run([action])).toBe(1);
-    expect(f.io.writeError).toHaveBeenCalledExactlyOnceWith(`${detail} Use felan daemon ${action} --force --daemon-runtime ${f.directory} to retry cleanup.`);
+    expect(f.io.writeError).toHaveBeenCalledExactlyOnceWith(`${detail} Use felan daemon ${action} --force --daemon-runtime ${f.runtimeArgument} to retry cleanup.`);
     expect(f.controls().map(request => request.op)).toEqual(['host.status']);
     expect(f.createClient).toHaveBeenCalledTimes(1);
   });
@@ -178,7 +178,7 @@ describe('blocked daemon CLI', () => {
       error: { code: 'host_blocked', message: 'Cleanup became blocked during drain.', retryable: false },
     };
     expect(await f.run([action])).toBe(1);
-    expect(f.io.writeError).toHaveBeenCalledExactlyOnceWith(`${detail} Use felan daemon ${action} --force --daemon-runtime ${f.directory} to retry cleanup.`);
+    expect(f.io.writeError).toHaveBeenCalledExactlyOnceWith(`${detail} Use felan daemon ${action} --force --daemon-runtime ${f.runtimeArgument} to retry cleanup.`);
     expect(f.controls()).toMatchObject([{ op: 'host.status' }, { op: `host.${action}`, params: { mode: 'drain' } }]);
     expect(f.controls()).toHaveLength(2);
     expect(f.createClient).toHaveBeenCalledTimes(1);
@@ -202,7 +202,7 @@ describe('blocked daemon CLI', () => {
     const f = await fixture({ blocked, directoryName: "project's runtime" });
     expect(await f.run([action])).toBe(action === 'status' ? 0 : 1);
     const command = action === 'status' ? 'restart' : action;
-    const message = `${detail} Use felan daemon ${command} --force --daemon-runtime '${f.root}/project'\\''s runtime' to retry cleanup.`;
+    const message = `${detail} Use felan daemon ${command} --force --daemon-runtime '${join(f.root, 'project')}'\\''s runtime' to retry cleanup.`;
     if (action === 'status') expect(f.io.writeOutput).toHaveBeenLastCalledWith(message);
     else expect(f.io.writeError).toHaveBeenCalledExactlyOnceWith(message);
     expect(f.createClient.mock.calls[0]?.[0].target).toMatchObject({ kind: 'isolated', directory: f.directory });
@@ -213,7 +213,7 @@ describe('blocked daemon CLI', () => {
     const f = await fixture();
     f.onControl = request => request.op === 'host.status' ? {} : { state: 'draining' };
     expect(await f.run([action, '--force'])).toBe(1);
-    expect(f.io.writeError).toHaveBeenCalledExactlyOnceWith(`${detail} Use felan daemon ${action} --force --daemon-runtime ${f.directory} to retry cleanup.`);
+    expect(f.io.writeError).toHaveBeenCalledExactlyOnceWith(`${detail} Use felan daemon ${action} --force --daemon-runtime ${f.runtimeArgument} to retry cleanup.`);
     expect(f.createClient).toHaveBeenCalledTimes(1);
   });
 
@@ -275,7 +275,7 @@ describe('waitForDaemonStop blocked recovery', () => {
   it('shell-quotes an explicitly supplied isolated CLI recovery target', async () => {
     const f = await fixture({ blocked, directoryName: "project's runtime" });
     await expect(waitForDaemonStop(await f.connect(), undefined, { client: 'cli', daemonRuntime: f.directory })).rejects.toThrow(
-      `${detail} Use felan daemon restart --force --daemon-runtime '${f.root}/project'\\''s runtime' to retry cleanup.`,
+      `${detail} Use felan daemon restart --force --daemon-runtime '${join(f.root, 'project')}'\\''s runtime' to retry cleanup.`,
     );
   });
 

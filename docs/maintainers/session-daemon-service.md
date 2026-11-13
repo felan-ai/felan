@@ -115,5 +115,8 @@ blocked recovery.
 
 Three user-approved historical test exceptions remain unfixed and are bounded
 known risks. Linux arm64 is verified only to the documented focused/container
-scope; Windows remains deferred and untested. This is not publication evidence
-or independent review evidence.
+scope. This historical baseline predates native Windows support. Current
+Windows daemon CI covers x64 and arm64 under an elevated Administrator account,
+not a standard non-admin account or interactive console-window behavior. See
+[native ownership](session-daemon-native-ownership.md#verification). This is
+not publication evidence or independent review evidence.

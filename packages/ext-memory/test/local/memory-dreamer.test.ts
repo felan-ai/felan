@@ -273,15 +273,16 @@ describe('createDefaultLocalMemoryDreamRunner', () => {
     expect(view).toContain('[source session="session-1" entry="first" role=user]');
     expect(view).toContain('| A durable user choice');
     expect(createHash('sha256').update(view).digest('hex')).toBe(inspectViewDigest);
-    expect((await stat(join(input.inputDirectory, inspectViewPath!))).mode & 0o777).toBe(0o400);
+    const readOnlyMode = process.platform === 'win32' ? 0o444 : 0o400;
+    expect((await stat(join(input.inputDirectory, inspectViewPath!))).mode & 0o777).toBe(readOnlyMode);
     expect(await readFile(join(input.inputDirectory, input.manifest.sessions[0]!.transcriptPath), 'utf8'))
       .toBe(`${inspect.trim()}\n${noise.trim()}\n`);
-    expect((await stat(join(input.inputDirectory, inspectPath))).mode & 0o777).toBe(0o400);
-    expect((await stat(join(input.inputDirectory, noisePath))).mode & 0o777).toBe(0o400);
+    expect((await stat(join(input.inputDirectory, inspectPath))).mode & 0o777).toBe(readOnlyMode);
+    expect((await stat(join(input.inputDirectory, noisePath))).mode & 0o777).toBe(readOnlyMode);
     await expect(captured!.runtime.writeFile(join(input.inputDirectory, inspectPath), new TextEncoder().encode('changed')))
       .rejects.toThrow('outside the staged memory inputs');
     expect(JSON.stringify(map)).not.toContain('A durable user choice');
-    expect((await stat(path)).mode & 0o777).toBe(0o400);
+    expect((await stat(path)).mode & 0o777).toBe(readOnlyMode);
     await expect(captured!.runtime.writeFile(path, new TextEncoder().encode('tampered'))).rejects.toThrow(
       'outside the staged memory inputs',
     );

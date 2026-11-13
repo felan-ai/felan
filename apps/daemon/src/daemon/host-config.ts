@@ -5,7 +5,7 @@ import { lstat, open } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { Type, type Static } from 'typebox';
 import { HostProjectSchema, JsonValueSchema, assertJson, parseSchema, text } from '@felan-ai/session-protocol';
-import { DaemonSecurityError } from './native-ownership.js';
+import { DaemonSecurityError, isWritableByOthers } from './native-ownership.js';
 
 const ServiceSchema = Type.Object({
   id: Type.String({ minLength: 1, maxLength: 128, pattern: '^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$' }),
@@ -187,8 +187,10 @@ async function readTrustedConfigFile(source: HostConfigSource): Promise<Buffer> 
   let bytes: Buffer;
   const handle = await open(source.path, constants.O_RDONLY).catch(() => { throw new DaemonSecurityError('unsafe_host_config', 'host.json path is unavailable.'); });
   try {
-    const stat = await handle.stat();
-    if (!stat.isFile() || (stat.mode & 0o022) !== 0) throw new DaemonSecurityError('unsafe_host_config', 'host.json must be a regular file that is not group or world writable.');
+    const stat = await handle.stat({ bigint: true });
+    if (!stat.isFile() || isWritableByOthers(source.path, stat)) throw new DaemonSecurityError('unsafe_host_config', process.platform === 'win32'
+      ? 'host.json must be a regular file whose ACL does not grant write access to another account.'
+      : 'host.json must be a regular file that is not group or world writable.');
     bytes = await handle.readFile();
   } finally { await handle.close(); }
   if (!isUtf8(bytes)) throw new DaemonSecurityError('invalid_host_config', 'host.json must be valid UTF-8.');

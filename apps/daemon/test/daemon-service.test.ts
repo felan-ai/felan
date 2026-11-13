@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -27,7 +28,7 @@ const testManager = { packageName: '@felan-ai/test-manager', version: '0.0.0',
   } };
 
 async function target(initialize = true) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), '.s14-')));
+  const root = realpathSync.native(await mkdtemp(join(tmpdir(), '.s14-')));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const directory = join(root, 'isolated');
   await mkdir(directory, { mode: 0o700 });
@@ -64,7 +65,6 @@ it('assembles owned service state and executes a real offline session before exp
   expect(await client.request('host.status', {})).toMatchObject({ outcome: 'accepted', result: { state: 'ready', setupNeeds: [], composition: { managerPackage: testManager.packageName } } });
   const created = await client.request('sessions.create', { cwd: input.directory, model: { provider: 'offline', id: 'fixture' } });
   expect(created.outcome).toBe('accepted'); if (created.outcome !== 'accepted') return;
-  expect((await stat(join(service.owner.target.agentDir, 'storage'))).mode & 0o777).toBe(0o700);
   await client.attach(created.result.sessionId);
   expect(await client.request('prompt', { text: 'offline request' }, { session: created.result.sessionId })).toMatchObject({ outcome: 'accepted' });
   await vi.waitFor(() => expect(client.getAttachment(created.result.sessionId)?.state.snapshot?.history.entries.some(row => row.role === 'assistant')).toBe(true));
@@ -109,7 +109,15 @@ it('creates private setup and agent storage roots before host dependency setup',
   for (const root of roots) {
     const storage = await stat(root);
     expect(storage.isDirectory()).toBe(true);
-    expect(storage.mode & 0o777).toBe(0o700);
+  }
+});
+
+it.skipIf(process.platform === 'win32')('creates storage roots with POSIX owner-only modes', async () => {
+  const { target: input, hostConfigPath } = await target();
+  const service = await startDaemonService(input, { manager: testManager, hostConfigPath, createModelRuntime: models });
+  cleanups.push(async () => { if (service.lifecycle.state !== 'stopped') { await service.requestStop('stop', 'force'); await service.stopped; } });
+  for (const path of [join(service.owner.target.agentDir, 'storage'), ...['setup', 'agent'].map(name => join(service.owner.target.agentDir, 'storage', name))]) {
+    expect((await stat(path)).mode & 0o777).toBe(0o700);
   }
 });
 
