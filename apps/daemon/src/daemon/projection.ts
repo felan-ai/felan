@@ -212,8 +212,9 @@ export class SessionProjection {
       const id = 'compaction:progress';
       if (!this.compacting || this.presentation.has(id) || this.presentation.size < LIMITS.pageEntries) {
         if (this.compacting) this.setPresentation({ id, kind: 'status', key: id, value: { kind: 'text', text: 'Compacting context…' }, fallback: 'Compacting context…' });
-        else if (this.presentation.has(id)) this.setPresentation({ id, remove: true });
+        // Clear before removing: a removal schedules a retry for whatever is still dirty.
         this.compactionDirty = false;
+        if (!this.compacting && this.presentation.has(id)) this.setPresentation({ id, remove: true });
       }
     }
     for (const id of this.dirtyCompletionOnly) this.publishCompletionOnly(id);
@@ -404,8 +405,11 @@ export class SessionProjection {
     if (this.activeDisplay) {
       if (!this.presentation.has(id) && this.presentation.size >= LIMITS.pageEntries) return;
       this.setPresentation({ id, kind: 'message_display', data: this.activeDisplay });
-    } else if (this.presentation.has(id)) this.setPresentation({ id, remove: true });
-    this.displayDirty = false;
+      this.displayDirty = false;
+    } else {
+      this.displayDirty = false;
+      if (this.presentation.has(id)) this.setPresentation({ id, remove: true });
+    }
   }
   private latestAssistantId(): string {
     const entry = [...this.session.sessionManager.getEntries()].reverse().find(item => item.type === 'message' && item.message.role === 'assistant');

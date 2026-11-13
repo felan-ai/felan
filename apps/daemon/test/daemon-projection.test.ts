@@ -339,6 +339,34 @@ describe.skipIf(!supported)('Pi protocol projection', () => {
     expect(projection.snapshot().presentation.some(item => item.id === 'compaction:progress')).toBe(false);
     expect(events.some(event => event.change.type === 'presentation.removed' && event.change.id === 'compaction:progress')).toBe(true);
   });
+  it('leaves no trailing refresh after an explicit refresh clears a finished display', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const projection = f.registry.projection(b.sessionId);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      await b.runtime.session.prompt('first'); projection.refresh();
+      expect(projection.presentations().some(item => item.id === MESSAGE_DISPLAY_ID)).toBe(false);
+      const revision = f.store.sessionMetadata(b.sessionId).revision;
+      b.runtime.session.sessionManager.appendCustomEntry('projection-test', {});
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(f.store.sessionMetadata(b.sessionId).revision).toBe(revision);
+    } finally { vi.useRealTimers(); }
+  });
+  it('retries deferred compaction progress when a removal frees a presentation slot', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const runtime = f.instances.get(b.sessionId)!; const projection = f.registry.projection(b.sessionId);
+    for (let index = 0; index < LIMITS.pageEntries; index++) {
+      projection.setPresentation({ id: `fill:${index}`, kind: 'status', key: `fill:${index}`, value: { kind: 'text', text: 'fill' }, fallback: 'fill' });
+    }
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      runtime.emit({ type: 'compaction_start', reason: 'manual' }); projection.refresh();
+      expect(projection.presentations().some(item => item.id === 'compaction:progress')).toBe(false);
+      projection.setPresentation({ id: 'fill:0', remove: true });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(projection.presentations().some(item => item.id === 'compaction:progress')).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
   it('maps actual Pi entries and coalesces live-only tool output', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const runtime = f.instances.get(b.sessionId)!;
