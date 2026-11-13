@@ -13,6 +13,7 @@ import type { ClientTransport, TransportConnector } from '../src/client/transpor
 import * as supervisor from '@felan-ai/daemon/client';
 import { FakeTransport, delta, snapshot } from './client-fixtures.js';
 import { clientDiagnosticsLog, describeBlocked, type ClientDiagnostic } from '../src/client/diagnostics.js';
+import { waitForDaemonAttachment, waitForDaemonRun } from '../src/acp/daemon-session.js';
 
 const clients: SessionClient[] = [];
 const roots: string[] = [];
@@ -360,6 +361,56 @@ describe('shared session client', () => {
     clients.push(client);
     const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon').mockResolvedValue({ target: { kind: 'isolated', directory: '/fixture', namespaceId: 'client-test' }, identity, daemonVersion: 'fixture' });
     await client.connect(); expect(launch).toHaveBeenCalledTimes(1); expect(client.identity).toEqual(identity);
+  });
+  it.each(['tui', 'acp', 'headless'] as const)('does not launch or retry an elevation mismatch on the initial %s connection', async kind => {
+    const error = Object.assign(new Error('The running daemon is elevated. Stop it from an elevated terminal, then retry.'), { code: 'elevation_mismatch' });
+    const connector = vi.fn(async () => { throw error; });
+    const diagnostics: ClientDiagnostic[] = [];
+    const { client } = await fixture({ kind, connector, launch: { entrypoint: '/fixture/entrypoint.js' }, diagnostics: event => diagnostics.push(event) });
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon');
+    await expect(client.connect()).rejects.toBe(error);
+    expect(client.status).toBe('blocked'); expect(client.connectionError).toBe(error); expect(client.reconnection).toBeUndefined();
+    expect(connector).toHaveBeenCalledOnce(); expect(launch).not.toHaveBeenCalled();
+    expect(diagnostics).toEqual([{ event: 'connection.failed', error: error.message }]);
+  });
+  it.each(['tui', 'acp', 'headless'] as const)('stops automatic %s reconnects on an elevation mismatch and retains its message', async kind => {
+    let delegate!: TransportConnector;
+    const diagnostics: ClientDiagnostic[] = [];
+    const connector = vi.fn((receiver: Parameters<TransportConnector>[0]) => delegate(receiver));
+    const { client, fake } = await fixture({ kind, connector, reconnectDelayMs: 10, launch: { entrypoint: '/fixture/entrypoint.js' }, diagnostics: event => diagnostics.push(event) });
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon');
+    delegate = fake.connector; await client.connect(); await client.attach('session');
+    const error = Object.assign(new Error('The running daemon is elevated. Stop it from an elevated terminal, then retry.'), { code: 'elevation_mismatch' });
+    delegate = async () => { throw error; };
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    fake.lose();
+    const attachment = expect(waitForDaemonAttachment(client, 'session')).rejects.toBe(error);
+    const run = expect(waitForDaemonRun(client, 'session', 'run')).rejects.toBe(error);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await attachment; await run;
+    expect(client.status).toBe('blocked'); expect(client.connectionError).toBe(error); expect(client.reconnection).toBeUndefined();
+    expect(connector).toHaveBeenCalledTimes(2); expect(launch).not.toHaveBeenCalled();
+    expect(diagnostics.filter(event => event.event === 'connection.failed')).toEqual([{ event: 'connection.failed', error: error.message }]);
+    delegate = fake.connector; await client.connect();
+    expect(client.status).toBe('ready'); expect(client.connectionError).toBeUndefined();
+  });
+  it('stops discovery retries when the winning starter has an elevation mismatch', async () => {
+    const error = Object.assign(new Error('The running daemon is elevated.'), { code: 'elevation_mismatch' });
+    const connector = vi.fn<TransportConnector>().mockRejectedValueOnce(Object.assign(new Error('missing'), { code: 'ENOENT' })).mockRejectedValue(error);
+    const { client } = await fixture({ connector, launch: { entrypoint: '/fixture/entrypoint.js' } });
+    const launch = vi.spyOn(supervisor, 'spawnDetachedDaemon').mockRejectedValue(Object.assign(new Error('Other starter owns target'), { code: 'launch_failed' }));
+    await expect(client.connect()).rejects.toBe(error);
+    expect(client.status).toBe('blocked'); expect(client.reconnection).toBeUndefined();
+    expect(connector).toHaveBeenCalledTimes(2); expect(launch).toHaveBeenCalledOnce();
+  });
+  it('preserves an elevation mismatch on the separate control connection', async () => {
+    let delegate!: TransportConnector;
+    const { client, fake } = await fixture({ connector: receiver => delegate(receiver) });
+    delegate = fake.connector; await client.connect();
+    const error = Object.assign(new Error('The running daemon is elevated.'), { code: 'elevation_mismatch' });
+    delegate = async () => { throw error; };
+    await expect(client.control('host.status')).rejects.toBe(error);
+    expect(client.reconnection).toBeUndefined();
   });
   it('fails a stalled hello boundedly and preserves authoritative rejection/indeterminate outcomes', async () => {
     const { client, fake } = await fixture({ requestTimeoutMs: 5, retries: 0 }); fake.onSend = () => {};

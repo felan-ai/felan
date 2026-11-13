@@ -115,6 +115,7 @@ export class SessionClient {
   private replacing: DaemonIdentity | undefined;
   private mismatchedWork: number | undefined;
   private mismatchedBuild: DaemonBuildMismatch | undefined;
+  private terminalConnectionError: Error | undefined;
   private negotiated: OperationResult<'hello'> | undefined;
   private connectionState: 'disconnected' | 'connecting' | 'ready' | 'incompatible' | 'blocked' | 'closed' = 'disconnected';
 
@@ -136,6 +137,7 @@ export class SessionClient {
   }
 
   get status() { return this.connectionState; }
+  get connectionError(): Error | undefined { return this.connectionState === 'blocked' ? this.terminalConnectionError : undefined; }
   /** The scheduled automatic reconnect after an established connection dropped; automatic attempts never launch a daemon. */
   get reconnection(): { attempt: number; retryAt: number } | undefined {
     return this.reconnectAt === undefined ? undefined : { attempt: this.reconnectCount + 1, retryAt: this.reconnectAt };
@@ -235,6 +237,7 @@ export class SessionClient {
 
   private async openOnce(launch: boolean, replaceIdleBuild: boolean): Promise<OperationResult<'hello'>> {
     this.queuedInteractions = []; this.queuedInteractionBytes = 0; this.mismatchedWork = undefined; this.mismatchedBuild = undefined;
+    this.terminalConnectionError = undefined;
     // Only an explicit expected identity or this attempt's launch receipt pins the instance; an unpinned client follows daemon restarts.
     this.verifying = this.options.expected && structuredClone(this.options.expected);
     this.connectionState = 'connecting'; this.negotiated = undefined; this.emit();
@@ -257,7 +260,8 @@ export class SessionClient {
           // A concurrent starter can win ownership while this launch exits.
           for (let attempt = 0; attempt < 3; attempt++) {
             if (attempt) await wait(this.delay, undefined, { signal: this.lifetime.signal });
-            try { this.transport = await this.connectTransport(receiver); break; } catch { /* Retry only discovery, never the launch. */ }
+            try { this.transport = await this.connectTransport(receiver); break; }
+            catch (error) { if ((error as { code?: string }).code === 'elevation_mismatch') throw error; }
           }
           if (!this.transport) throw launchError;
         }
@@ -309,13 +313,14 @@ export class SessionClient {
       return structuredClone(result);
     } catch (error) {
       this.mismatchedBuild = undefined;
+      if ((error as { code?: string }).code === 'elevation_mismatch') this.terminalConnectionError = error instanceof Error ? error : new Error(diagnosticText(error));
       this.diagnose({ event: 'connection.failed', error: diagnosticText(error) });
       const status = this.connectionState as string;
       // An established client that will retry stays disconnected so observers do not treat a daemon restart as fatal.
-      if (status !== 'incompatible' && !this.closed) this.connectionState = this.established && this.reconnectCount < this.reconnectLimit ? 'disconnected' : 'blocked';
+      if (status !== 'incompatible' && !this.closed) this.connectionState = this.established && !this.terminalConnectionError && this.reconnectCount < this.reconnectLimit ? 'disconnected' : 'blocked';
       this.interactionNotifications.clear(); this.queuedInteractions = []; this.queuedInteractionBytes = 0;
       ++this.epoch; this.transport?.close(); this.transport = undefined;
-      this.settleOutstanding('Daemon connection could not be established; execution may still be running');
+      this.settleOutstanding(this.terminalConnectionError?.message ?? 'Daemon connection could not be established; execution may still be running');
       this.emit(); throw error;
     }
   }
@@ -634,7 +639,7 @@ export class SessionClient {
   }
   /** Schedules the next automatic attempt; outstanding requests stay pending only until an attempt fails. */
   private retryLater(): boolean {
-    if (this.closed || !this.established || this.connectionState === 'incompatible' || this.reconnectCount >= this.reconnectLimit) return false;
+    if (this.closed || !this.established || this.terminalConnectionError || this.connectionState === 'incompatible' || this.reconnectCount >= this.reconnectLimit) return false;
     if (this.reconnectTimer) return true;
     this.connectionState = 'disconnected';
     const delay = Math.min(this.maxDelay, this.delay * 2 ** Math.min(this.reconnectCount, 30) * (0.9 + Math.random() * 0.2));
@@ -663,8 +668,9 @@ export class SessionClient {
     try {
       return await new Promise<ControlResponse>((resolve, reject) => {
         let settled = false;
-        const fail = () => {
-          if (!settled) { settled = true; clearTimeout(timer); transport?.close(); reject(new Error('Control outcome is indeterminate')); }
+        const fail = (error?: unknown) => {
+          if (!settled) { settled = true; clearTimeout(timer); transport?.close();
+            reject((error as { code?: string } | undefined)?.code === 'elevation_mismatch' ? error : new Error('Control outcome is indeterminate')); }
         };
         onClose = fail;
         this.lifetime.signal.addEventListener('abort', onClose, { once: true });

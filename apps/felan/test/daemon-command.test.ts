@@ -1,18 +1,20 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { spawn } from 'node:child_process';
+import childProcess, { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
 import { builtinExtensionPackages } from '../src/providers/extensions.js';
 import { clientDaemonTarget } from '../src/client-application.js';
-import { SessionClient } from '../src/client/client.js';
+import { SessionClient, type SessionClientOptions } from '../src/client/client.js';
 import { runCli } from '../src/cli-main.js';
 import { runDaemonCommand } from '../src/daemon-command.js';
 
 const cleanup: Array<() => Promise<void>> = [];
-afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); vi.unstubAllEnvs(); });
+afterEach(async () => { for (const dispose of cleanup.splice(0).reverse()) await dispose(); vi.restoreAllMocks(); syncBuiltinESMExports(); vi.unstubAllEnvs(); });
 const output = () => ({ writeOutput: vi.fn(), writeError: vi.fn() });
 async function runSuccessfully(args: readonly string[], io = output()): Promise<void> {
   const code = await runDaemonCommand(args, io);
@@ -34,6 +36,39 @@ it('routes daemon arguments separately from prompts and preserves the explicit i
   const foreground = vi.fn(async () => 7);
   expect(await runDaemonCommand(['foreground', '--daemon-runtime', directory], output(), { foreground })).toBe(7);
   expect(foreground).toHaveBeenCalledWith(expect.objectContaining({ kind: 'isolated', directory, storeRoots: [directory] }), undefined);
+});
+
+it.each(['status', 'start', 'stop', 'restart', 'logs'])('reports an elevation mismatch once for daemon %s without a replacement client', async action => {
+  const directory = await mkdtemp(join(tmpdir(), 'elevation-cli-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
+  const error = Object.assign(new Error('The running daemon is elevated. Stop it from an elevated terminal, then retry.'), { code: 'elevation_mismatch' });
+  const connector = vi.fn(async () => { throw error; });
+  const createClient = vi.fn((options: SessionClientOptions) => new SessionClient({ ...options, connector }));
+  const io = output();
+  expect(await runDaemonCommand([action, '--daemon-runtime', directory], io, { createClient })).toBe(1);
+  expect(io.writeError.mock.calls).toEqual([[error.message]]); expect(io.writeOutput).not.toHaveBeenCalled();
+  expect(createClient).toHaveBeenCalledOnce(); expect(connector).toHaveBeenCalledOnce();
+});
+
+it.runIf(process.platform === 'win32')('shares the foreground console without forwarding Ctrl+C through TerminateProcess', async () => {
+  const child = Object.assign(new EventEmitter(), { kill: vi.fn() });
+  const start = vi.spyOn(childProcess, 'spawn').mockReturnValue(child as unknown as childProcess.ChildProcess);
+  syncBuiltinESMExports();
+  const running = runDaemonCommand(['foreground'], output());
+  expect(start).toHaveBeenCalledWith(process.execPath, expect.arrayContaining(['--foreground']), { stdio: 'inherit' });
+  process.listeners('SIGINT').at(-1)!();
+  expect(child.kill).not.toHaveBeenCalled();
+  child.emit('exit', 0, null); expect(await running).toBe(0);
+});
+
+it.skipIf(process.platform === 'win32')('forwards foreground interrupts as SIGINT on POSIX', async () => {
+  const child = Object.assign(new EventEmitter(), { kill: vi.fn() });
+  const start = vi.spyOn(childProcess, 'spawn').mockReturnValue(child as unknown as childProcess.ChildProcess);
+  syncBuiltinESMExports();
+  const running = runDaemonCommand(['foreground'], output());
+  expect(start).toHaveBeenCalledWith(process.execPath, expect.arrayContaining(['--foreground']), { stdio: 'inherit', windowsHide: true });
+  process.listeners('SIGINT').at(-1)!(); process.listeners('SIGTERM').at(-1)!();
+  expect(child.kill.mock.calls).toEqual([['SIGINT'], ['SIGINT']]);
+  child.emit('exit', 0, null); expect(await running).toBe(0);
 });
 
 it('starts and restarts the actual daemon with a shared launch environment and retained session IDs', async () => {

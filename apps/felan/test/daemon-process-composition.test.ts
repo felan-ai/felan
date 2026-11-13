@@ -317,25 +317,16 @@ it('keeps a real foreground process alive after its client is killed and lets an
   const windows = process.platform === 'win32';
   const advancePath = join(f.directory, 'advance-process');
   const script = windows ? `
-    const { existsSync, writeFileSync } = require('node:fs');
+    const { existsSync } = require('node:fs');
     const pid = String(process.pid).padStart(10, '0');
-    const gatePath = ${JSON.stringify(advancePath)};
-    const probe = { pid: process.pid, cwd: process.cwd(), gatePath, checks: 0, gateExists: false, phase: 'waiting' };
-    const report = () => writeFileSync('foreground-probe.json', JSON.stringify(probe));
+    const gatePath = ${JSON.stringify(advancePath.replaceAll('\\', '/'))};
     let advanced = false;
     setInterval(() => {
-      if (advanced) return;
-      probe.checks++; probe.gateExists = existsSync(gatePath);
-      if (!probe.gateExists) { if (probe.checks % 20 === 0) report(); return; }
-      advanced = true; probe.phase = 'writing'; report();
-      process.stdout.write('AFTER:' + pid + '\\n', error => {
-        probe.phase = error ? 'write-failed' : 'flushed';
-        if (error) probe.error = error.message;
-        report();
-      });
+      if (advanced || !existsSync(gatePath)) return;
+      advanced = true;
+      process.stdout.write('AFTER:' + pid + '\\n');
     }, 50);
     process.stdout.write('READY:' + pid + '\\n');
-    report();
   ` : `
     const pid = String(process.pid).padStart(10, '0');
     let advanced = false;
@@ -370,25 +361,7 @@ it('keeps a real foreground process alive after its client is killed and lets an
   expect(await readOutput()).toMatchObject({ resourceId: run.resourceId, state: 'running', data: ready.data });
   if (windows) await writeFile(advancePath, ''); else process.kill(pid, 'SIGUSR2');
   const afterText = `${readyText}AFTER:${match![1]}\n`;
-  const progress = await wait(b.worker, { runId: run.runId, runState: 'running', process: { id: run.resourceId, state: 'running', minimumOutput: Buffer.byteLength(afterText) } }).catch(async error => {
-    if (!windows) throw error;
-    const inspect = async (operation: () => Promise<unknown>) => {
-      try { return await operation(); } catch (error) { return { error: error instanceof Error ? error.message : String(error) }; }
-    };
-    const state = await inspect(async () => {
-      const current = await b.worker.call<ClientView>('state'); const snapshot = current.attachment?.state.snapshot;
-      return { status: current.status, attachment: current.attachment?.state.status, run: snapshot?.run, processes: snapshot?.processes };
-    });
-    const [output, processes, gate, probe] = await Promise.all([
-      inspect(async () => { const value = await readOutput(); return { ...value, data: Buffer.from(value.data, 'base64').toString('utf8') }; }),
-      inspect(() => accepted(b.worker, 'processes.list', { root: session }, session)),
-      inspect(() => realpath(advancePath)),
-      inspect(async () => JSON.parse(await readFile(join(f.directory, 'foreground-probe.json'), 'utf8'))),
-    ]);
-    const alive = await inspect(async () => { process.kill(pid, 0); return true; });
-    throw new Error(`${error instanceof Error ? error.message : String(error)}\nForeground diagnostics: ${JSON.stringify({ pid, alive,
-      daemonExit: daemon.worker.exit, clientExit: b.worker.exit, state, output, processes, gate, probe })}`, { cause: error });
-  });
+  const progress = await wait(b.worker, { runId: run.runId, runState: 'running', process: { id: run.resourceId, state: 'running', minimumOutput: Buffer.byteLength(afterText) } });
   expect(progress.identity).toEqual(daemon.ready.identity);
   const after = await readOutput(); expect(after.state).toBe('running');
   expect(Buffer.from(after.data, 'base64').toString('utf8')).toBe(afterText);

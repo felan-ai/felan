@@ -2,7 +2,7 @@ import { configField, defineExtensionConfig, type ExtensionConfigDefinition } fr
 import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { KeybindingsManager, TUI_KEYBINDINGS, TuiAltScreen, setKeybindings, stripTerminalSequences, visibleWidth, type ProgramStatus, type Terminal } from '@earendil-works/pi-tui';
 import { SessionClient } from '../src/client/client.js';
-import { TuiSessionController } from '../src/tui/controller.js';
+import { TuiSessionController, connectionText } from '../src/tui/controller.js';
 import { DaemonTuiScreen } from '../src/tui/screen.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
 import { HerdrPane, type HerdrRequest } from '../src/tui/herdr.js';
@@ -505,6 +505,28 @@ it('keeps input usable with a clear notice while the daemon is disconnected with
     client.status = 'ready'; client.reconnection = undefined; emit();
     expect(controller.notes.some(note => note.text === 'Reconnected')).toBe(false);
   } finally { vi.useRealTimers(); await controller.dispose(); }
+});
+
+it.each(['disconnected', 'blocked'] as const)('shows a terminal connection error instead of retry advice with a %s attachment', async status => {
+  const f = await fixture(); const controller = f.controller(); await controller.start({ cwd: f.cwd, sessionId: f.root.sessionId });
+  const state = controller.state!;
+  const error = Object.assign(new Error('The running daemon was started from an Administrator terminal. Stop it from an elevated terminal with `felan daemon stop` or run Felan elevated.'), { code: 'elevation_mismatch' });
+  vi.spyOn(controller.client, 'status', 'get').mockReturnValue('blocked');
+  vi.spyOn(controller.client, 'connectionError', 'get').mockReturnValue(error);
+  vi.spyOn(controller, 'state', 'get').mockReturnValue({ ...state, status });
+  const connect = vi.spyOn(controller.client, 'connect'); const request = vi.spyOn(controller.client, 'request');
+  const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
+  const screen = new DaemonTuiScreen(controller, tui, { cwd: f.cwd, exit: vi.fn(), openBrowser: vi.fn(async () => undefined) });
+  cleanup.push(async () => { await screen.dispose(); tui.stop(); });
+  tui.setLayoutRoot(screen.component); screen.focus(); tui.start(); screen.editor.setText('retained draft');
+  expect(connectionText(controller.client)).toBe(error.message);
+  const visible = screenText(tui).replace(/\s+/gu, ' ');
+  expect(visible).toContain(error.message); expect(visible).not.toMatch(/\/reconnect|\/restart|Reconnecting/u);
+  expect(await controller.submit('retained draft')).toBe(false);
+  expect(controller.notice).toBe(`${error.message} The input remains in the editor.`);
+  expect(screen.editor.getExpandedText()).toBe('retained draft');
+  await expect(controller.perform('host.status', {})).rejects.toThrow(error.message);
+  expect(connect).not.toHaveBeenCalled(); expect(request).not.toHaveBeenCalled();
 });
 
 it('anchors notes to the latest entry, replaces back-to-back status lines and starts fresh per session', async () => {

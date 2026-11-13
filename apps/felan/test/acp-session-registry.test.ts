@@ -2,6 +2,7 @@ import { client, methods } from '@agentclientprotocol/sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpSessionRegistry } from '../src/acp/session-registry.js';
 import { createFelanAcpService } from '../src/acp/server.js';
+import { SessionClient, type SessionClientOptions } from '../src/client/client.js';
 import { gate } from '../../daemon/test/fixtures/server.js';
 import { acpDaemonFixture } from './acp-daemon-fixture.js';
 
@@ -18,6 +19,17 @@ async function fixture(options: Parameters<typeof acpDaemonFixture>[0] = {}) {
 const request = (cwd: string) => ({ cwd, mcpServers: [] });
 
 describe('daemon ACP sessions', () => {
+  it('returns an elevation mismatch once through ACP without diagnostics or relaunch', async () => {
+    const f = await fixture();
+    const error = Object.assign(new Error('The running daemon is elevated. Stop it from an elevated terminal, then retry.'), { code: 'elevation_mismatch' });
+    const connector = vi.fn(async () => { throw error; }); const writeDiagnostic = vi.fn();
+    const createClient = vi.fn((options: SessionClientOptions) => new SessionClient({ ...options, connector }));
+    const registry = new AcpSessionRegistry({ daemonRuntime: f.directory, createClient, writeDiagnostic }); cleanups.push(() => registry.dispose());
+    await expect(registry.newSession(request(f.cwd), f.editor)).rejects.toMatchObject({ code: -32603, message: `Internal error: ${error.message}` });
+    expect(writeDiagnostic).not.toHaveBeenCalled(); expect(f.updates).toEqual([]);
+    expect(createClient).toHaveBeenCalledOnce(); expect(connector).toHaveBeenCalledOnce();
+  });
+
   it('advertises only implemented capabilities and retains terminal-auth negotiation', async () => {
     const service = createFelanAcpService();
     cleanups.push(() => service.dispose());

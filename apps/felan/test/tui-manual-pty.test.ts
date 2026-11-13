@@ -38,8 +38,39 @@ async function bounded<T>(work: Promise<T>, label: string, milliseconds = 12_000
   } finally { clearTimeout(timeout); }
 }
 
+class ConPtyGrid extends ManualTerminalGrid {
+  pendingOutput = '';
+  override feed(data: string): void {
+    this.pendingOutput += data;
+    let end = 0;
+    while (end < this.pendingOutput.length) {
+      const tail = this.pendingOutput.slice(end);
+      if (tail.startsWith('\x1b[')) {
+        const match = /^\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/u.exec(tail);
+        if (!match) { if (tail.length > 256) throw new Error('Unterminated CSI'); break; }
+        end += match[0].length;
+      } else if (/^\x1b[\]P_^]/u.test(tail)) {
+        const match = /\x07|\x1b\\/u.exec(tail);
+        if (!match) { if (tail.length > 64 * 1024) throw new Error('Unterminated terminal string'); break; }
+        end += match.index + match[0].length;
+      } else if (tail.startsWith('\x1b')) {
+        const length = tail[1] === '(' || tail[1] === ')' ? 3 : 2;
+        if (tail.length < length) break;
+        end += length;
+      } else {
+        if (tail.length === 1 && /[\ud800-\udbff]/u.test(tail)) break;
+        end += String.fromCodePoint(tail.codePointAt(0)!).length;
+      }
+    }
+    if (!end) return;
+    super.feed(this.pendingOutput.slice(0, end)); this.pendingOutput = this.pendingOutput.slice(end);
+    // ConPTY forwards synchronized-output markers before it flushes the corresponding cell changes.
+    super.feed('\x1b[?2026l');
+  }
+}
+
 class Capture {
-  readonly grid = new ManualTerminalGrid(120, 32);
+  readonly grid = process.platform === 'win32' ? new ConPtyGrid(120, 32) : new ManualTerminalGrid(120, 32);
   raw = '';
   frameRaw = '';
   error: unknown;
@@ -63,7 +94,8 @@ class Capture {
         this.grid.feed(data);
         if (this.grid.frames > frames) {
           const end = '\x1b[?2026l';
-          this.frameRaw = this.raw.slice(0, this.raw.lastIndexOf(end) + end.length);
+          this.frameRaw = this.raw.slice(0, this.grid instanceof ConPtyGrid ? this.raw.length - this.grid.pendingOutput.length
+            : this.raw.lastIndexOf(end) + end.length);
         }
       } catch (error) { this.error = error; }
       for (const listener of this.listeners) listener();
@@ -153,15 +185,18 @@ async function captureManualTerminal(output: string): Promise<void> {
     await mkdir(join(f.directory, 'client', 'tui'), { recursive: true, mode: 0o700 });
     await writeFile(join(f.directory, 'client', 'tui', 'settings.json'), JSON.stringify({ theme: 'felan-dark' }), { mode: 0o600 });
     await preferences.update({ keybindings: { 'app.model.select': 'alt+m', 'app.exit': 'alt+x' } });
+    // An empty transcript paints only the canvas. Truecolor keeps customMessageBg distinct from that canvas.
+    if (process.platform === 'win32') f.root.runtime.session.sessionManager.appendCompaction('QA palette sample', null, 100);
     await server.start(); pty = new Capture(output, checkpoints, f.directory, f.cwd, f.root.sessionId); const terminal = pty;
     const idle = () => f.store.session(f.root.sessionId).run.state === 'idle' && !terminal.screen.includes('Working');
     const modelSelector = () => /Model\s+>\s+→ ✓ fixture \[offline\]/u.test(terminal.screen);
     const settingsSelector = () => terminal.screen.includes('Type to search');
     await terminal.wait('initial connected frame', () => idle() && terminal.screen.includes('Felan Code')
+      && (process.platform !== 'win32' || terminal.screen.includes('Context compacted'))
       && terminal.screen.split('\n').at(-2) === '─'.repeat(terminal.grid.screenColumns));
     expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getFgAnsi('text'));
     expect(terminal.raw).toContain(darkCanvas);
-    if (process.platform !== 'win32') expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getBgAnsi('customMessageBg'));
+    expect(terminal.raw).toContain(bundledClientThemes().get('felan-dark')!.getBgAnsi('customMessageBg'));
     expect(terminal.screen.split('\n').at(-2)).toBe('─'.repeat(terminal.grid.screenColumns));
     expect(terminal.screen.split('\n').at(-1)?.trim()).toBe('');
     await terminal.snapshot('01-dark-wide-idle');
@@ -198,6 +233,8 @@ async function captureManualTerminal(output: string): Promise<void> {
     expect(JSON.parse(await readFile(join(f.owner.target.agentDir, 'settings.json'), 'utf8'))).not.toHaveProperty('theme');
     terminal.send('\x1b'); await terminal.wait('general settings closed after theme change', () => terminal.screen.includes('General settings'));
     terminal.send('\x1b'); await terminal.wait('theme settings closed', () => !settingsSelector());
+    if (process.platform === 'win32') await terminal.wait('light custom message background', () => terminal.screen.includes('Context compacted')
+      && terminal.frameRaw.slice(paletteOffset).includes(bundledClientThemes().get('felan-light')!.getBgAnsi('customMessageBg')));
     await terminal.snapshot('07-light-wide-idle');
 
     const beforeResize = terminal.grid.clears;
@@ -277,6 +314,36 @@ async function captureManualTerminal(output: string): Promise<void> {
     if (cleanupErrors.length && !failure) throw new Error(`Cleanup failed: ${cleanupErrors.join('; ')}`);
   }
 }
+
+it('projects a recorded ConPTY editor update flushed after its synchronized-output end marker', () => {
+  const grid = new ConPtyGrid(120, 32);
+  grid.feed('\x1b[?2026h\x1b[?2026l');
+  grid.feed('\x1b[38;2;192;202;245m\x1b[48;2;26;27;38m\x1b[30;1H QA retained draft\x1b[7m \x1b[27m\x1b[K\x1b[101C');
+  expect(grid.screen.split('\n')[29]?.trim()).toBe('QA retained draft');
+  expect(grid.screenColumns).toBe(120); expect(grid.screenRows).toBe(32);
+  expect(grid.pendingOutput).toBe('');
+});
+
+it.each(['\x1b[2;1H', '\x1b]0;title\x07', '\x1b]0;title\x1b\\', '\x1b(B', '😀'])(
+  'preserves ConPTY output split within %j before committing the visible cells', sequence => {
+    const output = `\x1b[Hfirst${sequence}second`;
+    const expected = new ManualTerminalGrid(24, 4); expected.feed(`${output}\x1b[?2026l`);
+    for (let split = 1; split < output.length; split++) {
+      const grid = new ConPtyGrid(24, 4);
+      grid.feed(output.slice(0, split)); grid.feed(output.slice(split));
+      expect(grid.screen, `split ${split}`).toBe(expected.screen); expect(grid.pendingOutput).toBe('');
+    }
+  });
+
+it('commits complete ConPTY output without inserting a frame marker into an unfinished sequence', () => {
+  const grid = new ConPtyGrid(24, 4);
+  grid.feed('first\x1b[');
+  expect(grid.screen.split('\n')[0]?.trim()).toBe('first'); expect(grid.pendingOutput).toBe('\x1b[');
+  const frames = grid.frames; grid.feed('2;'); expect(grid.frames).toBe(frames);
+  grid.feed('1Hsecond');
+  expect(grid.screen.split('\n')[1]?.trim()).toBe('second'); expect(grid.pendingOutput).toBe('');
+  expect(() => grid.feed('\x1b[1z')).toThrow('Unsupported CSI: 1z');
+});
 
 it('captures emitted-CLI layout, palettes, shortcuts, resize and live model deltas under a focused broker dialog', async () => {
   const retain = process.env.FELAN_TEST_DIST_SMOKE === '1';

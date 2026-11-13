@@ -5,7 +5,7 @@ import { describeBlocked } from '../client/diagnostics.js';
 import { formatHostBlocked } from '../client/daemon-blocked.js';
 import type { SessionListing } from './session-navigator.js';
 
-type Connection = Pick<SessionClient, 'status' | 'reconnection' | 'incompatibleActiveWork' | 'buildMismatch' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'readAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
+type Connection = Pick<SessionClient, 'status' | 'connectionError' | 'reconnection' | 'incompatibleActiveWork' | 'buildMismatch' | 'identity' | 'capabilities' | 'connect' | 'request' | 'attach' | 'retryAttach' | 'detach' | 'readAttachment' | 'getInteractions' | 'subscribe' | 'close'>;
 type SessionSummary = OperationResult<'sessions.list'>['entries'][number];
 const PICKER_FIRST_PAGE = 20;
 const RETAINED_PROMPT_ECHOES = 32;
@@ -449,7 +449,8 @@ export class TuiSessionController {
 }
 
 /** Persistent connection status for the screen; undefined while connected. */
-export function connectionText(client: Pick<Connection, 'status' | 'reconnection'>, now = Date.now()): string | undefined {
+export function connectionText(client: Pick<Connection, 'status' | 'connectionError' | 'reconnection'>, now = Date.now()): string | undefined {
+  if (client.connectionError) return client.connectionError.message;
   if (client.status === 'ready') return undefined;
   if (client.status === 'incompatible') return 'Daemon incompatible. Use /restart to restart with this installation.';
   const retry = client.reconnection;
@@ -458,7 +459,8 @@ export function connectionText(client: Pick<Connection, 'status' | 'reconnection
   return `Daemon ${client.status}. Use /reconnect to retry.`;
 }
 
-function unavailableText(client: Pick<Connection, 'status' | 'reconnection'>): string {
+function unavailableText(client: Pick<Connection, 'status' | 'connectionError' | 'reconnection'>): string {
+  if (client.connectionError) return client.connectionError.message;
   if (client.status === 'incompatible') return 'Daemon incompatible. Use /restart to restart with this installation.';
   return client.reconnection || client.status === 'connecting' ? 'Daemon disconnected; reconnecting automatically. Use /reconnect to retry now.'
     : `Daemon ${client.status}. Use /reconnect to retry.`;

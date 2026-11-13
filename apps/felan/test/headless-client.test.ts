@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { runLocalFelanHeadless } from '../src/headless.js';
 import { SessionClient, type SessionClientOptions } from '../src/client/client.js';
 import { identityFor } from '../../daemon/src/daemon/target.js';
@@ -11,6 +11,17 @@ import { FakeTransport, snapshot } from './client-fixtures.js';
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+
+it.each(['text', 'json'] as const)('reports an elevation mismatch once in headless %s mode without stdout or relaunch', async mode => {
+  const daemonRuntime = await mkdtemp(join(tmpdir(), 'elevation-headless-')); roots.push(daemonRuntime);
+  const error = Object.assign(new Error('The running daemon is elevated. Stop it from an elevated terminal, then retry.'), { code: 'elevation_mismatch' });
+  const connector = vi.fn(async () => { throw error; });
+  const createClient = vi.fn((options: SessionClientOptions) => new SessionClient({ ...options, connector }));
+  const writeOutput = vi.fn(); const writeError = vi.fn();
+  expect(await runLocalFelanHeadless({ mode, daemonRuntime, initialMessage: 'hello', createClient, signalSource: new EventEmitter(), writeOutput, writeError })).toBe(1);
+  expect(writeError.mock.calls).toEqual([[error.message]]); expect(writeOutput).not.toHaveBeenCalled();
+  expect(createClient).toHaveBeenCalledOnce(); expect(connector).toHaveBeenCalledOnce();
+});
 
 it.each([
   ['text', './fixtures/../sessions'], ['json', './fixtures/../sessions'], ['text', undefined], ['json', undefined],

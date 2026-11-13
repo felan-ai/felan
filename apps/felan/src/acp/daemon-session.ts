@@ -71,7 +71,7 @@ export function waitForDaemonAttachment(client: SessionClient, session: string, 
       const attachment = client.getAttachment(session);
       if (signal?.aborted) { abort(); return; }
       if (!attachment || ['closed', 'blocked', 'incompatible'].includes(client.status) || attachment.state.status === 'blocked') {
-        finish(new Error('Session recovery failed')); return;
+        finish(client.connectionError ?? new Error('Session recovery failed')); return;
       }
       if (client.status !== 'ready') {
         timer ??= setTimeout(() => finish(new Error('Session reconnect timed out')), 30_000);
@@ -112,7 +112,7 @@ export function waitForDaemonRun(client: SessionClient, session: string, runId: 
       const attachment = client.getAttachment(session);
       if (signal?.aborted) { abort(); return; }
       if (!attachment || ['blocked', 'closed', 'incompatible'].includes(client.status) || attachment.state.status === 'blocked') {
-        finish(new Error('Session connection is unavailable; daemon execution may still be running')); return;
+        finish(client.connectionError ?? new Error('Session connection is unavailable; daemon execution may still be running')); return;
       }
       if (client.status !== 'ready' || attachment.state.status !== 'live') {
         timer ??= setTimeout(() => finish(new Error('Session reconnect timed out; daemon execution may still be running')), 30_000);
