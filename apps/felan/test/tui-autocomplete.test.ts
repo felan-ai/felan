@@ -1,7 +1,9 @@
+import childProcess from 'node:child_process';
 import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { delimiter, join } from 'node:path';
+import { afterEach, expect, it, vi } from 'vitest';
 import { createCommandAutocomplete } from '../src/tui/commands.js';
 import type { TuiSessionController } from '../src/tui/controller.js';
 
@@ -9,6 +11,7 @@ const directories: string[] = [];
 const originalPath = process.env.PATH;
 const originalLog = process.env.FD_LOG;
 afterEach(async () => {
+  vi.restoreAllMocks(); syncBuiltinESMExports();
   process.env.PATH = originalPath;
   if (originalLog === undefined) delete process.env.FD_LOG; else process.env.FD_LOG = originalLog;
   for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
@@ -40,16 +43,27 @@ it('preserves quoted paths containing spaces in a forced completion', async () =
   expect(suggestions?.items).toContainEqual(expect.objectContaining({ value: '"example file.ts"' }));
 });
 
-it('uses fd for fuzzy @ mentions and follows the current session cwd', async () => {
+it.each(process.platform === 'win32' ? ['node'] : ['shell', 'node'])('uses fd for fuzzy @ mentions and follows the current session cwd with a %s fixture', async fixture => {
   const cwd = await mkdtemp(join(tmpdir(), 'tui-autocomplete-'));
   const nextCwd = await mkdtemp(join(tmpdir(), 'tui-autocomplete-'));
   const bin = await mkdtemp(join(tmpdir(), 'tui-autocomplete-bin-'));
   directories.push(cwd, nextCwd, bin);
   const log = join(bin, 'cwd');
   process.env.FD_LOG = log;
-  await writeFile(join(bin, 'fd'), '#!/bin/sh\nif [ "$1" = "--version" ]; then exit 0; fi\nprintf "%s" "$2" > "$FD_LOG"\nprintf "example.ts\\n"\n');
-  await chmod(join(bin, 'fd'), 0o755);
-  process.env.PATH = `${bin}:${originalPath ?? ''}`;
+  if (fixture === 'shell') {
+    await writeFile(join(bin, 'fd'), '#!/bin/sh\nif [ "$1" = "--version" ]; then exit 0; fi\nprintf "%s" "$2" > "$FD_LOG"\nprintf "example.ts\\n"\n');
+    await chmod(join(bin, 'fd'), 0o755);
+    process.env.PATH = `${bin}${delimiter}${originalPath ?? ''}`;
+  } else {
+    const shim = join(bin, 'fd.cjs');
+    await writeFile(shim, 'if (process.argv[2] === "--version") process.exit(0);\nrequire("node:fs").writeFileSync(process.env.FD_LOG, process.argv[3]);\nprocess.stdout.write("example.ts\\n");\n');
+    const { spawn, spawnSync } = childProcess;
+    vi.spyOn(childProcess, 'spawn').mockImplementation((command, args, options) => command === 'fd'
+      ? spawn(process.execPath, [shim, ...args ?? []], options) : spawn(command, args, options));
+    vi.spyOn(childProcess, 'spawnSync').mockImplementation((command, args, options) => command === 'fd'
+      ? spawnSync(process.execPath, [shim, ...args ?? []], options) : spawnSync(command, args, options));
+    syncBuiltinESMExports();
+  }
   const snapshot = { cwd, catalog: { commands: [] } };
   const controller = { get snapshot() { return snapshot; } } as unknown as TuiSessionController;
   const provider = createCommandAutocomplete(controller);

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { resolve } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { DAEMON_VERSION } from '@felan-ai/daemon';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -172,7 +173,7 @@ describe('ACP server', () => {
     expect(() => stdout.trimEnd().split('\n').filter(Boolean).map(line => JSON.parse(line))).not.toThrow();
     expect(stdout).not.toContain('Daemon ');
     expect(Buffer.concat(diagnosticChunks).toString('utf8')).toBe(
-      `Daemon ${DAEMON_VERSION} is running; this installation expects next-build. Run felan daemon restart --daemon-runtime '/tmp/acp runtime' to apply the new build.\n`,
+      `Daemon ${DAEMON_VERSION} is running; this installation expects next-build. Run felan daemon restart --daemon-runtime '${resolve('/tmp/acp runtime')}' to apply the new build.\n`,
     );
   });
 

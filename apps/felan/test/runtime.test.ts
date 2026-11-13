@@ -465,6 +465,7 @@ describe('local provider runtime', () => {
     const root = await temporaryDirectory();
     const home = join(root, 'home');
     vi.stubEnv('HOME', home);
+    if (process.platform === 'win32') vi.stubEnv('USERPROFILE', home);
     const cwd = join(root, 'workspace');
     const agentDir = join(home, '.felan');
     const projectSkills = join(cwd, '.agents', 'skills');
@@ -562,7 +563,7 @@ describe('local provider runtime', () => {
     const providerMessages = await runtime.session.agent.convertToLlm(transformed);
     expect(providerMessages[0]?.role).toBe('user');
     expect(JSON.stringify(providerMessages[0])).toContain('Root project instructions');
-    expect(JSON.stringify(providerMessages[0])).toContain(join(cwd, 'AGENTS.md'));
+    expect(JSON.stringify(providerMessages[0])).toContain(join(cwd, 'AGENTS.md').replaceAll('\\', '/'));
     expect(JSON.stringify(providerMessages)).not.toContain('Ignored fallback instructions');
 
     await runtime.dispose();

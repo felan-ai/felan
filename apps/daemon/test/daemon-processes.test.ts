@@ -1,5 +1,5 @@
 import { mkdir, rm } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStdioProcess } from '@felan-ai/agent-core';
 import { LIMITS } from '@felan-ai/session-protocol';
@@ -271,7 +271,7 @@ describe.skipIf(!supported)('registry process ownership', () => {
     const adapter = { ...fakeProcessAdapter(), readOutputRange };
     const f = await fixture({}, adapter);
     const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
-    const remoteRoot = '/remote/workspace/.felan/session';
+    const remoteRoot = resolve('/remote/workspace/.felan/session');
     const files = new Map<string, Uint8Array>();
     const ports = (raw: HostAgentRuntime): Partial<AgentRuntime> => ({
       kind: 'docker',

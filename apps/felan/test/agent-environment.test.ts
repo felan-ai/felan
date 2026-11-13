@@ -40,7 +40,7 @@ describe('agent directory .env', () => {
 
   it('resolves the agent directory from the daemon launch target', () => {
     expect(daemonTargetAgentDir(JSON.stringify({ kind: 'production', agentDir: '/home/u/.felan', storeRoots: [] }))).toBe('/home/u/.felan');
-    expect(daemonTargetAgentDir(JSON.stringify({ kind: 'isolated', directory: '/tmp/fixture', namespaceId: 'n' }))).toBe('/tmp/fixture/agent');
+    expect(daemonTargetAgentDir(JSON.stringify({ kind: 'isolated', directory: '/tmp/fixture', namespaceId: 'n' }))).toBe(join('/tmp/fixture', 'agent'));
     expect(daemonTargetAgentDir('not json')).toBeUndefined();
     expect(daemonTargetAgentDir(undefined)).toBeUndefined();
   });

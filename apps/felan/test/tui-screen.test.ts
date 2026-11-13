@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { initTheme } from '@earendil-works/pi-coding-agent';
@@ -15,8 +16,10 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 
 function fixture() {
   initTheme('dark', false); setKeybindings(createClientKeybindings());
+  const directory = mkdtempSync(join(tmpdir(), 'tui-screen-'));
+  cleanups.push(() => rm(directory, { recursive: true, force: true }));
   const transport = new FakeTransport();
-  const client = new SessionClient({ target: { kind: 'isolated', directory: '/unused', namespaceId: 'screen-test' },
+  const client = new SessionClient({ target: { kind: 'isolated', directory, namespaceId: 'screen-test' },
     kind: 'tui', clientVersion: 'fixture', connector: transport.connector, retries: 0 });
   const controller = new TuiSessionController(client);
   const terminal = new TestTerminal(); const tui = new TuiAltScreen(terminal);
@@ -49,7 +52,7 @@ it('completes a later-line file path through the editor Tab and selection keys',
   const cwd = await mkdtemp(join(tmpdir(), 'tui-editor-autocomplete-'));
   await writeFile(join(cwd, 'example.ts'), 'export {};\n');
   const transport = new FakeTransport();
-  const client = new SessionClient({ target: { kind: 'isolated', directory: '/unused', namespaceId: 'autocomplete-screen-test' },
+  const client = new SessionClient({ target: { kind: 'isolated', directory: cwd, namespaceId: 'autocomplete-screen-test' },
     kind: 'tui', clientVersion: 'fixture', connector: transport.connector, retries: 0 });
   const controller = new TuiSessionController(client);
   vi.spyOn(controller, 'snapshot', 'get').mockReturnValue({ ...snapshot(), cwd });

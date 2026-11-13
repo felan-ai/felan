@@ -1,6 +1,6 @@
 import { ClientPreferencesStore } from '../src/tui/preferences-store.js';
 import { createRequire } from 'node:module';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -248,6 +248,12 @@ async function captureManualTerminal(output: string): Promise<void> {
   } catch (error) {
     failure = error;
     if (pty) await pty.snapshot('failure').catch(() => {});
+    if (pty && process.platform === 'win32') {
+      const end = '\x1b[?2026l'; const lastEnd = pty.raw.lastIndexOf(end);
+      console.error(`PTY failure diagnostics: ${JSON.stringify({ frames: pty.grid.frames, observedBytes: Buffer.byteLength(pty.raw),
+        lastSynchronizedEnd: lastEnd, charactersAfterLastFrame: lastEnd < 0 ? pty.raw.length : pty.raw.length - lastEnd - end.length,
+        rawTail: pty.raw.slice(-16 * 1024) })}`);
+    }
     throw error;
   } finally {
     allowSecondDelta.resolve(); release.resolve(); questionAbort.abort();
@@ -270,5 +276,13 @@ it('captures emitted-CLI layout, palettes, shortcuts, resize and live model delt
   const retain = process.env.FELAN_TEST_DIST_SMOKE === '1';
   const output = retain ? '/tmp/v/e/manual-pty' : await mkdtemp(join(tmpdir(), 'felan-manual-pty-'));
   try { await captureManualTerminal(output); }
+  catch (error) {
+    if (process.platform === 'win32') {
+      const artifacts = fileURLToPath(new URL(`tmp/windows-test-artifacts/tui-manual-pty-${process.pid}/`, root));
+      await cp(output, artifacts, { recursive: true }).then(() => console.error(`PTY failure artifacts: ${artifacts}`),
+        failure => console.error(`Could not retain PTY failure artifacts: ${String(failure)}`));
+    }
+    throw error;
+  }
   finally { if (!retain) await rm(output, { recursive: true, force: true }); }
 }, 90_000);

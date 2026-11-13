@@ -382,7 +382,9 @@ function implementationScript(enter: boolean): Script {
       { name: 'TaskCreate', arguments: { title: 'Update fixture', acceptance_criteria: 'Fixture reads after and shell test passes' } },
       { name: 'TaskUpdate', arguments: { task_id: taskId ?? '', status: 'in_progress' } },
       { name: 'edit', arguments: { path: 'fixture-0.txt', oldText: 'before', newText: 'after' } },
-      { name: 'bash', arguments: { command: 'test "$(cat fixture-0.txt)" = after' } },
+      { name: 'bash', arguments: { command: process.platform === 'win32'
+        ? `"${process.execPath}" -e "const check=require('node:assert/strict');check.equal(require('node:fs').readFileSync('fixture-0.txt','utf8'),'after\\n')"`
+        : 'test "$(cat fixture-0.txt)" = after' } },
       { name: 'TaskUpdate', arguments: { task_id: taskId ?? '', status: 'completed', result: 'Shell test confirmed fixture content is after' } },
       'final',
     ];

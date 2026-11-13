@@ -446,9 +446,9 @@ describe('Felan Code update', () => {
 
     expect(calls).toEqual([
       ['root', '--global'],
-      ['root', '--global', '--prefix', fixture.prefix],
+      ['root', '--global', '--prefix', fixture.prefix.replace(/\\/gu, '/')],
       ['view', '@felan-ai/felan@latest', 'version'],
-      ['install', '--global', '@felan-ai/felan@0.12.12', '--prefix', fixture.prefix],
+      ['install', '--global', '@felan-ai/felan@0.12.12', '--prefix', fixture.prefix.replace(/\\/gu, '/')],
     ]);
     expect(workingDirectories).toEqual([
       fixture.packageDirectory, fixture.packageDirectory, fixture.globalRoot, fixture.globalRoot,
@@ -545,7 +545,7 @@ describe('Felan Code update', () => {
       writeError: (line) => errors.push(line),
     })).resolves.toBe(1);
 
-    expect(calls).toEqual([['root', '--global'], ['root', '--global', '--prefix', fixture.prefix]]);
+    expect(calls).toEqual([['root', '--global'], ['root', '--global', '--prefix', fixture.prefix.replace(/\\/gu, '/')]]);
     expect(errors[0]).toContain(fixture.packageDirectory);
     expect(errors[0]).toContain(otherRoot);
     expect(errors[0]).toContain('package manager that installed it');

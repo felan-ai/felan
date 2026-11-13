@@ -294,7 +294,8 @@ describe.runIf(process.platform === 'win32')('authenticated Windows named-pipe I
     expect(endpoint.pipe).toMatch(/^\\\\\.\\pipe\\felan-daemon-[a-f0-9]{32}$/); expect(Buffer.from(endpoint.secret, 'base64')).toHaveLength(32);
     const socket = await connectLocalIpc(owner.target); socket.destroy();
     expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
-    await expect(probeDaemon(owner.target, { ...owner.identity, instanceId: randomUUID() })).rejects.toMatchObject({ code: 'target_mismatch' });
+    await expect(probeDaemon(owner.target, { ...owner.identity, instanceId: randomUUID() })).rejects.toMatchObject({ code: 'unavailable', message: 'Daemon closed before readiness.' });
+    expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
   });
 
   it('preserves absent and stale endpoint codes', async () => {

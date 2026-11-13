@@ -519,8 +519,15 @@ describe.skipIf(!supported)('reviewed persistence boundaries', () => {
     }; syncBuiltinESMExports();
     vi.stubEnv('FELAN_TEST_SKIP_FSYNC', undefined);
     try {
-      const store = new DaemonControlStore(owner); stores.push(store); store.close();
-      expect(reopen(owner).needsRecovery).toBe(false);
+      const store = new DaemonControlStore(owner); stores.push(store);
+      expect(store.needsRecovery).toBe(false);
+      const before = store.snapshot(); store.close();
+      const reloaded = reopen(owner);
+      expect(reloaded.database.rebuilt).toBe(false);
+      expect(reloaded.snapshot()).toEqual(before);
+      expect(reloaded.needsRecovery).toBe(true);
+      reloaded.recover();
+      expect(reloaded.needsRecovery).toBe(false);
       expect(openedDirectories).toEqual([]);
     } finally { fs.openSync = original; syncBuiltinESMExports(); vi.unstubAllEnvs(); }
   });

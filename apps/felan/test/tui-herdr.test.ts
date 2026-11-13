@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { Execution, Interaction, SessionSnapshot } from '@felan-ai/session-protocol';
 import { HerdrPane, createHerdrPane, herdrSocketEndpoint, herdrStatus, reportHerdrPane, sendHerdrRequest, type HerdrRequest } from '../src/tui/herdr.js';
@@ -126,7 +126,7 @@ describe('Herdr pane reporting', () => {
 
   it('sends newline-delimited requests and retries after an unanswered attempt', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'herdr-'));
-    const socketPath = join(directory, 's');
+    const socketPath = herdrSocketEndpoint(process.platform === 'win32' ? `${basename(directory)}-s` : join(directory, 's'), process.platform);
     const requests: string[] = [];
     let connections = 0;
     const server = createServer(socket => {
