@@ -1,5 +1,5 @@
 import { readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createFelanShrinkwrap } from './felan-shrinkwrap.mjs';
 import { packagePaths } from './package-paths.mjs';
@@ -58,15 +58,18 @@ function pack(packagePath) {
 }
 
 function packedManifest(tarball) {
-  return JSON.parse(tar(['-xOzf', tarball, 'package/package.json']));
+  return JSON.parse(tar(tarball, '-xOzf', ['package/package.json']));
 }
 
 function packedEntries(tarball) {
-  return tar(['-tzf', tarball]).split(/\r?\n/u);
+  return tar(tarball, '-tzf').split(/\r?\n/u);
 }
 
-function tar(args) {
-  const result = spawnSync('tar', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+function tar(tarball, flags, entries = []) {
+  const args = [flags, `./${basename(tarball)}`, ...entries];
+  const result = spawnSync('tar', args, {
+    cwd: dirname(tarball), encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+  });
   if (result.status !== 0) throw new Error(`tar ${args.join(' ')} failed: ${result.stderr}`);
   return result.stdout;
 }

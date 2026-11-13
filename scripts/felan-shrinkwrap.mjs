@@ -59,7 +59,7 @@ function rootEntry(manifest) {
 
 // Every third-party package version pnpm resolved, keyed by package name.
 export function pnpmPackageVersions(pnpmLockfile) {
-  const section = /^packages:\n([\s\S]*?)(?:^\S|(?![\s\S]))/m.exec(pnpmLockfile)?.[1];
+  const section = /^packages:\r?\n([\s\S]*?)(?:^\S|(?![\s\S]))/m.exec(pnpmLockfile)?.[1];
   if (!section) throw new Error('pnpm lockfile has no packages section');
   const versions = new Map();
   for (const [, name, version] of section.matchAll(/^ {2}'?(@?[^@'\s]+)@([^'(:\s]+)'?:/gm)) {
