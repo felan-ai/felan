@@ -1,6 +1,7 @@
-import { closeSync } from 'node:fs';
+import { closeSync, constants, fstatSync, lstatSync, openSync, type BigIntStats } from 'node:fs';
 import { Socket } from 'node:net';
 import koffi from 'koffi';
+import { windowsAccountPrincipal, assertWindowsPrivatePath, windowsWritableByOthers, protectWindowsPrivateDirectory } from './native-windows.js';
 
 export class DaemonSecurityError extends Error {
   constructor(readonly code: string, message: string) {
@@ -9,19 +10,69 @@ export class DaemonSecurityError extends Error {
   }
 }
 
-export function requireOwnershipPlatform(): 'darwin' | 'linux' {
-  if ((process.platform !== 'darwin' && process.platform !== 'linux') || !['arm64', 'x64'].includes(process.arch)) {
-    throw new DaemonSecurityError('platform_blocked', 'Daemon ownership is not available on this platform: Windows requires reviewed token, DACL and handle-lock support; other native ABIs require verification. No fallback is permitted.');
+export function requireOwnershipPlatform(): 'darwin' | 'linux' | 'win32' {
+  if (!['darwin', 'linux', 'win32'].includes(process.platform) || !['arm64', 'x64'].includes(process.arch)) {
+    throw new DaemonSecurityError('platform_blocked', 'Daemon ownership is not available on this platform; other native ABIs require verification. No fallback is permitted.');
   }
+  if (process.platform === 'win32') return 'win32';
   if (process.getuid!() !== process.geteuid!() || process.getgid!() !== process.getegid!()) {
     throw new DaemonSecurityError('platform_blocked', 'Daemon ownership refuses set-ID execution.');
   }
-  return process.platform;
+  return process.platform as 'darwin' | 'linux';
+}
+
+export function accountPrincipal(): string {
+  return requireOwnershipPlatform() === 'win32' ? windowsAccountPrincipal() : String(process.getuid!());
+}
+
+export function assertPrivatePath(path: string, stat: BigIntStats, principal: string, kind: 'file' | 'directory'): void {
+  if (requireOwnershipPlatform() === 'win32') { assertWindowsPrivatePath(path, stat, principal, kind); return; }
+  if ((kind === 'directory' ? !stat.isDirectory() : !stat.isFile()) || stat.uid !== BigInt(principal) || (stat.mode & 0o077n) !== 0n || (kind === 'file' && stat.nlink !== 1n)) {
+    throw new DaemonSecurityError('unsafe_path', 'Daemon path must be owner-only, non-symlink and owned by the real OS account (regular files require one link).');
+  }
+}
+
+export function isWritableByOthers(path: string, stat: BigIntStats): boolean {
+  return requireOwnershipPlatform() === 'win32' ? windowsWritableByOthers(path) : (stat.mode & 0o022n) !== 0n;
+}
+
+export function protectPrivateDirectory(path: string, principal: string): void {
+  if (requireOwnershipPlatform() === 'win32') protectWindowsPrivateDirectory(path, principal);
+}
+
+export function tryLockFile(path: string, principal?: string): number | undefined {
+  const platform = requireOwnershipPlatform();
+  let fd: number;
+  try {
+    // UV_FS_O_EXLOCK uses share mode zero. Even plain reads by another process fail while held.
+    fd = openSync(path, constants.O_RDWR | constants.O_CREAT | (platform === 'win32' ? 0x10000000 : constants.O_NOFOLLOW), 0o600);
+  } catch (error) { if (platform === 'win32' && (error as NodeJS.ErrnoException).code === 'EBUSY') return undefined; throw error; }
+  try {
+    if (principal !== undefined) {
+      const stat = fstatSync(fd, { bigint: true });
+      assertPrivatePath(path, stat, principal, 'file');
+      const current = lstatSync(path, { bigint: true });
+      if (current.isSymbolicLink() || stat.dev !== current.dev || stat.ino !== current.ino) throw new DaemonSecurityError('unsafe_path', 'Daemon file changed while opening.');
+    }
+    if (platform === 'win32' || tryKernelLock(fd)) return fd;
+    closeSync(fd); return undefined;
+  } catch (error) { closeSync(fd); throw error; }
+}
+
+export function lockStillHeld(fd: number): boolean {
+  if (requireOwnershipPlatform() !== 'win32') return tryKernelLock(fd);
+  try { fstatSync(fd); return true; } catch { return false; }
+}
+
+function requireUnixPlatform(): 'darwin' | 'linux' {
+  const platform = requireOwnershipPlatform();
+  if (platform === 'win32') throw new DaemonSecurityError('platform_blocked', 'Unix socket operations are unavailable on Windows.');
+  return platform;
 }
 
 let api: ReturnType<typeof loadApi> | undefined;
 function loadApi() {
-  const platform = requireOwnershipPlatform();
+  const platform = requireUnixPlatform();
   let libc: ReturnType<typeof koffi.load>;
   try { libc = koffi.load(platform === 'darwin' ? '/usr/lib/libSystem.B.dylib' : 'libc.so.6'); }
   catch { throw new DaemonSecurityError('platform_blocked', 'Native ownership backend unavailable; Linux requires glibc. No lease-lock or TCP fallback is permitted.'); }
@@ -49,13 +100,13 @@ function failure(operation: string): never {
   throw new DaemonSecurityError(code, `${operation} failed (errno ${errno}).`);
 }
 
-export function tryKernelLock(fd: number): boolean {
+function tryKernelLock(fd: number): boolean {
   if (native().flock(fd, 2 | 4) === 0) return true;
   if (koffi.errno() === koffi.os.errno.EWOULDBLOCK || koffi.errno() === koffi.os.errno.EAGAIN) return false;
   return failure('flock');
 }
 
-export function socketPathLimit(): number { return requireOwnershipPlatform() === 'darwin' ? 103 : 107; }
+export function socketPathLimit(): number { return requireUnixPlatform() === 'darwin' ? 103 : 107; }
 export function protectSocket(path: string): void {
   const n = native();
   const result: number = n.platform === 'darwin' ? n.chmodNoFollow(path, 0o600) : n.chmodNoFollow(-100, path, 0o600, 0x100);

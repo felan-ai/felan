@@ -1,5 +1,5 @@
 import { mkdir, rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, type AgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStdioProcess } from '@felan-ai/agent-core';
 import { LIMITS } from '@felan-ai/session-protocol';
@@ -13,13 +13,36 @@ import { deferred, fixture, fixtures, now, requestId, supported } from './fixtur
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
 
 describe.skipIf(!supported)('registry process ownership', () => {
+  it.runIf(process.platform === 'win32')('uses PowerShell to verify a host process identity on Windows', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42 }));
+    const exec = vi.fn<AgentRuntime['exec']>(async () => ({ stdout: 'worker launch', stderr: '', code: 0, killed: false }));
+    const adapter = { ...fakeProcessAdapter(), inspectDetached,
+      describeJob: (_runtime: AgentRuntime, path: string) => ({ id: 'job', kind: 'detached' as const,
+        status: 'running' as const, command: 'worker', startedAt: now - 100, startIdentity: 'launch', commandIdentity: ['worker'], outputPath: path }),
+    };
+    const processes = new RegistryProcesses({ store: f.store, processAdapter: adapter, assertCurrent: () => f.owner.assertCurrent(), changed() {} });
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, raw => ({ exec, storage: () => ({ ...raw.storage(), readFile: async () => new Uint8Array() }) }), processes);
+    f.store.putResource({ id: 'job', session: b.sessionId, root: b.rootSessionId, kind: 'detached', state: 'reconciling',
+      reference: join(adapter.storageDirectory(runtime), 'job'), startIdentity: 'launch', updatedAt: now });
+    await processes.refresh(b.rootSessionId);
+    expect(inspectDetached).toHaveBeenCalledOnce();
+    expect(exec).toHaveBeenCalledOnce();
+    expect(exec.mock.calls[0]![0]).toMatch(/powershell/i);
+    expect(JSON.stringify(exec.mock.calls[0]![1])).toContain('42');
+    expect(f.store.resource('job')?.state).toBe('running');
+    exec.mockResolvedValueOnce({ stdout: 'unrelated process', stderr: '', code: 0, killed: false });
+    await processes.refresh(b.rootSessionId);
+    expect(f.store.resource('job')?.state).toBe('reconciling');
+  });
+
   it('does not probe terminal records or renew their timestamps', async () => {
     let time = now; const f = await fixture({ now: () => time }); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42 }));
     const readFile = vi.fn(async () => new Uint8Array());
     const exec = vi.fn(async () => ({ stdout: 'worker launch', stderr: '', code: 0, killed: false }));
     const adapter = { ...fakeProcessAdapter(), inspectDetached,
-      describeJob: (_runtime: AgentRuntime, path: string) => ({ id: path.split('/').at(-1)!, kind: 'detached' as const,
+      describeJob: (_runtime: AgentRuntime, path: string) => ({ id: basename(path), kind: 'detached' as const,
         status: 'running' as const, command: 'worker', startedAt: now - 100, startIdentity: 'launch', commandIdentity: ['worker'], outputPath: path }),
     };
     const changed = vi.fn();

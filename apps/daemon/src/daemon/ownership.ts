@@ -1,10 +1,10 @@
-import { closeSync, constants, futimesSync, lstatSync, lutimesSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, futimesSync, lstatSync, lutimesSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { dirname, isAbsolute, join } from 'node:path';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
-import { syncDescriptor } from './durability.js';
-import { DaemonSecurityError, tryKernelLock } from './native-ownership.js';
-import { assertPathIdentity, assertPrivateStat, canonicalProspectivePath, identityFor, openPrivateFile, pathIdentity, pathInside, pathsOverlap, pinPathAncestry, pinPathChain, prepareDaemonTarget, privateDirectory, resolveDaemonTarget, storeDirectory, type DaemonTarget, type PathIdentity, type ResolvedDaemonTarget } from './target.js';
+import { replaceFile, syncDescriptor, syncDirectory } from './durability.js';
+import { assertPrivatePath, DaemonSecurityError, lockStillHeld, tryLockFile } from './native-ownership.js';
+import { assertPathIdentity, canonicalProspectivePath, identityFor, pathIdentity, pathInside, pathsOverlap, pinPathAncestry, pinPathChain, prepareDaemonTarget, privateDirectory, resolveDaemonTarget, storeDirectory, type DaemonTarget, type PathIdentity, type ResolvedDaemonTarget } from './target.js';
 
 interface Claim {
   kind: 'production' | 'isolated'; namespaceId: string; instanceId: string; lock: string;
@@ -37,7 +37,7 @@ function readLedger(directory: string): Ledger {
 function validClaim(c: Claim): boolean {
   return !!c && (c.kind === 'production' || c.kind === 'isolated') && typeof c.namespaceId === 'string' && typeof c.instanceId === 'string'
     && typeof c.lock === 'string' && /^(production|isolated-[a-f0-9]{64})\.lock$/.test(c.lock) && validNode(c.lockNode)
-    && Array.isArray(c.roots) && c.roots.every((r: unknown) => typeof r === 'string' && r.startsWith('/') && !r.includes('\0'))
+    && Array.isArray(c.roots) && c.roots.every((r: unknown) => typeof r === 'string' && isAbsolute(r) && !r.includes('\0'))
     && Array.isArray(c.nodes) && c.nodes.length === c.roots.length && c.nodes.every(validNode) && Array.isArray(c.ancestors) && c.ancestors.every(validNode);
 }
 
@@ -62,44 +62,45 @@ function uniqueNodes(pins: readonly PathIdentity[]): NodeIdentity[] {
 
 /** A claim is live only while another process still holds its registered lifetime lock. */
 function claimActive(target: ResolvedDaemonTarget, claim: Claim): boolean {
-  let fd: number;
-  try { fd = openSync(join(target.accountDirectory, claim.lock), constants.O_RDWR | constants.O_NOFOLLOW); }
-  catch { return false; }
-  try {
-    const pin = pathIdentity(join(target.accountDirectory, claim.lock));
-    if (String(pin.dev) !== claim.lockNode.dev || String(pin.ino) !== claim.lockNode.ino) return false;
-    return !tryKernelLock(fd);
-  } finally { closeSync(fd); }
+  const path = join(target.accountDirectory, claim.lock);
+  let pin: PathIdentity;
+  try { pin = pathIdentity(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  if (String(pin.dev) !== claim.lockNode.dev || String(pin.ino) !== claim.lockNode.ino) return false;
+  const fd = tryLockFile(path, target.principal);
+  try { assertPathIdentity(pin); return fd === undefined; }
+  finally { if (fd !== undefined) closeSync(fd); }
 }
 
-function saveLedger(directory: string, uid: number, ledger: Ledger): void {
+function saveLedger(directory: string, principal: string, ledger: Ledger): void {
   const temp = join(directory, `claims-${randomUUID()}.tmp`);
   const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   try { writeFileSync(fd, JSON.stringify(ledger)); syncDescriptor(fd); } finally { closeSync(fd); }
   try {
-    assertPrivateStat(lstatSync(directory, { bigint: true }), uid, true);
-    renameSync(temp, join(directory, 'claims.json'));
-    const dir = openSync(directory, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    try { syncDescriptor(dir); } finally { closeSync(dir); }
+    assertPrivatePath(directory, lstatSync(directory, { bigint: true }), principal, 'directory');
+    replaceFile(temp, join(directory, 'claims.json'));
+    syncDirectory(directory);
   } finally { try { unlinkSync(temp); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; } }
 }
 
 async function coordination(target: ResolvedDaemonTarget): Promise<{ fd: number; pins: PathIdentity[] }> {
-  privateDirectory(target.accountDirectory, target.uid);
-  const pins = pinPathChain(target.accountDirectory, target.uid);
+  privateDirectory(target.accountDirectory, target.principal);
+  const pins = pinPathChain(target.accountDirectory, target.principal);
   const file = join(target.accountDirectory, CLAIMS_LOCK);
-  const fd = openPrivateFile(file, target.uid);
-  const pin = pathIdentity(file); pins.push(pin);
+  let fd: number | undefined;
+  let pinned = false;
   try {
     const deadline = performance.now() + 5_000;
-    while (!tryKernelLock(fd)) {
+    while ((fd = tryLockFile(file, target.principal)) === undefined) {
+      if (!pinned) { pins.push(pathIdentity(file)); pinned = true; }
       if (performance.now() >= deadline) throw new DaemonSecurityError('ownership_busy', 'Account claim coordinator is busy; retry without removing its lock.');
       await new Promise(resolve => setTimeout(resolve, 10));
       for (const p of pins) assertPathIdentity(p);
     }
+    if (!pinned) pins.push(pathIdentity(file));
     for (const p of pins) assertPathIdentity(p);
     return { fd, pins };
-  } catch (error) { closeSync(fd); throw error; }
+  } catch (error) { if (fd !== undefined) closeSync(fd); throw error; }
 }
 
 /** @internal */
@@ -125,14 +126,13 @@ function readKnownRoots(target: ResolvedDaemonTarget): string[] {
 
 function writeKnownRoots(agentDir: string, roots: readonly string[]): void {
   const path = join(agentDir, KNOWN_ROOTS); const temp = `${path}.${randomUUID()}.tmp`;
-  try { writeFileSync(temp, JSON.stringify(roots), { flag: 'wx', mode: 0o600 }); renameSync(temp, path); }
+  try { writeFileSync(temp, JSON.stringify(roots), { flag: 'wx', mode: 0o600 }); replaceFile(temp, path); }
   finally { try { unlinkSync(temp); } catch { /* Already renamed. */ } }
 }
 
 function lockStoreRoot(root: string): number {
-  const fd = openSync(join(root, STORE_LOCK), constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW, 0o600);
-  if (tryKernelLock(fd)) return fd;
-  closeSync(fd);
+  const fd = tryLockFile(join(root, STORE_LOCK));
+  if (fd !== undefined) return fd;
   throw new DaemonSecurityError('root_conflict', 'The canonical store has a live kernel ownership lock.');
 }
 
@@ -162,7 +162,7 @@ export class DaemonOwnership {
     if (this.released) throw new DaemonSecurityError('ownership_lost', 'Daemon ownership has been released.');
     try {
       for (const pin of [...this.pins, ...this.extraPins]) assertPathIdentity(pin);
-      for (const fd of this.fds) if (!tryKernelLock(fd)) throw new Error('kernel lock lost');
+      for (const fd of this.fds) if (!lockStillHeld(fd)) throw new Error('kernel lock lost');
     }
     catch {
       this.lost = new DaemonSecurityError('ownership_lost', 'Daemon lock or path identity changed; admission is permanently fenced for this instance.');
@@ -173,6 +173,7 @@ export class DaemonOwnership {
   }
   /** Wall-clock throttling refreshes on the first tick after sleep, when reapers may run immediately. */
   private refreshTimestamps(): void {
+    if (process.platform === 'win32') return;
     const now = Date.now(); const elapsed = now - this.refreshedAt;
     if (elapsed >= 0 && elapsed < TIMESTAMP_REFRESH_MS) return;
     this.refreshedAt = now;
@@ -216,7 +217,7 @@ export class DaemonOwnership {
       this.fds.push(lockStoreRoot(root));
       this.lockedRoots.push(root);
       const own = ledger.claims.find(claim => claim.instanceId === this.instanceId);
-      if (own) { own.roots.push(root); own.nodes.push(node(pathIdentity(root))); saveLedger(this.current.accountDirectory, this.current.uid, ledger); }
+      if (own) { own.roots.push(root); own.nodes.push(node(pathIdentity(root))); saveLedger(this.current.accountDirectory, this.current.principal, ledger); }
     } finally { closeSync(coordinator.fd); }
     if (this.current.rootSet.includes(root)) return;
     const rootSet = Object.freeze([...this.current.rootSet, root]);
@@ -234,11 +235,11 @@ export class DaemonOwnership {
     this.released = true; clearInterval(this.timer);
     let coordinator: Awaited<ReturnType<typeof coordination>> | undefined;
     try {
-      for (const pin of this.pins.filter(p => p.path === this.current.accountDirectory || p.path.startsWith(`${this.current.accountDirectory}/`))) assertPathIdentity(pin);
+      for (const pin of this.pins.filter(p => pathInside(this.current.accountDirectory, p.path))) assertPathIdentity(pin);
       coordinator = await coordination(this.current);
       const ledger = readLedger(this.current.accountDirectory);
       ledger.claims = ledger.claims.filter(c => c.instanceId !== this.instanceId);
-      saveLedger(this.current.accountDirectory, this.current.uid, ledger);
+      saveLedger(this.current.accountDirectory, this.current.principal, ledger);
     } finally {
       for (const fd of this.fds.splice(0).reverse()) closeSync(fd);
       if (coordinator) closeSync(coordinator.fd);
@@ -256,9 +257,9 @@ export async function acquireDaemonOwnership(input: DaemonTarget): Promise<Daemo
     const candidateNodes = existingNodes(guardedRoots);
     const candidateAncestors = target.pins.map(node);
     const lock = namespaceLockName(target);
-    const lifetime = openPrivateFile(join(target.accountDirectory, lock), target.uid);
+    const lifetime = tryLockFile(join(target.accountDirectory, lock), target.principal);
+    if (lifetime === undefined) throw new DaemonSecurityError('owner_running', 'This OS account/namespace already has a daemon. Attach using its pinned roots; do not delete locks.');
     held.push(lifetime);
-    if (!tryKernelLock(lifetime)) throw new DaemonSecurityError('owner_running', 'This OS account/namespace already has a daemon. Attach using its pinned roots; do not delete locks.');
     const live = readLedger(target.accountDirectory).claims.filter(claim => claim.lock !== lock && claimActive(target, claim));
     for (const claim of live) {
       if (claim.roots.some(root => guardedRoots.some(other => pathsOverlap(root, other))) || nodesIntersect(claim.nodes, candidateAncestors) || nodesIntersect(candidateNodes, claim.ancestors)) {
@@ -275,7 +276,7 @@ export async function acquireDaemonOwnership(input: DaemonTarget): Promise<Daemo
     const instanceId = randomUUID();
     const lockPin = pathIdentity(join(target.accountDirectory, lock));
     for (const pin of coordinator.pins) assertPathIdentity(pin);
-    saveLedger(target.accountDirectory, target.uid, { version: 1, claims: [...live, { kind: target.kind, namespaceId: target.namespaceId, instanceId, lock, lockNode: node(lockPin), roots: guardedRoots, nodes, ancestors }] });
+    saveLedger(target.accountDirectory, target.principal, { version: 1, claims: [...live, { kind: target.kind, namespaceId: target.namespaceId, instanceId, lock, lockNode: node(lockPin), roots: guardedRoots, nodes, ancestors }] });
     const lockPins = [join(target.accountDirectory, lock), ...target.rootSet.map(root => join(root, STORE_LOCK))].map(pathIdentity);
     const lockedRoots = [...target.rootSet];
     const known = [...new Set(readKnownRoots(target))].filter(root => !lockedRoots.some(owned => pathInside(owned, root)));

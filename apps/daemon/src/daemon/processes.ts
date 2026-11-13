@@ -403,7 +403,9 @@ export class RegistryProcesses {
         continue;
       }
       const pid = job.pid;
-      const inspection = pid ? await runtime.exec('ps', ['-o', 'command=', '-p', String(pid)]).catch(() => null) : undefined;
+      const inspection = pid && Number.isSafeInteger(pid) && pid > 0 ? await (process.platform === 'win32' && runtime.kind === 'host'
+        ? runtime.exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object -ExpandProperty CommandLine`])
+        : runtime.exec('ps', ['-o', 'command=', '-p', String(pid)])).catch(() => null) : undefined;
       this.options.assertCurrent();
       if (inspection === null) continue;
       const verified = inspection?.code === 0 && info.commandIdentity.every(value => inspection.stdout.includes(value)) && inspection.stdout.includes(row.startIdentity);

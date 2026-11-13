@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, constants, fstatSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
+import { chmodSync, closeSync, constants, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync, unlinkSync, writeFileSync, type BigIntStats } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { AbsolutePathSchema, IdSchema } from '@felan-ai/session-protocol';
 import { Type } from 'typebox';
 import type { DaemonOwnership } from './ownership.js';
-import { syncDescriptor } from './durability.js';
+import { replaceFile, syncDescriptor, syncDirectory } from './durability.js';
+import { assertPrivatePath } from './native-ownership.js';
 import { guardOwnedPaths, prepareControlDirectory, syncOwnedDirectory } from './persistence.js';
 import { assertPathIdentity, pathIdentity, pathInside, type PathIdentity } from './target.js';
 
@@ -22,8 +23,9 @@ function owned(owner: DaemonOwnership, path: string): string {
   if (owner.assertOwnsPath(path) !== path) throw error('ownership_lost', 'Owned file changed its canonical destination.');
   return path;
 }
-function regular(stat: BigIntStats, owner?: DaemonOwnership): void {
-  if (!stat.isFile() || owner && (stat.uid !== BigInt(owner.target.uid) || stat.nlink !== 1n)) throw error('invalid_request', 'Expected an unchanged regular file with one owned link.');
+function regular(path: string, stat: BigIntStats, owner: DaemonOwnership): void {
+  if (!stat.isFile() || stat.nlink !== 1n || process.platform !== 'win32' && stat.uid !== BigInt(owner.target.principal)) throw error('invalid_request', 'Expected an unchanged regular file with one owned link.');
+  if (process.platform === 'win32') assertPrivatePath(path, stat, owner.target.principal, 'file');
 }
 function sameFile(stat: BigIntStats, pin: PathIdentity): void {
   if (stat.dev !== pin.dev || stat.ino !== pin.ino) throw error('ownership_lost', 'File identity changed.');
@@ -48,10 +50,10 @@ export function readOwnedOutputRange(owner: DaemonOwnership, input: string, offs
   const path = owned(owner, input); const check = guardOwnedPaths(owner, [path]); const pin = pathIdentity(path);
   const fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
-    const before = fstatSync(fd, { bigint: true }); regular(before, owner); sameFile(before, pin); check();
+    const before = fstatSync(fd, { bigint: true }); regular(path, before, owner); sameFile(before, pin); check();
     if (BigInt(offset) > before.size) throw error('resync_required', 'Output range is no longer retained.');
     const bytes = Buffer.alloc(limit); const count = readSync(fd, bytes, 0, limit, offset);
-    const after = fstatSync(fd, { bigint: true }); regular(after, owner); sameFile(after, pin);
+    const after = fstatSync(fd, { bigint: true }); regular(path, after, owner); sameFile(after, pin);
     if (!Number.isSafeInteger(offset + count) || after.size < BigInt(offset + count)) throw error('resync_required', 'Output shrank during the read.');
     check(); return new Uint8Array(bytes.subarray(0, count));
   } finally { closeSync(fd); }
@@ -75,7 +77,11 @@ export function stageImport(owner: DaemonOwnership, directory: string, source: s
   const path = join(target, `.felan-import-${randomUUID()}.tmp`);
   const output = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
   let pin: PathIdentity | undefined;
-  try { pin = pathIdentity(path); check(); writeFileSync(output, prepared.bytes); syncDescriptor(output); check(); }
+  try {
+    pin = pathIdentity(path);
+    if (process.platform === 'win32') assertPrivatePath(path, fstatSync(output, { bigint: true }), owner.target.principal, 'file');
+    check(); writeFileSync(output, prepared.bytes); syncDescriptor(output); check();
+  }
   catch (cause) { owner.assertCurrent(); if (pin) unlinkPinned(path, pin); throw cause; }
   finally { closeSync(output); }
   const pinned = pin;
@@ -89,9 +95,10 @@ export interface PreparedExport { target: string }
 export function prepareExport(owner: DaemonOwnership, destination: string, managed: readonly string[]): PreparedExport {
   owner.assertCurrent();
   if (['.', '..', ''].includes(basename(destination))) throw error('invalid_request', 'Export requires an explicit file name.');
-  const target = join(realpathSync(dirname(destination)), basename(destination));
+  const realpath = process.platform === 'win32' ? realpathSync.native : realpathSync;
+  const target = join(realpath(dirname(destination)), basename(destination));
   let resolved = target;
-  try { resolved = realpathSync(target); } catch (cause) { if (!absent(cause)) throw cause; }
+  try { resolved = realpath(target); } catch (cause) { if (!absent(cause)) throw cause; }
   if (managed.some(path => pathInside(path, target) || pathInside(path, resolved))) throw error('forbidden', 'Export cannot overwrite files managed by the session daemon.');
   return { target };
 }
@@ -102,15 +109,16 @@ export async function publishExport(owner: DaemonOwnership, render: (path: strin
   try {
     await render(temp);
     owner.assertCurrent();
-    try { chmodSync(temp, statSync(target).mode & 0o777); } catch (cause) { if (!absent(cause)) throw cause; }
-    const fd = openSync(temp, constants.O_RDONLY);
+    if (process.platform !== 'win32') {
+      try { chmodSync(temp, statSync(target).mode & 0o777); } catch (cause) { if (!absent(cause)) throw cause; }
+    }
+    const fd = openSync(temp, process.platform === 'win32' ? constants.O_RDWR : constants.O_RDONLY);
     try { syncDescriptor(fd); } finally { closeSync(fd); }
-    renameSync(temp, target);
+    replaceFile(temp, target);
   } catch (cause) {
     try { unlinkSync(temp); } catch {}
     throw cause;
   }
-  const directory = openSync(dirname(target), constants.O_RDONLY | constants.O_DIRECTORY);
-  try { syncDescriptor(directory); } finally { closeSync(directory); }
+  syncDirectory(dirname(target));
   return target;
 }

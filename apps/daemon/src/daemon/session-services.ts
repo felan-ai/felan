@@ -8,6 +8,7 @@ import type { ControlSessionMetadata } from './control-state.js';
 import { guardOwnedPaths } from './persistence.js';
 import type { SessionRegistry } from './registry.js';
 import { createSessionExecutions, type SessionExecutionOperations } from './session-executions.js';
+import { assertPrivatePath } from './native-ownership.js';
 
 const titleRecord = 'sessions.set-title-outcome';
 const executionPorts = new WeakMap<SessionRegistry, Map<string, SessionExecutionOperations>>();
@@ -145,7 +146,11 @@ function createRegistrySessionsHistory(registry: SessionRegistry, current: Sessi
       const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
       try {
         const before = await file.stat({ bigint: true });
-        if (!before.isFile() || before.nlink !== 1n || before.uid !== BigInt(registry.options.owner.target.uid)) throw new SessionsServiceError('inaccessible');
+        if (!before.isFile() || before.nlink !== 1n || process.platform !== 'win32' && before.uid !== BigInt(registry.options.owner.target.principal)) throw new SessionsServiceError('inaccessible');
+        if (process.platform === 'win32') {
+          try { assertPrivatePath(path, before, registry.options.owner.target.principal, 'file'); }
+          catch { throw new SessionsServiceError('inaccessible'); }
+        }
         if (before.size > BigInt(maxBytes)) throw new SessionsServiceError('oversize');
         const buffer = Buffer.alloc(Number(before.size) + 1);
         let offset = 0;

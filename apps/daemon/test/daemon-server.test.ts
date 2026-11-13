@@ -2,8 +2,8 @@ import type { ProcessAdapter } from '../src/daemon/process-adapter.js';
 import { fakeProcessAdapter } from './fixtures/process-provider.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configField, defineExtensionConfig, type AgentRuntimeProcess, type ExtensionAPI } from '@felan-ai/agent-core';
-import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
-import { renameSync } from 'node:fs';
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
+import { realpathSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { JsonLineDecoder, LIMITS, encodeFrame, parseServerEnvelope, type Operation, type OperationParams, type SessionSnapshot } from '@felan-ai/session-protocol';
@@ -302,7 +302,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(statuses.every(status => status === 'ready')).toBe(true);
   });
 
-  it('lists and adopts a pre-daemon transcript recorded under a symlinked project path', async () => {
+  it.skipIf(process.platform === 'win32')('lists and adopts a transcript under a POSIX symlinked project path', async () => {
     const f = await fixture(); const client = await f.client(); const id = '019a0000-0000-7000-8000-000000000029';
     const alias = join(f.directory, 'project-alias'); await symlink(f.cwd, alias);
     const directory = join(f.directory, 'agent', 'sessions', legacySessionDirectoryName(alias)); await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -315,6 +315,17 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(listed.result.entries.filter(row => row.session === id)).toEqual([expect.objectContaining({ cwd: f.cwd, preview: 'via alias' })]);
     expect(await client.attach(id)).toMatchObject({ outcome: 'accepted' });
     expect(f.store.session(id)).toMatchObject({ cwd: f.cwd, piPath: path });
+  });
+
+  it.skipIf(process.platform === 'win32')('lists pre-daemon transcripts through POSIX project aliases', async () => {
+    const f = await fixture(); const client = await f.client(); const id = 'legacy-project-alias';
+    const directory = join(f.owner.target.agentDir, 'sessions', legacySessionDirectoryName(f.cwd)); await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, 'legacy.jsonl'), JSON.stringify({ type: 'session', version: 3, id, cwd: f.cwd }) + '\n');
+    const alias = join(f.directory, 'alias'); await symlink(f.cwd, alias);
+    const listed = await client.request('sessions.list', { cwd: alias });
+    expect(listed.outcome).toBe('accepted');
+    if (listed.outcome !== 'accepted') throw new Error('List failed');
+    expect(listed.result.entries.map(row => row.session).sort()).toEqual([f.root.sessionId, id].sort());
   });
 
   it('lists a pre-daemon per-cwd transcript and adopts it in place under its ID', async () => {
@@ -333,10 +344,6 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     };
     expect(await rows({ cwd: f.cwd })).toEqual([expect.objectContaining({ root: id, cwd: f.cwd, state: 'open', residency: 'evicted', revision: 0, title: '', preview: 'from 0.28.3' })]);
     expect(await rows({})).toHaveLength(1);
-    const alias = join(f.directory, 'alias'); await symlink(f.cwd, alias);
-    const aliased = await client.request('sessions.list', { cwd: alias });
-    if (aliased.outcome !== 'accepted') throw new Error('List failed');
-    expect(aliased.result.entries.map(row => row.session).sort()).toEqual([f.root.sessionId, id].sort());
     expect(await rows({ cwd: f.directory })).toHaveLength(0);
     expect(await client.attach(id)).toMatchObject({ outcome: 'accepted' });
     expect(f.store.session(id)).toMatchObject({ root: id, cwd: f.cwd, piPath: path });
@@ -416,7 +423,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect((await readdir(sessionDir)).filter(name => name.endsWith('.jsonl'))).toEqual(['fixture.jsonl']);
   });
 
-  it.each(['agent', 'store', 'runtime', 'session-storage', 'symlink'] as const)('rejects adoption from the reserved %s directory before opening', async kind => {
+  for (const kind of ['agent', 'store', 'runtime', 'session-storage', 'symlink'] as const) it.skipIf(process.platform === 'win32' && kind === 'symlink')(`rejects adoption from the reserved ${kind} directory before opening (symlink requires POSIX privileges)`, async () => {
     const f = await fixture(); const client = await f.client(); const id = `reserved-${kind}`;
     let sessionDir = { agent: f.owner.target.agentDir, store: f.store.directory, runtime: f.owner.target.runtimeDirectory,
       'session-storage': f.root.resources.sessionStorageBase, symlink: f.owner.target.agentDir }[kind];
@@ -433,13 +440,13 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(await readFile(path, 'utf8')).toBe(original);
   });
 
-  it.each(['directory', 'transcript-symlink'] as const)('rejects a non-owned %s during custom-directory adoption', async kind => {
+  for (const kind of ['directory', 'transcript-symlink'] as const) it.skipIf(process.platform === 'win32' && kind === 'transcript-symlink')(`rejects a non-owned ${kind} during custom-directory adoption (symlink requires POSIX privileges)`, async () => {
     const f = await fixture(); const client = await f.client(); const id = 'outside-fixture';
     const owner = await acquireDaemonOwnership({ kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [] });
     cleanups.push(() => owner.release());
     vi.spyOn(f.owner, 'ownRoot').mockImplementation(directory => owner.ownRoot(directory));
     vi.spyOn(f.owner, 'assertOwnsPath').mockImplementation(path => owner.assertOwnsPath(path));
-    const outside = await realpath(await mkdtemp(join(tmpdir(), 'outside-session-')));
+    const outside = realpathSync.native(await mkdtemp(join(tmpdir(), 'outside-session-')));
     cleanups.push(() => rm(outside, { recursive: true, force: true }));
     const path = join(outside, 'fixture.jsonl');
     const original = JSON.stringify({ type: 'session', version: 3, id, timestamp: '2026-01-01T00:00:00.000Z', cwd: f.cwd }) + '\n';
@@ -1090,7 +1097,7 @@ describe('session server over private real Unix IPC with fake ownership', () => 
   it.each(['html', 'jsonl'] as const)('exports through the actual SDK %s renderer once without changing the session or allowing a managed destination', async format => {
     const f = await fixture(); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
     await completedPrompt(f, client, 'wire-export-payload');
-    const external = await realpath(await mkdtemp(join(tmpdir(), 's7-export-'))); cleanups.push(() => rm(external, { recursive: true, force: true }));
+    const external = realpathSync.native(await mkdtemp(join(tmpdir(), 's7-export-'))); cleanups.push(() => rm(external, { recursive: true, force: true }));
     const destination = join(external, `session.${format}`); const source = f.store.session(session).piPath; const before = await readFile(source);
     const renderer = vi.spyOn(f.root.runtime.session, format === 'html' ? 'exportToHtml' : 'exportToJsonl');
     const id = newRequestId(); const params = { format, destination };
@@ -1299,7 +1306,6 @@ describe('session server over private real Unix IPC with fake ownership', () => 
 
   it('imports an unregistered legacy file into a new ID without changing or adopting its source', async () => {
     const f = await fixture(); const client = await f.client();
-    await chmod(f.root.resources.sessionDir, 0o755);
     const source = join(f.directory, 'external.jsonl'); const oldId = 'unregistered-import-source';
     const bytes = JSON.stringify({ type: 'session', version: 3, id: oldId, cwd: f.cwd }) + '\n'; await writeFile(source, bytes);
     const response = await client.request('session.import', { path: source, cwd: f.cwd });
@@ -1307,6 +1313,15 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     if (response.outcome !== 'accepted') throw new Error('Import failed');
     expect(response.result.sessionId).not.toBe(oldId); expect(await readFile(source, 'utf8')).toBe(bytes);
     expect(f.store.snapshot().sessions.some(row => row.id === oldId)).toBe(false);
+    expect((await stat(join(f.root.resources.sessionDir, '.felan-import'))).isDirectory()).toBe(true);
+  });
+
+  it.skipIf(process.platform === 'win32')('creates the import directory with a POSIX owner-only mode', async () => {
+    const f = await fixture(); const client = await f.client();
+    await chmod(f.root.resources.sessionDir, 0o755);
+    const source = join(f.directory, 'external-mode.jsonl');
+    await writeFile(source, JSON.stringify({ type: 'session', version: 3, id: 'import-mode', cwd: f.cwd }) + '\n');
+    expect((await client.request('session.import', { path: source, cwd: f.cwd })).outcome).toBe('accepted');
     expect((await stat(join(f.root.resources.sessionDir, '.felan-import'))).mode & 0o777).toBe(0o700);
   });
 

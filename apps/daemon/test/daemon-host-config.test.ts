@@ -1,4 +1,5 @@
 import { chmod, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -37,7 +38,7 @@ describe('trusted host configuration', () => {
 
   it('loads optional authoritative remote settings and rejects malformed or duplicate projects', async () => {
     const root = await fixture(); const agentDir = join(root, 'agent');
-    const remote = { share: 'all', projects: [{ id: 'workspace', name: 'Team workspace', path: '/home/agent/workspace' }] };
+    const remote = { share: 'all', projects: [{ id: 'workspace', name: 'Team workspace', path: join(root, 'workspace') }] };
     const save = (value: unknown) => writeFile(join(agentDir, 'host.json'), JSON.stringify({ version: 1, services: [], extensions: [], remote: value }), { mode: 0o600 });
     await save(remote);
     expect((await loadHostConfig({ agentDir })).config.remote).toEqual(remote);
@@ -46,8 +47,8 @@ describe('trusted host configuration', () => {
     for (const value of [
       { ...remote, share: 'none' }, { ...remote, token: 'secret' },
       { ...remote, projects: [{ ...remote.projects[0], path: 'relative' }] },
-      { ...remote, projects: [{ ...remote.projects[0], path: '/a/../b' }] },
-      { ...remote, projects: [remote.projects[0], { ...remote.projects[0], path: '/other' }] },
+      { ...remote, projects: [{ ...remote.projects[0], path: `${root}/a/../b` }] },
+      { ...remote, projects: [remote.projects[0], { ...remote.projects[0], path: join(root, 'other') }] },
       { ...remote, projects: [remote.projects[0], { ...remote.projects[0], id: 'other' }] },
     ]) {
       await save(value);
@@ -75,14 +76,9 @@ describe('trusted host configuration', () => {
     await expect(loadHostConfig({ agentDir: join(root, 'missing-agent') })).rejects.toThrow('no default configuration');
   });
 
-  it('rejects writable or malformed input, duplicate providers and unknown keys', async () => {
+  it('rejects malformed input, duplicate providers and unknown keys', async () => {
     const root = await fixture();
     const agentDir = join(root, 'agent');
-    const target = join(root, 'target.json');
-    const link = join(root, 'link.json');
-    await writeFile(target, config(), { mode: 0o600 });
-    await symlink(target, link);
-    expect((await loadHostConfig({ agentDir, explicitPath: link })).source.path).toBe(link);
     await expect(loadHostConfig({ agentDir, explicitPath: 'relative.json' })).rejects.toThrow('absolute path');
     await writeFile(join(agentDir, 'host.json'), JSON.stringify({ version: 1, services: [], extensions: [], unexpected: true }), { mode: 0o600 });
     await expect(loadHostConfig({ agentDir })).rejects.toThrow('Schema validation failed');
@@ -90,12 +86,29 @@ describe('trusted host configuration', () => {
       { id: 'felan.models', major: 1, use: '@test/provider' }, { id: 'felan.models', major: 1, use: '@test/other' },
     ], extensions: [] }), { mode: 0o600 });
     await expect(loadHostConfig({ agentDir })).rejects.toThrow('more than one configured provider');
-    await writeFile(join(agentDir, 'host.json'), config());
-    await chmod(join(agentDir, 'host.json'), 0o664);
-    await expect(loadHostConfig({ agentDir })).rejects.toThrow('not group or world writable');
-    await chmod(join(agentDir, 'host.json'), 0o644);
     await writeFile(join(agentDir, 'host.json'), 'x'.repeat(64), { mode: 0o600 });
     await expect(loadHostConfig({ agentDir })).rejects.toThrow('not valid JSON');
+  });
+
+  it.skipIf(process.platform === 'win32')('accepts a symlinked config and rejects POSIX group-writable files', async () => {
+    const root = await fixture(); const agentDir = join(root, 'agent');
+    const target = join(root, 'target.json'); const link = join(root, 'link.json');
+    await writeFile(target, config(), { mode: 0o600 }); await symlink(target, link);
+    expect((await loadHostConfig({ agentDir, explicitPath: link })).source.path).toBe(link);
+    const path = join(agentDir, 'host.json'); await writeFile(path, config()); await chmod(path, 0o664);
+    await expect(loadHostConfig({ agentDir })).rejects.toThrow('not group or world writable');
+  });
+
+  it.runIf(process.platform === 'win32')('accepts a private host.json and rejects an Everyone write ACL', async () => {
+    const root = await fixture(); const agentDir = join(root, 'agent'); const path = join(agentDir, 'host.json');
+    await writeFile(path, config());
+    await expect(loadHostConfig({ agentDir })).resolves.toMatchObject({ source: { kind: 'agent-directory', path } });
+    try {
+      execFileSync('icacls', [path, '/grant', '*S-1-1-0:W'], { windowsHide: true });
+      await expect(loadHostConfig({ agentDir })).rejects.toThrow(/ACL.*write|write.*ACL/i);
+    } finally {
+      execFileSync('icacls', [path, '/remove:g', '*S-1-1-0'], { windowsHide: true });
+    }
   });
 
   it('accepts package export specifiers and refuses paths, URLs and traversal', () => {

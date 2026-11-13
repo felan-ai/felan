@@ -89,7 +89,7 @@ export class SessionServer {
 
   constructor(private readonly options: SessionServerOptions) {
     const { registry } = options; registry.assertAdmission();
-    this.principal = parseSchema(IdSchema, `local:${registry.options.owner.target.uid}:${registry.options.owner.target.namespaceId}`);
+    this.principal = parseSchema(IdSchema, `local:${registry.options.owner.target.principal}:${registry.options.owner.target.namespaceId}`);
     this.commands = new SessionCommands({ ...options, invalidated: revisions => this.invalidate(revisions) });
     this.admission = new OrderedAdmission(registry.options.store, { committed: revisions => this.invalidateConnections(revisions), dispatched: revisions => registry.publishCommitted(revisions) });
     this.unbindCommands = registry.bindCommandDispatcher(() => true);

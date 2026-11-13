@@ -1,5 +1,6 @@
 import { TestHostConfiguration, createTestHostServices } from './host-services.js';
-import { mkdir, realpath } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, SettingsManager, createFelanServiceRegistry, resolveExtensionConfigs, type ExtensionConfigDefinition, type ExtensionPackageImporter, type FelanServiceRegistry } from '@felan-ai/agent-core';
 import { createSessionLifecycle, type SessionLifecycleOptions } from '../../src/daemon/session-lifecycle.js';
@@ -25,7 +26,7 @@ export function createTestSessionRuntime(options: {
     createModelRuntime: async () => ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false }),
     async resolveEnvironment(request) {
       assertAbsolutePath(request.cwd); assertAbsolutePath(request.agentDir);
-      const cwd = await realpath(request.cwd);
+      const cwd = realpathSync.native(request.cwd);
       const agentDir = await canonicalPath(request.agentDir);
       const settings = SettingsManager.create(cwd, agentDir);
       const configured = request.sessionDir ?? settings.getSessionDir();

@@ -18,6 +18,11 @@ it('keeps a bounded persisted rolling tail across reopening the log', async () =
   expect(restored.page({}).entries.length).toBeGreaterThan(0);
   expect(restored.page({}).entries.every(row => row.message === 'Daemon is ready.')).toBe(true);
   expect((await stat(join(f.owner.target.runtimeDirectory, 'stdout.log'))).size).toBeLessThanOrEqual(256);
+});
+
+it.skipIf(process.platform === 'win32')('creates the operational log with a POSIX owner-only mode', async () => {
+  const f = await serverFixture(); cleanup.push(() => f.dispose());
+  const sink = new BoundedDaemonLogs(f.owner); cleanup.push(async () => sink.close());
   expect((await stat(join(f.owner.target.runtimeDirectory, 'stdout.log'))).mode & 0o777).toBe(0o600);
 });
 

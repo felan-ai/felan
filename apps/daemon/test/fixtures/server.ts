@@ -1,9 +1,10 @@
 import type { HostConfiguration } from '../../src/daemon/host-services.js';
 import type { ProcessAdapter } from '../../src/daemon/process-adapter.js';
 import { randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative } from 'node:path';
+import { isAbsolute, join, relative, sep } from 'node:path';
 import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream, type ExtensionAPI, type ExtensionConfigDefinition } from '@felan-ai/agent-core';
 import { DaemonControlStore, type ControlCapacity } from '../../src/daemon/control-store.js';
 import { createTestSessionLifecycle } from './session-runtime.js';
@@ -43,7 +44,7 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
   onBind?: (context: ProfileExtensionContext) => void;
   extensionUi?: (context: ProfileExtensionContext, registry: SessionRegistry) => { context: NonNullable<ProfileExtensionBindings['uiContext']>; dispose(): void | Promise<void> };
   compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean } = {}) {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 's7-')));
+  const directory = realpathSync.native(await mkdtemp(join(tmpdir(), 's7-')));
   const cwd = join(directory, 'work'); const agentDir = join(directory, 'agent');
   await mkdir(cwd); await mkdir(agentDir, { mode: 0o700 }); await mkdir(join(directory, 'runtime'), { mode: 0o700 });
   if (options.skill) {
@@ -57,7 +58,7 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
     assertCurrent() {},
     assertOwnsPath(input: string) {
       const path = canonicalProspectivePath(input); const child = relative(directory, path);
-      if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('Outside private server fixture');
+      if (child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) throw new Error('Outside private server fixture');
       return path;
     },
     async ownRoot(input: string) { owner.assertOwnsPath(input); },

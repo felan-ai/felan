@@ -36,7 +36,7 @@ export async function spawnDetachedDaemon(options: {
     env: process.env,
     detached: true,
     windowsHide: true,
-    stdio: ['ignore', 'ignore', 'ignore', 'pipe'],
+    stdio: ['ignore', 'ignore', 'ignore', process.platform === 'win32' ? 'overlapped' : 'pipe'],
   });
   const deadline = performance.now() + timeoutMs;
   const channel = child.stdio[3] as Socket;
@@ -97,10 +97,10 @@ export class BoundedDaemonLogs {
   constructor(private readonly owner: DaemonOwnership, private readonly limitBytes = 32_768) {
     owner.assertCurrent();
     if (!Number.isInteger(limitBytes) || limitBytes < 128 || limitBytes > 1_048_576) throw new DaemonSecurityError('invalid_logs', 'Diagnostic capacity must be between 128 and 1048576 bytes.');
-    const stdout = openPrivateFile(join(owner.target.runtimeDirectory, 'stdout.log'), owner.target.uid);
+    const stdout = openPrivateFile(join(owner.target.runtimeDirectory, 'stdout.log'), owner.target.principal);
     let stderr: number | undefined;
     try {
-      stderr = openPrivateFile(join(owner.target.runtimeDirectory, 'stderr.log'), owner.target.uid);
+      stderr = openPrivateFile(join(owner.target.runtimeDirectory, 'stderr.log'), owner.target.principal);
       this.files = { stdout, stderr };
       for (const stream of ['stdout', 'stderr'] as const) {
         const size = fstatSync(this.files[stream]).size;

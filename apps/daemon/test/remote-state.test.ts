@@ -55,7 +55,7 @@ describe('remote state', () => {
     expect(reopened.session(session)).toEqual(record); expect(reopened.sessions()).toEqual([session]);
     const copy = reopened.settings(); copy.projects[0]!.name = 'mutated'; expect(reopened.settings().projects[0]!.name).toBe('Fixture');
   });
-  it('canonicalizes paths and reuses a stable project id through symlink aliases', async () => {
+  it.skipIf(process.platform === 'win32')('canonicalizes paths and reuses a stable project id through POSIX symlink aliases', async () => {
     const { database, owner } = await openRemoteDatabase(); const root = owner.target.agentDir; const real = join(root, 'project'); mkdirSync(real); const alias = join(root, 'alias'); symlinkSync(real, alias);
     const store = new RemoteStore(database); const a = store.addProject(real); const b = store.addProject(alias);
     expect(a).toEqual(b); expect(a.path).toBe(real); expect(store.settings().projects).toHaveLength(1);

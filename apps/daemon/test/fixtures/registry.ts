@@ -1,4 +1,5 @@
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -12,7 +13,7 @@ import { createTestSessionLifecycle } from './session-runtime.js';
 import { fakeProcessAdapter } from './process-provider.js';
 import type { ProcessAdapter } from '../../src/daemon/process-adapter.js';
 
-export const supported = ['darwin', 'linux'].includes(process.platform);
+export const supported = ['darwin', 'linux', 'win32'].includes(process.platform);
 export const now = 1_800_000_000_000;
 export const fixtures: Array<() => Promise<void>> = [];
 export function requestId(): string { const hex = now.toString(16).padStart(12, '0'); return `${hex.slice(0, 8)}-${hex.slice(8)}-7${randomUUID().slice(1, 4)}-8${randomUUID().slice(1, 4)}-${randomUUID().slice(-12)}`; }
@@ -58,7 +59,7 @@ export interface FakeSession {
   abort: ReturnType<typeof vi.fn>;
 }
 export async function fixture(options: ControlStoreOptions = {}, processAdapter: ProcessAdapter = fakeProcessAdapter()) {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 's6-')));
+  const directory = realpathSync.native(await mkdtemp(join(tmpdir(), 's6-')));
   let owner: DaemonOwnership | undefined;
   let store: DaemonControlStore | undefined;
   let registry: SessionRegistry | undefined;

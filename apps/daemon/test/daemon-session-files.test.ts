@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtemp, mkdir, readFile, realpath, rm, symlink, link, writeFile } from 'node:fs/promises';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mkdtemp, mkdir, readFile, rm, symlink, link, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { prepareExport, prepareTranscriptDeletion, publishExport, readOwnedOutputRange, stageImport } from '../src/daemon/session-files.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
+import { accountPrincipal } from '../src/daemon/native-ownership.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -11,16 +13,16 @@ afterEach(async () => {
 });
 
 async function fixture() {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 's7-files-')));
+  const directory = realpathSync.native(await mkdtemp(join(tmpdir(), 's7-files-')));
   const owned = join(directory, 'owned'); const external = join(directory, 'external');
   await mkdir(owned, { mode: 0o700 }); await mkdir(external, { mode: 0o700 });
   cleanups.push(() => rm(directory, { recursive: true, force: true }));
   let current = true;
   const assertCurrent = () => { if (!current) throw new Error('Synthetic ownership loss'); };
-  const owner = { target: { uid: process.getuid!(), rootSet: [owned] }, assertCurrent,
+  const owner = { target: { principal: accountPrincipal(), rootSet: [owned] }, assertCurrent,
     assertOwnsPath(input: string) {
       assertCurrent(); const path = resolve(input); const child = relative(owned, path);
-      if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('Outside private owned root');
+      if (child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) throw new Error('Outside private owned root');
       return path;
     }, async ownRoot(input: string) { owner.assertOwnsPath(input); }, watchPath: () => () => {},
   } as unknown as DaemonOwnership;
@@ -35,6 +37,10 @@ describe('identity-checked daemon host file ports', () => {
     expect(readOwnedOutputRange(f.owner, path, 5, 1)).toEqual(new Uint8Array());
     expect(() => readOwnedOutputRange(f.owner, path, 6, 1)).toThrowError(/retained/);
     expect(() => readOwnedOutputRange(f.owner, path, 0, 65537)).toThrowError(/range/);
+  });
+
+  it.skipIf(process.platform === 'win32')('rejects POSIX symlinks and hardlinks in owned output', async () => {
+    const f = await fixture(); const path = join(f.owned, 'output.log'); await writeFile(path, 'output');
     const alias = join(f.owned, 'alias'); await symlink(path, alias);
     expect(() => readOwnedOutputRange(f.owner, alias, 0, 1)).toThrow();
     await link(path, join(f.owned, 'hardlink'));
@@ -71,6 +77,19 @@ describe('identity-checked daemon host file ports', () => {
     expect(await publishExport(f.owner, async path => { await writeFile(path, 'rendered'); }, prepareExport(f.owner, destination, [f.owned]))).toBe(destination);
     expect(await readFile(destination, 'utf8')).toBe('rendered');
     expect(() => prepareExport(f.owner, join(f.owned, 'forbidden'), [f.owned])).toThrowError(expect.objectContaining({ code: 'forbidden' }));
+  });
+
+  it.runIf(process.platform === 'win32')('flushes and replaces an exported file with durable writes enabled', async () => {
+    const f = await fixture(); const destination = join(f.external, 'durable-export.html');
+    await writeFile(destination, 'old'); vi.stubEnv('FELAN_TEST_SKIP_FSYNC', undefined);
+    try {
+      expect(await publishExport(f.owner, async path => { await writeFile(path, 'durable'); }, prepareExport(f.owner, destination, [f.owned]))).toBe(destination);
+      expect(await readFile(destination, 'utf8')).toBe('durable');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
+  it.skipIf(process.platform === 'win32')('protects managed paths through POSIX symlinks and permits hardlinked exports', async () => {
+    const f = await fixture(); const destination = join(f.external, 'export.html'); await writeFile(destination, 'old');
     const managed = join(f.owned, 'target.jsonl'); await writeFile(managed, 'managed');
     const alias = join(f.external, 'alias'); await symlink(managed, alias);
     expect(() => prepareExport(f.owner, alias, [f.owned])).toThrowError(expect.objectContaining({ code: 'forbidden' }));

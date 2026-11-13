@@ -1,12 +1,13 @@
 import type { DaemonTarget } from './target.js';
 import { resolveDaemonTarget } from './target.js';
-import { startDaemonService } from './service.js';
+import { installWindowsConsoleDefaults } from './windows-console.js';
 import { publishDaemonReadiness } from './supervisor.js';
 import { DAEMON_VERSION } from '../version.js';
 import { DaemonIdentitySchema, parseSchema, type DaemonIdentity } from '@felan-ai/session-protocol';
 import type { HostManager } from './host-config.js';
 
 export async function runDaemonProcess(args: readonly string[], manager?: HostManager): Promise<void> {
+  installWindowsConsoleDefaults();
   if (args.length < 1 || args[0]!.length > 65_536) throw new Error('Invalid daemon launch arguments.');
   const target = parseTarget(args[0]!);
   let foreground = false;
@@ -27,6 +28,7 @@ export async function runDaemonProcess(args: readonly string[], manager?: HostMa
   }
   const activeManager: HostManager = manager ?? { packageName: '@felan-ai/daemon', version: DAEMON_VERSION,
     resolveFrom: new URL('../index.js', import.meta.url).href };
+  const { startDaemonService } = await import('./service.js');
   const service = await startDaemonService(target, { ...(replacing ? { replacing } : {}), ...(hostConfigPath ? { hostConfigPath } : {}), manager: activeManager });
   let failed = false;
   const stop = () => { void service.requestStop().then(response => {

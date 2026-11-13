@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, type ClientEnvelope, type Response } from '@felan-ai/session-protocol';
 import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand } from '../src/daemon/admission.js';
@@ -9,6 +10,7 @@ import { ControlStoreError } from '../src/daemon/control-state.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../src/daemon/control-store.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
 import { readControlDatabase } from './fixtures/control-database.js';
+import { accountPrincipal } from '../src/daemon/native-ownership.js';
 
 const now = 1_800_000_000_000;
 const cleanups: Array<() => Promise<void>> = [];
@@ -31,17 +33,17 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 async function fixture(options: ControlStoreOptions = {}) {
-  const directory = await realpath(await mkdtemp(join(tmpdir(), 'a7-')));
+  const directory = realpathSync.native(await mkdtemp(join(tmpdir(), 'a7-')));
   const stores: DaemonControlStore[] = [];
   let lost = false;
   const assertCurrent = () => { if (lost) throw new ControlStoreError('ownership_lost', 'Synthetic ownership loss'); };
   // Persistence is real; account-wide kernel ownership is deliberately not acquired by unit fixtures.
   const owner = {
-    target: { agentDir: directory, rootSet: [directory], uid: process.getuid!(), namespaceId: randomUUID() },
+    target: { agentDir: directory, rootSet: [directory], principal: accountPrincipal(), namespaceId: randomUUID() },
     assertCurrent,
     assertOwnsPath(input: string) {
       assertCurrent(); const path = resolve(input); const child = relative(directory, path);
-      if (child === '..' || child.startsWith('../') || isAbsolute(child)) throw new Error('Path outside private fixture');
+      if (child === '..' || child.startsWith(`..${sep}`) || isAbsolute(child)) throw new Error('Path outside private fixture');
       return path;
     },
     async ownRoot(input: string) { owner.assertOwnsPath(input); },

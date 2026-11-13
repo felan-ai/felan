@@ -1,12 +1,12 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { closeSync, fstatSync, mkdirSync, openSync, renameSync, writeFileSync } from 'node:fs';
-import { createServer, Server } from 'node:net';
+import { createConnection, createServer, Server } from 'node:net';
 import type { Socket } from 'node:net';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { randomUUID } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import koffi from 'koffi';
 import { acquireDaemonOwnership, type DaemonOwnership } from '../src/daemon/ownership.js';
@@ -15,6 +15,7 @@ import { BoundedDaemonLogs, spawnDetachedDaemon } from '../src/daemon/supervisor
 import { resolveDaemonTarget, type DaemonTarget } from '../src/daemon/target.js';
 import { connectUnix, listenUnix, protectSocket, socketPathLimit } from '../src/daemon/native-ownership.js';
 import * as nativeOwnership from '../src/daemon/native-ownership.js';
+import { clientHandshake } from '../src/daemon/ipc-handshake.js';
 import type { DaemonIdentity } from '@felan-ai/session-protocol';
 
 const supported = ['darwin', 'linux'].includes(process.platform);
@@ -280,6 +281,109 @@ describe.skipIf(!supported)('owner-only local daemon IPC and startup', () => {
     const socket = await connectLocalIpc(resolveDaemonTarget(target));
     const closed = new Promise<void>(resolve => socket.once('close', () => resolve()));
     socket.destroy(); await closed;
+    expect((await probeDaemon(resolveDaemonTarget(target), receipt.identity)).state).toBe('ready');
+  }, 15_000);
+});
+
+describe.runIf(process.platform === 'win32')('authenticated Windows named-pipe IPC and startup', () => {
+  it('publishes a private endpoint and authenticates listen, connect and readiness', async () => {
+    const { owner } = await fixture(); await serve(owner);
+    nativeOwnership.assertPrivatePath(owner.target.endpoint, await lstat(owner.target.endpoint, { bigint: true }), owner.target.principal, 'file');
+    const endpoint = JSON.parse(await readFile(owner.target.endpoint, 'utf8'));
+    expect(Object.keys(endpoint).sort()).toEqual(['pipe', 'secret', 'version']); expect(endpoint.version).toBe(1);
+    expect(endpoint.pipe).toMatch(/^\\\\\.\\pipe\\felan-daemon-[a-f0-9]{32}$/); expect(Buffer.from(endpoint.secret, 'base64')).toHaveLength(32);
+    const socket = await connectLocalIpc(owner.target); socket.destroy();
+    expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+    await expect(probeDaemon(owner.target, { ...owner.identity, instanceId: randomUUID() })).rejects.toMatchObject({ code: 'target_mismatch' });
+  });
+
+  it('preserves absent and stale endpoint codes', async () => {
+    const { owner } = await fixture(); await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'ENOENT' });
+    await writeFile(owner.target.endpoint, JSON.stringify({ version: 1, pipe: `\\\\.\\pipe\\felan-daemon-${randomBytes(16).toString('hex')}`, secret: randomBytes(32).toString('base64') }), { mode: 0o600 });
+    await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'stale_endpoint' });
+    const before = await readFile(owner.target.endpoint, 'utf8'); const listener = await serve(owner);
+    expect(await readFile(owner.target.endpoint, 'utf8')).not.toBe(before); expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+    listener.close(); await expect(lstat(owner.target.endpoint)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('refuses to replace a live authenticated endpoint', async () => {
+    const { owner } = await fixture(); await serve(owner); const before = await readFile(owner.target.endpoint, 'utf8');
+    await expect(listenLocalIpc(owner, () => {})).rejects.toMatchObject({ code: 'endpoint_live' });
+    expect(await readFile(owner.target.endpoint, 'utf8')).toBe(before); expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+  });
+
+  it('keeps the first listener usable when two calls bind concurrently for the same owner', async () => {
+    const { owner } = await fixture();
+    const results = await Promise.allSettled([serve(owner), serve(owner)]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.find(result => result.status === 'rejected')).toMatchObject({ status: 'rejected', reason: { code: 'endpoint_live' } });
+    expect(() => owner.assertCurrent()).not.toThrow(); expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+  });
+
+  it('rejects a client with a wrong secret without closing the listener', async () => {
+    const { owner } = await fixture(); let delivered = 0;
+    listeners.push(await listenLocalIpc(owner, socket => { delivered++; serveReadiness(owner, 'fixture', socket); }));
+    const { pipe } = JSON.parse(await readFile(owner.target.endpoint, 'utf8'));
+    const client = createConnection(pipe); client.on('error', () => {});
+    try { await expect(clientHandshake(client, randomBytes(32))).rejects.toMatchObject({ code: 'forbidden' }); expect(delivered).toBe(0); }
+    finally { client.destroy(); }
+    expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready');
+  });
+
+  it('rejects endpoint files readable by other accounts', async () => {
+    const { owner } = await fixture(); await serve(owner);
+    const result = spawnSync('icacls.exe', [owner.target.endpoint, '/grant', '*S-1-1-0:R'], { windowsHide: true, encoding: 'utf8' });
+    expect(result.status, result.stderr).toBe(0);
+    await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'unsafe_path' });
+  });
+
+  it.each(['version', 'pipe', 'secret', 'extra', 'oversize', 'garbage'] as const)('rejects an invalid %s endpoint without deleting it', async invalid => {
+    const { owner } = await fixture();
+    const value = { version: 1, pipe: `\\\\.\\pipe\\felan-daemon-${randomBytes(16).toString('hex')}`, secret: randomBytes(32).toString('base64') };
+    if (invalid === 'version') value.version = 2;
+    if (invalid === 'pipe') value.pipe = '\\\\remote\\pipe\\felan-daemon-test';
+    if (invalid === 'secret') value.secret = randomBytes(31).toString('base64');
+    const source = invalid === 'oversize' ? ' '.repeat(4_097) : invalid === 'garbage' ? '{' : JSON.stringify(invalid === 'extra' ? { ...value, extra: true } : value);
+    await writeFile(owner.target.endpoint, source, { mode: 0o600 });
+    await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'unsafe_endpoint' });
+    await expect(listenLocalIpc(owner, () => {})).rejects.toMatchObject({ code: 'unsafe_endpoint' }); expect(await readFile(owner.target.endpoint, 'utf8')).toBe(source);
+  });
+
+  it.each(['replace', 'delete'] as const)('closes the listener and authenticated connections on endpoint %s', async action => {
+    const { owner } = await fixture(); let accepted: Socket | undefined;
+    listeners.push(await listenLocalIpc(owner, socket => { accepted = socket; }));
+    const { pipe } = JSON.parse(await readFile(owner.target.endpoint, 'utf8'));
+    const socket = await connectLocalIpc(owner.target); socket.on('error', () => {});
+    try {
+      await vi.waitFor(() => expect(accepted).toBeDefined()); const closed = new Promise<void>(resolve => socket.once('close', () => resolve()));
+      if (action === 'replace') { await rename(owner.target.endpoint, `${owner.target.endpoint}.old`); await writeFile(owner.target.endpoint, 'replacement', { mode: 0o600 }); }
+      else await unlink(owner.target.endpoint);
+      expect(() => owner.assertCurrent()).toThrow(/fenced/); await closed; expect(accepted!.destroyed).toBe(true);
+      const rejected = createConnection(pipe); rejected.on('error', () => {});
+      await new Promise<void>(resolve => rejected.once('close', () => resolve()));
+      if (action === 'replace') expect(await readFile(owner.target.endpoint, 'utf8')).toBe('replacement');
+    } finally { socket.destroy(); }
+  });
+
+  it('counts pending handshakes toward the 64 connection cap and recovers capacity', async () => {
+    const { owner } = await fixture(); await serve(owner); const clients: Socket[] = [];
+    const { pipe } = JSON.parse(await readFile(owner.target.endpoint, 'utf8'));
+    try {
+      for (let index = 0; index < 64; index++) {
+        const client = createConnection(pipe); client.on('error', () => {}); clients.push(client);
+        await new Promise<void>((resolve, reject) => { client.once('connect', resolve); client.once('error', reject); });
+      }
+      await expect(connectLocalIpc(owner.target)).rejects.toMatchObject({ code: 'unavailable' });
+      clients[0]!.destroy();
+      await vi.waitFor(async () => expect((await probeDaemon(owner.target, owner.identity)).state).toBe('ready'));
+    } finally { for (const client of clients) client.destroy(); }
+  });
+
+  it('receives and acknowledges detached readiness over the overlapped fd 3 channel', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 's103-win-det-')); roots.push(directory);
+    const target = { kind: 'isolated' as const, directory, namespaceId: randomUUID() };
+    const receipt = await spawnDetachedDaemon({ target, entrypoint: fileURLToPath(new URL('./fixtures/daemon-detached.mjs', import.meta.url)) });
+    detached.push({ target, identity: receipt.identity });
     expect((await probeDaemon(resolveDaemonTarget(target), receipt.identity)).state).toBe('ready');
   }, 15_000);
 });

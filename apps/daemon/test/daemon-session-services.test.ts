@@ -1,10 +1,12 @@
-import { appendFile, mkdtemp, realpath, rm, utimes, writeFile } from 'node:fs/promises';
+import { appendFile, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SessionsServiceError, type HostSessionsSelector } from '@felan-ai/agent-core';
 import type { SessionRegistry } from '../src/daemon/registry.js';
 import { createHostSessionsHistory, createRegistrySessionsService } from '../src/daemon/session-services.js';
+import { accountPrincipal } from '../src/daemon/native-ownership.js';
 import { deferred, fixture as registryFixture, fixtures, requestId, supported } from './fixtures/registry.js';
 
 function fixture() {
@@ -72,7 +74,7 @@ describe('host sessions history', () => {
   afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
 
   async function historyFixture(selector: HostSessionsSelector = { kind: 'project', cwd: '/project' }) {
-    const directory = await realpath(await mkdtemp(join(tmpdir(), 'host-history-')));
+    const directory = realpathSync.native(await mkdtemp(join(tmpdir(), 'host-history-')));
     directories.push(directory);
     const timestamp = '2026-08-24T10:00:00.000Z';
     const rows = [
@@ -86,7 +88,7 @@ describe('host sessions history', () => {
     await Promise.all(rows.map(row => writeFile(row.piPath, [
       { type: 'session', version: 3, id: row.id, cwd: row.cwd, timestamp }, entries.get(row.id),
     ].map(value => JSON.stringify(value)).join('\n'))));
-    const owner = { assertOwnsPath: vi.fn((path: string) => path), assertCurrent: vi.fn(), target: { uid: process.getuid!() } };
+    const owner = { assertOwnsPath: vi.fn((path: string) => path), assertCurrent: vi.fn(), target: { principal: accountPrincipal() } };
     const loaded = new Set<string>();
     const registry = { assertAdmission: vi.fn(), assertServiceAccess: vi.fn(), listed: vi.fn(() => rows),
       binding: vi.fn((id: string) => loaded.has(id) ? {} : undefined),
