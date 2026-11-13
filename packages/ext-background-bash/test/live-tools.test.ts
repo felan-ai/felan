@@ -94,7 +94,7 @@ describe('registered Background Bash tools with live host processes', () => {
   it('returns the last 2000 foreground lines and spills all output without a job record', async () => {
     await withLiveTools(async ({ runtime, owner }) => {
       const output = Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join('\n') + '\n';
-      const result = await call(owner, 'bash', { command: nodeCommand(`process.stdout.write(${JSON.stringify(output)})`) });
+      const result = await call(owner, 'bash', { command: nodeCommand("process.stdout.write(Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join('\\n') + '\\n')") });
       const details = result.details as { fullOutputPath: string };
       expect(result.details).toEqual({ background: false, exitCode: 0, truncated: true, fullOutputPath: expect.any(String) });
       expect(text(result)).toBe(`Exit: 0\n\n${output.trimEnd().split('\n').slice(-2000).join('\n')}\n\n[Output truncated to the last 2000 lines / 50 KB. Full output: ${details.fullOutputPath}]`);
@@ -107,6 +107,7 @@ describe('registered Background Bash tools with live host processes', () => {
 
   it('promotes the same foreground process and delivers completion without polling tools', async () => {
     await withLiveTools(async ({ runtime, owner, child }) => {
+      const start = vi.spyOn(runtime.processes!, 'startShell');
       const command = "printf 'before\\n'; printf '%s' \"$$\" > bash.pid; while [ ! -f continue ]; do sleep 0.02; done; printf 'after\\n'";
       const result = await call(owner, 'bash', { command, timeout: 0.05 });
       const details = result.details as BackgroundBashDetails;
@@ -114,7 +115,10 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(text(result)).toContain('Started background process.');
       const pid = await eventually(async () => Number(decoder.decode(await runtime.readFile('bash.pid'))),
         value => Number.isSafeInteger(value) && value > 0, 'promoted process writes its PID');
-      expect(details.pid).toBe(pid);
+      expect(start).toHaveBeenCalledOnce();
+      expect(details.pid).toBe((await start.mock.results[0]!.value).pid);
+      // Git Bash's $$ is an MSYS PID, not the native Windows child PID.
+      if (process.platform !== 'win32') expect(details.pid).toBe(pid);
       const info = JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo;
       expect(info).toMatchObject({ executionMode: 'attached', pid: details.pid, startedAt: details.startedAt, promotedAt: expect.any(Number) });
       expect(listedJob(await call(child, 'list_background_bash', {}), details.id).status.status).toBe('running');
@@ -385,8 +389,13 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(finished.job.status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
       expect(finished.job.meta.promotedAt).toBeUndefined();
       expect(job.pid).toEqual(expect.any(Number));
-      await eventually(() => runtime.shell(`kill -0 ${job.pid} 2>/dev/null`, { shellFlavor: 'posix' }),
-        (result) => result.code !== 0, 'cancelled PTY exits');
+      if (process.platform === 'win32') {
+        await eventually(() => runtime.terminals!.attach!(job.id)!.read(0),
+          result => !result.running, 'cancelled PTY exits');
+      } else {
+        await eventually(() => runtime.shell(`kill -0 ${job.pid} 2>/dev/null`, { shellFlavor: 'posix' }),
+          result => result.code !== 0, 'cancelled PTY exits');
+      }
     });
   }, TEST_TIMEOUT_MS);
 
@@ -602,9 +611,11 @@ function nodeCommand(script: string): string {
 function interactiveCommand(): string {
   return nodeCommand(`
     setTimeout(() => process.exit(99), 25000);
+    if (process.platform === 'win32') process.stdin.setRawMode(true);
     process.stdin.setEncoding('utf8');
     let pending = '';
     process.stdin.on('data', chunk => {
+      if (process.platform === 'win32' && chunk.includes('\\x03')) process.exit(130);
       pending += chunk;
       let newline;
       while ((newline = pending.indexOf('\\n')) !== -1) {
@@ -623,6 +634,7 @@ function silentCommand(): string {
   return `stty -echo; ${nodeCommand(`
     const fs = require('node:fs');
     setTimeout(() => process.exit(99), 25000);
+    if (process.platform === 'win32') process.stdin.setRawMode(true);
     process.stdin.setEncoding('utf8');
     process.stdin.on('data', chunk => fs.appendFileSync('received.txt', chunk));
     fs.writeFileSync('silent-ready.txt', String(process.pid));

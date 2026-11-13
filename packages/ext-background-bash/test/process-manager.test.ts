@@ -288,7 +288,7 @@ describe('BackgroundBashManager', () => {
     vi.spyOn(runtime, 'storage').mockReturnValue({
       ...storage,
       async writeFile(path, bytes) {
-        if (path.endsWith('info.json') && !failed && JSON.parse(new TextDecoder().decode(bytes)).pid) {
+        if (path.endsWith('info.json') && !failed && JSON.parse(new TextDecoder().decode(bytes)).pid !== undefined) {
           failed = true;
           if (mode === 'detached with terminalized metadata') {
             const info = JSON.parse(new TextDecoder().decode(bytes));
@@ -493,7 +493,10 @@ it('supports a PTY job with stdin and preserves its exit code', async () => {
     .map((path) => mkdir(path, { recursive: true })));
   const runtime = new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
   const manager = new BackgroundBashManager(runtime);
-  const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.stdout.write('ready\\n'); process.stdin.once('data', value => { process.stdout.write('echo:' + value); process.exit(7) })")}`;
+  const executable = process.platform === 'win32' ? process.execPath.replaceAll('\\', '/') : process.execPath;
+  const script = "if (process.platform === 'win32') process.stdin.setRawMode(true); process.stdout.write('ready\\n'); process.stdin.once('data', value => { process.stdout.write('echo:' + value); process.exit(7) })";
+  const quote = (value: string) => `'${value.replaceAll("'", `'\\''`)}'`;
+  const command = `${quote(executable)} -e ${quote(script)}`;
   const started = await manager.startInteractive(command);
   startedJobs.push({ manager, id: started.job.meta.id });
   const ready = await manager.readInteractive(started.job.meta.id, 1_000);

@@ -86,13 +86,16 @@ describe('/claude-code', () => {
     const h = fixture();
     await h.run(args);
     expect(h.notify).toHaveBeenLastCalledWith({
-      text: expect.stringMatching(/Claude Agent SDK: unavailable .*SDK missing.*\nProvider: not registered\nplan=max\nlongContextExtraUsage=true\nforceTwoHundredK=\["claude-opus-4-6"\]/),
+      text: expect.stringMatching(process.platform === 'win32'
+        ? /Claude Agent SDK: unavailable .*Windows paths are not supported.*\nProvider: not registered\nplan=max\nlongContextExtraUsage=true\nforceTwoHundredK=\["claude-opus-4-6"\]/
+        : /Claude Agent SDK: unavailable .*SDK missing.*\nProvider: not registered\nplan=max\nlongContextExtraUsage=true\nforceTwoHundredK=\["claude-opus-4-6"\]/),
       level: 'warning',
     });
+    if (process.platform === 'win32') expect(h.storage.readFile).not.toHaveBeenCalled();
     expect(h.runtime.exec).not.toHaveBeenCalled();
   });
 
-  it('shows the installed version and registered provider without installing', async () => {
+  it.skipIf(process.platform === 'win32')('shows the installed version and registered provider without installing', async () => {
     const install = vi.fn<RuntimeDependenciesService['install']>();
     const h = fixture({ available: true, registered: true, service: { install } });
     await h.run('status');
@@ -134,8 +137,10 @@ describe('/claude-code', () => {
     });
     await h.run('status');
     expect(h.notify).toHaveBeenLastCalledWith({
-      text: expect.stringContaining(`available (${MANAGED_CLAUDE_AGENT_SDK_VERSION})\nProvider: not registered`),
-      level: 'info',
+      text: expect.stringContaining(process.platform === 'win32'
+        ? 'unavailable (The managed Claude Agent SDK supports macOS and Linux only; Windows paths are not supported.)\nProvider: not registered'
+        : `available (${MANAGED_CLAUDE_AGENT_SDK_VERSION})\nProvider: not registered`),
+      level: process.platform === 'win32' ? 'warning' : 'info',
     });
     expect(h.runtime.exec).not.toHaveBeenCalled();
   });

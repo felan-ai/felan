@@ -128,8 +128,8 @@ describe('shared local memory coordinator', () => {
     expect(inputs[0]).toMatchObject({ models: modelsA, selectedModel: selectedA, scopedModels: [selectedA], classifier: classifierA });
     expect(environmentA.sessions.history).toHaveBeenCalled();
     expect(environmentB.sessions.history).not.toHaveBeenCalled();
-    expect(writesA.mock.calls.some(([path]) => path.endsWith('.dreaming/input/manifest.json'))).toBe(true);
-    expect(writesB.mock.calls.some(([path]) => path.endsWith('.dreaming/input/manifest.json'))).toBe(false);
+    expect(writesA.mock.calls.some(([path]) => path.endsWith(join('.dreaming', 'input', 'manifest.json')))).toBe(true);
+    expect(writesB.mock.calls.some(([path]) => path.endsWith(join('.dreaming', 'input', 'manifest.json')))).toBe(false);
 
     await first.settle('force');
     await running;
@@ -144,7 +144,7 @@ describe('shared local memory coordinator', () => {
     expect(inputs[1]!.scopedModels).toEqual([selectedB]);
     expect(inputs[1]!.classifier).toBeUndefined();
     expect(environmentB.sessions.history).toHaveBeenCalled();
-    expect(writesB.mock.calls.some(([path]) => path.endsWith('.dreaming/input/manifest.json'))).toBe(true);
+    expect(writesB.mock.calls.some(([path]) => path.endsWith(join('.dreaming', 'input', 'manifest.json')))).toBe(true);
   });
 
   it('drains only the attached driver without aborting its accepted run or driving new work', async () => {

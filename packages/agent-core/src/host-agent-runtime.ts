@@ -21,6 +21,7 @@ import {
 import { constants as osConstants, homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { IDisposable, IPty } from '@lydell/node-pty';
 import type {
   AgentRuntime,
@@ -108,7 +109,7 @@ export class HostAgentRuntime implements AgentRuntime {
     this.files = {
       inspect: async value => fileInfo(await lstat(await path(value))),
       canonicalPath: async value => realpath(await path(value)),
-      move: async (source, target) => rename(await path(source, false), await path(target, false)),
+      move: async (source, target) => moveFile(await path(source, false), await path(target, false)),
       removeEmptyDirectory: async value => rmdir(await path(value, false)),
       touch: async (value, modifiedAt) => utimes(await path(value), modifiedAt / 1000, modifiedAt / 1000),
       ensurePrivateDirectory: async (value, options) => {
@@ -120,7 +121,7 @@ export class HostAgentRuntime implements AgentRuntime {
       snapshot: async (value, maxBytes) => {
         if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) throw new Error('Invalid snapshot byte limit');
         const resolved = await path(value);
-        const handle = await open(resolved, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
+        const handle = await openNoFollow(resolved, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK);
         try {
           const info = fileInfo(await handle.stat());
           if (info.kind !== 'file') throw new Error('Expected a regular file');
@@ -137,7 +138,7 @@ export class HostAgentRuntime implements AgentRuntime {
         } finally { await handle.close(); }
       },
       append: async (value, content, expected) => {
-        const handle = await open(await path(value), fsConstants.O_WRONLY | fsConstants.O_APPEND
+        const handle = await openNoFollow(await path(value), fsConstants.O_WRONLY | fsConstants.O_APPEND
           | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK | (expected ? 0 : fsConstants.O_CREAT), 0o600);
         try {
           const info = fileInfo(await handle.stat());
@@ -248,7 +249,7 @@ export class HostAgentRuntime implements AgentRuntime {
       await writeFile(resolvedPath, copiedContent, options?.exclusive ? { flag: 'wx' } : undefined);
       return;
     }
-    const handle = await open(resolvedPath, fsConstants.O_WRONLY | fsConstants.O_CREAT
+    const handle = await openNoFollow(resolvedPath, fsConstants.O_WRONLY | fsConstants.O_CREAT
       | (options.exclusive ? fsConstants.O_EXCL : 0) | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK,
       options.readOnly ? 0o400 : 0o600);
     try {
@@ -638,16 +639,15 @@ class HostRuntimeProcess extends HostBufferedProcess {
     });
   }
 
-  protected sendSignal(signal: NodeJS.Signals): void {
+  protected sendSignal(signal: NodeJS.Signals): void | Promise<void> {
     if (signal !== 'SIGINT') {
       this.#terminating = true;
       clearTimeout(this.#drainTimer);
     }
     if (signal === 'SIGINT' && process.platform === 'win32') {
-      killChild(this.#child, 'SIGTERM');
-      return;
+      return killChild(this.#child, 'SIGTERM', true);
     }
-    killChild(this.#child, signal);
+    return killChild(this.#child, signal, true);
   }
 }
 
@@ -698,12 +698,12 @@ class HostRuntimeStdioProcess extends HostBufferedProcess implements AgentRuntim
     this.#child.stdin?.end();
   }
 
-  protected sendSignal(signal: NodeJS.Signals): void {
+  protected sendSignal(signal: NodeJS.Signals): void | Promise<void> {
     if (signal === 'SIGINT' && process.platform === 'win32') {
       killChild(this.#child, 'SIGTERM');
       return;
     }
-    killChild(this.#child, signal);
+    return killChild(this.#child, signal, true);
   }
 
   protected override onDispose(): void {
@@ -1256,14 +1256,23 @@ function isMissingPathError(error: unknown): boolean {
     && (error.code === 'ENOENT' || error.code === 'ENOTDIR');
 }
 
-function killChild(child: ChildProcess, signal: NodeJS.Signals): void {
+function killChild(child: ChildProcess, signal: NodeJS.Signals, waitForExit = false): void | Promise<void> {
   if (child.pid === undefined) return;
 
   if (process.platform === 'win32') {
     const killer = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
       stdio: 'ignore',
       windowsHide: true,
+      timeout: 5_000,
     });
+    if (waitForExit) return new Promise<void>((resolveKill, rejectKill) => {
+      killer.once('error', rejectKill);
+      killer.once('close', code => {
+        if (code === 0 || child.exitCode !== null || child.signalCode !== null) resolveKill();
+        else rejectKill(new Error(`taskkill exited with code ${code}`));
+      });
+    });
+    killer.once('error', () => {});
     killer.unref();
     return;
   }
@@ -1345,6 +1354,43 @@ async function readBoundedFile(path: string, maxBytes: number): Promise<Buffer> 
     throw new Error(`File exceeds maximum size of ${maxBytes} bytes`);
   } finally {
     await handle.close();
+  }
+}
+
+async function moveFile(source: string, target: string): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(source, target); return; }
+    catch (error) {
+      if (process.platform !== 'win32' || attempt === 6 || !(error instanceof Error)
+        || !('code' in error) || error.code !== 'EPERM' && error.code !== 'EBUSY') throw error;
+      // Windows refuses atomic replacement while a snapshot reader still has the target open.
+      await delay(10 * 2 ** attempt);
+    }
+  }
+}
+
+async function openNoFollow(path: string, flags: number, mode?: number): Promise<import('node:fs/promises').FileHandle> {
+  if (process.platform !== 'win32') return open(path, flags, mode);
+  const check = async () => {
+    const stat = await lstat(path);
+    if (stat.isSymbolicLink()) throw Object.assign(new Error(`Refusing to follow symbolic link: ${path}`), { code: 'ELOOP' });
+    return stat;
+  };
+  let before: import('node:fs').Stats | undefined;
+  try { before = await check(); } catch (error) { if (!isMissingPathError(error)) throw error; }
+  // Windows has no O_NOFOLLOW. Validate the opened identity before any content I/O.
+  if (before) {
+    if (flags & fsConstants.O_EXCL) throw Object.assign(new Error(`File already exists: ${path}`), { code: 'EEXIST' });
+    flags &= ~fsConstants.O_CREAT;
+  } else if (flags & fsConstants.O_CREAT) flags |= fsConstants.O_EXCL;
+  const handle = await open(path, flags, mode);
+  try {
+    const info = fileInfo(await handle.stat());
+    if (before && info.identity !== fileInfo(before).identity || info.identity !== fileInfo(await check()).identity) throw new Error('File changed while opening');
+    return handle;
+  } catch (error) {
+    await handle.close();
+    throw error;
   }
 }
 
