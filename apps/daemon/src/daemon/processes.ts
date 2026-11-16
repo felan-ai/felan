@@ -25,7 +25,7 @@ async function inspectWindowsProcess(runtime: AgentRuntime, pid: number) {
 
 interface Scope { session: string; root: string }
 interface Lifetime { scope: Scope; runtime: AgentRuntime; draining: boolean; revoked: boolean }
-interface LiveProcess { raw: AgentRuntimeProcess; process: AgentRuntimeProcess; view: ProcessView; transport: boolean; settled: boolean; disposed: boolean; signal?: AgentRuntimeTerminationSignal }
+interface LiveProcess { raw: AgentRuntimeProcess; process: AgentRuntimeProcess; view: ProcessView; transport: boolean; settled: boolean; disposed: boolean; disposal?: Promise<void>; signal?: AgentRuntimeTerminationSignal }
 export interface ProcessTrackerOptions {
   store: DaemonControlStore;
   assertCurrent(): void;
@@ -288,7 +288,7 @@ export class RegistryProcesses {
     if (!(data instanceof Uint8Array) || data.byteLength > LIMITS.processWriteBytes) throw new Error('Invalid process input size.');
     const bytes = new Uint8Array(data);
     const row = this.authorizeResource(requester, id); const live = this.live.get(id);
-    if (!live || live.disposed || live.settled || !live.view.controllable) throw new Error('Process stdin is unavailable.');
+    if (!live || live.disposed || live.disposal || live.settled || !live.view.controllable) throw new Error('Process stdin is unavailable.');
     const lifetime = this.creatorLifetime(row);
     this.assertLifetime(lifetime); this.assertLiveIdentity(row, live);
     return this.track((async () => {
@@ -300,7 +300,7 @@ export class RegistryProcesses {
 
   assertWritable(requester: string, id: string): void {
     const row = this.authorizeResource(requester, id); const live = this.live.get(id);
-    if (!live || live.disposed || live.settled || !live.view.controllable) throw processFault('unavailable', 'Process stdin is unavailable.');
+    if (!live || live.disposed || live.disposal || live.settled || !live.view.controllable) throw processFault('unavailable', 'Process stdin is unavailable.');
     this.assertLifetime(this.creatorLifetime(row)); this.assertLiveIdentity(row, live);
   }
 
@@ -445,7 +445,7 @@ export class RegistryProcesses {
   /** Settles a root's live handles and operations; `keepTerminals` leaves PTYs running for the root's next runtime. */
   async settle(root: string, fenced = false, sessions?: ReadonlySet<string>, keepTerminals = false): Promise<void> {
     const owns = (scope: Scope) => scope.root === root && (!sessions || sessions.has(scope.session));
-    const settles = (item: LiveProcess) => owns(item.view) && !item.disposed && !(keepTerminals && item.view.kind === 'pty');
+    const settles = (item: LiveProcess) => owns(item.view) && !item.disposed && !item.disposal && !(keepTerminals && item.view.kind === 'pty');
     for (const lifetime of this.lifetimes) if (owns(lifetime.scope)) lifetime.draining = true;
     const failures: unknown[] = [];
     const join = async (operations: Promise<unknown>[]) => {
@@ -461,6 +461,7 @@ export class RegistryProcesses {
       const pending = [...this.operations].filter(([, { scope }]) => owns(scope)).map(([operation]) => operation);
       await join(pending);
       await join(handles.map(async item => {
+        if (item.disposal) await item.disposal.catch(() => {});
         if (item.disposed) return;
         const snapshot = await item.raw.read(0, { maxBytes: 0 });
         if (snapshot.running) throw new Error('A live process did not settle.');
@@ -496,46 +497,61 @@ export class RegistryProcesses {
       const view: ProcessView = { id, ...scope, kind, state: 'running', command: boundedText(command, 16384), startedAt: this.now(), controllable: true, outputOffset: 0 };
       const live: LiveProcess = { raw: process, process, view, transport, settled: false, disposed: false };
       const wrapped = new Proxy(process, { get: (target, key) => {
-        const current = () => { this.options.assertCurrent(); if (live.disposed) throw new Error('Process handle is disposed.'); };
+        const closed = () => live.disposed || live.disposal !== undefined;
+        const current = () => { this.options.assertCurrent(); if (closed()) throw new Error('Process handle is disposed.'); };
+        const disposedSnapshot = () => ({ output: new Uint8Array(), nextOffset: live.view.outputOffset, running: false,
+          ...(live.view.exitCode === undefined ? {} : { exitCode: live.view.exitCode }), ...(live.signal ? { signal: live.signal } : {}) });
         if (key === 'read' || transport && (key === 'readStdout' || key === 'readStderr')) return (...args: Parameters<AgentRuntimeProcess['read']>) => {
-          if (live.disposed) return Promise.resolve({ output: new Uint8Array(), nextOffset: live.view.outputOffset, running: false,
-            ...(live.view.exitCode === undefined ? {} : { exitCode: live.view.exitCode }), ...(live.signal ? { signal: live.signal } : {}) });
+          if (closed()) return Promise.resolve(disposedSnapshot());
           return this.track((async () => {
           current(); const read = Reflect.get(target, key, target) as AgentRuntimeProcess['read'];
-          const snapshot = await read.apply(target, args); this.options.assertCurrent();
+          // A read that overlaps disposal may fail or describe a handle the runtime is tearing down.
+          const snapshot = await read.apply(target, args).catch((error: unknown) => { if (closed()) return undefined; throw error; });
+          this.options.assertCurrent();
+          if (!snapshot || closed()) return disposedSnapshot();
           this.record(live, row, snapshot, key === 'read');
           return { ...snapshot, running: !live.settled, ...(live.view.exitCode === undefined ? {} : { exitCode: live.view.exitCode }), ...(!snapshot.running && live.signal ? { signal: live.signal } : {}) };
           })(), scope, transport);
         };
         if (key === 'terminate') return (signal: AgentRuntimeTerminationSignal = 'SIGTERM') => {
           if (live.disposed) return Promise.resolve();
+          // Disposal already ends the process; signalling a handle mid-disposal would race its teardown.
+          if (live.disposal) return live.disposal;
           current();
           live.signal = signal;
           return this.track(target.terminate(signal).catch(error => { delete live.signal; throw error; }), scope);
         };
+        if (key === 'dispose') return () => {
+          if (live.disposed) return Promise.resolve();
+          if (!live.disposal) {
+            current();
+            live.disposal = this.track(this.release(live, row), scope).catch((error: unknown) => { delete live.disposal; throw error; });
+          }
+          return live.disposal;
+        };
         const value: unknown = Reflect.get(target, key, target);
         if (typeof value !== 'function') return value;
         return (...args: unknown[]) => {
-          if (live.disposed && (key === 'dispose' || key === 'terminate' || key === 'closeInput')) return Promise.resolve();
+          if (closed() && key === 'closeInput') return Promise.resolve();
           current();
           // A PTY outlives its starting runtime across reload; its callers check their own current lifetime.
           if ((key === 'write' || key === 'resize') && kind !== 'pty') this.assertLifetime(lifetime);
-          return this.track(Promise.resolve(Reflect.apply(value, target, args)).then(async result => {
-            this.options.assertCurrent();
-            if (key === 'dispose') {
-              live.disposed = true;
-              const snapshot = await live.raw.read(live.view.outputOffset, { maxBytes: 0 }); this.options.assertCurrent();
-              if (!snapshot.running) {
-                this.record(live, row, snapshot, false);
-                this.live.delete(id); this.views.delete(id);
-              }
-            }
-            return result;
-          }), scope);
+          return this.track(Promise.resolve(Reflect.apply(value, target, args)).then(result => { this.options.assertCurrent(); return result; }), scope);
         };
       } });
       live.process = wrapped; this.live.set(id, live); this.update(row, 'running', view); return wrapped;
     })(), scope);
+  }
+
+  /** Takes the final snapshot before disposing: runtimes may reject reads from a disposed handle or discard its exit state. */
+  private async release(live: LiveProcess, row: ControlResource): Promise<void> {
+    const snapshot = live.settled ? undefined : await live.raw.read(live.view.outputOffset, { maxBytes: 0 }).catch(() => undefined);
+    await live.raw.dispose(); live.disposed = true;
+    this.options.assertCurrent();
+    if (this.live.get(row.id) !== live) return;
+    // Disposal ends a running process, so a handle never seen exiting is recorded as exited without a status.
+    if (!live.settled) this.record(live, row, snapshot && !snapshot.running ? snapshot : { running: false, nextOffset: live.view.outputOffset }, false);
+    this.live.delete(row.id); this.views.delete(row.id);
   }
 
   private describeJob(runtime: AgentRuntime, path: string, bytes: Uint8Array): ProcessRecord | undefined {
@@ -571,11 +587,11 @@ export class RegistryProcesses {
 
   /** Records an exit nobody has read yet, e.g. a PTY kept across reload; a failed probe leaves the handle as it was. */
   private async observe(live: LiveProcess): Promise<void> {
-    if (live.settled || live.disposed) return;
+    if (live.settled || live.disposed || live.disposal) return;
     const snapshot = await this.track(live.raw.read(live.view.outputOffset, { maxBytes: 0 }), live.view, true).catch(() => undefined);
     this.options.assertCurrent();
     const row = this.options.store.resource(live.view.id);
-    if (!snapshot || !row || this.live.get(live.view.id) !== live || live.disposed) return;
+    if (!snapshot || !row || this.live.get(live.view.id) !== live || live.disposed || live.disposal) return;
     this.record(live, row, snapshot, false);
   }
 

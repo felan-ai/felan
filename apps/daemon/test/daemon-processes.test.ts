@@ -174,6 +174,78 @@ describe.skipIf(!supported)('registry process ownership', () => {
     expect(f.registry.processes.list(b.rootSessionId)[0]).toMatchObject({ state: 'exited', outputOffset: 0, exitCode: 0 });
   });
 
+  for (const observed of [true, false]) it(`records a foreground exit before disposing a handle that rejects later reads (exit ${observed ? 'read' : 'unread'})`, async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const remote = remoteProcess();
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, { processes: { startShell: async () => remote.handle } });
+    const process = await runtime.processes!.startShell('remote foreground');
+    const row = f.store.resources(b.rootSessionId)[0]!;
+    if (observed) {
+      expect(await process.read(0)).toMatchObject({ running: true });
+      remote.exit(7);
+      expect(await process.read(0)).toMatchObject({ running: false, exitCode: 7 });
+    } else remote.exit(7);
+    await expect(process.dispose()).resolves.toBeUndefined();
+    expect(remote.handle.dispose).toHaveBeenCalledOnce();
+    expect(remote.callsAfterDispose).toBe(0);
+    expect(f.store.resource(row.id)).toMatchObject({ state: 'exited', exitCode: 7 });
+    expect(await f.registry.processes.read(b.sessionId, row.id, 3, 4)).toEqual({ data: new Uint8Array(), offset: 3, nextOffset: 3, state: 'exited', exitCode: 7 });
+    expect(f.registry.processes.activeCount(b.rootSessionId)).toBe(0); expect(f.registry.processes.liveRoots().size).toBe(0);
+    expect(await f.registry.processes.interruptibleCount()).toBe(0);
+    await expect(process.dispose()).resolves.toBeUndefined();
+    await f.registry.processes.settle(b.rootSessionId);
+    expect(remote.handle.dispose).toHaveBeenCalledOnce(); expect(remote.callsAfterDispose).toBe(0);
+  });
+
+  it('records a handle disposed while running as exited without calling it during or after disposal', async () => {
+    let time = now; const f = await fixture({ now: () => time }); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const gate = deferred(); f.releases.add(gate.resolve);
+    const remote = remoteProcess(gate.promise);
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, { processes: { startShell: async () => remote.handle } });
+    const process = await runtime.processes!.startShell('remote worker');
+    const row = f.store.resources(b.rootSessionId)[0]!;
+    const polling = process.read(0, { waitMs: 1000 });
+    const disposing = process.dispose();
+    await vi.waitFor(() => expect(remote.handle.dispose).toHaveBeenCalledOnce());
+    expect(process.dispose()).toBe(disposing);
+    const terminating = process.terminate();
+    await expect(process.read(0)).resolves.toMatchObject({ running: false });
+    expect(() => process.write(new Uint8Array())).toThrow('Process handle is disposed.');
+    await expect(f.registry.processes.write(b.sessionId, row.id, new Uint8Array())).rejects.toThrow('stdin is unavailable');
+    await f.registry.processes.refresh(b.rootSessionId);
+    const settling = f.registry.processes.settle(b.rootSessionId);
+    gate.resolve();
+    await expect(disposing).resolves.toBeUndefined(); await expect(terminating).resolves.toBeUndefined(); await settling;
+    await expect(polling).resolves.toEqual({ output: new Uint8Array(), nextOffset: 0, running: false });
+    expect(remote.handle.read).toHaveBeenCalledTimes(2); expect(remote.handle.terminate).not.toHaveBeenCalled();
+    expect(remote.handle.dispose).toHaveBeenCalledOnce(); expect(remote.callsAfterDispose).toBe(0);
+    expect(f.store.resource(row.id)).toMatchObject({ state: 'exited' }); expect(f.store.resource(row.id)?.exitCode).toBeUndefined();
+    expect(f.registry.processes.list(b.rootSessionId)[0]).toMatchObject({ state: 'exited', controllable: false });
+    expect(f.registry.processes.activeCount(b.rootSessionId)).toBe(0); expect(f.registry.processes.blocksEviction(b.rootSessionId)).toBe(false);
+    expect(f.registry.processes.liveRoots().size).toBe(0);
+    time += LIMITS.requestRetentionMs + 1; f.store.compact();
+    expect(f.store.resource(row.id)).toBeUndefined();
+  });
+
+  it('keeps a handle whose disposal failed so a later disposal can release it', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    let running = true;
+    const dispose = vi.fn<AgentRuntimeProcess['dispose']>().mockRejectedValueOnce(new Error('dispose failed')).mockResolvedValue(undefined);
+    const handle: AgentRuntimeProcess = { pid: 42,
+      read: vi.fn(async offset => ({ output: new Uint8Array(), nextOffset: offset, running, ...(running ? {} : { exitCode: 3 }) })),
+      write: vi.fn(async () => {}), terminate: vi.fn(async () => {}), dispose,
+    };
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, { processes: { startShell: async () => handle } });
+    const process = await runtime.processes!.startShell('flaky disposal');
+    const row = f.store.resources(b.rootSessionId)[0]!;
+    await expect(process.dispose()).rejects.toThrow('dispose failed');
+    expect(f.store.resource(row.id)).toMatchObject({ state: 'running' }); expect(f.registry.processes.activeCount(b.rootSessionId)).toBe(1);
+    running = false;
+    await expect(process.dispose()).resolves.toBeUndefined();
+    expect(dispose).toHaveBeenCalledTimes(2);
+    expect(f.store.resource(row.id)).toMatchObject({ state: 'exited', exitCode: 3 }); expect(f.registry.processes.activeCount(b.rootSessionId)).toBe(0);
+  });
+
   it('reconstructs terminal metadata without a probe and validates detached output only on demand', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42 }));
@@ -701,6 +773,25 @@ describe.skipIf(!supported)('registry process ownership', () => {
     await expect(runtime.writeFile('too late', new Uint8Array())).rejects.toThrow('closed');
   });
 });
+
+/** Mirrors a remote runtime process: disposal ends it and removes its state, a wait spanning disposal reports that
+ * removed state, and every call made after disposal starts fails. */
+function remoteProcess(disposing?: Promise<void>) {
+  let running = true; let exitCode: number | undefined; let disposalStarted = false; let callsAfterDispose = 0;
+  const removed = deferred();
+  const usable = () => { if (disposalStarted) { callsAfterDispose++; throw new Error('Process has been disposed'); } };
+  const handle = { pid: 42,
+    read: vi.fn(async (offset: number, options?: { waitMs?: number }) => {
+      usable();
+      if (options?.waitMs && running) { await removed.promise; return { output: new Uint8Array(), nextOffset: offset, running: false, exitCode: 137 }; }
+      return { output: new Uint8Array(), nextOffset: offset, running, ...(exitCode === undefined ? {} : { exitCode }) };
+    }),
+    write: vi.fn(async () => { usable(); }),
+    terminate: vi.fn(async () => { usable(); running = false; }),
+    dispose: vi.fn(async () => { disposalStarted = true; await disposing; running = false; removed.resolve(); }),
+  } satisfies AgentRuntimeProcess;
+  return { handle, exit: (code: number) => { running = false; exitCode = code; }, get callsAfterDispose() { return callsAfterDispose; } };
+}
 
 function syntheticTerminal() {
   let running = true;
