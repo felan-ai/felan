@@ -332,6 +332,32 @@ describe.skipIf(!supported)('daemon session registry', () => {
     expect(f.store.session(b.sessionId).run.state).toBe('idle');
   });
 
+  it.each(['before', 'after'] as const)('settles after automatic compaction ends %s dispatch cleanup', async ordering => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const fake = f.instances.get(b.sessionId)!;
+    let idle = true;
+    Object.defineProperty(fake.session, 'isIdle', { get: () => idle, configurable: true });
+    const id = requestId(); f.store.admit({ v: 1, id, op: 'prompt', session: b.sessionId, params: { text: 'work' } }, 'owner');
+    const work = f.registry.runAdmitted(id, b.sessionId, { kind: 'headless', attachment: 'fixture' }, async () => {
+      idle = false;
+      fake.emit({ type: 'agent_start' });
+      fake.emit({ type: 'compaction_start', reason: 'threshold' });
+      fake.emit({ type: 'agent_settled', aborted: false });
+      if (ordering === 'before') {
+        idle = true;
+        fake.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: false, willRetry: false });
+      }
+    });
+    await work;
+    expect(f.store.sessionMetadata(b.sessionId).run.state).toBe(ordering === 'before' ? 'idle' : 'running');
+    if (ordering === 'after') {
+      idle = true;
+      fake.emit({ type: 'compaction_end', reason: 'threshold', result: undefined, aborted: false, willRetry: false });
+    }
+    await vi.waitFor(() => expect(f.store.sessionMetadata(b.sessionId).run.state).toBe('idle'));
+    expect(fake.abort).not.toHaveBeenCalled();
+  });
+
   it('does not apply an old admitted finalizer to a newer run ID', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const gate = deferred(); f.releases.add(gate.resolve); const id = requestId();

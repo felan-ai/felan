@@ -169,6 +169,8 @@ export class SessionProjection {
   settleRun(expectedRunId: string | undefined): void {
     if (expectedRunId === undefined || !this.session.isIdle || this.options.canSettle?.() === false) return;
     this.transitionForSafety('idle', expectedRunId);
+    const run = this.options.store.sessionMetadata(this.id).run;
+    if (run.id !== expectedRunId || run.state === 'idle') this.runtimeRunId = undefined;
   }
 
   /** Only a patch is durable; live views (tools, presentations, catalog, executions) take transient revisions. */
@@ -352,7 +354,9 @@ export class SessionProjection {
     }
     if (event.type === 'agent_settled') {
       this.settleRun(this.runtimeRunId);
-      this.runtimeRunId = undefined;
+    }
+    if (event.type === 'compaction_end') {
+      this.settleRun(this.runtimeRunId);
     }
     if (event.type === 'message_start' && event.message.role === 'assistant') {
       // Cursor changes clear client streams, so publish them before response deltas.
