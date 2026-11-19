@@ -381,9 +381,20 @@ export class SessionCommands {
         const model = await this.model(request.params, registry.binding(request.session)!.runtime.session);
         if (!await registry.binding(request.session)!.runtime.session.modelRuntime.checkAuth(model.provider)) throw commandError('unavailable');
         command.assertDispatch();
-        return this.mutate(request, async ({ session, assertCurrent }) => { await session.setModel(model, { persist: false }); assertCurrent(); });
+        return this.mutate(request, async ({ session, assertCurrent }) => {
+          const previousModel = session.model; const previousThinking = session.thinkingLevel;
+          await session.setModel(model, { persist: false }); assertCurrent();
+          if (context.remote && previousModel?.provider === session.model?.provider && previousModel?.id === session.model?.id && previousThinking === session.thinkingLevel) {
+            registry.projection(request.session).publish({ type: 'model.updated', model: { provider: model.provider, id: model.id }, thinking: session.thinkingLevel });
+          }
+        });
       }
-      case 'set_thinking': return this.mutate(request, async ({ session }) => { session.setThinkingLevel(request.params.thinking, { persist: false }); });
+      case 'set_thinking': return this.mutate(request, async ({ session }) => {
+        const previousThinking = session.thinkingLevel; session.setThinkingLevel(request.params.thinking, { persist: false });
+        if (context.remote && previousThinking === session.thinkingLevel && session.model) {
+          registry.projection(request.session).publish({ type: 'model.updated', model: { provider: session.model.provider, id: session.model.id }, thinking: session.thinkingLevel });
+        }
+      });
       case 'session.rename': return this.mutate(request, async ({ session }) => { session.setSessionName(request.params.name); });
       case 'session.entry.label': case 'session.branch.select': {
         const session = registry.binding(request.session)!.runtime.session;

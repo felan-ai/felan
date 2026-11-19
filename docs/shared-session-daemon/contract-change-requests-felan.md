@@ -908,3 +908,38 @@ values, so later features stay readable.
 
 Rolling back a daemon from 0.2.0 to 0.1.x after it has recorded a channel origin
 is unsupported: 0.1.x cannot parse that origin in its stored control state.
+
+## Remote model and thinking selection
+
+The remote command protocol accepts `set_model` with the local operation's
+`{ provider, id }` parameters and `set_thinking` with `{ thinking }`. Hosts
+advertise both operation names in `HostCapabilities.operations`; the platform
+must keep the controls disabled for hosts that do not advertise them. The
+daemon restores a nonresident shared session before submitting either operation
+through the same admission and local validation path as local commands. Model
+selection checks provider authentication and the session's available and
+scoped models. Rejections (`not_found`, `unavailable` or
+`authentication_required`) do not change the selection or publish
+`model.updated`. Each accepted command publishes the current `model` and
+`thinking` together, including an accepted no-op. Startup and recovery also publish the current pair, and
+the local session transcript stores `model_change` and
+`thinking_level_change` entries for resume. These commands do not change the
+host's configured model or thinking defaults.
+
+The protocol schema and daemon implementation are prepared on BUG-465's branch;
+they are not yet released. The following are proposed versions, pending a
+human-reviewed merge to `main` and the CI-triggered npm release workflow:
+
+| Package | Current | Proposed |
+| --- | --- | --- |
+| `@felan-ai/session-protocol` | 0.4.4 | 0.4.5 |
+| `@felan-ai/ext-ask-user` | 0.12.2 | 0.12.3 |
+| `@felan-ai/ext-background-bash` | 0.15.2 | 0.15.3 |
+| `@felan-ai/ext-fusion` | 0.4.2 | 0.4.3 |
+| `@felan-ai/ext-prompt-history` | 0.9.4 | 0.9.5 |
+| `@felan-ai/agent-core` | 0.15.8 | 0.15.9 |
+| `@felan-ai/daemon` | 0.7.14 | 0.7.15 |
+| `@felan-ai/felan` | 0.39.9 | 0.39.10 |
+
+Do not start BUG-425 until these versions are confirmed published and the
+platform consumes the released protocol and daemon packages.

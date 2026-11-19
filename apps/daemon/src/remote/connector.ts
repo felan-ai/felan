@@ -27,7 +27,7 @@ import { HostTokenSource, HostTokenExchangeError, PLAIN_HTTP_API_HOSTS, type Hos
 import { HostPairing, HostPairingFailure, type HostPairingOptions } from './pairing.js';
 
 const REMOTE_CAPABILITIES: HostCapabilities = {
-  operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'],
+  operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'],
   interactionKinds: [...INTERACTION_KINDS],
   features: [...REMOTE_FEATURES],
 };
@@ -574,7 +574,7 @@ export class RemoteConnector {
 
   private observe(event: ProjectionOutput): void {
     try {
-      const stateChange = 'change' in event && (event.change.type === 'run.updated' || event.change.type === 'metadata.updated');
+      const stateChange = 'change' in event && (event.change.type === 'run.updated' || event.change.type === 'metadata.updated' || event.change.type === 'model.updated');
       if (stateChange && !this.stopped && (!this.configured || this.recordingBlocked.has(event.session))) this.markStateUnrecorded(event.session);
       if (this.stopped || !this.configured || !('change' in event) && (!this.platform || this.state !== 'connected')) return;
       // Skills and processes are published as current values on the session row, never as events.
@@ -631,7 +631,9 @@ export class RemoteConnector {
     const row = this.options.registry.options.store.findSessionMetadata(session);
     if (!row || row.deletedAt !== undefined) return;
     const rev = Math.max(1, row.revision); const occurredAt = this.clock.now();
+    const snapshot = this.options.registry.projection(session).snapshot();
     const changes: KnownSessionChange[] = [
+      { type: 'model.updated', model: snapshot.model, thinking: snapshot.thinking },
       { type: 'run.updated', run: row.run }, { type: 'metadata.updated', title: row.title, state: row.state, residency: row.residency },
     ];
     this.outbox.append(session, changes.flatMap(change => {

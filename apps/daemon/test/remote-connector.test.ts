@@ -331,6 +331,17 @@ describe('RemoteConnector publication', () => {
     expect(f.platform.publish).not.toHaveBeenCalled(); expect(f.platform.realtime.sendText).toHaveBeenCalledExactlyOnceWith(event);
   });
 
+  it('publishes the current model and thinking level when recording recovered session state', async () => {
+    const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick(0);
+    f.connector.store.setSession(f.id, { ...f.connector.store.session(f.id)!, stateRecorded: false });
+    f.platform.publish.mockClear();
+    await f.restart();
+    const events = f.platform.publications.flatMap(row => row.events);
+    expect(events.find(event => event.change.type === 'model.updated')?.change).toMatchObject({
+      type: 'model.updated', model: { provider: 'offline', id: 'fixture' }, thinking: f.root.runtime.session.thinkingLevel,
+    });
+  });
+
   it('republishes the row without events only when published skills or processes change', async () => {
     const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick(0);
     const emit = (f.registry as unknown as { publish(value: ProjectionOutput): void }).publish.bind(f.registry);
@@ -947,6 +958,7 @@ describe('RemoteConnector publication', () => {
     Object.assign(f.registry, { recovery: { changedSessions: new Set([f.id]), resumableContinuations: [], reconcileDetached: [], missingResources: [] } });
     f.platform.publications.length = 0; await f.restart();
     expect(f.platform.publications.flatMap(row => row.events).map(event => event.change)).toEqual([
+      expect.objectContaining({ type: 'model.updated', model: { provider: 'offline', id: 'fixture' }, thinking: 'off' }),
       expect.objectContaining({ type: 'run.updated', run: expect.objectContaining({ state: 'interrupted', id: 'recovered-run' }) }),
       expect.objectContaining({ type: 'metadata.updated', state: 'open' }),
     ]);
@@ -968,7 +980,7 @@ describe('RemoteConnector publication', () => {
     const f = await fixture(); f.connector.setShared(f.id, true); await f.clock.tick();
     const { stateRecorded: _stateRecorded, ...record } = f.connector.store.session(f.id)!; f.connector.store.setSession(f.id, record);
     f.platform.publications.length = 0; await f.restart();
-    expect(f.platform.publications.flatMap(row => row.events).map(event => event.change.type)).toEqual(['run.updated', 'metadata.updated']);
+    expect(f.platform.publications.flatMap(row => row.events).map(event => event.change.type)).toEqual(['model.updated', 'run.updated', 'metadata.updated']);
     f.platform.publications.length = 0; await f.restart();
     expect(f.platform.publications.flatMap(row => row.events)).toEqual([]);
   });
@@ -1045,7 +1057,7 @@ describe('RemoteConnector connection and commands', () => {
 
   it('registers capabilities and canonical projects, then re-registers edits and heartbeats', async () => {
     const f = await fixture(); expect(f.platform.registration[0]).toMatchObject({ rowSchemaVersion: 1, capabilities: {
-      operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'], interactionKinds: ['select', 'confirm', 'input', 'editor', 'tool_approval', 'dependency', 'form'], features: ['sessions.create.instructions', 'sessions.create.session-id'],
+      operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'], interactionKinds: ['select', 'confirm', 'input', 'editor', 'tool_approval', 'dependency', 'form'], features: ['sessions.create.instructions', 'sessions.create.session-id'],
     } });
     const status = await f.connector.configure({ action: 'open_project', path: f.cwd }); await f.clock.tick();
     expect(status.projects[0]).toMatchObject({ path: f.cwd, name: 'work' }); expect(f.platform.registration.at(-1)!.projects).toEqual(status.projects);
@@ -1214,7 +1226,7 @@ it('re-records current state after a lost backfill marker when the record cannot
   const pending = f.connector.outbox.pending(f.id);
   const { stateRecorded: _stateRecorded, ...record } = f.connector.store.session(f.id)!; f.connector.store.setSession(f.id, { ...record, backfilled: false });
   await f.restart();
-  expect(f.platform.publications.flatMap(row => row.events).map(event => event.change.type)).toEqual([...pending.map(entry => entry.change.type), 'run.updated', 'metadata.updated']);
+  expect(f.platform.publications.flatMap(row => row.events).map(event => event.change.type)).toEqual([...pending.map(entry => entry.change.type), 'model.updated', 'run.updated', 'metadata.updated']);
   expect(f.connector.store.session(f.id)).toMatchObject({ backfilled: true, stateRecorded: true });
 });
 

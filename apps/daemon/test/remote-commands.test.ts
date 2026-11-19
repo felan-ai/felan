@@ -23,7 +23,7 @@ function id() {
 }
 const requester = randomUUID(); const session = randomUUID();
 const expiresAt = Number.MAX_SAFE_INTEGER;
-const capabilities: HostCapabilities = { operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer'], interactionKinds: ['confirm'] };
+const capabilities: HostCapabilities = { operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'], interactionKinds: ['confirm'] };
 function accepted(request: ClientEnvelope): Response {
   return { v: 1, re: request.id, outcome: 'accepted', result: request.op === 'sessions.create' ? { sessionId: session }
     : request.op === 'prompt' ? { runId: 'run' } : request.op === 'steer' || request.op === 'follow_up' ? { itemId: 'item' } : {} };
@@ -59,6 +59,8 @@ it.each([
   { op: 'follow_up', session, params: { text: 'Next' } },
   { op: 'cancel', session, params: { runId: 'run' } },
   { op: 'interaction.answer', session, params: { interactionId: 'question', answer: { kind: 'confirm', confirmed: true } } },
+  { op: 'set_model', session, params: { provider: 'offline', id: 'fixture' } },
+  { op: 'set_thinking', session, params: { thinking: 'off' } },
 ] satisfies RemoteCommand[])('maps $op with the command identity and web requester', async command => {
   const f = await fixture(); const commandId = id();
   const outcome = await f.executor.execute({ id: commandId, requester, expiresAt, command });
@@ -319,6 +321,46 @@ it('uses shared admission without attachments and preserves web origin on runs a
   expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: steering, op: 'steer', session: f.root.sessionId, params: { text: 'Steer' } }), { user: requester, command: steering })).toMatchObject({ outcome: 'accepted' });
   expect(f.registry.projection(f.root.sessionId).snapshot().queue[0]?.origin).toEqual({ ...origin, command: steering });
   expect(await f.server.submitRemote(request, { user: randomUUID(), command })).toMatchObject({ error: { code: 'request_conflict' } });
+});
+
+it('applies remote model and thinking changes only after admission and persists the model selection', async () => {
+  const f = await realServer(); const session = f.root.sessionId;
+  const before = f.root.runtime.session.sessionManager.getEntries();
+  const rejectedId = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: rejectedId, op: 'set_model', session,
+    params: { provider: 'missing', id: 'unknown' } }), { user: requester, command: rejectedId }))
+    .toMatchObject({ outcome: 'rejected', error: { code: 'not_found' } });
+  expect(f.root.runtime.session.sessionManager.getEntries()).toEqual(before);
+  const checkAuth = vi.spyOn(f.root.runtime.session.modelRuntime, 'checkAuth').mockResolvedValue(false);
+  const unavailableId = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: unavailableId, op: 'set_model', session,
+    params: { provider: offlineModel.provider, id: offlineModel.id } }), { user: requester, command: unavailableId }))
+    .toMatchObject({ outcome: 'rejected', error: { code: 'unavailable' } });
+  expect(f.root.runtime.session.sessionManager.getEntries()).toEqual(before);
+  checkAuth.mockRestore();
+
+  const modelId = id();
+  const publish = vi.spyOn(f.registry.projection(session), 'publish');
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: modelId, op: 'set_model', session,
+    params: { provider: offlineModel.provider, id: offlineModel.id } }), { user: requester, command: modelId }))
+    .toMatchObject({ outcome: 'accepted' });
+  expect(f.root.runtime.session.sessionManager.getEntries().filter(entry => entry.type === 'model_change')).toHaveLength(before.filter(entry => entry.type === 'model_change').length + 1);
+  expect(publish).toHaveBeenCalledWith({ type: 'model.updated', model: { provider: 'offline', id: 'fixture' }, thinking: 'off' });
+
+  const thinkingId = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: thinkingId, op: 'set_thinking', session,
+    params: { thinking: 'off' } }), { user: requester, command: thinkingId })).toMatchObject({ outcome: 'accepted' });
+  expect(publish).toHaveBeenCalledWith({ type: 'model.updated', model: { provider: 'offline', id: 'fixture' }, thinking: 'off' });
+});
+
+it('restores an unloaded shared session before applying remote model selection', async () => {
+  const f = await realServer(); const session = f.root.sessionId; await f.registry.evictIdle();
+  expect(f.registry.binding(session)).toBeUndefined();
+  const command = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'set_model', session,
+    params: { provider: offlineModel.provider, id: offlineModel.id } }), { user: requester, command }))
+    .toMatchObject({ outcome: 'accepted' });
+  expect(f.registry.binding(session)?.runtime.session.sessionManager.getEntries().some(entry => entry.type === 'model_change')).toBe(true);
 });
 
 it('records a channel origin on runs and queued steering for channel-started commands', async () => {
