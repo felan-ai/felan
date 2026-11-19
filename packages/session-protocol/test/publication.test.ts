@@ -167,6 +167,23 @@ describe('remote commands', () => {
     expect(() => parseRemoteCommand({ ...input, params: {} })).toThrow();
     expect(() => parseOperationResult('follow_up', { itemId: 'queued', status: 'handled' })).toThrow();
   });
+  it('reuses local model and thinking schemas for remote commands and capabilities', () => {
+    const model = { op: 'set_model', session, params: { provider: 'anthropic', id: 'claude-sonnet' } } as const;
+    const thinking = { op: 'set_thinking', session, params: { thinking: 'high' } } as const;
+    expect(parseRemoteCommand(model)).toEqual(model);
+    expect(parseRemoteCommand(thinking)).toEqual(thinking);
+    expectTypeOf<Extract<RemoteCommand, { op: 'set_model' }>['params']>().toEqualTypeOf<OperationParams<'set_model'>>();
+    expectTypeOf<Extract<RemoteCommand, { op: 'set_thinking' }>['params']>().toEqualTypeOf<OperationParams<'set_thinking'>>();
+    for (const remoteCommand of [model, thinking]) {
+      expect(parseHostRegistration({ name: 'host', daemonVersion: '0.3.0', rowSchemaVersion: 1, projects: [],
+        capabilities: { operations: [remoteCommand.op], interactionKinds: [] } }).capabilities.operations).toEqual([remoteCommand.op]);
+      expect(parseRealtimeNotification({ event: 'command', payload: { id: command, op: remoteCommand.op } })).toEqual({
+        event: 'command', payload: { id: command, op: remoteCommand.op },
+      });
+    }
+    expect(() => parseRemoteCommand({ ...model, params: { provider: 'anthropic' } })).toThrow();
+    expect(() => parseRemoteCommand({ ...thinking, params: { thinking: 'extreme' } })).toThrow();
+  });
   it('accepts only lowercase UUIDs for optional client-created session IDs', () => {
     const create = { op: 'sessions.create', params: { project: 'workspace', sessionId: session } };
     expect(parseRemoteCommand(create)).toEqual(create);
