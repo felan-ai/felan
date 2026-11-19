@@ -909,7 +909,8 @@ async function assertPackedDaemonOnly(tarballs) {
     writeFileSync(environment.NPM_CONFIG_GLOBALCONFIG, '', { mode: 0o600 });
     const npmCommand = process.platform === 'win32' ? process.execPath : 'npm';
     const npmPrefix = process.platform === 'win32' ? [join(dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')] : [];
-    runHere(npmCommand, [...npmPrefix, 'install', '--offline', '--ignore-scripts', '--no-fund', '--no-audit', '--prefix', prefix, ...selected], 180_000);
+    // Windows CI runners have needed more than three minutes for this offline install.
+    runHere(npmCommand, [...npmPrefix, 'install', '--offline', '--ignore-scripts', '--no-fund', '--no-audit', '--prefix', prefix, ...selected], 600_000);
     for (const [name, expected] of sourcePackagesByName) {
       if (!selectedNames.has(name)) continue;
       const installed = JSON.parse(readFileSync(join(prefix, 'node_modules', ...name.split('/'), 'package.json'), 'utf8'));

@@ -524,13 +524,21 @@ describe('memory retry scheduling', () => {
     const before = await f.store.readControl();
     expect(before).toMatchObject({ consecutiveFailures: 3, autoDisabled: { runId: expect.any(String) } });
     const readControl = Store.prototype.readControl;
-    let entered = false;
+    const resetProjectControl = Store.prototype.resetProjectControl;
+    let resettingStore: Store | undefined;
     const waiting = deferred();
     const { gate, release } = cleanupGate();
-    vi.spyOn(Store.prototype, 'readControl').mockImplementation(async function (this: import('../../src/local/store.js').LocalMemoryStore) {
+    vi.spyOn(Store.prototype, 'resetProjectControl').mockImplementation(function (this: Store, ...args) {
+      resettingStore = this;
+      return resetProjectControl.apply(this, args);
+    });
+    // Pause only the read the reset makes while it holds the state lock. retryProject's earlier
+    // schedule check reads control without the lock; pausing that one lets the reset race setEnabled.
+    vi.spyOn(Store.prototype, 'readControl').mockImplementation(async function (this: Store) {
+      const paused = resettingStore === this;
+      if (paused) resettingStore = undefined;
       const control = await readControl.call(this);
-      if (!entered && control.autoDisabled) {
-        entered = true;
+      if (paused) {
         waiting.resolve();
         await gate;
       }

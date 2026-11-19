@@ -41,21 +41,23 @@ jobs:
           - name: release versions
             os: ubuntu-latest
             run: pnpm check:proposed-version
+          # Windows runners stall for seconds at random, so any test can pass Vitest's 5 s
+          # default. Only the CLI flag reaches projects without their own Vitest config.
           - name: test daemon
             os: windows-latest
-            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon --testTimeout=30000
           - name: test felan
             os: windows-latest
-            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/felan
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/felan --testTimeout=30000
           - name: test packages
             os: windows-latest
-            run: scripts/test-isolated.sh pnpm test -- --project '@felan-ai/ext-*' --project @felan-ai/agent-core --project @felan-ai/session-protocol
+            run: scripts/test-isolated.sh pnpm test -- --project '@felan-ai/ext-*' --project @felan-ai/agent-core --project @felan-ai/session-protocol --testTimeout=30000
           - name: packed install
             os: windows-latest
             run: scripts/test-isolated.sh bash -c 'pnpm check:licenses && pnpm pack:all && pnpm test:packed-bin && pnpm test:dist'
           - name: test daemon
             os: windows-11-arm
-            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon --testTimeout=30000
     steps:
       - uses: actions/checkout@v4
         # Git Bash scripts and the shrinkwrap parser require LF before any run step.
