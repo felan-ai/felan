@@ -1,4 +1,4 @@
-import { PUBLICATION_LIMITS, type PublishedEvent, type PublishedSession } from '@felan-ai/session-protocol';
+import { LIMITS, PUBLICATION_LIMITS, type PublishedEvent, type PublishedSession, type PublishedTaskDetail } from '@felan-ai/session-protocol';
 
 export function publicationBatches(session: PublishedSession, events: readonly PublishedEvent[]): PublishedEvent[][] {
   const envelopeBytes = Buffer.byteLength(JSON.stringify({ p_session: session, p_events: [] }));
@@ -14,5 +14,20 @@ export function publicationBatches(session: PublishedSession, events: readonly P
     bytes += eventBytes + (batch.length ? 1 : 0); batch.push(event);
   }
   if (batch.length || !batches.length) batches.push(batch);
+  return batches;
+}
+
+export function taskDetailBatches(session: string, tasks: readonly PublishedTaskDetail[]): PublishedTaskDetail[][] {
+  const envelopeBytes = Buffer.byteLength(JSON.stringify({ p_session: session, p_tasks: [] }));
+  const batches: PublishedTaskDetail[][] = []; let batch: PublishedTaskDetail[] = []; let bytes = envelopeBytes;
+  for (const task of tasks) {
+    const taskBytes = Buffer.byteLength(JSON.stringify(task));
+    if (envelopeBytes + taskBytes > PUBLICATION_LIMITS.batchBytes) throw new Error('Published task exceeds the batch byte limit.');
+    if (batch.length >= LIMITS.pageEntries || bytes + taskBytes + (batch.length ? 1 : 0) > PUBLICATION_LIMITS.batchBytes) {
+      batches.push(batch); batch = []; bytes = envelopeBytes;
+    }
+    bytes += taskBytes + (batch.length ? 1 : 0); batch.push(task);
+  }
+  if (batch.length) batches.push(batch);
   return batches;
 }

@@ -151,7 +151,7 @@ export class TaskStore {
 
   #publish(state: TaskState): void {
     try {
-      const tasks: AgentRuntimeTask[] = state.tasks.map(({ id, title, status, blockedBy }) => ({ id, title, status, blockedBy: [...blockedBy] }));
+      const tasks: AgentRuntimeTask[] = state.tasks.map((task) => ({ ...task, blockedBy: [...task.blockedBy] }));
       this.#runtime.tasks?.changed?.(tasks);
     } catch {
       // A publication listener cannot roll back a persisted task mutation.

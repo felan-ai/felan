@@ -1,12 +1,14 @@
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, relative, sep } from 'node:path';
+import type { AgentRuntimeTask } from '@felan-ai/agent-core';
 import type { TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import {
-  KnownSessionChangeSchema, LIMITS, PUBLISHED_CHANGE_TYPES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS, PublishedSessionSchema, ROW_SCHEMA_VERSION,
-  isPublishedChangeType, parsePublishedEvent, parsePublishedSession,
-  type KnownSessionChange, type Process, type PublishedEvent, type PublishedProcess, type PublishedSession, type PublishedSkill, type PublishedTask, type SessionSnapshot,
+  KnownSessionChangeSchema, LIMITS, PUBLISHED_CHANGE_TYPES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS, PublishedSessionSchema, PublishedTaskDetailSchema, ROW_SCHEMA_VERSION,
+  isPublishedChangeType, parsePublishedEvent, parsePublishedSession, parseSchema,
+  type KnownSessionChange, type Process, type PublishedEvent, type PublishedProcess, type PublishedSession, type PublishedSkill, type PublishedTask, type PublishedTaskDetail, type SessionSnapshot,
 } from '@felan-ai/session-protocol';
+import { wellFormed } from '../daemon/message-sanitize.js';
 import type { LoadedSkill } from '../daemon/projection.js';
 import { redact } from '../logger.js';
 
@@ -14,7 +16,7 @@ export type PublishedChange = Extract<KnownSessionChange, { type: typeof PUBLISH
 export interface PublicationEntry { seq: number; rev: number; occurredAt: number; change: PublishedChange }
 export type PublishedSessionInput = Pick<SessionSnapshot, 'session' | 'parent' | 'cwd' | 'title' | 'state' | 'run'> & {
   shared: boolean; lastActivity?: number; home?: string; skills?: readonly LoadedSkill[]; processes?: readonly Process[];
-  tasks?: readonly { id: string; title: string; status: PublishedTask['status']; blockedBy: readonly string[] }[];
+  tasks?: readonly AgentRuntimeTask[];
 };
 
 type Schema = TSchema & {
@@ -155,6 +157,17 @@ function publishedProcesses(session: string, processes: readonly Process[]): Pub
       ...(process.exitCode === undefined ? {} : { exitCode: process.exitCode }) }));
 }
 
+export function publishedTaskDetails(tasks: readonly AgentRuntimeTask[]): PublishedTaskDetail[] {
+  const fields = ['description', 'acceptanceCriteria', 'notes', 'result', 'blockedReason'] as const;
+  return tasks.slice(0, LIMITS.pageEntries).map(task => {
+    const record: ObjectValue = { id: task.id };
+    for (const field of fields) if (typeof task[field] === 'string' && task[field].length) record[field] = wellFormed(task[field]);
+    const sanitized = sanitize(PublishedTaskDetailSchema as Schema, record) as ObjectValue;
+    for (const field of fields) if (sanitized[field] === '') delete sanitized[field];
+    return parseSchema(PublishedTaskDetailSchema, sanitized);
+  });
+}
+
 export function publishedSession(input: PublishedSessionInput): PublishedSession {
   return parsePublishedSession(sanitize(PublishedSessionSchema as Schema, {
     schemaVersion: ROW_SCHEMA_VERSION, session: input.session, ...(input.parent ? { parent: input.parent } : {}),
@@ -163,8 +176,17 @@ export function publishedSession(input: PublishedSessionInput): PublishedSession
     ...(input.lastActivity !== undefined ? { lastActivity: input.lastActivity } : {}),
     ...(input.skills ? { skills: publishedSkills(input.skills, input.cwd, input.home ?? homedir()) } : {}),
     ...(input.processes ? { processes: publishedProcesses(input.session, input.processes) } : {}),
-    ...(input.shared && input.tasks ? { tasks: input.tasks.slice(0, LIMITS.pageEntries).map(task => ({
-      id: task.id, title: task.title, status: task.status, blockedBy: task.blockedBy.slice(0, 32),
-    })) } : {}),
+    ...(input.shared && input.tasks ? { tasks: input.tasks.slice(0, LIMITS.pageEntries).map(task => {
+      const summary: PublishedTask = { id: task.id, title: wellFormed(task.title), status: task.status, blockedBy: task.blockedBy.slice(0, 32) };
+      if (typeof task.priority === 'number' && Number.isSafeInteger(task.priority) && task.priority >= 0 && task.priority <= 4) summary.priority = task.priority;
+      if (typeof task.ownerSessionId === 'string' && task.ownerSessionId.length) summary.ownerSessionId = task.ownerSessionId;
+      for (const field of ['createdAt', 'updatedAt', 'claimedAt', 'completedAt'] as const) {
+        const value = task[field];
+        if (typeof value !== 'string') continue;
+        const timestamp = Date.parse(value);
+        if (Number.isSafeInteger(timestamp) && timestamp >= 0) summary[field] = timestamp;
+      }
+      return summary;
+    }) } : {}),
   }));
 }

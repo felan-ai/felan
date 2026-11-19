@@ -55,6 +55,7 @@ async function fixture(overrides: Partial<RemoteConnectorOptions> = {}, recovery
   const platform = {
     register: vi.fn(async () => {}), heartbeat: vi.fn(async () => {}),
     publish: vi.fn<ConnectorPlatform['publish']>(async (_session, events) => events.at(-1)?.seq ?? 0),
+    publishTasks: vi.fn(async () => {}),
     claim: vi.fn(async () => rows),
     complete: vi.fn(async (id: string, _outcome: RemoteCommandOutcome) => { rows = rows.filter(row => row.id !== id); }),
     close: vi.fn(async () => {}),

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { ExtensionAPI } from '@felan-ai/agent-core';
+import type { AgentRuntimeTask, ExtensionAPI } from '@felan-ai/agent-core';
 import type { KnownSessionChange, SessionEvent } from '@felan-ai/session-protocol';
 import { DaemonControlStore } from '../src/daemon/control-store.js';
 import { ControlStoreError } from '../src/daemon/control-state.js';
@@ -14,6 +14,29 @@ function hasChangeType<T extends KnownSessionChange['type']>(change: SessionEven
 }
 
 describe.skipIf(!supported)('daemon session registry', () => {
+  it('keeps full task records and clones their blockers in the root snapshot', async () => {
+    const f = await fixture();
+    const open = vi.mocked(f.profile.openSession).getMockImplementation()!;
+    vi.mocked(f.profile.openSession).mockImplementation(async request => {
+      const binding = await open(request);
+      return { ...binding, agentRuntime: f.registry.wrapOpeningRuntime(binding.agentRuntime, binding.rootSessionId) };
+    });
+    const binding = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const task = { id: 'T-ABC123', title: 'Task', status: 'blocked', blockedBy: ['T-DEF456'], priority: 0,
+      description: 'Description', acceptanceCriteria: 'Criteria', ownerSessionId: binding.sessionId, claimedAt: '2026-11-18T12:00:00Z',
+      notes: 'Notes', result: 'Result', blockedReason: 'Blocker', createdAt: '2026-11-18T11:00:00Z',
+      updatedAt: '2026-11-18T12:01:00Z', completedAt: '2026-11-18T12:02:00Z' } satisfies AgentRuntimeTask;
+    const minimal = { id: 'T-DEF456', title: 'Dependency', status: 'pending', blockedBy: [] } satisfies AgentRuntimeTask;
+    expect(f.registry.taskSnapshot(binding.rootSessionId)).toBeUndefined();
+    binding.agentRuntime.tasks!.changed!([task, minimal]);
+    const snapshot = f.registry.taskSnapshot(binding.rootSessionId)!;
+    expect(snapshot).toEqual([task, minimal]); expect(snapshot[0]).not.toBe(task); expect(snapshot[0]!.blockedBy).not.toBe(task.blockedBy);
+    expect(Object.values(snapshot[1]!)).not.toContain(undefined);
+    task.blockedBy.push('T-GHI789'); task.notes = 'Changed notes';
+    expect(snapshot[0]!.blockedBy).toEqual(['T-DEF456']); expect(snapshot[0]!.notes).toBe('Notes');
+    expect(f.registry.taskSnapshot(binding.rootSessionId)).toBe(snapshot);
+  });
+
   it.each([
     { name: 'without prompt options', systemPromptOptions: undefined },
     { name: 'without sections', systemPromptOptions: {} },

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { HostRegistration, PublishedEvent, PublishedSession, RemoteCommandOutcome } from '@felan-ai/session-protocol';
+import type { HostRegistration, PublishedEvent, PublishedSession, PublishedTaskDetail, RemoteCommandOutcome } from '@felan-ai/session-protocol';
 import { PlatformClient, PlatformError, parsePlatformError, type RemoteSupabaseClient, type SupabaseClientFactory } from '../src/remote/platform.js';
 import type { HostTokenInfo, HostTokenProvider } from '../src/remote/token.js';
 
@@ -10,6 +10,7 @@ const other = '0199e5f0-0000-7000-8000-000000000002';
 const registration: HostRegistration = { name: 'host', daemonVersion: '0.1.0', rowSchemaVersion: 1, capabilities: { operations: ['cancel'], interactionKinds: [] }, projects: [] };
 const session: PublishedSession = { session: id, schemaVersion: 1, directory: 'project', shared: true, title: 'title', state: 'open', runState: 'idle' };
 const event: PublishedEvent = { session: id, schemaVersion: 1, seq: 1, rev: 1, change: { type: 'metadata.updated', title: 'title', state: 'open', residency: 'warm' }, occurredAt: 0 };
+const tasks: PublishedTaskDetail[] = [{ id: 'T-ABC123', description: 'Task description', notes: 'Task notes' }];
 const outcome: RemoteCommandOutcome = { v: 1, re: id, outcome: 'expired' };
 function setup() {
   let token = 'host-token';
@@ -56,12 +57,14 @@ describe('PlatformClient', () => {
     await platform.heartbeat();
     f.rpc.mockResolvedValueOnce({ data: '1', error: null });
     expect(await platform.publish(session, [event])).toBe(1);
+    await platform.publishTasks(id, tasks);
     f.rpc.mockResolvedValueOnce({ data: [], error: null });
     expect(await platform.claim()).toEqual([]);
     await platform.complete(id, outcome);
     expect(f.rpc.mock.calls).toEqual([
       ['host_register', { p_registration: registration }], ['host_heartbeat', undefined],
       ['publish_session_events', { p_session: session, p_events: [event] }],
+      ['publish_session_tasks', { p_session: id, p_tasks: tasks }],
       ['claim_session_commands', undefined], ['complete_session_command', { p_id: id, p_outcome: outcome }],
     ]);
     await platform.close();
@@ -75,10 +78,28 @@ describe('PlatformClient', () => {
     await expect(platform.publish(session, [{ ...event, seq: 0 }])).rejects.toMatchObject({ kind: 'invalid' });
     await expect(platform.publish(session, [{ ...event, session: other }])).rejects.toMatchObject({ kind: 'invalid' });
     await expect(platform.publish(session, Array.from({ length: 501 }, () => event))).rejects.toMatchObject({ kind: 'invalid' });
+    for (const [sessionId, details] of [
+      ['bad', tasks], [id, []], [id, [{ id: 'T-ABC123', description: '' }]], [id, [...tasks, ...tasks]],
+      [id, Array.from({ length: 257 }, (_, index) => ({ id: `T-${index}` }))],
+    ] as const) {
+      await expect(platform.publishTasks(sessionId, [...details])).rejects.toMatchObject({ kind: 'invalid', message: 'Invalid task publication payload.' });
+    }
     await expect(platform.complete('bad', outcome)).rejects.toMatchObject({ kind: 'invalid' });
     await expect(platform.complete(other, outcome)).rejects.toMatchObject({ kind: 'invalid' });
     await expect(platform.complete(id, { ...outcome, outcome: 'garbage' } as unknown as RemoteCommandOutcome)).rejects.toMatchObject({ kind: 'invalid' });
     expect(f.rpc).not.toHaveBeenCalled();
+    await platform.close();
+  });
+
+  it.each([
+    { error: { code: 'PGRST202' }, status: 404, kind: 'invalid' },
+    { error: {}, status: 503, kind: 'retry' },
+  ])('maps task publication HTTP $status to $kind', async ({ error, status, kind }) => {
+    const f = setup();
+    f.rpc.mockResolvedValueOnce({ data: null, error, status });
+    const platform = await PlatformClient.connect(f.source, { clientFactory: f.factory });
+    await expect(platform.publishTasks(id, tasks)).rejects.toMatchObject({ kind });
+    expect(f.rpc).toHaveBeenCalledWith('publish_session_tasks', { p_session: id, p_tasks: tasks });
     await platform.close();
   });
 

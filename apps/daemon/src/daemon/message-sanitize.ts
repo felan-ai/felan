@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { LIMITS, MESSAGE_DISPLAY_KEY, MessageSchema, parseSchema, validateBase64, type JsonValue, type Message, type MessageDisplay } from '@felan-ai/session-protocol';
 import { boundMessage } from './message-bounds.js';
 
-const wellFormed = (value: string): string => (value as string & { toWellFormed(): string }).toWellFormed();
+export const wellFormed = (value: string): string => (value as string & { toWellFormed(): string }).toWellFormed();
 
 export function toolId(input: unknown): string {
   const value = typeof input === 'string' ? input : '';

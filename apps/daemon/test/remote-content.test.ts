@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  KNOWN_CHANGE_TYPES, PUBLISHED_CHANGE_TYPES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS,
+  KNOWN_CHANGE_TYPES, PUBLISHED_CHANGE_TYPES, PUBLISHED_TASK_TEXT_BYTES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, PUBLICATION_LIMITS,
   parsePublishedEvent, parsePublishedSession, type KnownSessionChange,
 } from '@felan-ai/session-protocol';
-import { publishableChange, publishedEvent, publishedSession } from '../src/remote/content.js';
+import { publishableChange, publishedEvent, publishedSession, publishedTaskDetails } from '../src/remote/content.js';
 
 const session = '01999999-1111-7111-8111-111111111111';
 const message = (text: string): KnownSessionChange => ({ type: 'message.completed', message: { id: 'm', entryId: 'e', role: 'assistant', timestamp: 1, content: [{ type: 'text', text }] } });
@@ -187,16 +187,77 @@ describe('remote publication content', () => {
     expect(publishedSession({ ...base, processes: [] }).processes).toEqual([]);
     expect(publishedSession(base)).not.toHaveProperty('processes');
   });
-  it('publishes only bounded task fields and keeps private task data out of the row', () => {
-    const task = { id: 'T-ABC123', title: 'a'.repeat(194) + '?key=x', status: 'pending' as const, blockedBy: [], description: 'private', ownerSessionId: session };
+  it('publishes bounded task metadata and keeps long task text out of the row', () => {
+    const task = {
+      id: 'T-ABC123', title: 'a'.repeat(194) + '?key=x', status: 'in_progress' as const, blockedBy: [], priority: 0, ownerSessionId: session,
+      createdAt: '1970-01-01T00:00:00Z', updatedAt: '2026-11-18T12:01:00Z', claimedAt: '2026-11-18T12:00:00Z',
+      description: 'private description', acceptanceCriteria: 'private criteria', notes: 'private notes', result: 'private result', blockedReason: 'private blocker',
+    };
+    const completed = { id: 'T-DEF456', title: 'Done', status: 'completed' as const, blockedBy: [], priority: 4, completedAt: '2026-11-18T12:02:00Z' };
+    const invalid = { id: 'T-GHI789', title: 'Invalid metadata', status: 'pending' as const, blockedBy: [], priority: 1.5, ownerSessionId: '',
+      createdAt: 'invalid', updatedAt: '1969-12-31T23:59:59.999Z', claimedAt: '+300000-01-01T00:00:00Z', completedAt: '' };
     const base = { session, cwd: '/w', title: 'T', state: 'open' as const, run: { state: 'idle' as const }, shared: true };
-    const value = publishedSession({ ...base, tasks: [task] });
-    expect(value.tasks).toEqual([{ id: task.id, title: 'a'.repeat(194) + '?key=[', status: 'pending', blockedBy: [] }]);
+    const value = publishedSession({ ...base, tasks: [task, completed, invalid] });
+    expect(value.tasks).toEqual([
+      { id: task.id, title: 'a'.repeat(194) + '?key=[', status: 'in_progress', blockedBy: [], priority: 0, ownerSessionId: session,
+        createdAt: 0, updatedAt: Date.parse(task.updatedAt), claimedAt: Date.parse(task.claimedAt) },
+      { id: completed.id, title: completed.title, status: 'completed', blockedBy: [], priority: 4, completedAt: Date.parse(completed.completedAt) },
+      { id: invalid.id, title: invalid.title, status: 'pending', blockedBy: [] },
+    ]);
     expect(JSON.stringify(value.tasks)).not.toContain('private');
+    expect(parsePublishedSession(value)).toEqual(value);
     expect(publishedSession({ ...base, tasks: [] }).tasks).toEqual([]);
     expect(publishedSession({ ...base, shared: false, tasks: [task] })).not.toHaveProperty('tasks');
     expect(publishedSession(base)).not.toHaveProperty('tasks');
     expect(publishableChange({ type: 'tasks.updated' })).toBeUndefined();
+  });
+  it.each([-1, 5, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1])('omits invalid task priority %s', priority => {
+    const value = publishedSession({ session, cwd: '/w', title: 'T', state: 'open', run: { state: 'idle' }, shared: true,
+      tasks: [{ id: 'T-ABC123', title: 'Task', status: 'pending', blockedBy: [], priority }] });
+    expect(value.tasks?.[0]).not.toHaveProperty('priority');
+  });
+  it('caps session task summaries at 256 tasks and 32 blockers', () => {
+    const blockedBy = Array.from({ length: 40 }, (_, index) => `T-B${index}`);
+    const tasks = Array.from({ length: 300 }, (_, index) => ({ id: `T-${index}`, title: 'Task', status: 'pending' as const, blockedBy }));
+    const value = publishedSession({ session, cwd: '/w', title: 'T', state: 'open', run: { state: 'idle' }, shared: true, tasks });
+    expect(value.tasks).toHaveLength(256); expect(value.tasks?.[255]?.id).toBe('T-255');
+    expect(value.tasks?.[0]?.blockedBy).toEqual(blockedBy.slice(0, 32)); expect(blockedBy).toHaveLength(40);
+  });
+  it('redacts task detail credentials without changing task identities or publishing summary fields', () => {
+    const task = { id: 'sk-task123456789', title: 'Task', status: 'blocked' as const, blockedBy: [], priority: 1,
+      description: 'Use fln_pat_test123456789', acceptanceCriteria: 'api_key=short-secret', notes: 'Bearer abc123456789',
+      result: 'sk-secret123456789', blockedReason: 'Blocked\0by github_pat_test123456789' };
+    expect(publishedTaskDetails([task])).toEqual([{ id: task.id,
+      description: 'Use [redacted]', acceptanceCriteria: 'api_key=[redacted]', notes: 'Bearer [redacted]',
+      result: '[redacted]', blockedReason: 'Blocked\uFFFDby [redacted]',
+    }]);
+    expect(task.description).toBe('Use fln_pat_test123456789');
+  });
+  it.each(Object.entries(PUBLISHED_TASK_TEXT_BYTES))('cuts task detail %s only past %i UTF-8 bytes', (field, bytes) => {
+    const task = { id: 'T-ABC123', title: 'Task', status: 'pending' as const, blockedBy: [] };
+    for (const character of ['x', '😀']) {
+      const count = bytes / Buffer.byteLength(character);
+      expect(publishedTaskDetails([{ ...task, [field]: character.repeat(count) }])).toEqual([{ id: task.id, [field]: character.repeat(count) }]);
+      expect(publishedTaskDetails([{ ...task, [field]: character.repeat(count + 1) }])).toEqual([{ id: task.id, [field]: character.repeat(count) }]);
+    }
+  });
+  it('replaces ill-formed Unicode in task titles and details instead of failing', () => {
+    const task = { id: 'T-ABC123', title: 'Lone \uD800 title', status: 'pending' as const, blockedBy: [], notes: 'Lone \uDC00 note' };
+    expect(publishedTaskDetails([task])).toEqual([{ id: task.id, notes: 'Lone \uFFFD note' }]);
+    const base = { session, cwd: '/w', title: 'T', state: 'open' as const, run: { state: 'idle' as const }, shared: true };
+    expect(publishedSession({ ...base, tasks: [task] }).tasks?.[0]?.title).toBe('Lone \uFFFD title');
+  });
+  it('omits absent and empty task detail fields and keeps id-only records', () => {
+    const task = { id: 'T-ABC123', title: 'Task', status: 'pending' as const, blockedBy: [] };
+    expect(publishedTaskDetails([task, { ...task, id: 'T-DEF456', description: '', acceptanceCriteria: '', notes: '', result: '', blockedReason: '' }]))
+      .toEqual([{ id: task.id }, { id: 'T-DEF456' }]);
+    expect(publishedTaskDetails([])).toEqual([]);
+  });
+  it('caps task details at the first 256 tasks', () => {
+    const tasks = Array.from({ length: 300 }, (_, index) => ({ id: `T-${index}`, title: 'Task', status: 'pending' as const, blockedBy: [], notes: `Notes ${index}` }));
+    const details = publishedTaskDetails(tasks);
+    expect(details).toHaveLength(256); expect(details.map(task => task.id)).toEqual(tasks.slice(0, 256).map(task => task.id));
+    expect(details[255]).toEqual({ id: 'T-255', notes: 'Notes 255' });
   });
   it('publishes channel origins with their provider and identities intact', () => {
     const origin = { kind: 'channel' as const, provider: 'slack', user: session, command: session };

@@ -149,11 +149,23 @@ export interface AgentRuntimeListFilesOptions {
   readonly signal?: AbortSignal;
 }
 
+/** Task timestamps use ISO 8601 strings, not epoch milliseconds. */
 export interface AgentRuntimeTask {
   readonly id: string;
   readonly title: string;
+  readonly description?: string;
+  readonly acceptanceCriteria?: string;
+  readonly priority?: number;
   readonly status: 'pending' | 'in_progress' | 'blocked' | 'completed' | 'cancelled';
   readonly blockedBy: readonly string[];
+  readonly ownerSessionId?: string;
+  readonly claimedAt?: string;
+  readonly notes?: string;
+  readonly result?: string;
+  readonly blockedReason?: string;
+  readonly createdAt?: string;
+  readonly updatedAt?: string;
+  readonly completedAt?: string;
 }
 
 export interface AgentRuntime {
@@ -169,6 +181,7 @@ export interface AgentRuntime {
   readonly terminals?: AgentRuntimeTerminals;
   readonly files?: RuntimeFiles;
   readonly tasks?: {
+    /** Reports the full current task graph, not incremental updates. */
     changed?(tasks: readonly AgentRuntimeTask[]): void;
   };
 

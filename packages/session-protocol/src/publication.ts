@@ -3,7 +3,7 @@ import { ResponseSchema } from './envelopes.js';
 import { OperationSchemas } from './commands.js';
 import { KnownSessionChangeSchema, parseSessionEvent } from './events.js';
 import { INTERACTION_KINDS, InteractionKindSchema } from './interactions.js';
-import { LIMITS, PROTOCOL_VERSION, ProtocolValidationError, ROW_SCHEMA_VERSION } from './limits.js';
+import { LIMITS, PROTOCOL_VERSION, ProtocolValidationError, ROW_SCHEMA_VERSION, utf8Bytes } from './limits.js';
 import { CounterSchema, DiagnosticTextSchema, IdSchema, ModelSchema, NameSchema, ThinkingSchema, enumOf, parseSchema, text } from './schema.js';
 import { AutomationSourceSchema, ChannelProviderSchema, PromptSchema, validatePrompt } from './data.js';
 import { UUID_V7_PATTERN } from './request-id.js';
@@ -14,6 +14,10 @@ export const PUBLISHED_CHANGE_TYPES = [
   'metadata.updated', 'model.updated', 'child.updated', 'stream.completion_only',
 ] as const;
 export const PUBLISHED_TOOL_OUTPUT_CHARACTERS = 4096;
+// UTF-8 bytes, four times the task tools' character limits: hosts, parsers and SQL all count the same unit.
+export const PUBLISHED_TASK_TEXT_BYTES = Object.freeze({
+  description: 16_000, acceptanceCriteria: 16_000, notes: 32_000, result: 32_000, blockedReason: 8_000,
+});
 export const PUBLICATION_LIMITS = Object.freeze({
   eventsPerBatch: 500,
   batchBytes: 4 * 1024 * 1024,
@@ -43,6 +47,17 @@ export const PublishedTaskSchema = Type.Object({
   id: IdSchema, title: Type.String({ ...text(800, 1), maxLength: 200 }),
   status: enumOf(['pending', 'in_progress', 'blocked', 'completed', 'cancelled'] as const),
   blockedBy: Type.Array(IdSchema, { maxItems: 32 }),
+  priority: Type.Optional(Type.Integer({ minimum: 0, maximum: 4 })), ownerSessionId: Type.Optional(IdSchema),
+  createdAt: Type.Optional(CounterSchema), updatedAt: Type.Optional(CounterSchema),
+  claimedAt: Type.Optional(CounterSchema), completedAt: Type.Optional(CounterSchema),
+});
+const taskText = (field: keyof typeof PUBLISHED_TASK_TEXT_BYTES) => Type.Optional(text(PUBLISHED_TASK_TEXT_BYTES[field], 1));
+export const PublishedTaskDetailSchema = Type.Object({
+  id: IdSchema, description: taskText('description'), acceptanceCriteria: taskText('acceptanceCriteria'),
+  notes: taskText('notes'), result: taskText('result'), blockedReason: taskText('blockedReason'),
+});
+export const PublishedTaskDetailsSchema = Type.Object({
+  session: UuidSchema, tasks: Type.Array(PublishedTaskDetailSchema, { minItems: 1, maxItems: LIMITS.pageEntries }),
 });
 // An absent resource array means the host does not know the current value; the stored value stays.
 export const PublishedSessionSchema = Type.Object({
@@ -118,6 +133,8 @@ export type PublishedSession = Static<typeof PublishedSessionSchema>;
 export type PublishedSkill = Static<typeof PublishedSkillSchema>;
 export type PublishedProcess = Static<typeof PublishedProcessSchema>;
 export type PublishedTask = Static<typeof PublishedTaskSchema>;
+export type PublishedTaskDetail = Static<typeof PublishedTaskDetailSchema>;
+export type PublishedTaskDetails = Static<typeof PublishedTaskDetailsSchema>;
 export type HostProject = Static<typeof HostProjectSchema>;
 export type HostCapabilities = Static<typeof HostCapabilitiesSchema>;
 export type HostRegistration = Static<typeof HostRegistrationSchema>;
@@ -178,6 +195,17 @@ export function parsePublishedSession(value: unknown): PublishedSession {
     throw new ProtocolValidationError('invalid_request', 'Published skill path must be relative');
   }
   return session;
+}
+
+export function parsePublishedTaskDetails(value: unknown): PublishedTaskDetails {
+  const details = parseSchema(PublishedTaskDetailsSchema, value);
+  if (new Set(details.tasks.map(task => task.id)).size !== details.tasks.length) {
+    throw new ProtocolValidationError('invalid_request', 'Duplicate published task');
+  }
+  if (utf8Bytes(JSON.stringify({ p_session: details.session, p_tasks: details.tasks })) > PUBLICATION_LIMITS.batchBytes) {
+    throw new ProtocolValidationError('invalid_request', 'Published task details exceed batch limit');
+  }
+  return details;
 }
 
 export function parseHostRegistration(value: unknown): HostRegistration {

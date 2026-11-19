@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { JsonLineDecoder, encodeFrame, parsePublishedEvent, parsePublishedSession, type HostRegistration, type PublishedEvent, type PublishedSession, type RemoteCommandOutcome, type TextStreamEvent } from '@felan-ai/session-protocol';
+import { JsonLineDecoder, PUBLICATION_LIMITS, encodeFrame, parsePublishedEvent, parsePublishedSession, type HostRegistration, type PublishedEvent, type PublishedSession, type RemoteCommandOutcome, type TextStreamEvent } from '@felan-ai/session-protocol';
 import { join } from 'node:path';
 import type { Process } from '@felan-ai/session-protocol';
 import { RemoteConnector, type ConnectorPlatform, type ConnectorTokenSource, type RemoteConnectorOptions } from '../src/remote/connector.js';
@@ -18,6 +18,8 @@ import { FakePairing } from './fixtures/remote-pairing.js';
 import { RemoteStorageError } from '../src/remote/state.js';
 import { RemoteOutbox, RemoteOutboxCapacityError } from '../src/remote/outbox.js';
 import { OrderedAdmission } from '../src/daemon/admission.js';
+import * as content from '../src/remote/content.js';
+import * as batch from '../src/remote/batch.js';
 
 const hostA = '019a0000-0000-7000-8000-000000000001';
 const hostB = '019a0000-0000-7000-8000-000000000002';
@@ -72,9 +74,14 @@ class Platform implements ConnectorPlatform {
     const seq = Math.max(this.remoteSeq.get(session.session) ?? 0, events.at(-1)?.seq ?? 0);
     this.remoteSeq.set(session.session, seq); return seq;
   });
+  publishTasks = vi.fn<ConnectorPlatform['publishTasks']>(async () => {});
   claim = vi.fn(async () => this.rows);
   complete = vi.fn(async (_id: string, _outcome: RemoteCommandOutcome) => { this.rows = this.rows.filter(row => row.id !== _id); });
   close = vi.fn(async () => {});
+}
+
+function largeTasks() {
+  return Array.from({ length: 200 }, (_, index) => ({ id: `T-${String(index).padStart(6, '0')}`, title: 'Task', status: 'pending' as const, blockedBy: [], notes: '記'.repeat(8000) }));
 }
 
 async function fixture(options: { configured?: boolean; credential?: string; token?: Token; pairing?: FakePairing; platform?: Platform; connector?: Partial<RemoteConnectorOptions>; wired?: boolean } = {}) {
@@ -377,11 +384,12 @@ describe('RemoteConnector publication', () => {
     const rows = f.platform.publish.mock.calls.map(([session, events]) => ({ session, events }));
     expect(rows).toHaveLength(2);
     expect(rows.map(({ session }) => session.tasks)).toEqual([
-      [{ id: task.id, title: task.title, status: task.status, blockedBy: task.blockedBy }],
-      [{ id: task.id, title: task.title, status: task.status, blockedBy: task.blockedBy }],
+      [{ id: task.id, title: task.title, status: task.status, blockedBy: task.blockedBy, ownerSessionId: child.sessionId }],
+      [{ id: task.id, title: task.title, status: task.status, blockedBy: task.blockedBy, ownerSessionId: child.sessionId }],
     ]);
     expect(rows.every(({ events }) => events.length === 0)).toBe(true);
     expect(JSON.stringify(rows)).not.toContain('secret details');
+    expect(f.platform.publishTasks).toHaveBeenCalledExactlyOnceWith(f.id, [{ id: task.id, description: task.description }]);
     f.platform.publish.mockClear();
     runtime.tasks!.changed!([task]); await f.clock.tick(0);
     expect(f.platform.publish).not.toHaveBeenCalled();
@@ -395,6 +403,377 @@ describe('RemoteConnector publication', () => {
     f.connector.setShared(f.id, false); await f.clock.tick(0); f.platform.publish.mockClear();
     runtime.tasks!.changed!([{ ...task, title: 'Changed while unshared' }]); await f.clock.tick(0);
     expect(f.platform.publish).not.toHaveBeenCalled();
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(f.platform.publications.map(row => row.session))).not.toContain('secret details');
+  });
+
+  it('publishes every task detail after indexing the root, then sends only changed tasks', async () => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const tasks = [
+      { id: 'T-ABC123', title: 'First', status: 'pending' as const, blockedBy: [], description: 'First description', notes: 'Initial notes', updatedAt: new Date(now).toISOString() },
+      { id: 'T-DEF456', title: 'Second', status: 'pending' as const, blockedBy: [], acceptanceCriteria: 'Second criteria' },
+    ];
+    runtime.tasks!.changed!(tasks);
+    f.platform.publishTasks.mockImplementationOnce(async root => {
+      expect(root).toBe(f.id); expect(f.connector.store.session(root)?.indexedHostId).toBe(hostA);
+      expect(f.platform.publish).toHaveBeenCalled();
+    });
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledExactlyOnceWith(f.id, [
+      { id: tasks[0]!.id, description: 'First description', notes: 'Initial notes' },
+      { id: tasks[1]!.id, acceptanceCriteria: 'Second criteria' },
+    ]);
+    runtime.tasks!.changed!([{ ...tasks[0]!, notes: 'Updated notes', updatedAt: new Date(now + 1).toISOString() }, tasks[1]!]); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks).toHaveBeenLastCalledWith(f.id, [{ id: tasks[0]!.id, description: 'First description', notes: 'Updated notes' }]);
+  });
+
+  it('never publishes task details for a child session row', async () => {
+    const f = await fixture();
+    const child = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: f.id, rootSessionId: f.id, model: offlineModel }));
+    f.registry.binding(child.sessionId)!.agentRuntime.tasks!.changed!([{ id: 'T-ABC123', title: 'Child task', status: 'pending', blockedBy: [], description: 'Root details' }]);
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledExactlyOnceWith(f.id, [{ id: 'T-ABC123', description: 'Root details' }]);
+    f.platform.publishTasks.mockClear(); f.platform.publish.mockClear();
+    const projection = f.registry.projection(child.sessionId);
+    vi.spyOn(projection, 'skills').mockReturnValue([{ name: 'review', description: 'Review code', filePath: join(f.cwd, '.agents/skills/review/SKILL.md'), scope: 'project' }]);
+    projection.publish({ type: 'catalog.updated', catalog: projection.catalog() }); await f.clock.tick(0);
+    expect(f.platform.publish).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ session: child.sessionId }), []);
+    expect(f.platform.publishTasks).not.toHaveBeenCalled();
+  });
+
+  it('does not publish task details for an unshared root and uploads them again after re-share', async () => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const task = { id: 'T-ABC123', title: 'Private task', status: 'pending' as const, blockedBy: [], description: 'Private details' };
+    runtime.tasks!.changed!([task]); await f.clock.tick(0);
+    expect(f.platform.publishTasks).not.toHaveBeenCalled();
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledExactlyOnceWith(f.id, [{ id: task.id, description: task.description }]);
+    f.connector.setShared(f.id, false); await f.clock.tick(0);
+    runtime.tasks!.changed!([{ ...task, title: 'Changed while private' }]); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks).toHaveBeenLastCalledWith(f.id, [{ id: task.id, description: task.description }]);
+  });
+
+  it('publishes a child notes-only change under the root without changing the row summary', async () => {
+    const f = await fixture();
+    const child = startedSession(await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: f.id, rootSessionId: f.id, model: offlineModel }));
+    const runtime = f.registry.binding(child.sessionId)!.agentRuntime;
+    const task = { id: 'T-ABC123', title: 'Task', status: 'pending' as const, blockedBy: [], notes: 'Initial notes', updatedAt: new Date(now).toISOString() };
+    runtime.tasks!.changed!([task]); f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publish.mock.calls.find(([row]) => row.session === f.id)![0].tasks?.[0]?.updatedAt).toBe(now);
+    f.platform.publish.mockClear(); f.platform.publishTasks.mockClear();
+    const sequences = [f.id, child.sessionId].map(id => f.connector.outbox.nextSeq(id));
+    runtime.tasks!.changed!([{ ...task, notes: 'Notes changed without a timestamp change' }]); await f.clock.tick(0);
+    expect(f.platform.publish).not.toHaveBeenCalled();
+    expect(f.platform.publishTasks).toHaveBeenCalledExactlyOnceWith(f.id, [{ id: task.id, notes: 'Notes changed without a timestamp change' }]);
+    expect([f.id, child.sessionId].map(id => f.connector.outbox.nextSeq(id))).toEqual(sequences);
+  });
+
+  it('uploads all task details once again after a reconnect', async () => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    runtime.tasks!.changed!([
+      { id: 'T-ABC123', title: 'First', status: 'pending', blockedBy: [], description: 'First description' },
+      { id: 'T-DEF456', title: 'Second', status: 'pending', blockedBy: [], notes: 'Second notes' },
+    ]);
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    const first = f.platform.publishTasks.mock.calls[0]; expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    f.platform.heartbeat.mockRejectedValueOnce(new PlatformError('retry', 'offline')); await f.clock.tick(100);
+    expect(f.connector.status().state).toBe('offline');
+    await f.clock.tick(1001); await f.clock.tick(0);
+    expect(f.connector.status().state).toBe('connected');
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2); expect(f.platform.publishTasks.mock.calls[1]).toEqual(first);
+    runtime.tasks!.changed!(f.registry.taskSnapshot(f.id)!); await f.clock.tick(100);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])('preserves task changes received during detail publication with rowChanged=%s', async rowChanged => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const task = { id: 'T-ABC123', title: 'Task', status: 'pending' as const, blockedBy: [], notes: 'Initial notes', updatedAt: new Date(now).toISOString() };
+    runtime.tasks!.changed!([task]); f.connector.setShared(f.id, true); await f.clock.tick(0);
+    f.platform.publishTasks.mockClear();
+    let release!: () => void;
+    f.platform.publishTasks.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    const changed = { ...task, notes: 'In flight', updatedAt: new Date(now + Number(rowChanged)).toISOString() };
+    runtime.tasks!.changed!([changed]); await f.clock.tick(0);
+    runtime.tasks!.changed!([{ ...changed, notes: 'Changed during upload' }]); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    release(); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks).toHaveBeenLastCalledWith(f.id, [{ id: task.id, notes: 'Changed during upload' }]);
+  });
+
+  it('sends each task once across byte-bounded detail batches', async () => {
+    const f = await fixture(); const tasks = largeTasks();
+    f.registry.binding(f.id)!.agentRuntime.tasks!.changed!(tasks);
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    const calls = f.platform.publishTasks.mock.calls;
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.flatMap(([, batch]) => batch.map(task => task.id))).toEqual(tasks.map(task => task.id));
+    for (const [session, batch] of calls) expect(Buffer.byteLength(JSON.stringify({ p_session: session, p_tasks: batch }))).toBeLessThanOrEqual(PUBLICATION_LIMITS.batchBytes);
+  });
+
+  it('stops sending further task detail batches when the root becomes unshared', async () => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    runtime.tasks!.changed!(largeTasks());
+    let release!: () => void;
+    f.platform.publishTasks.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    expect(Buffer.byteLength(JSON.stringify({ p_session: f.id, p_tasks: f.platform.publishTasks.mock.calls[0]![1] }))).toBeLessThanOrEqual(PUBLICATION_LIMITS.batchBytes);
+    f.connector.setShared(f.id, false); release(); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    expect(f.platform.publications.at(-1)?.session.shared).toBe(false);
+  });
+
+  it.each(['pending', 'failed'])('clears task detail issues when the unshare publication is %s', async outcome => {
+    const f = await fixture();
+    f.registry.binding(f.id)!.agentRuntime.tasks!.changed!([{ id: 'T-ABC123', title: 'Task', status: 'pending', blockedBy: [], notes: 'Details' }]);
+    f.platform.publishTasks.mockRejectedValueOnce(new PlatformError('retry', 'Unavailable'));
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.connector.status().message).toContain('Task details could not be published; retrying.');
+    const publish = f.platform.publish.getMockImplementation()!;
+    let release = () => {};
+    if (outcome === 'pending') f.platform.publish.mockImplementationOnce(async (session, events) => {
+      await new Promise<void>(resolve => { release = resolve; }); return publish(session, events);
+    });
+    else f.platform.publish.mockRejectedValueOnce(new PlatformError('invalid', 'Unshare rejected'));
+    f.connector.setShared(f.id, false);
+    const immediate = f.connector.status().message;
+    await f.clock.tick(0);
+    const afterPublish = f.connector.status().message;
+    release(); await f.clock.tick(0);
+    expect(immediate).toBeUndefined(); expect(afterPublish ?? '').not.toContain('Task details');
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears task detail backoff on a same-tick unshare and re-share', async () => {
+    const f = await fixture();
+    f.registry.binding(f.id)!.agentRuntime.tasks!.changed!([{ id: 'T-ABC123', title: 'Task', status: 'pending', blockedBy: [], notes: 'Details' }]);
+    const build = vi.spyOn(content, 'publishedTaskDetails');
+    f.platform.publishTasks.mockRejectedValueOnce(new PlatformError('retry', 'Unavailable'));
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.connector.status().message).toContain('Task details could not be published; retrying.');
+    const time = f.clock.now();
+    f.connector.setShared(f.id, false); f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.clock.now()).toBe(time); expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(build).toHaveBeenCalledTimes(2); expect(f.connector.status().message).toBeUndefined();
+  });
+
+  it.each(['success', 'invalid', 'retry'] as const)('ignores an in-flight task detail %s after a same-tick unshare and re-share', async outcome => {
+    const f = await fixture();
+    f.registry.binding(f.id)!.agentRuntime.tasks!.changed!([{ id: 'T-ABC123', title: 'Task', status: 'pending', blockedBy: [], notes: 'Details' }]);
+    let settle!: () => void;
+    f.platform.publishTasks.mockImplementationOnce(() => new Promise<void>((resolve, reject) => {
+      settle = () => { if (outcome === 'success') resolve(); else reject(new PlatformError(outcome, 'Old detail failure')); };
+    }));
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    f.connector.setShared(f.id, false); f.connector.setShared(f.id, true);
+    settle(); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks.mock.calls[1]).toEqual(f.platform.publishTasks.mock.calls[0]);
+    expect(f.connector.status().message).toBeUndefined();
+  });
+
+  it('backs off task detail HTTP 403 failures across events and task changes, grows delays and resets after success', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    const platform = new Platform();
+    const connect = vi.fn(async (source: ConnectorTokenSource) => { await source.token(); return platform; });
+    const f = await fixture({ platform, connector: { connect, heartbeatMs: 30_000 } });
+    const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const task = { id: 'T-ABC123', title: 'Task', status: 'pending' as const, blockedBy: [], notes: 'Details' };
+    runtime.tasks!.changed!([task]);
+    const failure = parsePlatformError({ message: 'WAF blocked content' }, 403);
+    platform.publishTasks.mockRejectedValueOnce(failure).mockRejectedValueOnce(failure);
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(platform.publishTasks).toHaveBeenCalledTimes(1);
+    expect(f.connector.status().message).toContain(`${f.id}: Task details could not be published; retrying.`);
+    await f.clock.tick(0); expect(platform.publishTasks).toHaveBeenCalledTimes(1);
+    runtime.tasks!.changed!([{ ...task, notes: 'Changed during backoff' }]); await f.clock.tick(0);
+    for (let index = 0; index < 3; index++) {
+      f.change(`Rows still publish ${index}`); await f.clock.tick(0);
+      expect(platform.publishTasks).toHaveBeenCalledTimes(1);
+      expect(platform.publications.at(-1)?.events.at(-1)?.change).toMatchObject({ title: `Rows still publish ${index}` });
+    }
+    await f.clock.tick(999); f.change('Before first retry'); await f.clock.tick(0);
+    expect(platform.publishTasks).toHaveBeenCalledTimes(1);
+    await f.clock.tick(1); f.change('First retry due'); await f.clock.tick(0);
+    expect(platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(platform.publishTasks).toHaveBeenLastCalledWith(f.id, [{ id: task.id, notes: 'Changed during backoff' }]);
+    await f.clock.tick(1_999); f.change('Before second retry'); await f.clock.tick(0);
+    expect(platform.publishTasks).toHaveBeenCalledTimes(2);
+    await f.clock.tick(1); f.change('Second retry due'); await f.clock.tick(0);
+    expect(platform.publishTasks).toHaveBeenCalledTimes(3); expect(f.connector.status().message).toBeUndefined();
+    platform.publishTasks.mockRejectedValueOnce(failure);
+    runtime.tasks!.changed!([{ ...task, notes: 'Changed after success' }]); await f.clock.tick(0);
+    expect(platform.publishTasks).toHaveBeenCalledTimes(4);
+    expect(f.connector.status().message).toContain('Task details could not be published; retrying.');
+    await f.clock.tick(999); f.change('Before reset retry'); await f.clock.tick(0);
+    expect(platform.publishTasks).toHaveBeenCalledTimes(4);
+    await f.clock.tick(1); f.change('Reset retry due'); await f.clock.tick(0);
+    expect(platform.publishTasks).toHaveBeenCalledTimes(5);
+    expect(connect).toHaveBeenCalledTimes(1); expect(platform.close).not.toHaveBeenCalled(); expect(f.token.invalidate).not.toHaveBeenCalled();
+    expect(f.connector.status().state).toBe('connected'); expect(f.connector.status().message).toBeUndefined();
+    expect(f.connector.outbox.pendingCount()).toBe(0); expect(f.connector.store.session(f.id)?.terminal).toBeUndefined();
+  });
+
+  it('retries only pending task detail batches after a retry-class error without disconnecting or blocking rows', async () => {
+    const f = await fixture(); const tasks = largeTasks();
+    f.registry.binding(f.id)!.agentRuntime.tasks!.changed!(tasks);
+    f.platform.publishTasks.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new PlatformError('retry', 'Unavailable'));
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(f.connector.status().state).toBe('connected'); expect(f.connector.status().message).toContain('Task details could not be published; retrying.');
+    expect(f.platform.close).not.toHaveBeenCalled(); expect(f.connector.store.session(f.id)?.terminal).toBeUndefined();
+    const [sent, pending] = f.platform.publishTasks.mock.calls;
+    await f.clock.tick(0); expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    f.change('Rows still publish'); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    await f.clock.tick(1_001);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(3);
+    expect(f.platform.publishTasks.mock.calls[2]).toEqual(pending);
+    expect([...sent![1], ...f.platform.publishTasks.mock.calls[2]![1]].map(task => task.id)).toEqual(tasks.map(task => task.id));
+    for (const [session, batch] of f.platform.publishTasks.mock.calls) expect(Buffer.byteLength(JSON.stringify({ p_session: session, p_tasks: batch }))).toBeLessThanOrEqual(PUBLICATION_LIMITS.batchBytes);
+    expect(f.platform.publications.at(-1)?.events.at(-1)?.change).toMatchObject({ title: 'Rows still publish' });
+    expect(f.connector.status()).toMatchObject({ state: 'connected', pending: 0 }); expect(f.connector.status().message).toBeUndefined();
+    await f.clock.tick(100); expect(f.platform.publishTasks).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([
+    new HostTokenExchangeError('host_revoked', 'Revoked'), new Error('Unexpected detail failure'), new PlatformError('unsupported_schema', 'Unsupported'),
+  ])('keeps a task detail error local and retries on a heartbeat after backoff: %s', async error => {
+    const f = await fixture();
+    f.registry.binding(f.id)!.agentRuntime.tasks!.changed!([{ id: 'T-ABC123', title: 'Task', status: 'pending', blockedBy: [], notes: 'Details' }]);
+    f.platform.publishTasks.mockRejectedValueOnce(error);
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    expect(f.connector.status()).toMatchObject({ state: 'connected', pending: 0 });
+    expect(f.connector.status().message).toContain('Task details could not be published; retrying.');
+    expect(f.platform.close).not.toHaveBeenCalled(); expect(f.token.invalidate).not.toHaveBeenCalled();
+    await f.clock.tick(100); expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    await f.clock.tick(1_000);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks.mock.calls[1]).toEqual(f.platform.publishTasks.mock.calls[0]);
+    expect(f.connector.status().message).toBeUndefined();
+    f.change('Rows still publish'); await f.clock.tick(0);
+    expect(f.platform.publications.at(-1)?.events.at(-1)?.change).toMatchObject({ title: 'Rows still publish' });
+  });
+
+  it('keeps a bounded task detail timeout connected and retries on the next heartbeat', async () => {
+    const f = await fixture({ connector: { requestTimeoutMs: 50, heartbeatMs: 30_000 } });
+    f.registry.binding(f.id)!.agentRuntime.tasks!.changed!([{ id: 'T-ABC123', title: 'Task', status: 'pending', blockedBy: [], notes: 'Details' }]);
+    f.platform.publishTasks.mockImplementationOnce(() => new Promise<void>(() => {}));
+    f.connector.setShared(f.id, true); await f.clock.tick(0); await f.clock.tick(50);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    expect(f.connector.status()).toMatchObject({ state: 'connected', pending: 0 });
+    expect(f.connector.status().message).toContain('Task details could not be published; retrying.');
+    expect(f.platform.close).not.toHaveBeenCalled();
+    f.change('Row during timeout backoff'); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    await f.clock.tick(30_000);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks.mock.calls[1]).toEqual(f.platform.publishTasks.mock.calls[0]);
+    expect(f.connector.status().message).toBeUndefined();
+  });
+
+  it('rejects a task detail construction failure without blocking rows and retries after the snapshot changes', async () => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const tasks = [
+      { id: 'T-ABC123', title: 'First', status: 'pending' as const, blockedBy: [], notes: 'First notes' },
+      { id: 'T-DEF456', title: 'Second', status: 'pending' as const, blockedBy: [], description: 'Second description' },
+    ];
+    runtime.tasks!.changed!(tasks);
+    const build = vi.spyOn(content, 'publishedTaskDetails').mockImplementationOnce(() => { throw new Error('Invalid detail payload'); });
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(build).toHaveBeenCalledTimes(1); expect(f.platform.publishTasks).not.toHaveBeenCalled();
+    expect(f.connector.status()).toMatchObject({ state: 'connected', pending: 0 });
+    expect(f.connector.status().message).toContain(`${f.id}: Task details were rejected by the platform; retrying after the tasks change.`);
+    f.change('Rows still publish'); await f.clock.tick(100);
+    expect(f.platform.publish).toHaveBeenCalledTimes(2); expect(build).toHaveBeenCalledTimes(1);
+    expect(f.platform.publishTasks).not.toHaveBeenCalled(); expect(f.platform.close).not.toHaveBeenCalled();
+    runtime.tasks!.changed!([{ ...tasks[0]!, notes: 'Changed notes' }, tasks[1]!]); await f.clock.tick(0);
+    expect(build).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks).toHaveBeenCalledExactlyOnceWith(f.id, [
+      { id: tasks[0]!.id, notes: 'Changed notes' }, { id: tasks[1]!.id, description: 'Second description' },
+    ]);
+    expect(f.connector.status().message).toBeUndefined(); expect(f.connector.store.session(f.id)?.terminal).toBeUndefined();
+  });
+
+  it('rejects a task detail batching failure without retrying until the snapshot changes', async () => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const task = { id: 'T-ABC123', title: 'Task', status: 'pending' as const, blockedBy: [], notes: 'Details' };
+    runtime.tasks!.changed!([task]);
+    const batches = vi.spyOn(batch, 'taskDetailBatches').mockImplementationOnce(() => { throw new Error('Invalid detail batch'); });
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(batches).toHaveBeenCalledTimes(1); expect(f.platform.publishTasks).not.toHaveBeenCalled();
+    expect(f.connector.status()).toMatchObject({ state: 'connected', pending: 0 });
+    expect(f.connector.status().message).toContain('Task details were rejected by the platform; retrying after the tasks change.');
+    f.change('Row during batch rejection'); await f.clock.tick(1_001);
+    expect(f.platform.publish).toHaveBeenCalledTimes(2); expect(batches).toHaveBeenCalledTimes(1);
+    expect(f.platform.publishTasks).not.toHaveBeenCalled();
+    runtime.tasks!.changed!([{ ...task, title: 'Changed snapshot' }]); await f.clock.tick(0);
+    expect(batches).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks).toHaveBeenCalledExactlyOnceWith(f.id, [{ id: task.id, notes: task.notes }]);
+    expect(f.connector.status().message).toBeUndefined(); expect(f.platform.close).not.toHaveBeenCalled();
+  });
+
+  it('reuses built task details across root row publications until the snapshot changes', async () => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const task = { id: 'T-ABC123', title: 'Task', status: 'pending' as const, blockedBy: [], notes: 'Details' };
+    const build = vi.spyOn(content, 'publishedTaskDetails');
+    runtime.tasks!.changed!([task]); f.connector.setShared(f.id, true); await f.clock.tick(0);
+    const snapshot = f.registry.taskSnapshot(f.id);
+    expect(build).toHaveBeenCalledTimes(1);
+    f.platform.publish.mockClear();
+    for (let index = 0; index < 3; index++) { f.change(`Row ${index}`); await f.clock.tick(0); }
+    expect(f.registry.taskSnapshot(f.id)).toBe(snapshot);
+    expect(f.platform.publish).toHaveBeenCalledTimes(3); expect(build).toHaveBeenCalledTimes(1);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    runtime.tasks!.changed!([{ ...task, notes: 'Changed notes' }]); await f.clock.tick(0);
+    expect(build).toHaveBeenCalledTimes(2); expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    f.connector.setShared(f.id, false); await f.clock.tick(0);
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(build).toHaveBeenCalledTimes(3); expect(f.platform.publishTasks).toHaveBeenCalledTimes(3);
+  });
+
+  it('skips invalid task details without blocking rows and retries all tasks only after details change', async () => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const tasks = [
+      { id: 'T-ABC123', title: 'First', status: 'pending' as const, blockedBy: [], notes: 'First notes', updatedAt: new Date(now).toISOString() },
+      { id: 'T-DEF456', title: 'Second', status: 'pending' as const, blockedBy: [], description: 'Second description' },
+    ];
+    runtime.tasks!.changed!(tasks); f.connector.setShared(f.id, true); await f.clock.tick(0);
+    f.platform.publishTasks.mockClear(); f.platform.publish.mockClear();
+    f.platform.publishTasks.mockRejectedValueOnce(new PlatformError('invalid', 'RPC unavailable'));
+    const changed = [{ ...tasks[0]!, notes: 'Rejected notes', updatedAt: new Date(now + 1).toISOString() }, tasks[1]!];
+    runtime.tasks!.changed!(changed); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledExactlyOnceWith(f.id, [{ id: tasks[0]!.id, notes: 'Rejected notes' }]);
+    expect(f.platform.publish).toHaveBeenCalledTimes(1); expect(f.connector.store.session(f.id)?.terminal).toBeUndefined();
+    expect(f.connector.status()).toMatchObject({ state: 'connected', pending: 0 });
+    expect(f.connector.status().message).toContain(`${f.id}: Task details were rejected by the platform; retrying after the tasks change.`);
+    runtime.tasks!.changed!(changed); f.change('Row still publishes'); await f.clock.tick(100);
+    expect(f.platform.publish).toHaveBeenCalledTimes(2); expect(f.platform.publishTasks).toHaveBeenCalledTimes(1);
+    runtime.tasks!.changed!([{ ...changed[0]!, notes: 'Accepted notes' }, changed[1]!]); await f.clock.tick(0);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(2);
+    expect(f.platform.publishTasks).toHaveBeenLastCalledWith(f.id, [
+      { id: tasks[0]!.id, notes: 'Accepted notes' }, { id: tasks[1]!.id, description: 'Second description' },
+    ]);
+    expect(f.connector.status().message).toBeUndefined();
+  });
+
+  it.each(['session_deleted', 'forbidden'] as const)('terminates task detail publication on %s just like row publication', async kind => {
+    const f = await fixture(); const runtime = f.registry.binding(f.id)!.agentRuntime;
+    const task = { id: 'T-ABC123', title: 'Task', status: 'pending' as const, blockedBy: [], description: 'Details' };
+    runtime.tasks!.changed!([task]); f.platform.publishTasks.mockRejectedValueOnce(new PlatformError(kind, kind));
+    f.connector.setShared(f.id, true); await f.clock.tick(0);
+    expect(f.connector.store.session(f.id)?.terminal).toBe(kind === 'session_deleted' ? 'deleted' : 'forbidden');
+    expect(f.connector.outbox.pendingCount()).toBe(0); expect(f.connector.status().message).toContain(f.id);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1); expect(f.platform.publish).toHaveBeenCalledTimes(1);
+    f.change('After termination'); runtime.tasks!.changed!([{ ...task, notes: 'New notes' }]); await f.clock.tick(100);
+    expect(f.platform.publishTasks).toHaveBeenCalledTimes(1); expect(f.platform.publish).toHaveBeenCalledTimes(1);
   });
 
   it('indexes legacy shared sessions with an acknowledged cursor but no successful-index marker once', async () => {

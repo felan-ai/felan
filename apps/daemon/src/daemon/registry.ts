@@ -152,7 +152,7 @@ export class SessionRegistry {
     const scope = { session: opening.workerSession ?? '', root };
     opening.scope = scope;
     return this.processes.wrap(runtime, scope, { changed: tasks => {
-      this.taskGraphs.set(root, tasks.map(({ id, title, status, blockedBy }) => ({ id, title, status, blockedBy: [...blockedBy] })));
+      this.taskGraphs.set(root, tasks.map(task => ({ ...task, blockedBy: [...task.blockedBy] })));
       for (const row of this.list()) if (row.root === root) {
         this.publish({ v: 1, session: row.id, rev: Math.max(1, this.options.store.sessionMetadata(row.id).revision), change: { type: 'tasks.updated' } });
       }

@@ -1,8 +1,8 @@
 import { createClient, type SupabaseClientOptions } from '@supabase/supabase-js';
 import {
   PUBLICATION_LIMITS, RemoteCommandRowSchema, UUID_V7_PATTERN, parseHostRegistration, parsePublishedEvent,
-  parsePublishedSession, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema,
-  type HostRegistration, type PublishedEvent, type PublishedSession, type RemoteCommand, type RemoteCommandOutcome,
+  parsePublishedSession, parsePublishedTaskDetails, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema,
+  type HostRegistration, type PublishedEvent, type PublishedSession, type PublishedTaskDetail, type PublishedTaskDetails, type RemoteCommand, type RemoteCommandOutcome,
 } from '@felan-ai/session-protocol';
 import { redact } from '../logger.js';
 import { RemoteRealtime, type RealtimeClientPort, type RemoteRealtimeOptions } from './realtime.js';
@@ -183,6 +183,13 @@ export class PlatformClient {
     return result;
   }
 
+  async publishTasks(session: string, tasks: PublishedTaskDetail[]): Promise<void> {
+    let parsed: PublishedTaskDetails;
+    try { parsed = parsePublishedTaskDetails({ session, tasks }); }
+    catch { throw new PlatformError('invalid', 'Invalid task publication payload.'); }
+    await this.#rpc('publish_session_tasks', { p_session: parsed.session, p_tasks: parsed.tasks });
+  }
+
   async claim(): Promise<(ClaimedCommand | InvalidClaimedCommand)[]> {
     const data = await this.#rpc('claim_session_commands');
     if (!Array.isArray(data)) throw new PlatformError('invalid', 'Platform returned an invalid command batch.');
@@ -218,7 +225,7 @@ export class PlatformClient {
     let response;
     try { response = await this.#client.rpc(name, params); }
     catch { throw new PlatformError('retry', 'Platform is temporarily unavailable.'); }
-    if (response.error) throw parsePlatformError(response.error, response.status, name === 'publish_session_events' ? 'publish' : 'other');
+    if (response.error) throw parsePlatformError(response.error, response.status, name === 'publish_session_events' || name === 'publish_session_tasks' ? 'publish' : 'other');
     return response.data;
   }
 }

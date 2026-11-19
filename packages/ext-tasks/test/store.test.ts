@@ -58,7 +58,7 @@ describe('TaskStore', () => {
     second.close();
   });
 
-  it('publishes only the public task snapshot after a successful mutation', async () => {
+  it('publishes full task records without undefined fields after successful mutations', async () => {
     const harness = await runtimeHarness();
     const changed = vi.fn();
     const source = harness.runtime();
@@ -70,11 +70,39 @@ describe('TaskStore', () => {
     const store = new TaskStore(runtime);
     await expect(store.snapshot()).resolves.toMatchObject({ revision: 0, tasks: [] });
     expect(changed).toHaveBeenNthCalledWith(1, []);
-    const created = await store.create({ title: 'Public fields', description: 'private' });
-    expect(changed).toHaveBeenNthCalledWith(2, [{ id: created.task.id, title: 'Public fields', status: 'pending', blockedBy: [] }]);
+    const created = await store.create({
+      title: 'Full task record',
+      description: 'Publish all current task fields',
+      acceptanceCriteria: 'The hook receives details and lifecycle metadata',
+      priority: 0,
+    });
+    expect(changed.mock.calls[1]).toStrictEqual([[created.task]]);
+    const claimed = await store.update({
+      taskId: created.task.id,
+      status: 'in_progress',
+      notes: 'The task is ready for implementation',
+    }, 'root');
+    expect(changed.mock.calls[2]).toStrictEqual([[claimed.task]]);
+    expect(claimed.task).toMatchObject({ ownerSessionId: 'root', claimedAt: expect.any(String) });
+
+    const blocked = await store.update({
+      taskId: created.task.id,
+      status: 'blocked',
+      blockedReason: 'Waiting for a dependency',
+    }, 'root');
+    expect(changed.mock.calls[3]).toStrictEqual([[blocked.task]]);
+    await store.update({ taskId: created.task.id, status: 'pending' }, 'root');
     await store.update({ taskId: created.task.id, status: 'in_progress' }, 'root');
-    expect(changed).toHaveBeenNthCalledWith(3, [{ id: created.task.id, title: 'Public fields', status: 'in_progress', blockedBy: [] }]);
-    expect(JSON.stringify(changed.mock.calls)).not.toContain('private');
+    const completed = await store.update({
+      taskId: created.task.id,
+      status: 'completed',
+      result: 'All task fields reached the hook',
+    }, 'root');
+    expect(changed.mock.lastCall).toStrictEqual([[completed.task]]);
+    expect(completed.task).toMatchObject({ completedAt: expect.any(String) });
+    for (const [tasks] of changed.mock.calls) {
+      for (const task of tasks) expect(Object.values(task)).not.toContain(undefined);
+    }
     store.close();
   });
 

@@ -689,9 +689,167 @@ title; they are not backfilled.
 
 **Source and update:** `ext-tasks` reports the root-shared store's task snapshot through the Agent Runtime task-change hook after successful mutations and when a session loads or resumes. The daemon owns the hook boundary and publishes the resulting root snapshot on every shared row in that session tree. `tasks.updated` is a row-refresh signal only; it is not a published event. Changes republish affected rows with `p_events: []`, without waiting for another session event.
 
-**Meaning and privacy:** An absent `tasks` field means the host does not know the graph and leaves the stored value unchanged. An empty array means the graph has no tasks. Unshared rows never carry the field. Descriptions, acceptance criteria, notes, results, blocked reasons, owners and timestamps are never published. No task edit operation is added to the remote protocol.
+**Meaning and privacy:** An absent `tasks` field means the host does not know the
+graph and leaves the stored value unchanged. An empty array means the graph has
+no tasks. Unshared rows never carry the field. CR 27 adds owners and timestamps
+on the row, and descriptions, acceptance criteria, notes, results and blocked
+reasons through `publish_session_tasks`. No task edit operation is added to the
+remote protocol.
 
 **Platform work:** Add a `tasks jsonb` column to `host_sessions` and update `publish_session_events` to validate the bounded task shape, preserve the column when the key is absent, clear it for unshared sessions, and issue the existing row realtime hint when the value changes. No session-event replay or row-schema bump is needed.
+
+## 27. Task details for shared sessions
+
+**What:** Add short task metadata to each shared row's `tasks` summary and
+publish full task text separately through `publish_session_tasks`.
+
+**Why:** Linear BUG-462 needs descriptions, acceptance criteria, an Activity
+section with notes, results and blocked reasons, and chips for priority, owner
+and lifecycle dates. A single row cannot carry full details. 200 tasks with all
+detail fields at their byte limits need 20.8 million bytes, above the 4 MiB
+`publish_session_events` limit. After each task change, the daemon republishes
+the graph on every shared row in the session tree.
+
+**Proposed change:** `PublishedTaskSchema` keeps `id`, `title`, `status` and
+`blockedBy` and adds these optional fields so older hosts can omit them:
+
+- `priority`: an integer from 0 to 4, with 0 highest and 4 lowest.
+- `ownerSessionId`: an `IdSchema` value for the session that claimed the task,
+  present only while the task is `in_progress`.
+- `createdAt`, `updatedAt`, `claimedAt`, `completedAt`: non-negative safe
+  integers in epoch milliseconds, matching `PublishedProcessSchema.startedAt`
+  and session `lastActivity`. `claimedAt` is present only while `in_progress`;
+  `completedAt` is present only when `completed`.
+
+`ROW_SCHEMA_VERSION` stays 1. The summary still allows at most 256 tasks, titles
+of at most 200 characters and 800 bytes, and at most 32 prerequisites per task.
+
+`PublishedTaskDetailSchema` requires `id` using `IdSchema` and allows these
+optional, nonempty text fields. `PUBLISHED_TASK_TEXT_BYTES` sets their UTF-8
+byte limits, with no character limit. These byte limits are four times the
+`TaskCreate` and `TaskUpdate` tool character limits. UTF-8 bytes give hosts and
+both validators the same unit. TypeBox counts graphemes for character limits,
+while Postgres `char_length` counts code points.
+
+| Field | UTF-8 bytes |
+| --- | --- |
+| `description` | 16,000 |
+| `acceptanceCriteria` | 16,000 |
+| `notes` | 32,000 |
+| `result` | 32,000 |
+| `blockedReason` | 8,000 |
+
+`PublishedTaskDetailsSchema` contains `session`, the root session UUID, and
+`tasks`, an array of 1 to 256 detail records. `parsePublishedTaskDetails`
+rejects duplicate task IDs and requests whose UTF-8 encoding of
+`JSON.stringify({ p_session: session, p_tasks: tasks })` exceeds
+`PUBLICATION_LIMITS.batchBytes`, 4 MiB. The RPC
+`publish_session_tasks(p_session uuid, p_tasks json)` returns nothing. The host
+sends `{ p_session: details.session, p_tasks: details.tasks }`.
+
+Each detail record fully replaces the stored detail for its session and task
+ID. An absent field means no current value, so omitting `blockedReason` clears
+the old blocker. The root row's `tasks` array determines membership and order;
+details for IDs outside it are stale. Child rows carry the same task summary,
+but the platform stores details once under the root. The web finds that root by
+following `parent` up the row chain.
+
+**Meaning and privacy:** Task text uses the same credential and secret-named-key
+redaction as other published content. For shared sessions, this text already
+reaches the platform through published history, in `TaskCreate` and `TaskUpdate`
+`tool_call` arguments and tool result `details`. Withholding it from the row did
+not keep it private.
+
+**Platform work:** The separate platform repository must implement these steps:
+
+1. Add `host_session_tasks`, keyed by `session_id` and `task_id`, with nullable
+   `description`, `acceptance_criteria`, `notes`, `result`, `blocked_reason` and
+   `updated_at` columns. Set `updated_at` to the platform's write time for the
+   detail record, not the task's lifecycle `updatedAt`. Give it team read access
+   like `host_sessions` and cascade deletion with the session row.
+2. Add `publish_session_tasks(p_session uuid, p_tasks json)`. Require the host
+   caller to own the shared, non-tombstoned row, with `PT410 session_deleted`
+   and `PT403 forbidden` errors. Reject `p_session` with `PT400
+   invalid_request` if its row has a `parent`; only root rows carry details.
+   Do not use `PT403` for this case, because hosts terminate a session on
+   `forbidden`. Validate keys, types, 1 to 256 items, unique
+   IDs and a request of at most 4 MiB, with `PT400 invalid_request` and
+   `PT413 limit_exceeded` errors. Validate detail text limits with
+   `octet_length` only, not `char_length`. Upsert each record and replace all
+   detail columns.
+3. Extend `publish_session_events` to accept and store `priority`,
+   `ownerSessionId`, `createdAt`, `updatedAt`, `claimedAt` and `completedAt` in
+   row tasks. It currently rejects every task key besides `id`, `title`,
+   `status` and `blockedBy` with `PT400`. Deploy this platform migration before
+   hosts run the new daemon, or every row publication for a session with tasks
+   fails.
+4. Delete a session's task details when its row publishes with `shared: false`,
+   and prune details for tasks no longer in the row.
+5. Send the existing row realtime hint when details change.
+6. Show the task description, an acceptance criteria heading, an Activity
+   section with notes, results and blocked reasons, and chips for priority,
+   owner and dates in the web viewer.
+
+**Current implementation:** The daemon keeps full task records from the runtime
+hook. It publishes safe priority values and converts valid lifecycle timestamps
+to epoch milliseconds on the row. Hosts replace ill-formed Unicode, including
+lone surrogates, in task titles and task text with U+FFFD before publication.
+Task text passes through `sanitize(PublishedTaskDetailSchema)` for redaction and
+the byte limits above. Hosts cut text that exceeds a byte limit at a code point
+boundary. For text within the tool character limits, this happens only when
+text averages more than four bytes per tool character, such as long runs of ZWJ
+emoji sequences. The host splits detail requests at 256 tasks and 4 MiB.
+
+The connector uploads details only for shared root sessions, after it has
+published and indexed their row under the current host. Children never call the
+RPC. It checks details even when the row summary has not changed, so notes and
+results do not need a row change to upload. It sends only tasks whose sanitized
+details changed, with bounded RPC calls, and records each successful batch only
+while the platform, connection generation and host remain current. An absent
+runtime task snapshot causes no detail upload.
+
+The connector keeps sent details and rejected detail sets only in memory. It
+clears them on disconnect, local session removal and a root row publication
+with `shared: false`. Reconnect or re-share uploads every task's details again;
+the RPC's upsert is idempotent. Detail errors never disconnect the connector or
+stop row publication, and `/remote status` lists them as session issues until
+the next successful detail upload:
+
+- On an `invalid` error or a host-side failure to build the detail payload or
+  its batches, the host skips that detail set until details change or the
+  connector reconnects. A missing RPC counts as `invalid`: PostgREST answers
+  `PGRST202` with HTTP 404. The next attempt sends every task.
+- Retry-class errors, including timeouts and HTTP 408, 429 and 5xx, and
+  authorization errors reported as `revoked` leave the details pending. The
+  connector retries that root with exponential backoff, from about 1 second up
+  to 60 seconds, on a later publish pass. The heartbeat triggers a pass about
+  every 30 seconds, and any session change triggers one too. Each detail call
+  waits at most 15 seconds, so a timeout can delay other publications in that
+  pass once per backoff window.
+- `session_deleted` and `forbidden` terminate that session, as they do for row
+  publication.
+
+Detail records carry no version. A call that timed out on the host can still
+commit on the platform after a newer retry, leaving older text until that task
+changes again.
+
+This adds no change types, outbox rows or persisted state.
+
+Release versions for this change are:
+
+| Package | Previous | New |
+| --- | --- | --- |
+| `@felan-ai/session-protocol` | 0.4.3 | 0.4.4 |
+| `@felan-ai/agent-core` | 0.15.7 | 0.15.8 |
+| `@felan-ai/ext-tasks` | 0.11.1 | 0.11.2 |
+| `@felan-ai/ext-ask-user` | 0.12.1 | 0.12.2 |
+| `@felan-ai/ext-background-bash` | 0.15.1 | 0.15.2 |
+| `@felan-ai/ext-fusion` | 0.4.1 | 0.4.2 |
+| `@felan-ai/ext-prompt-history` | 0.9.3 | 0.9.4 |
+| `@felan-ai/daemon` | 0.7.13 | 0.7.14 |
+| `@felan-ai/felan` | 0.39.8 | 0.39.9 |
+
+Felan pins the daemon at `workspace:0.7.14`.
 
 ## Daemon status for platform change requests
 

@@ -180,6 +180,23 @@ consuming a sequence number. Recording continues; `/remote status` reports the
 persistent per-session count as “N changes could not be published.” No omission
 marker is uploaded, so the web copy may be incomplete.
 
+Shared rows carry the task graph summary with ID, title, status, prerequisites,
+priority, owner and lifecycle times. Only shared root sessions upload task text
+through `publish_session_tasks`. The connector redacts that text like other
+content and applies only the UTF-8 byte limits in
+[CR 27](contract-change-requests-felan.md#27-task-details-for-shared-sessions).
+It replaces ill-formed Unicode in task titles and text with U+FFFD and cuts text
+at a code point boundary when it exceeds a byte limit. Detail errors never
+disconnect the connector or stop row publication, and `/remote status` lists
+them as session issues. On an `invalid` error or a host-side failure to build
+the detail payload, the host skips that detail set until details change or the
+connector reconnects. A missing RPC counts as `invalid`: PostgREST answers
+`PGRST202` with HTTP 404. The next attempt sends every task. Retry-class
+errors, including timeouts and HTTP 408, 429 and 5xx, and authorization errors
+reported as `revoked` leave details pending, and the connector retries them
+with exponential backoff of up to 60 seconds. `session_deleted` and `forbidden`
+terminate that session, as they do for rows.
+
 Live text is redacted and sent only after successful indexing under the current
 host, by private Broadcast in chunks of at most 32 KiB. The connector persists
 `indexedHostId` only after a successful publish, including zero-event publishes,

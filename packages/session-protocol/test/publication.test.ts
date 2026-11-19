@@ -1,9 +1,9 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
-  LIMITS, OriginSchema, PUBLISHED_TOOL_OUTPUT_CHARACTERS, REMOTE_FEATURES, RemoteCommandRowSchema, parseClientEnvelope, parseHostPairingError, parseHostPairingPollRequest, parseHostPairingPollResponse, parseHostPairingStartRequest, parseHostPairingStartResponse,
+  LIMITS, OriginSchema, PUBLICATION_LIMITS, PUBLISHED_TASK_TEXT_BYTES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, ProtocolValidationError, PublishedTaskDetailSchema, REMOTE_FEATURES, RemoteCommandRowSchema, parseClientEnvelope, parseHostPairingError, parseHostPairingPollRequest, parseHostPairingPollResponse, parseHostPairingStartRequest, parseHostPairingStartResponse,
   parseHostRegistration, parseHostTokenClaims, parseHostTokenResponse, parseOperationResult, parsePublishedEvent,
-  parsePublishedSession, parseRealtimeNotification, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema, parseServerEnvelope,
-  type HostTokenClaims, type HostTokenResponse, type OperationParams, type RemoteCommand, type RemoteCommandRow,
+  parsePublishedSession, parsePublishedTaskDetails, parseRealtimeNotification, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema, parseServerEnvelope, utf8Bytes,
+  type HostTokenClaims, type HostTokenResponse, type OperationParams, type PublishedTaskDetail, type PublishedTaskDetails, type RemoteCommand, type RemoteCommandRow,
 } from '../src/index.js';
 import { tool } from './fixtures.js';
 
@@ -55,11 +55,12 @@ describe('published sessions and hosts', () => {
     expect(() => parsePublishedSession({ ...row, processes: [{ ...process, command: 'x'.repeat(1025) }] })).toThrow();
     expect(() => parsePublishedSession({ ...row, processes: Array.from({ length: LIMITS.pageEntries + 1 }, () => process) })).toThrow();
   });
-  it('parses bounded task graphs while omitting private and unknown task fields', () => {
+  it('parses bounded task graphs and omits unknown task fields', () => {
     const row = { schemaVersion: 1, session, directory: 'felan', shared: true, title: 'Fix login', state: 'open', runState: 'idle' };
-    const task = { id: 'T-ABC123', title: 'Review change', status: 'pending', blockedBy: [], description: 'private', ownerSessionId: session, updatedAt: 'today' };
+    const task = { id: 'T-ABC123', title: 'Review change', status: 'pending', blockedBy: [] };
     expect(parsePublishedSession({ ...row, tasks: [] })).toEqual({ ...row, tasks: [] });
-    expect(parsePublishedSession({ ...row, tasks: [task] })).toEqual({ ...row, tasks: [{ id: task.id, title: task.title, status: task.status, blockedBy: [] }] });
+    expect(parsePublishedSession({ ...row, tasks: [task] })).toEqual({ ...row, tasks: [task] });
+    expect(parsePublishedSession({ ...row, tasks: [{ ...task, description: 'Detail text', futureField: true }] }).tasks).toEqual([task]);
     expect(parsePublishedSession({ ...row, tasks: Array.from({ length: 256 }, (_, i) => ({ ...task, id: `T-${String(i).padStart(6, '0')}` })) }).tasks).toHaveLength(256);
     expect(() => parsePublishedSession({ ...row, tasks: Array.from({ length: 257 }, () => task) })).toThrow();
     expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, title: 'é'.repeat(201) }] })).toThrow();
@@ -67,11 +68,75 @@ describe('published sessions and hosts', () => {
     expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, status: 'ready' }] })).toThrow();
     expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, blockedBy: Array.from({ length: 33 }, (_, i) => `T-${String(i).padStart(6, '0')}`) }] })).toThrow();
   });
+  it('accepts optional task priority, owner and lifecycle timestamps', () => {
+    const row = { schemaVersion: 1, session, directory: 'felan', shared: true, title: 'Fix login', state: 'open', runState: 'idle' };
+    const task = { id: 'T-ABC123', title: 'Review change', status: 'in_progress', blockedBy: [], ownerSessionId: session,
+      createdAt: 1_700_000_000_000, updatedAt: 1_700_000_000_001, claimedAt: 1_700_000_000_001 };
+    for (const priority of [0, 1, 2, 3, 4]) {
+      expect(parsePublishedSession({ ...row, tasks: [{ ...task, priority }] }).tasks).toEqual([{ ...task, priority }]);
+    }
+    const { ownerSessionId: _, claimedAt: __, ...completed } = { ...task, status: 'completed', completedAt: 1_700_000_000_002 };
+    expect(parsePublishedSession({ ...row, tasks: [completed] }).tasks).toEqual([completed]);
+    for (const priority of [5, -1, 1.5]) expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, priority }] })).toThrow();
+    expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, ownerSessionId: '' }] })).toThrow();
+  });
+  it.each(['createdAt', 'updatedAt', 'claimedAt', 'completedAt'])('requires task %s to be a safe non-negative integer', field => {
+    const row = { schemaVersion: 1, session, directory: 'felan', shared: true, title: 'Fix login', state: 'open', runState: 'idle' };
+    const task = { id: 'T-ABC123', title: 'Review change', status: 'pending', blockedBy: [] };
+    for (const timestamp of [0, Number.MAX_SAFE_INTEGER]) {
+      expect(parsePublishedSession({ ...row, tasks: [{ ...task, [field]: timestamp }] }).tasks).toEqual([{ ...task, [field]: timestamp }]);
+    }
+    for (const timestamp of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1, 'today']) {
+      expect(() => parsePublishedSession({ ...row, tasks: [{ ...task, [field]: timestamp }] })).toThrow();
+    }
+  });
   it('rejects duplicate host projects', () => {
     const project = { id: 'p1', name: 'felan', path: '/work/felan' };
     const registration = { name: 'MacBook', daemonVersion: '0.29.0', rowSchemaVersion: 1, capabilities: { operations: ['prompt'], interactionKinds: ['confirm'] }, projects: [project] };
     expect(parseHostRegistration(registration)).toEqual(registration);
     expect(() => parseHostRegistration({ ...registration, projects: [project, project] })).toThrow(/Duplicate/);
+  });
+});
+
+describe('published task details', () => {
+  it('accepts full and id-only records and omits unknown fields', () => {
+    const task: PublishedTaskDetail = { id: 'T-ABC123', description: 'Review the change.', acceptanceCriteria: 'The checks pass.',
+      notes: 'Review started.', result: 'Review passed.', blockedReason: 'Awaiting approval.' };
+    const details: PublishedTaskDetails = { session, tasks: [task, { id: 'T-DEF456' }] };
+    expect(parsePublishedTaskDetails(details)).toEqual(details);
+    expect(parsePublishedTaskDetails({ ...details, futureField: true, tasks: [{ ...task, title: 'Review change' }, { id: 'T-DEF456' }] })).toEqual(details);
+  });
+  it('requires a UUID session and between 1 and 256 tasks with unique IDs', () => {
+    const tasks = Array.from({ length: LIMITS.pageEntries }, (_, i) => ({ id: `T-${String(i).padStart(6, '0')}` }));
+    expect(parsePublishedTaskDetails({ session, tasks }).tasks).toEqual(tasks);
+    expect(() => parsePublishedTaskDetails({ session, tasks: [] })).toThrow();
+    expect(() => parsePublishedTaskDetails({ session, tasks: [...tasks, { id: 'T-ABC123' }] })).toThrow();
+    expect(() => parsePublishedTaskDetails({ session, tasks: [tasks[0], { ...tasks[0], notes: 'Changed' }] }))
+      .toThrowError(new ProtocolValidationError('invalid_request', 'Duplicate published task'));
+    expect(() => parsePublishedTaskDetails({ session: 'not-a-uuid', tasks })).toThrow();
+    expect(() => parsePublishedTaskDetails({ session, tasks: [{}] })).toThrow();
+    expect(() => parsePublishedTaskDetails({ session, tasks: [{ id: '' }] })).toThrow();
+  });
+  it.each(Object.entries(PUBLISHED_TASK_TEXT_BYTES))('bounds task %s text by UTF-8 bytes', (field, bytes) => {
+    for (const character of ['x', 'é', '😀', '👨‍👩‍👧']) {
+      const count = Math.floor(bytes / utf8Bytes(character));
+      const task = { id: 'T-ABC123', [field]: character.repeat(count) };
+      expect(parsePublishedTaskDetails({ session, tasks: [task] }).tasks).toEqual([task]);
+      expect(() => parsePublishedTaskDetails({ session, tasks: [{ ...task, [field]: character.repeat(count + 1) }] })).toThrow();
+    }
+    for (const value of ['', null, 1]) {
+      expect(() => parsePublishedTaskDetails({ session, tasks: [{ id: 'T-ABC123', [field]: value }] })).toThrow();
+    }
+  });
+  it('rejects RPC batches over 4 MiB measured in UTF-8 bytes', () => {
+    const task = { id: 'T-ABC123', description: 'x'.repeat(4000), notes: '😀'.repeat(8000) };
+    expect(parseSchema(PublishedTaskDetailSchema, task)).toEqual(task);
+    const tasks = Array.from({ length: 128 }, (_, i) => ({ ...task, id: `T-${String(i).padStart(6, '0')}` }));
+    const request = JSON.stringify({ p_session: session, p_tasks: tasks });
+    expect(request.length).toBeLessThan(PUBLICATION_LIMITS.batchBytes);
+    expect(utf8Bytes(request)).toBeGreaterThan(PUBLICATION_LIMITS.batchBytes);
+    expect(() => parsePublishedTaskDetails({ session, tasks }))
+      .toThrowError(new ProtocolValidationError('invalid_request', 'Published task details exceed batch limit'));
   });
 });
 

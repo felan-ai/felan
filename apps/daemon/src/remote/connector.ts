@@ -14,10 +14,10 @@ import { commandError } from '../daemon/commands.js';
 import { redact } from '../logger.js';
 import { DAEMON_VERSION } from '../version.js';
 import { retryDelay, schedule, systemClock, type RemoteClock, type TimerHandle } from './backoff.js';
-import { publicationBatches } from './batch.js';
+import { publicationBatches, taskDetailBatches } from './batch.js';
 import { RemoteCommandJournal } from './command-journal.js';
 import { RemoteCommandExecutor, type RemoteHostIdentity } from './commands.js';
-import { publishableChange, publishedEvent, publishedSession, type PublishedSessionInput } from './content.js';
+import { publishableChange, publishedEvent, publishedSession, publishedTaskDetails, type PublishedSessionInput } from './content.js';
 import { RemoteOutbox, RemoteOutboxCapacityError, type OutboxItem } from './outbox.js';
 import { PlatformClient, PlatformError } from './platform.js';
 import { sessionShared, setSessionSharing, webCreatedSession, type SharingInput } from './sharing.js';
@@ -34,7 +34,7 @@ const REMOTE_CAPABILITIES: HostCapabilities = {
 export type ConnectorTokenSource = HostTokenProvider & Pick<HostTokenSource, 'stop' | 'invalidate'>;
 export type ConnectorPairing = Pick<HostPairing, 'start' | 'wait' | 'cancel'>;
 type PairingInfo = NonNullable<RemoteStatus['pairing']>;
-export type ConnectorPlatform = Pick<PlatformClient, 'register' | 'heartbeat' | 'publish' | 'claim' | 'complete' | 'close'> & {
+export type ConnectorPlatform = Pick<PlatformClient, 'register' | 'heartbeat' | 'publish' | 'publishTasks' | 'claim' | 'complete' | 'close'> & {
   realtime: Pick<PlatformClient['realtime'], 'subscribeCommands' | 'sendText'>;
 };
 export interface RemoteConnectorOptions {
@@ -114,6 +114,13 @@ export class RemoteConnector {
   private readonly publicationGaps = new Map<string, { lastSeq: number; fastForwarded: boolean }>();
   private readonly rowChanged = new Set<string>();
   private readonly publishedResources = new Map<string, { skills?: string; processes?: string; tasks?: string }>();
+  private readonly publishedTaskDetails = new Map<string, Map<string, string>>();
+  private readonly rejectedTaskDetails = new Map<string, string | ReturnType<SessionRegistry['taskSnapshot']>>();
+  private readonly taskDetailRetries = new Set<string>();
+  private readonly taskDetailRetryAt = new Map<string, { at: number; attempt: number }>();
+  private readonly taskDetailIssues = new Map<string, string>();
+  private readonly taskDetailCache = new Map<string, { tasks: NonNullable<ReturnType<SessionRegistry['taskSnapshot']>>;
+    details: ReturnType<typeof publishedTaskDetails>; full: string; encoded: Map<string, string> }>();
   private outboxErrorsWired = false;
   private readonly blocked = new Map<string, string>();
   private readonly recordingIssues = new Map<string, string>();
@@ -207,6 +214,7 @@ export class RemoteConnector {
     for (const [id, reason] of this.blocked) issues.push(`${id}: ${reason}`);
     for (const [id, reason] of this.recordingIssues) issues.push(`${id}: ${reason}`);
     for (const [id, reason] of this.backfillIssues) issues.push(`${id}: ${reason}`);
+    for (const [id, reason] of this.taskDetailIssues) issues.push(`${id}: ${reason}`);
     let sessions = 0;
     for (const row of this.options.registry.list()) {
       this.rootIds.set(row.id, row.root);
@@ -431,6 +439,7 @@ export class RemoteConnector {
   private markUnshared(session: string): void {
     this.text.discard(session);
     this.buffered.delete(session); this.backfillIssues.delete(session); this.backfillRetryAt.delete(session);
+    this.clearTaskDetails(session);
     const record = this.record(session);
     if (record.terminal) return;
     if (!record.hostId && !record.uploadAttempted && this.outbox.acked(session) === 0) {
@@ -526,7 +535,10 @@ export class RemoteConnector {
         if (!this.current(generation)) { await this.bounded(platform.close()).catch(() => {}); return; }
         for (const id of this.store.sessions()) {
           const record = this.store.session(id)!;
-          if (!record.terminal && record.indexedHostId === host) this.indexed.add(id);
+          if (!record.terminal && record.indexedHostId === host) {
+            this.indexed.add(id);
+            if (this.options.registry.taskSnapshot(id)) this.markRowChanged(id);
+          }
         }
         this.platform = platform;
         this.unsubscribeCommands = platform.realtime.subscribeCommands(host, () => this.wakeClaims(), () => this.wakeClaims());
@@ -733,6 +745,7 @@ export class RemoteConnector {
     this.backfillIssues.delete(session); this.backfillRetryAt.delete(session);
     this.blocked.delete(session); this.recordingBlocked.delete(session); this.recordingIssues.delete(session); this.publicationGaps.delete(session);
     this.rowChanged.delete(session); this.publishedResources.delete(session);
+    this.clearTaskDetails(session);
   }
 
   private markRowChanged(session: string): void {
@@ -765,6 +778,8 @@ export class RemoteConnector {
   }
   private async publish(platform: ConnectorPlatform): Promise<void> {
     try {
+      // Detail failures wait for another wake, not another outbox-draining round.
+      const taskDetailRetries = new Set(this.taskDetailRetries);
       do {
         this.publishAgain = false;
         let pending: string[] = [];
@@ -773,17 +788,17 @@ export class RemoteConnector {
           if (!(error instanceof RemoteStorageError || error instanceof RemoteIntegrityError)) throw error;
           this.recordingFailure('outbox', error);
         }
-        const ids = new Set([...pending, ...this.rowChanged, ...this.store.sessions().filter(id => {
+        const ids = new Set([...pending, ...this.rowChanged, ...taskDetailRetries, ...this.store.sessions().filter(id => {
           const record = this.store.session(id);
           return record?.unsharedPending || record?.sharedPending || record?.backfilled && !this.indexed.has(id) && !record.terminal;
         })]);
+        taskDetailRetries.clear();
         for (const id of ids) {
           if (this.platform !== platform || this.stopped) return;
           const record = this.store.session(id);
           if (this.blocked.has(id) && !record?.unsharedPending || record?.terminal) continue;
           try {
             if (await this.publishSession(platform, id)) this.publishAgain = true;
-            this.rowChanged.delete(id);
           } catch (error) {
             if (error instanceof RemoteStorageError || error instanceof RemoteIntegrityError) { this.recordingFailure(id, error); continue; }
             if (error instanceof PlatformError && error.kind === 'revoked' && error.httpStatus === 403) {
@@ -802,13 +817,15 @@ export class RemoteConnector {
     }
   }
   private async publishSession(platform: ConnectorPlatform, id: string): Promise<boolean> {
-    try { return await this.publishSessionNow(platform, id); }
+    const rowChanged = this.rowChanged.delete(id);
+    try { return await this.publishSessionNow(platform, id, rowChanged); }
     catch (error) {
+      if (rowChanged) this.rowChanged.add(id);
       if (error instanceof RemoteStorageError || error instanceof RemoteIntegrityError || error instanceof RemoteOutboxCapacityError) this.recordingFailure(id, error);
       throw error;
     }
   }
-  private async publishSessionNow(platform: ConnectorPlatform, id: string): Promise<boolean> {
+  private async publishSessionNow(platform: ConnectorPlatform, id: string, rowChanged: boolean): Promise<boolean> {
     const row = this.options.registry.options.store.findSessionMetadata(id);
     if (!row || row.deletedAt !== undefined) {
       this.removeLocalSession(id);
@@ -829,8 +846,12 @@ export class RemoteConnector {
       const tasks = session.tasks ? JSON.stringify(session.tasks) : previous?.tasks;
       const resources = { ...(skills === undefined ? {} : { skills }), ...(processes === undefined ? {} : { processes }), ...(tasks === undefined ? {} : { tasks }) };
       const resourcesChanged = resources.skills !== previous?.skills || resources.processes !== previous?.processes || resources.tasks !== previous?.tasks;
-      if (shared && !pending.length && !record.sharedPending && this.indexed.has(id) && !resourcesChanged) { this.publicationGaps.delete(id); return false; }
-      const rowOnly = this.rowChanged.has(id) && resourcesChanged;
+      if (shared && !pending.length && !record.sharedPending && this.indexed.has(id) && !resourcesChanged) {
+        this.publicationGaps.delete(id);
+        if (id === currentRow.root) await this.publishTaskDetails(platform, id);
+        return false;
+      }
+      const rowOnly = rowChanged && resourcesChanged;
       const batch = publicationBatches(session, rowOnly ? [] : pending.map(entry => publishedEvent(id, entry)))[0]!;
       const host = this.host; const generation = this.generation;
       try {
@@ -849,8 +870,10 @@ export class RemoteConnector {
         if (host && this.host && host !== this.host) { this.terminate(id, 'forbidden'); return false; }
         this.indexed.add(id);
         if (shared) this.publishedResources.set(id, resources);
+        else if (id === currentRow.root) this.clearTaskDetails(id);
         if (batch.length) this.outbox.acknowledge(id, acknowledged);
         this.publicationGaps.delete(id);
+        if (shared && id === currentRow.root) await this.publishTaskDetails(platform, id);
         return true;
       } catch (error) {
         if (this.platform !== platform || this.stopped) return false;
@@ -878,9 +901,63 @@ export class RemoteConnector {
     }
     return false;
   }
+  private async publishTaskDetails(platform: ConnectorPlatform, root: string): Promise<void> {
+    if (!this.isShared(root) || !this.indexed.has(root)) { this.taskDetailRetries.delete(root); return; }
+    if ((this.taskDetailRetryAt.get(root)?.at ?? 0) > this.clock.now()) return;
+    const tasks = this.options.registry.taskSnapshot(root);
+    if (!tasks || this.rejectedTaskDetails.get(root) === tasks) { this.taskDetailRetries.delete(root); return; }
+    const host = this.host; const generation = this.generation;
+    let full: string | undefined;
+    let batches: ReturnType<typeof taskDetailBatches> | undefined;
+    let cached = this.taskDetailCache.get(root);
+    try {
+      if (cached?.tasks !== tasks) {
+        const details = publishedTaskDetails(tasks);
+        cached = { tasks, details, full: JSON.stringify(details), encoded: new Map(details.map(task => [task.id, JSON.stringify(task)])) };
+        this.taskDetailCache.set(root, cached);
+      }
+      full = cached.full;
+      if (this.rejectedTaskDetails.get(root) === full) { this.taskDetailRetries.delete(root); return; }
+      const previous = this.publishedTaskDetails.get(root) ?? new Map<string, string>();
+      const { details, encoded } = cached;
+      const changed = details.filter(task => encoded.get(task.id) !== previous.get(task.id));
+      batches = taskDetailBatches(root, changed);
+      for (const batch of batches) {
+        if (!this.isShared(root)) { this.taskDetailRetries.delete(root); return; }
+        await this.bounded(platform.publishTasks(root, batch));
+        if (this.platform !== platform || !this.current(generation) || host !== this.host || this.taskDetailCache.get(root) !== cached) return;
+        for (const task of batch) previous.set(task.id, encoded.get(task.id)!);
+        this.publishedTaskDetails.set(root, previous); this.rejectedTaskDetails.delete(root);
+      }
+      this.taskDetailRetries.delete(root); this.rejectedTaskDetails.delete(root);
+      this.taskDetailRetryAt.delete(root); this.taskDetailIssues.delete(root);
+    } catch (error) {
+      if (this.platform !== platform || !this.current(generation) || host !== this.host || this.taskDetailCache.get(root) !== cached) return;
+      if (batches === undefined || error instanceof PlatformError && error.kind === 'invalid') {
+        // Older platforms can reject details while still accepting session rows.
+        this.rejectedTaskDetails.set(root, batches === undefined ? tasks : full!);
+        this.publishedTaskDetails.delete(root); this.taskDetailRetries.delete(root); this.taskDetailRetryAt.delete(root);
+        this.taskDetailIssues.set(root, 'Task details were rejected by the platform; retrying after the tasks change.'); return;
+      }
+      if (error instanceof PlatformError && ['session_deleted', 'forbidden'].includes(error.kind)) {
+        this.terminate(root, error.kind === 'session_deleted' ? 'deleted' : 'forbidden');
+        if (!this.currentRootId(root)) this.removeLocalSession(root, true);
+        return;
+      }
+      this.taskDetailRetries.add(root);
+      const attempt = this.taskDetailRetryAt.get(root)?.attempt ?? 0;
+      this.taskDetailRetryAt.set(root, { at: this.clock.now() + retryDelay(attempt), attempt: attempt + 1 });
+      this.taskDetailIssues.set(root, 'Task details could not be published; retrying.');
+    }
+  }
+  private clearTaskDetails(root: string): void {
+    this.publishedTaskDetails.delete(root); this.rejectedTaskDetails.delete(root); this.taskDetailRetries.delete(root);
+    this.taskDetailRetryAt.delete(root); this.taskDetailIssues.delete(root); this.taskDetailCache.delete(root);
+  }
   private terminate(session: string, terminal: 'deleted' | 'forbidden'): void {
     this.store.setSession(session, { ...this.record(session), terminal, unsharedPending: false }); this.outbox.drop(session);
     this.indexed.delete(session); this.publicationGaps.delete(session); this.rowChanged.delete(session); this.publishedResources.delete(session);
+    this.clearTaskDetails(session);
   }
 
   private wakeClaims(): void {
@@ -971,6 +1048,8 @@ export class RemoteConnector {
   }
   private disconnect(): Promise<void> {
     this.text.clear(); this.indexed.clear(); this.publishedResources.clear();
+    this.publishedTaskDetails.clear(); this.rejectedTaskDetails.clear(); this.taskDetailRetries.clear();
+    this.taskDetailRetryAt.clear(); this.taskDetailIssues.clear(); this.taskDetailCache.clear();
     this.unsubscribeCommands(); this.unsubscribeCommands = () => {};
     const platform = this.platform; this.platform = undefined;
     return platform ? platform.close().catch(() => {}) : Promise.resolve();
