@@ -4,15 +4,17 @@ import { estimateHighEffortOutputTokens, reportDynamicThinkingSavings } from '..
 
 const astra = {
   api: 'openai-codex-responses', provider: 'openai-codex', id: 'gpt-6-astra', reasoning: true,
+  compat: { supportsMidConvoEffort: true },
 } as Model<Api>;
 
 describe('dynamic-thinking high-effort estimate', () => {
   it('uses the same explicitly heuristic uplift for supported models and high-to-lower selections', () => {
     const usage = { output: 1_000, reasoning: 400 };
-    const officialModels = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna'].map((id) => ({
+    const officialModels = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna', 'gpt-6.2-sol'].map((id) => ({
       ...astra, provider: 'openai', api: 'openai-responses' as const, id,
     }));
-    for (const model of [astra, { ...astra, id: 'gpt-6-sol' }, { ...astra, id: 'gpt-6-luna' }, ...officialModels, {
+    for (const model of [astra, { ...astra, id: 'gpt-6-sol' }, { ...astra, id: 'gpt-6-luna' },
+      { ...astra, id: 'gpt-6.2-sol' }, ...officialModels, {
       ...astra, api: 'anthropic-messages' as const, provider: 'anthropic', id: 'claude-opus-5-5',
       compat: { supportsMidConvoEffort: true },
     }]) {
@@ -31,7 +33,9 @@ describe('dynamic-thinking high-effort estimate', () => {
     expect(estimateHighEffortOutputTokens(astra, 'medium', 'low', usage)).toBeUndefined();
     expect(estimateHighEffortOutputTokens(astra, 'medium', 'high', usage)).toBeUndefined();
     expect(estimateHighEffortOutputTokens(astra, 'low', 'medium', usage)).toBeUndefined();
-    expect(estimateHighEffortOutputTokens({ ...astra, id: 'gpt-5.6-sol' }, 'high', 'medium', usage))
+    expect(estimateHighEffortOutputTokens({ ...astra, id: 'gpt-6-cyber', compat: {} }, 'high', 'medium', usage))
+      .toBeUndefined();
+    expect(estimateHighEffortOutputTokens({ ...astra, compat: { supportsMidConvoEffort: false } }, 'high', 'medium', usage))
       .toBeUndefined();
     expect(estimateHighEffortOutputTokens({ ...astra, api: 'openai-responses' }, 'high', 'medium', usage))
       .toBeUndefined();

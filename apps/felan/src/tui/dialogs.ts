@@ -139,7 +139,7 @@ export class TuiDialogs implements TuiDialogHost {
 
   dispose(): void { this.closed = true; for (const cancel of [...this.active]) cancel(); }
 
-  private frame(lines: string[], width: number): string[] {
+  private frame(lines: readonly string[], width: number): string[] {
     const border = this.theme().fg('border', '─'.repeat(width));
     return [border, ...lines.map(line => this.theme().fg('text', line)), border];
   }

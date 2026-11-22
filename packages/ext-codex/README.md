@@ -41,11 +41,11 @@ retain `fast: true` (priority processing) or `fast: false` (no tier override).
 With neither configured, no premium tier is requested. `normal` explicitly
 requests the standard `default` tier, even when `fast` is true.
 
-Ultrafast currently applies to the exact `gpt-6-astra` and `gpt-6.1-sol` model
-IDs on eligible OpenAI and Codex Responses routes. Other eligible GPT models
-fall back to fast (`priority`). Pi does not expose service-tier capability
-metadata, so this model rule is maintained in the extension rather than fetched
-from a catalog.
+Ultrafast currently applies to the exact `gpt-6-astra`, `gpt-6.1-sol`,
+`gpt-6.2-astra`, and `gpt-6.2-sol` model IDs on eligible OpenAI and Codex
+Responses routes. Other eligible GPT models fall back to fast (`priority`).
+Pi does not expose service-tier capability metadata, so this model rule is
+maintained in the extension rather than fetched from a catalog.
 Account, plan, workspace and endpoint eligibility still apply; rejected
 requests are not automatically retried at another tier.
 
@@ -72,24 +72,18 @@ Pi includes GPT-6 Astra in its built-in OpenAI and OpenAI Codex catalogs.
 The existing GPT policy enables this extension's structured tools and native
 Responses controls without a custom `models.json` entry.
 
-For GPT-6 Astra, Sol, Luna, and GPT-6.1 Sol using `openai-responses` with an
-OpenAI API key, Pi sends native `configuration_update` items itself and keeps
-request-level `reasoning.effort` fixed at `medium`. For `openai-codex-responses`
-on either eligible provider, this extension keeps the initial request-level
-effort and projects a `configuration_update` before the next user message.
-Older `openai`/`openai-responses` sessions ignore persisted
-`codex-reasoning-update` entries and resume at Pi's fixed `medium` request effort,
-so expect one prompt-cache miss if their original initial effort was not `medium`.
-The extension's updates are retained across session resume and forks; after
-Pi compaction, the new context establishes its own effort baseline. A queued
-user follow-up receives its change before its next response; a tool-only
-continuation does not. Changes without another user turn are recorded when
-the run settles. These extension updates require standard, single-agent
-Responses requests; pro mode, server-side multi-agent mode, Chat Completions,
-other GPT models, and Anthropic are not supported. Automatic server truncation
-and compaction cannot be combined with native updates; Pi's existing local
-compaction remains available. Actual cache hits also depend on provider cache
-eligibility and can be checked using response usage cached-token counts.
+For GPT models that Pi marks with `compat.supportsMidConvoEffort`, such as
+GPT-6.2 Sol, Pi sends native `configuration_update` items itself on
+`openai-responses` with an OpenAI API key and on `openai-codex-responses` on
+either eligible provider. Pi keeps request-level `reasoning.effort` fixed at
+`medium`. This extension leaves these updates to Pi. Dynamic thinking on these
+routes still requires this extension to be enabled.
+
+Sessions from earlier Felan Code versions ignore persisted `codex-reasoning-update` entries and resume
+at Pi's fixed `medium` request effort. They may see one prompt-cache miss if
+their original initial effort was not `medium`. Actual cache hits also depend
+on provider cache eligibility and can be checked using response usage
+cached-token counts.
 
 Reasoning updates do not change provider transport. `forceCachedWebSockets`
 still applies only to `openai-codex` / `openai-codex-responses`; the official

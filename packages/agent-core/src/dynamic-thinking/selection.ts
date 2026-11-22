@@ -9,7 +9,6 @@ import {
 } from '../classifier/index.js';
 import type { FelanThinkingLevel } from '../thinking.js';
 
-const CODEX_MODELS = new Set(['gpt-6-astra', 'gpt-6-sol', 'gpt-6.1-sol', 'gpt-6-luna']);
 const LEVELS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
 
 export function supportsDynamicThinking(
@@ -19,13 +18,15 @@ export function supportsDynamicThinking(
   if (!model?.reasoning) return false;
   if (model.api === 'openai-codex-responses'
     || (model.provider === 'openai' && model.api === 'openai-responses')) {
-    return (model.provider === 'openai-codex' || model.provider === 'openai') && CODEX_MODELS.has(model.id);
+    return (model.provider === 'openai-codex' || model.provider === 'openai') && supportsMidConvoEffort(model);
   }
-  if (model.provider === 'anthropic' && model.api === 'anthropic-messages') {
-    return model.compat !== undefined && 'supportsMidConvoEffort' in model.compat
-      && model.compat.supportsMidConvoEffort === true;
-  }
+  if (model.provider === 'anthropic' && model.api === 'anthropic-messages') return supportsMidConvoEffort(model);
   return supportsNativeThinkingUpdates?.(model) === true;
+}
+
+function supportsMidConvoEffort(model: Model<Api>): boolean {
+  return model.compat !== undefined && 'supportsMidConvoEffort' in model.compat
+    && model.compat.supportsMidConvoEffort === true;
 }
 
 export async function selectDynamicThinkingLevel(

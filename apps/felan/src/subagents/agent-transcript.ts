@@ -322,7 +322,7 @@ export class AgentTranscript implements Component {
     this.detach();
   }
 
-  render(width: number): string[] {
+  render(width: number): readonly string[] {
     return this.#container.render(width);
   }
 
@@ -402,8 +402,8 @@ export class AgentTranscript implements Component {
     this.#container.addChild(this.#cachedRender(width => new Text(this.#theme().fg(color, text), 1, 0).render(width)));
   }
 
-  #cachedRender(render: (width: number) => string[]): Component {
-    let cached: { width: number; expanded: boolean; lines: string[] } | undefined;
+  #cachedRender(render: (width: number) => readonly string[]): Component {
+    let cached: { width: number; expanded: boolean; lines: readonly string[] } | undefined;
     return {
       render: width => {
         if (!cached || cached.width !== width || cached.expanded !== this.#toolsExpanded) {

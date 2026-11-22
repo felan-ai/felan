@@ -11,7 +11,6 @@ import { CODEX_CONFIG, DEFAULT_CODEX_CONFIG } from './config.js';
 import { registerPostAgentRunCompaction } from './compaction.js';
 import { supportsCodexModel, supportsCodexResponsesRequest } from './model-policy.js';
 import { createCodexStreamFunctionWrapper } from './transport.js';
-import { registerReasoningUpdates } from './reasoning-updates.js';
 import { applyCodexRequestOptions } from './request-options.js';
 import { CODEX_TOOL_NAMES, createCodexExecutionTools, registerPatchResultEvent } from './execution-tools.js';
 import { createCodexImageProvider } from './images.js';
@@ -33,7 +32,6 @@ export function createCodexExtension(): ConfiguredFelanExtension {
       }));
     }
     registerPostAgentRunCompaction(pi, config);
-    const reasoningUpdates = registerReasoningUpdates(pi);
     for (const tool of createCodexExecutionTools(pi.runtime)) pi.registerTool(tool);
     registerPatchResultEvent(pi);
 
@@ -61,11 +59,7 @@ export function createCodexExtension(): ConfiguredFelanExtension {
       synchronizeTools(ctx.model);
     });
     pi.on('model_select', (event) => synchronizeTools(event.model));
-    pi.on('context', (event, ctx) => ({ messages: reasoningUpdates.project(event.messages, ctx) }));
-    pi.on('before_provider_request', (event, ctx) => {
-      const configured = applyCodexRequestOptions(event.payload, ctx, config);
-      return reasoningUpdates.rewrite(configured, ctx.model);
-    });
+    pi.on('before_provider_request', (event, ctx) => applyCodexRequestOptions(event.payload, ctx, config));
   };
 
   associateExtensionConfig(codexExtension, CODEX_CONFIG);

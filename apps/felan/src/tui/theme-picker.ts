@@ -76,7 +76,7 @@ export class ThemePicker implements Component {
     };
   }
 
-  render(width: number): string[] { return this.component.render(width); }
+  render(width: number): readonly string[] { return this.component.render(width); }
   invalidate(): void { this.component.invalidate(); }
   handleInput(data: string): void { this.component.handleInput?.(data); this.changed(); }
 }

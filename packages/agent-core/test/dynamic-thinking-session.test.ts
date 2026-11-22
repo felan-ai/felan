@@ -25,6 +25,7 @@ function harness(
 ) {
   const model = {
     id: 'gpt-6-astra', provider: 'openai-codex', api: 'openai-codex-responses', reasoning: true,
+    compat: { supportsMidConvoEffort: true },
     cost: { input: 10, output: 50, cacheRead: 1, cacheWrite: 10 },
     thinkingLevelMap: { off: 'none', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max' },
   } as Model<Api>;

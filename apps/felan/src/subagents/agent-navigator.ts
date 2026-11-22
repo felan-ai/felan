@@ -507,7 +507,7 @@ export class AgentNavigator implements Component, Focusable {
     selected: AgentNavigatorRecord | undefined,
   ): string[] {
     if (height <= 0) return [];
-    let content: string[];
+    let content: readonly string[];
     if (!selected) {
       content = [this.theme.fg('dim', 'No subagents to show. Press Esc/q to close.')];
     } else if (!selected.liveSession && !selected.projection) {

@@ -38,6 +38,10 @@ describe('Codex service priority', () => {
         for (const [id, expectedTier] of [
           ['gpt-6-astra', supportedTier],
           ['gpt-6.1-sol', priority === 'ultrafast' ? supportedTier : fallbackTier],
+          ['gpt-6.2-astra', supportedTier],
+          ['gpt-6.2-sol', supportedTier],
+          ['gpt-6.2-astra-preview', fallbackTier],
+          ['gpt-6.2-sol-preview', fallbackTier],
           ['gpt-5.6-sol', fallbackTier],
           ['gpt-unknown', fallbackTier],
         ] as const) {

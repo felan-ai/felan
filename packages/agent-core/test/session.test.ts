@@ -195,7 +195,7 @@ describe('Agent Core session composition', () => {
       const cwd = join(root, 'workspace');
       await mkdir(cwd, { recursive: true });
       const modelRuntime = await createModelRuntime(join(root, 'agent-dir'));
-      const model = { ...modelRuntime.getModel('openai-codex', 'gpt-5.6-sol')!, id: 'gpt-6-astra' };
+      const model = modelRuntime.getModel('openai-codex', 'gpt-6-astra')!;
       vi.spyOn(modelRuntime, 'hasConfiguredAuth').mockReturnValue(true);
       vi.spyOn(modelRuntime, 'getAuth').mockResolvedValue({ auth: { apiKey: 'test' } });
       const classify = vi.fn(async () => ({
