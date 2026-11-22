@@ -49,6 +49,7 @@ browser and Powerline extensions:
     "backgroundBash": true,
     "codex": true,
     "claudeCode": true,
+    "discretestack": true,
     "rtkOptimizer": true,
     "codebaseMemory": true,
     "markitdown": true,
@@ -133,6 +134,35 @@ Set `LLAMA_BASE_URL` and optionally `LLAMA_API_KEY` instead if you prefer
 environment configuration. Use `/llama` to inspect and manage router models,
 then `/model` to select one for the session. Downloads are explicit actions in
 Pi's `/llama` interface; enabling the integration does not download models.
+
+### DiscreteStack provider
+
+The Felan-managed DiscreteStack provider channel uses the OpenAI chat
+completions API with base URL `https://api.discretestack.eu/provider/v1`.
+Its provider ID is `discretestack`.
+
+Run `/login`, choose DiscreteStack, and paste your API key. Felan saves the key
+in its auth store. Alternatively, set `DISCRETESTACK_API_KEY` in your shell or
+in the [daemon `.env`](#configuration-files). A stored key takes precedence
+over the environment variable.
+
+Prices are in USD per 1 million tokens:
+
+| Model ID | Display name | Underlying model | Input | Cached input | Output |
+| --- | --- | --- | --- | --- | --- |
+| `discretestack/deepseek-v4.1-flash-1017` | DiscreteStack Max | DeepSeek V4.1 Flash | $0.07 | $0.002 | $0.18 |
+| `discretestack/glm-5.3-flash` | DiscreteStack Compact | GLM 5.3 Flash | $0.05 | $0.015 | $0.20 |
+
+Both models support text and image input, tools, and the `off`, `minimal`,
+`low`, `high`, and `max` thinking levels. `minimal` sends no reasoning, the
+same as `off`, because the gateway has no minimal effort. The gateway accepts at most 1,048,576 tokens of
+prompt plus requested output, so Felan uses a 131,072-token output limit and a
+917,504-token context window to compact sessions before they reach it. Under
+heavy load, DiscreteStack may return HTTP 429. Pi handles it with its standard
+retry logic.
+
+The built-in extension is enabled by default. To disable it, set
+`builtinExtensions.discretestack` to `false` in Felan's global `settings.json`.
 
 ### Code mode
 

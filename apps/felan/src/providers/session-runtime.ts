@@ -28,8 +28,9 @@ import { createLocalExecutionServices } from './execution-services.js';
 import { createLocalProcessAdapter } from './process-adapter.js';
 import { COMPACTION_MESSAGE_TYPE, compactionPresentation } from '@felan-ai/ext-session-compaction/view';
 import { claudeCodeWorkerExtension } from '@felan-ai/ext-claude-code';
+import { DISCRETESTACK_PROVIDER, DISCRETESTACK_PROVIDER_ID } from '@felan-ai/ext-discretestack/provider';
 import { openHostUrl, prepareLocalInteractionOpen } from './setup-open.js';
-import { parsePiExtensionSettings } from './global-settings.js';
+import { isBuiltinExtensionEnabled, parsePiExtensionSettings, readDaemonGlobalSettings } from './global-settings.js';
 import { createLocalModelRuntime } from './local-model-runtime.js';
 import { parseApprovalExemptTools } from './tool-policy.js';
 
@@ -60,6 +61,11 @@ export function createLocalSessionRuntime(options: {
     secretStorage: createDaemonSecretStorage(),
     async createHostServices(request) {
       const { agentDir, homeDir, runtime, models, assertCurrent } = request;
+      // An unreadable settings.json must not stop the daemon; sessions also fall back to defaults then.
+      const settings = await readDaemonGlobalSettings(agentDir, assertCurrent).catch(() => { assertCurrent(); return {}; });
+      if (isBuiltinExtensionEnabled(settings, 'discretestack')) {
+        models.registerProvider(DISCRETESTACK_PROVIDER_ID, DISCRETESTACK_PROVIDER);
+      }
       return {
         configuration: new DaemonConfiguration({ agentDir, definitions: request.definitions, assertCurrent }),
         prepareRoot: createRootPreparation({ agentDir, homeDir, broker: request.interactions, assertCurrent }),

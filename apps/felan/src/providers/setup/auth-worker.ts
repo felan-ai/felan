@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { stripVTControlCharacters } from 'node:util';
 import type { ModelRuntime } from '@felan-ai/agent-core';
+import { DISCRETESTACK_PROVIDER, DISCRETESTACK_PROVIDER_ID } from '@felan-ai/ext-discretestack/provider';
 import { JsonLineDecoder, SetupPromptSchema, encodeFrame, parseSchema, type SetupPrompt } from '@felan-ai/session-protocol';
 import { createLocalModelRuntime } from '../local-model-runtime.js';
 import { createDaemonSettingsManager } from '../global-settings.js';
@@ -42,6 +43,7 @@ export async function authenticateProvider(start: Start, io: {
     io.signal.throwIfAborted();
     const models = await (io.createModels ?? createLocalModelRuntime)(start.agentDir);
     io.signal.throwIfAborted();
+    if (start.provider === DISCRETESTACK_PROVIDER_ID) models.registerProvider(DISCRETESTACK_PROVIDER_ID, DISCRETESTACK_PROVIDER);
     const interaction: Parameters<ModelRuntime['login']>[2] = {
       signal: io.signal,
       prompt: async request => {

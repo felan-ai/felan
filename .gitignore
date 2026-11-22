@@ -16,3 +16,4 @@ apps/felan/.pc-*/
 tmp/
 # Local performance artifacts
 perf/results/
+.env

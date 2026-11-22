@@ -32,6 +32,11 @@ providing bounded automatic names for local interactive root sessions. Its
 package-level license and notice are included in
 packages/ext-session-title/LICENSE and NOTICE.
 
+@felan-ai/ext-discretestack is original Felan MIT-licensed extension code
+that provides the DiscreteStack model provider. See
+packages/ext-discretestack/LICENSE and packages/ext-discretestack/NOTICE for
+the package-level license and notice.
+
 @felan-ai/ext-session-compaction provides bounded verified session summaries,
 classifier-selected transcript compaction, and active-lineage recall. Portions
 of src/internal/cache-state.ts and src/expiry.ts adapt pi-cached-compaction

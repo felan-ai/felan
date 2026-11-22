@@ -110,6 +110,7 @@
     "@felan-ai/ext-codex": "workspace:*",
     "@felan-ai/ext-context": "workspace:*",
     "@felan-ai/ext-context-view": "workspace:*",
+    "@felan-ai/ext-discretestack": "workspace:*",
     "@felan-ai/ext-felan-api": "workspace:*",
     "@felan-ai/ext-fusion": "workspace:*",
     "@felan-ai/ext-insights": "workspace:*",

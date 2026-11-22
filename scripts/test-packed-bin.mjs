@@ -109,7 +109,7 @@ try {
   for (const sourcePackage of sourcePackages) validateInstalledPackage(sourcePackage);
   writeFileSync(join(artifacts, 'packed-lock.json'), readFileSync(join(installDir, 'package-lock.json')), { mode: 0o600 });
   assertPackedFelanThemes();
-  assertPackedFelanOutputStyleDependency();
+  assertPackedFelanExtensionDependencies();
   assertPackedFelanAcpPackage();
   assertPackedFelanShrinkwrap();
   assertPinnedPiInstallation();
@@ -240,6 +240,7 @@ try {
       if (!configuredPackages.includes('@felan-ai/ext-model-tools')) throw new Error('Packed daemon omitted model tools');
       if (!configuredPackages.includes('@felan-ai/ext-fusion')) throw new Error('Packed daemon omitted Fusion');
       if (!configuredPackages.includes('@felan-ai/ext-claude-code')) throw new Error('Packed daemon omitted Claude Code');
+      if (!configuredPackages.includes('@felan-ai/ext-discretestack')) throw new Error('Packed daemon omitted DiscreteStack');
       for (const packageName of configuredPackages) {
         const extension = await hostExtensions.importLocalExtension(packageName);
         if (packageName === '@felan-ai/ext-subagents') {
@@ -264,6 +265,8 @@ try {
           throw new Error(packageName + ' has no extension factory');
         }
       }
+      const { DISCRETESTACK_PROVIDER_ID } = await import('@felan-ai/ext-discretestack/provider');
+      if (DISCRETESTACK_PROVIDER_ID !== 'discretestack') throw new Error('Packed DiscreteStack provider has the wrong ID');
       const outputStyle = await import('@felan-ai/ext-output-style');
       let outputStyleHandler;
       outputStyle.createOutputStyleExtension('concise')({
@@ -1290,17 +1293,16 @@ function assertPackedDaemonBoundary() {
   `], cleanEnvironment);
 }
 
-function assertPackedFelanOutputStyleDependency() {
+function assertPackedFelanExtensionDependencies() {
   const felanManifest = JSON.parse(readFileSync(
     join(installDir, 'node_modules', '@felan-ai', 'felan', 'package.json'),
     'utf8',
   ));
-  const outputStyleVersion = sourcePackagesByName.get('@felan-ai/ext-output-style')?.version;
-  if (!outputStyleVersion) throw new Error('Output-style package is missing from the public package list');
-  if (felanManifest.dependencies?.['@felan-ai/ext-output-style'] !== outputStyleVersion) {
-    throw new Error(
-      `Packed TUI output-style dependency is ${felanManifest.dependencies?.['@felan-ai/ext-output-style']}, expected ${outputStyleVersion}`,
-    );
+  for (const name of ['@felan-ai/ext-output-style', '@felan-ai/ext-discretestack']) {
+    const version = sourcePackagesByName.get(name)?.version;
+    if (!version) throw new Error(`${name} is missing from the public package list`);
+    const dependency = felanManifest.dependencies?.[name];
+    if (dependency !== version) throw new Error(`Packed Felan dependency ${name} is ${dependency}, expected ${version}`);
   }
 }
 

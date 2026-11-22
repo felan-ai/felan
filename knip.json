@@ -204,6 +204,17 @@
         "scripts/**/*.mjs!"
       ]
     },
+    "packages/ext-discretestack": {
+      "entry": [
+        "src/index.ts!",
+        "src/provider.ts!",
+        "test/**/*.test.{ts,mts,mjs}"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx,mts,mjs}!",
+        "test/**/*.{ts,tsx,mts,mjs}"
+      ]
+    },
     "packages/ext-felan-api": {
       "entry": [
         "src/extension.ts!",

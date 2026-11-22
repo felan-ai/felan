@@ -32,15 +32,18 @@ it('preserves the supplied host extension order', () => {
   expect(resolveConfiguredExtensionPackages(packages, undefined)).toEqual(packages);
 });
 
-it('includes Claude Code in the packaged host and allows disabling it by its built-in key', async () => {
+it('includes Claude Code and DiscreteStack in the packaged host and allows disabling each by its built-in key', async () => {
   const host = JSON.parse(await readFile(new URL('../../src/host.json', import.meta.url), 'utf8')) as {
     extensions: Array<{ package: string }>;
   };
   const packages = host.extensions.map(extension => extension.package);
   expect(packages).toContain(builtinExtensionPackages.claudeCode);
+  expect(packages).toContain('@felan-ai/ext-discretestack');
   expect(new Set(packages)).toEqual(new Set(Object.values(builtinExtensionPackages)));
   expect(resolveConfiguredExtensionPackages(packages, { claudeCode: false }))
     .toEqual(packages.filter(name => name !== '@felan-ai/ext-claude-code'));
+  expect(resolveConfiguredExtensionPackages(packages, { discretestack: false }))
+    .toEqual(packages.filter(name => name !== '@felan-ai/ext-discretestack'));
 });
 
 it('registers the Claude Code command without installing or registering a provider when the SDK is absent', async () => {

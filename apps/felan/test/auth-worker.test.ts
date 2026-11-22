@@ -1,7 +1,22 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { ModelRuntime } from '@felan-ai/agent-core';
+import { DISCRETESTACK_PROVIDER } from '@felan-ai/ext-discretestack/provider';
 import { authenticateProvider } from '../src/providers/setup/auth-worker.js';
 import type { AuthWorkerOutput } from '../src/providers/setup/auth-wire.js';
+
+it('registers DiscreteStack before API-key login in the auth worker', async () => {
+  const registerProvider = vi.fn();
+  const login = vi.fn(async () => {
+    expect(registerProvider).toHaveBeenCalledExactlyOnceWith('discretestack', DISCRETESTACK_PROVIDER);
+  });
+  const models = { login, registerProvider } as unknown as ModelRuntime;
+  const emit = vi.fn();
+  await authenticateProvider({ kind: 'start', agentDir: '/fixture', provider: 'discretestack', method: 'api_key' }, {
+    signal: new AbortController().signal, createModels: async () => models, emit, prompt: vi.fn(),
+  });
+  expect(login).toHaveBeenCalledExactlyOnceWith('discretestack', 'api_key', expect.any(Object));
+  expect(emit).toHaveBeenCalledExactlyOnceWith({ kind: 'done' });
+});
 
 it('masks API-key prompts and redacts known secrets from provider messages', async () => {
   const events: AuthWorkerOutput[] = []; const secret = 'synthetic-private-api-key';

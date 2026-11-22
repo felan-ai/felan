@@ -78,6 +78,9 @@ felan
 /login
 ```
 
+To configure DiscreteStack, run `/login` and select DiscreteStack, or set
+`DISCRETESTACK_API_KEY`.
+
 Run an initial prompt or continue the most recent session for the current
 directory:
 

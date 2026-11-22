@@ -1,6 +1,9 @@
-import { resolve } from 'node:path';
-import { ModelRuntime, type HostRuntimeService } from '@felan-ai/agent-core';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { HostAgentRuntime, ModelRuntime, type HostRuntimeService } from '@felan-ai/agent-core';
 import { afterEach, expect, it, vi } from 'vitest';
+import { setupDependencies } from '../../src/providers/dependencies.js';
 import { createLocalModelRuntime } from '../../src/providers/local-model-runtime.js';
 import { createLocalSessionRuntime } from '../../src/providers/session-runtime.js';
 
@@ -32,4 +35,59 @@ it('initializes the configured session provider once before startup model discov
   expect(create).toHaveBeenCalledTimes(2);
   await expect(runtime.createModelRuntime('/other')).rejects.toThrow('restart');
   expect(create).toHaveBeenCalledTimes(2);
+});
+
+async function createDiscreteStackHost(agentDir: string, settingsJson?: string) {
+  if (settingsJson !== undefined) await writeFile(join(agentDir, 'settings.json'), settingsJson);
+  for (const dependency of setupDependencies) vi.spyOn(dependency, 'check').mockResolvedValue({ available: false });
+  const runtimeService = { create: (...args: Parameters<HostRuntimeService['create']>) => new HostAgentRuntime(...args) };
+  const local = createLocalSessionRuntime({ runtimeService, initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }) });
+  const models = await local.createModelRuntime(agentDir);
+  const host = await local.createHostServices({ agentDir, homeDir: agentDir, models,
+    runtime: runtimeService.create(agentDir, { agentStorageRoot: agentDir, sessionStorageRoot: agentDir }),
+    definitions: [], interactions: { request: vi.fn() }, refreshModelAvailability: vi.fn(), assertCurrent() {},
+  });
+  return { local, models, host };
+}
+
+it.each([true, false])('gates the DiscreteStack host provider and login catalog when enabled is %s', async enabled => {
+  const agentDir = await mkdtemp(join(tmpdir(), 'felan-model-bootstrap-'));
+  try {
+    const { local, models, host } = await createDiscreteStackHost(agentDir,
+      enabled ? undefined : JSON.stringify({ builtinExtensions: { discretestack: false } }));
+    const provider = (await host.setup.catalog()).providers.find(({ id }) => id === 'discretestack');
+    const login = { kind: 'login', provider: 'discretestack', method: 'api_key' } as const;
+    expect(models.getProviders().some(({ id }) => id === 'discretestack')).toBe(enabled);
+    if (enabled) {
+      expect(provider).toMatchObject({ id: 'discretestack', label: 'DiscreteStack', methods: ['api_key'], apiKeyLogin: true });
+      expect(() => host.setup.validateStart(login)).not.toThrow();
+    } else {
+      expect(provider).toBeUndefined();
+      expect(() => host.setup.validateStart(login)).toThrow();
+    }
+    const sessionModels = await local.createModelRuntime(agentDir);
+    expect(sessionModels.getProviders().some(({ id }) => id === 'discretestack')).toBe(false);
+  } finally { await rm(agentDir, { recursive: true, force: true }); }
+});
+
+it('starts host services with DiscreteStack registered when settings.json is malformed', async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), 'felan-model-bootstrap-'));
+  try {
+    const { models } = await createDiscreteStackHost(agentDir, '{');
+    expect(models.getProviders().some(({ id }) => id === 'discretestack')).toBe(true);
+  } finally { await rm(agentDir, { recursive: true, force: true }); }
+});
+
+it('propagates lost ownership while reading DiscreteStack host settings', async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), 'felan-model-bootstrap-'));
+  try {
+    const runtimeService = { create: (...args: Parameters<HostRuntimeService['create']>) => new HostAgentRuntime(...args) };
+    const local = createLocalSessionRuntime({ runtimeService, initializeProcess: async () => ({ diagnostics: [], assertConfiguration: () => [] }) });
+    const models = await local.createModelRuntime(agentDir);
+    await expect(local.createHostServices({ agentDir, homeDir: agentDir, models,
+      runtime: runtimeService.create(agentDir, { agentStorageRoot: agentDir, sessionStorageRoot: agentDir }),
+      definitions: [], interactions: { request: vi.fn() }, refreshModelAvailability: vi.fn(),
+      assertCurrent() { throw new Error('ownership lost'); },
+    })).rejects.toThrow('ownership lost');
+  } finally { await rm(agentDir, { recursive: true, force: true }); }
 });

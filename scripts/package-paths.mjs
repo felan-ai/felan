@@ -21,6 +21,7 @@ export const packagePaths = [
   'packages/ext-felan-api',
   'packages/ext-codex',
   'packages/ext-claude-code',
+  'packages/ext-discretestack',
   'packages/ext-rtk-optimizer',
   'packages/ext-codebase-memory',
   'packages/ext-powerline',

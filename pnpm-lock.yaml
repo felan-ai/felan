@@ -93,6 +93,9 @@ importers:
       '@felan-ai/ext-context-view':
         specifier: workspace:*
         version: link:../../packages/ext-context-view
+      '@felan-ai/ext-discretestack':
+        specifier: workspace:*
+        version: link:../../packages/ext-discretestack
       '@felan-ai/ext-felan-api':
         specifier: workspace:*
         version: link:../../packages/ext-felan-api
@@ -269,6 +272,12 @@ importers:
         version: link:../agent-core
 
   packages/ext-context-view:
+    devDependencies:
+      '@felan-ai/agent-core':
+        specifier: workspace:*
+        version: link:../agent-core
+
+  packages/ext-discretestack:
     devDependencies:
       '@felan-ai/agent-core':
         specifier: workspace:*
