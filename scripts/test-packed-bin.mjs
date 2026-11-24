@@ -1620,7 +1620,7 @@ function createPackedAcpClient() {
       if (result.code !== 0 || result.signal !== null) {
         throw new Error(`Packed ACP did not exit cleanly: ${JSON.stringify(result)}\n${stderr}`);
       }
-      assertProcessExited(child.pid);
+      await assertProcessExited(child.pid);
     },
     async stop() {
       if (!exit) child.kill('SIGTERM');
@@ -1628,7 +1628,7 @@ function createPackedAcpClient() {
       if (!exit) child.kill('SIGKILL');
       if (!exit) await Promise.race([exited, delay(5_000)]);
       if (!exit) throw new Error(`Packed ACP process did not terminate\n${stderr}`);
-      assertProcessExited(child.pid);
+      await assertProcessExited(child.pid);
     },
   };
 }
@@ -1654,13 +1654,22 @@ async function withTimeout(operation, milliseconds, message) {
   }
 }
 
-function assertProcessExited(pid) {
+// Windows terminates a process asynchronously, so a signal-0 probe keeps finding one the
+// kernel has not released yet. Poll instead of demanding an instant reap, as
+// apps/felan/test/daemon-process-composition.test.ts already does for the same reason.
+async function assertProcessExited(pid, timeoutMs = 15_000) {
   if (pid === undefined) return;
-  try {
-    process.kill(pid, 0);
-  } catch (error) {
-    if (error?.code === 'ESRCH') return;
-    throw error;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error?.code === 'ESRCH') return;
+      throw error;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Packed ACP process ${pid} is still running after ${timeoutMs}ms`);
+    }
+    await delay(50);
   }
-  throw new Error(`Packed ACP process ${pid} is still running`);
 }

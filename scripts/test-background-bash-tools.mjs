@@ -3,6 +3,26 @@ import { readFile, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
+// Windows tears a tree down asynchronously: `taskkill /T /F` returns once it has issued the
+// kills, and a signal-0 probe keeps finding a terminated process until the kernel releases
+// its PID. Poll instead of demanding an instant reap, so a process that genuinely outlives
+// cleanup still fails while a slow teardown does not.
+async function assertExited(pid, timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if (error.code === 'ESRCH') return;
+      throw error;
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`Background Bash smoke process ${pid} survived cleanup for ${timeoutMs}ms`);
+    }
+    await delay(50);
+  }
+}
+
 export async function testBackgroundBashTools(initialRuntime, workspace, reload) {
   let runtime = initialRuntime;
   const extensionErrors = [];
@@ -135,10 +155,9 @@ export async function testBackgroundBashTools(initialRuntime, workspace, reload)
     errors.push(...cleanup.filter((result) => result.status === 'rejected').map((result) => result.reason));
     for (const pid of ownedPids) {
       try {
-        process.kill(pid, 0);
-        errors.push(new Error(`Background Bash smoke process ${pid} survived cleanup`));
+        await assertExited(pid);
       } catch (error) {
-        if (error.code !== 'ESRCH') errors.push(error);
+        errors.push(error);
       }
     }
     await Promise.all([interactivePath, silentPath, pidPath].map((path) => rm(path, { force: true })));
