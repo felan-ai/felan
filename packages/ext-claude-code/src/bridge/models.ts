@@ -28,6 +28,7 @@ function versionRank(id: string): { family: string; tuple: [number, number] } {
 	return { family, tuple: [Number(major) || 0, Number(minor) || 0] };
 }
 
+/** @internal */
 export function buildModels<T extends { id: string; [key: string]: any }>(piAiModels: T[]) {
 	return piAiModels
 		.filter((m) => typeof m.id === "string" && !isDatedAlias(m.id))

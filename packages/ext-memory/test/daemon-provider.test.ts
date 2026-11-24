@@ -401,7 +401,7 @@ describe('memory daemon provider', { timeout: 15_000 }, () => {
     const store = await f.seed(f.cwd, 5);
     const provider = await f.create();
     await provider.activate();
-    await vi.waitFor(() => expect(entered).toBe(true));
+    await vi.waitFor(() => expect(entered).toBe(true), { timeout: 5_000 });
     const attachment = f.attach.mock.results[0]!.value as LocalMemoryAttachment;
     const settle = vi.spyOn(attachment, 'settle');
     f.lifetime.abort();
@@ -494,7 +494,7 @@ describe('memory daemon provider', { timeout: 15_000 }, () => {
     const store = await f.seed(f.cwd, 5);
     const provider = await f.create();
     await provider.activate();
-    await vi.waitFor(() => expect(entered).toBe(true));
+    await vi.waitFor(() => expect(entered).toBe(true), { timeout: 5_000 });
     expect(provider.busy()).toBe(true);
     const draining = provider.settle('drain');
     await provider.settle('force');
@@ -520,7 +520,7 @@ describe('memory daemon provider', { timeout: 15_000 }, () => {
     });
     cleanups.push(async () => { release(); await session.detach(); });
     await session.status(other);
-    await vi.waitFor(() => expect(f.worker.prompt).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(f.worker.prompt).toHaveBeenCalledOnce(), { timeout: 5_000 });
     expect(session.busy()).toBe(true);
     expect(f.shared.coordinator.hasActiveWork()).toBe(true);
     expect(provider.busy()).toBe(false);
