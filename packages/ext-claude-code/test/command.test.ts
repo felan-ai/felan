@@ -107,12 +107,18 @@ describe('/claude-code', () => {
   });
 
   // A non-host runtime can load an SDK its image carries, so status inspects instead of
-  // refusing outright.
+  // refusing outright. Windows is unsupported before that point, so it still refuses
+  // without reading anything.
   it('inspects agent storage on a non-host runtime', async () => {
+    const windows = process.platform === 'win32';
     const h = fixture({ kind: 'docker' });
     await h.run('status');
-    expect(h.notify).toHaveBeenLastCalledWith({ text: expect.stringContaining('/claude-code install'), level: 'warning' });
-    expect(h.storage.readFile).toHaveBeenCalled();
+    expect(h.notify).toHaveBeenLastCalledWith({
+      text: expect.stringContaining(windows ? 'Windows paths are not supported' : '/claude-code install'),
+      level: 'warning',
+    });
+    if (windows) expect(h.storage.readFile).not.toHaveBeenCalled();
+    else expect(h.storage.readFile).toHaveBeenCalled();
   });
 
   it('explains that installation requires the local Felan host when the service is absent', async () => {
