@@ -1,5 +1,4 @@
 import { createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEventStream, type Context, type ImageContent, type Model, type SimpleStreamOptions, type TextContent, type Tool, type UserMessage } from "@felan-ai/agent-core";
-import { builtinProviders } from "@felan-ai/agent-core";
 import type { ExtensionAPI, ExtensionUIContext } from "@felan-ai/agent-core";
 import { claudeAgentSdk } from "../sdk/runtime.js";
 import type { Query, EffortLevel, SDKMessage, SdkModelInfo, SettingSource, Base64ImageSource, ContentBlockParam } from "../sdk/types.js";
@@ -8,7 +7,10 @@ import { appendFileSync, mkdirSync, realpathSync, statSync } from "fs";
 import { dirname, join } from "path";
 import { PROVIDER_ID, messageContentToText, convertPiMessages } from "./convert.js";
 import { debugLogPath, diagLogPath, setBridgeAgentDir } from "./log-paths.js";
-import { applyLongContext, buildModels, claudeCodeModelId, selectOfferedModels, type LongContextSettings } from "./models.js";
+import {
+	ANTHROPIC_MODELS, CLAUDE_CODE_MODELS, applyLongContext, claudeCodeModelId, longContextSettings as resolveLongContextSettings,
+	selectOfferedModels, type LongContextSettings,
+} from "./models.js";
 import { MCP_SERVER_NAME, MCP_TOOL_PREFIX } from "./skills.js";
 import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
@@ -131,8 +133,6 @@ function diagDump(label: string, data: Record<string, unknown>) {
 
 // --- Constants ---
 
-const ANTHROPIC_MODELS = builtinProviders().find((provider) => provider.id === "anthropic")?.getModels() ?? [];
-const MODELS = buildModels([...ANTHROPIC_MODELS]);
 // Felan: on models pi-ai marks for mid-conversation effort, Claude Code applies an effort
 // change inside the conversation (per-turn effort), so the prompt cache survives it.
 const PER_TURN_EFFORT_MODELS = new Set(ANTHROPIC_MODELS
@@ -2647,17 +2647,8 @@ export function activateClaudeCodeBridge(
 	setSessionCwdOverride(options.sessionCwd);
 	providerSettings = options.settings;
 	// We need these settings to know if we're eligible for 1M context on certain models
-	// Validate at the boundary: a non-array here would throw inside every
-	// claudeCodeModelId call and brick the extension at activation.
-	const forceTwoHundredK = Array.isArray(providerSettings.forceTwoHundredK)
-		? providerSettings.forceTwoHundredK.filter((id): id is string => typeof id === "string")
-		: undefined;
-	longContextSettings = {
-		plan: providerSettings.plan ?? "pro",
-		longContextExtraUsage: providerSettings.longContextExtraUsage ?? false,
-		forceTwoHundredK,
-	};
-	const registeredModels = applyLongContext(selectOfferedModels(MODELS, options.supportedModels), longContextSettings);
+	longContextSettings = resolveLongContextSettings(providerSettings);
+	const registeredModels = applyLongContext(selectOfferedModels(CLAUDE_CODE_MODELS, options.supportedModels), longContextSettings);
 	if (registeredModels.length === 0) {
 		console.error("claude-code: none of Claude Code's models are in the Anthropic catalog — update @felan-ai/agent-core");
 	}

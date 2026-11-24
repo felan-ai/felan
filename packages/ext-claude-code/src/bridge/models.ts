@@ -1,3 +1,6 @@
+import { builtinProviders } from "@felan-ai/agent-core";
+import type { ClaudeCodeSettings } from "./config.js";
+
 // Model selection + display-order policy for the model picker. The picker is
 // driven by pi-ai's anthropic catalog: models appear (and disappear) with it,
 // no per-model code here. Extracted from index.ts so tests can import without
@@ -53,6 +56,9 @@ export function buildModels<T extends { id: string; [key: string]: any }>(piAiMo
 		}));
 }
 
+export const ANTHROPIC_MODELS = builtinProviders().find((provider) => provider.id === "anthropic")?.getModels() ?? [];
+export const CLAUDE_CODE_MODELS = buildModels([...ANTHROPIC_MODELS]);
+
 // Felan: Claude Code's model rows use aliases (default, opus), [1m] variants and
 // dated snapshot ids; resolvedModel names the wire id they run. The picker keeps
 // only bare ids, and catalog models Claude Code does not offer for this login are
@@ -73,6 +79,19 @@ export type LongContextSettings = {
 	// forces bare id at 200K without a code change.
 	forceTwoHundredK?: string[];
 };
+
+export function longContextSettings(settings: ClaudeCodeSettings): LongContextSettings {
+	// Validate at the boundary: a non-array here would throw inside every
+	// claudeCodeModelId call and brick the extension at activation.
+	const forceTwoHundredK = Array.isArray(settings.forceTwoHundredK)
+		? settings.forceTwoHundredK.filter((id): id is string => typeof id === "string")
+		: undefined;
+	return {
+		plan: settings.plan ?? "pro",
+		longContextExtraUsage: settings.longContextExtraUsage ?? false,
+		forceTwoHundredK,
+	};
+}
 
 type ClaudeCodeRuntimeModel = {
 	cliModelId: string;
