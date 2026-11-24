@@ -53,6 +53,22 @@ export type PromptCaptureDiagnostic = {
 	matches: { key: string; firstDivergent: number; source?: string }[];
 };
 
+function diagnosticSource(source?: string): string {
+	return source?.slice(0, 64).replace(/[\r\n\v\f\u0085\u2028\u2029]/g, " ").trim() || "an unknown boundary";
+}
+
+function describeClosestMatches(matches: PromptCaptureDiagnostic["matches"], promptLength: number): string {
+	if (matches.length === 0) return "No known captures to compare against.";
+	const sameLength = matches.filter(({ key }) => key.length === promptLength);
+	const sample = matches.slice(0, 3);
+	if (sameLength.length > 0 && !sample.some(({ key }) => key.length === promptLength)) {
+		sample[sample.length - 1] = sameLength[0];
+	}
+	const details = sample.map(({ key, source }) => `${key.length}-char key, last recorded at ${diagnosticSource(source)}`);
+	if (sample.length < matches.length) details.push(`${matches.length - sample.length} more`);
+	return `Closest known match offset ${matches[0].firstDivergent} (${matches.length} tied, ${sameLength.length} same length): ${details.join("; ")}.`;
+}
+
 export class PromptCaptures {
 	private readonly captures = new Map<string, PromptCapture>();
 	/** Invoked with everything that would otherwise be lost when resolution throws,
@@ -102,6 +118,14 @@ export class PromptCaptures {
 		// Mutate an existing node in place so descendants retain a live reference,
 		// then re-insert its key so Map order tracks recency.
 		this.touch(systemPrompt, capture);
+	}
+
+	has(systemPrompt: string): boolean {
+		return this.captures.has(systemPrompt);
+	}
+
+	*sectionNameOrders(): IterableIterator<string[]> {
+		for (const { sections } of this.captures.values()) yield Object.keys(sections ?? {});
 	}
 
 	/** Exact lookup only. Callers serving a query want `resolveOrDerive`. */
@@ -175,6 +199,7 @@ export class PromptCaptures {
 		if (embedded.length === 0) {
 			const matches = this.closestKnown(systemPrompt);
 			this.onDiagnose({ systemPrompt, matches });
+			const closest = describeClosestMatches(matches, systemPrompt.length);
 			// Felan: a truncated capture omits extension additions present at capture time;
 			// fail this turn rather than silently lose instructions. Later turns may resolve.
 			const truncated = matches.find(
@@ -183,15 +208,15 @@ export class PromptCaptures {
 			if (truncated) {
 				throw new Error(
 					`prompt-capture: this ${systemPrompt.length}-char prompt is the ${truncated.key.length}-char capture recorded at `
-					+ `${truncated.source ?? "an unknown boundary"} with its final ${truncated.key.length - systemPrompt.length} chars missing. `
+					+ `${diagnosticSource(truncated.source)} with its final ${truncated.key.length - systemPrompt.length} chars missing. `
+					+ `${closest} `
 					+ `The prompt lacks extension additions present at capture time. The turn fails; later turns may resolve.`,
 				);
 			}
 			// Felan: npm installs ship the README, not the repository's user guide.
 			throw new Error(
 				`prompt-capture: no capture for this ${systemPrompt.length}-char system prompt, and it embeds none of the ${this.captures.size} known. `
-				+ `Closest known match diverges at offset ${matches[0]?.firstDivergent ?? "?"} `
-				+ `(${matches.length ? matches[0].key.length : 0}-char key${matches[0]?.source ? `, last recorded at ${matches[0].source}` : ""}). `
+				+ `${closest} `
 				+ `Claude Code would receive none of this turn's context files, skills or custom instructions. `
 				+ `When the divergence sits at a section's opening tag, the capture and this prompt disagree about that section — `
 				+ `pi's mcp_servers since pi 0.99.2, or one an extension added. `

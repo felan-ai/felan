@@ -112,6 +112,29 @@ describe("PromptCaptures", () => {
 		assert.equal(captures.resolveOrDerive(undefined), undefined);
 	});
 
+	it("reports tied closest keys and includes a same-length key beyond the sample limit", () => {
+		const captures = new PromptCaptures();
+		const prefix = "Shared prefix: ";
+		const prompt = `${prefix}query`;
+		captures.record(`${prefix}one`, capture(), "before_agent_start");
+		captures.record(`${prefix}two`, capture(), `agent_start\n${"x".repeat(1000)}`);
+		for (const suffix of ["a", "b", "c", "d"]) {
+			captures.record(`${prefix}${suffix}`, capture());
+		}
+		captures.record(`${prefix}equal`, capture(), "turn_start");
+
+		assert.throws(() => captures.resolveOrDerive(prompt), (error) => {
+			assert.match(error.message, new RegExp(`offset ${prefix.length}`));
+			assert.match(error.message, /7 tied.*1 same length/);
+			assert.match(error.message, new RegExp(`${prefix.length + 3}-char key, last recorded at before_agent_start`));
+			assert.match(error.message, new RegExp(`${prefix.length + 3}-char key, last recorded at agent_start`));
+			assert.match(error.message, new RegExp(`${prompt.length}-char key, last recorded at turn_start`));
+			assert.match(error.message, /4 more/);
+			assert.doesNotMatch(error.message, /[\r\n]|x{65}/);
+			return true;
+		});
+	});
+
 	it("reports missing extension additions when a prompt is a recorded key with its tail missing", () => {
 		const captures = new PromptCaptures();
 		const key = `${PARENT_KEY}\n\n<skills>extension additions</skills>`;

@@ -17,14 +17,10 @@ import {
 	type Context,
 	type SystemMessage,
 } from "@felan-ai/agent-core";
+import { sharedPromptCaptures } from "./prompt-capture.js";
 
 /** pi's canonical built-in section order. A name absent from the table is a custom
- *  section, which the builder renders after every built-in; see stableRanked.
- *  Known limitation: customs keep their replayed relative order here, while the builder
- *  takes theirs from `systemPromptOptions.sections`. The two agree unless a custom moves
- *  without its content changing — pi's section diff then emits nothing for it, the replay
- *  keeps the stale position, and the exact-key capture lookup throws on that legitimate
- *  turn. */
+ *  section, which the builder renders after every built-in. */
 const SECTION_RANK = new Map<string, number>([
 	["preamble", 0], ["tools", 1], ["rules", 2], ["docs", 3], ["addendum", 4],
 	["project_context", 5], ["skills", 6], ["cwd", 7],
@@ -56,12 +52,31 @@ function stableRanked(sections: Map<string, string>, ranks: Map<string, number>)
 /** Render replayed system state in the same section order as pi's prompt builder. */
 function canonicalSystemPrompt(message: SystemMessage | undefined): string | undefined {
 	if (!message) return undefined;
-	const sections = new Map<string, string>(
+	const sections = stableRanked(new Map<string, string>(
 		Object.entries(message.sections ?? {}).filter((entry): entry is [string, string] => entry[1] !== null),
-	);
-	const parts = [contentText(message.content), ...stableRanked(sections, SECTION_RANK).values()]
+	), SECTION_RANK);
+	const parts = [contentText(message.content), ...sections.values()]
 		.filter((part) => part.length > 0);
-	return parts.length > 0 ? parts.join("\n\n") : undefined;
+	if (parts.length === 0) return undefined;
+	const systemPrompt = parts.join("\n\n");
+	const captures = sharedPromptCaptures();
+	if (captures.has(systemPrompt) || captures.size === 0) return systemPrompt;
+
+	// Pi's section diff omits order-only changes, so replay can retain a stale custom order.
+	const custom = new Map([...sections].filter(([name, value]) => !SECTION_RANK.has(name) && value.length > 0));
+	if (custom.size < 2) return systemPrompt;
+	const baseParts = parts.slice(0, -custom.size);
+	const tried = new Set([JSON.stringify([...custom.keys()])]);
+	for (const order of captures.sectionNameOrders()) {
+		const names = order.filter((name) => custom.has(name));
+		if (names.length !== custom.size) continue;
+		const orderKey = JSON.stringify(names);
+		if (tried.has(orderKey)) continue;
+		tried.add(orderKey);
+		const candidate = [...baseParts, ...names.map((name) => custom.get(name))].join("\n\n");
+		if (captures.has(candidate)) return candidate;
+	}
+	return systemPrompt;
 }
 
 /**

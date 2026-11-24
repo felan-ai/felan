@@ -5,17 +5,15 @@
 // project_context, skills, cwd, then customs). The transcript replays section patches
 // in Map order, where a deleted-then-re-added section (skills vanishes while `read` and
 // `bash` are both disabled, then returns) or a mid-session first appearance (skills
-// becomes loadable) lands at the tail instead of its canonical slot. Re-emitting in
-// canonical order keeps the replayed prompt byte-identical to the recorded key, so the
-// exact-match lookup never spuriously throws. A name pi does not rank — an extension's
-// custom section such as `mcp_servers`, or a future pi built-in — sorts after `cwd`, where
-// pi's builder puts every custom section.
+// becomes loadable) lands at the tail instead of its canonical slot. A name pi does not
+// rank, such as `mcp_servers`, sorts after `cwd`. A change to custom-section order alone
+// leaves no replay patch, so the recorded section order can recover the exact key.
 import { describe, it } from "vitest";
 import assert from "node:assert/strict";
 
 import { __test } from "../../src/bridge/index.ts";
 
-const { toBridgeContext } = __test;
+const { promptCaptures, toBridgeContext } = __test;
 
 function systemMessage(overrides) {
 	return { role: "system", content: "", timestamp: 0, ...overrides };
@@ -98,6 +96,45 @@ describe("toBridgeContext section replay order", () => {
 			userMessage("go"),
 		];
 		assert.equal(replayedSystemPrompt(messages), ["P", "T", "/w", "X"].join("\n\n"));
+	});
+
+	it("uses a recorded custom order to recover the exact capture key", () => {
+		const content = "Base instructions.";
+		const preamble = "Preamble";
+		const cwd = "/transposed";
+		const mcp = "<mcp_servers>Connected servers</mcp_servers>";
+		const style = "<output_style>Keep replies short.</output_style>";
+		const recorded = [content, preamble, cwd, mcp, style].join("\n\n");
+		promptCaptures.record(recorded, {
+			contextFiles: [], skills: [], sections: { mcp_servers: "Connected servers", output_style: "Keep replies short." },
+		}, "turn_start");
+		const messages = [
+			systemMessage({ content, sections: { cwd, preamble, output_style: style, mcp_servers: mcp } }),
+			userMessage("go"),
+		];
+
+		const systemPrompt = replayedSystemPrompt(messages);
+		assert.equal(systemPrompt, recorded);
+		assert.equal(promptCaptures.resolveOrDerive(systemPrompt).source, "turn_start");
+	});
+
+	it("leaves a changed custom section unmatched even when its length is unchanged", () => {
+		const cwd = "/unmatched";
+		const mcp = "<mcp_servers>Available servers</mcp_servers>";
+		const style = "<output_style>Use terse replies.</output_style>";
+		const recorded = [cwd, mcp, style].join("\n\n");
+		promptCaptures.record(recorded, {
+			contextFiles: [], skills: [], sections: { mcp_servers: "Available servers", output_style: "Use terse replies." },
+		}, "turn_start");
+		const changedStyle = style.replace("terse", "plain");
+		const messages = [
+			systemMessage({ sections: { cwd, output_style: changedStyle, mcp_servers: mcp } }),
+			userMessage("go"),
+		];
+
+		const systemPrompt = replayedSystemPrompt(messages);
+		assert.equal(systemPrompt, [cwd, changedStyle, mcp].join("\n\n"));
+		assert.throws(() => promptCaptures.resolveOrDerive(systemPrompt), /no capture for this .* system prompt/);
 	});
 
 	it("renders the canonical head alone unchanged (fresh-session shape)", () => {
