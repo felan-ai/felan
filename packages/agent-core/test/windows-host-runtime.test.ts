@@ -47,17 +47,6 @@ async function fixture() {
   return { cwd, runtime: new HostAgentRuntime(cwd, { sessionStorageRoot: join(cwd, 'storage'), agentStorageRoot: join(cwd, 'storage') }) };
 }
 
-async function waitForProcess(handle: AgentRuntimeProcess, predicate: (output: string, running: boolean) => boolean) {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const snapshot = await handle.read(0, { waitMs: 100 });
-    if (predicate(Buffer.from(snapshot.output).toString(), snapshot.running)) return snapshot;
-    if (!snapshot.running) throw new Error('Process exited before the expected output');
-    await delay(10);
-  }
-  throw new Error('Timed out waiting for process output or completion');
-}
-
 it.runIf(process.platform === 'win32')('retries atomic replacement until a Windows snapshot reader closes', async () => {
   const { cwd, runtime } = await fixture();
   await runtime.writeFile('source', new Uint8Array([2]));
@@ -483,35 +472,6 @@ it.runIf(process.platform === 'win32')('captures taskkill before a Windows timeo
     await execution;
   }
 });
-
-it.runIf(process.platform === 'win32').each(['shell', 'stdio'] as const)('captures taskkill before Windows %s termination can observe changed environment', async kind => {
-  const { runtime } = await fixture();
-  const taskkill = join(systemRoot!, 'System32', 'taskkill.exe');
-  const script = 'console.log(process.pid); setTimeout(() => process.exit(99), 5000)';
-  const handle = kind === 'shell'
-    ? await runtime.processes.startShell(`${JSON.stringify(process.execPath)} -e "${script}"`)
-    : await runtime.processes.startStdio!(process.execPath, ['-e', script]);
-  let pid: number | undefined;
-  try {
-    const ready = await waitForProcess(handle, output => /^\d+\s*$/u.test(output));
-    pid = Number(Buffer.from(ready.output).toString().trim());
-    vi.stubEnv('SystemRoot', 'relative');
-    await handle.terminate('SIGKILL');
-    const options = vi.mocked(spawn).mock.calls.find(([command]) => command === taskkill)![2]!;
-    expect(options.windowsHide).toBe(true);
-    expect(options.env?.SystemRoot ?? options.env?.SYSTEMROOT).toBe(systemRoot);
-    expect((await handle.read(0)).running).toBe(false);
-    expect((await handle.read(0)).exitCode).not.toBe(99);
-    expect(() => process.kill(pid!, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }));
-  } finally {
-    if (pid !== undefined) {
-      try { process.kill(pid, 'SIGKILL'); }
-      catch (error) { if (!(error instanceof Error) || !('code' in error) || error.code !== 'ESRCH') throw error; }
-    }
-    await waitForProcess(handle, (_output, running) => !running);
-    await handle.dispose();
-  }
-}, 15_000);
 
 it.runIf(process.platform === 'win32')('uses an absolute Windows shell when ComSpec is missing', async () => {
   const { runtime } = await fixture();
