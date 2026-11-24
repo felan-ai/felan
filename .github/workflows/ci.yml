@@ -75,17 +75,6 @@ jobs:
       - name: Configure Windows script shell
         if: runner.os == 'Windows'
         run: pnpm config set script-shell 'C:\Program Files\Git\bin\bash.exe' --location project
-      # The daemon refuses a packaged host.json that an account other than the owner can
-      # write, because that file names the providers it loads. A production install owns it
-      # under the npm prefix, while a hosted runner's checkout can inherit a permissive ACE
-      # from the drive, which fails on some runners and not others.
-      - name: Restrict the packaged host.json ACL
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-          icacls apps\felan\src\host.json /inheritance:r /grant:r "${account}:(R,W)"
-          icacls apps\felan\src\host.json
       - run: pnpm install --frozen-lockfile
       - run: sudo apt-get update && sudo apt-get install -y ripgrep
         if: runner.os == 'Linux'
@@ -95,6 +84,21 @@ jobs:
       - run: pnpm dead-code
         if: matrix.name == 'packed install'
       - run: pnpm build
+      # The daemon refuses a packaged host.json that an account other than the owner can
+      # write, because that file names the providers it loads. A production install owns it
+      # under the npm prefix, while a hosted runner's checkout can inherit a permissive ACE
+      # from the drive, which fails on some runners and not others. The build copies the file
+      # into dist, where the copy inherits that directory's ACL, so this runs after the build.
+      - name: Restrict the packaged host.json ACL
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+          foreach ($file in 'apps\felan\src\host.json', 'apps\felan\dist\host.json') {
+            icacls $file /inheritance:r /grant:r "${account}:(R,W)"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            icacls $file
+          }
       - run: ${{ matrix.run }}
 
   # Branch protection requires a single check named verify.
