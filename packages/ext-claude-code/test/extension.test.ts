@@ -21,6 +21,7 @@ import extension, {
   setClaudeAgentSdk,
 } from '../src/index.js';
 import { __test as bridgeTest } from '../src/bridge/index.js';
+import { sessionCwdFor, setSessionCwdOverride } from '../src/bridge/session-cwd.js';
 import packageLock from '../src/managed/agent-sdk-package-lock.json' with { type: 'json' };
 
 type Command = Parameters<FelanExtensionAPI['registerCommand']>[1];
@@ -49,6 +50,7 @@ const fakeEntrySource = fakeEntryWithModels(
 afterEach(async () => {
   for (const shutdown of shutdowns.splice(0)) await shutdown();
   bridgeTest.resetSupportedModels();
+  setSessionCwdOverride(undefined);
   setClaudeAgentSdk(undefined);
   vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
@@ -182,16 +184,40 @@ describe('Claude Code configuration', () => {
 });
 
 describe('Claude Code extension activation', () => {
-  it('registers only the command on a non-host runtime', async () => {
+  it('registers only the command when a non-host runtime has no installed SDK', async () => {
     const h = await fixture('docker');
     expect([...h.commands.keys()]).toEqual(['claude-code']);
     expect(h.providers.size).toBe(0);
     expect(h.handlers.size).toBe(0);
-    expect(h.runtime.storage).not.toHaveBeenCalled();
+    expect(h.logger.warn).toHaveBeenCalledWith(
+      { reason: expect.stringContaining(process.platform === 'win32' ? 'Windows paths are not supported' : '/claude-code install') },
+      expect.stringContaining('not registered'),
+    );
+    expect(h.logger.error).not.toHaveBeenCalled();
+    expect(h.install).not.toHaveBeenCalled();
+    expect(h.runtime.exec).not.toHaveBeenCalled();
+    expect(h.storage.writeFile).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('runs Claude Code in a local directory when the workspace is not on this filesystem', async () => {
+    const h = await fixture('daytona', fakeEntrySource);
+    expect(h.providers.has('claude-code')).toBe(true);
+    expect(h.storage.mkdir).toHaveBeenCalledWith('claude-code/workspace', { recursive: true });
+    expect(sessionCwdFor('unknown-session')).toBe(join(h.storage.root, 'claude-code', 'workspace'));
     expect(h.logger.warn).not.toHaveBeenCalled();
     expect(h.logger.error).not.toHaveBeenCalled();
     expect(h.install).not.toHaveBeenCalled();
     expect(h.runtime.exec).not.toHaveBeenCalled();
+  });
+
+  it.skipIf(process.platform === 'win32')('keeps the session workspace as the Claude Code directory on a host runtime', async () => {
+    const h = await fixture('host', fakeEntrySource);
+    expect(h.providers.has('claude-code')).toBe(true);
+    expect(h.storage.mkdir).not.toHaveBeenCalled();
+    for (const handler of h.handlers.get('session_start') ?? []) {
+      await handler({ reason: 'new' }, { sessionManager: { getSessionId: () => 'session-1' }, cwd: '/repo', ui: {} });
+    }
+    expect(sessionCwdFor('session-1')).toBe('/repo');
   });
 
   it('logs a missing SDK without registering a provider or installing anything', async () => {
@@ -215,7 +241,7 @@ describe('Claude Code extension activation', () => {
     expect(h.providers.size).toBe(0);
     expect(h.handlers.size).toBe(0);
     expect(h.logger.error).toHaveBeenCalledWith(
-      { error: expect.stringContaining('missing query export') },
+      { error: expect.stringContaining('missing query export'), runtime: 'host' },
       expect.stringContaining('/claude-code install'),
     );
     expect(h.install).not.toHaveBeenCalled();

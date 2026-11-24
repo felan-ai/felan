@@ -9,10 +9,14 @@ No Claude Code companion modification is required.
 
 ## Requirements and setup
 
-- A macOS or Linux Felan host. Non-host runtimes and Windows are not supported.
+- A macOS or Linux process running Felan. Windows is not supported.
 - `npm` on the host's `PATH` for the managed installation.
 - Claude Code installed and signed in on that machine with a compatible Claude
   plan. Run `claude`, then `/login`, before using this provider.
+
+The SDK is loaded with an in-process import and spawns Claude Code as a child of
+the process running Felan, so both must be on that process's own filesystem.
+See [Non-host runtimes](#non-host-runtimes) for what that means away from a host.
 
 In Felan:
 
@@ -56,6 +60,29 @@ the host's platform and libc-matched binary, before being moved into place.
 A valid installation is never removed or replaced; reinstalling it is a no-op.
 npm registry and proxy configuration still applies, but integrity is enforced.
 See [Runtime dependencies](../../docs/reference/runtime-dependencies.md#claude-code-managed-runtime).
+
+## Non-host runtimes
+
+On a `docker` or `daytona` runtime the provider loads an SDK that the runtime
+image already carries; `/claude-code install` is refused there, because the
+managed installation writes to agent storage but runs `npm` through the runtime,
+and those are not always the same filesystem. Preinstall version **0.3.322**
+under `<agent-storage>/claude-code/agent-sdk-0.3.322` in the image instead.
+
+The session workspace on those runtimes is usually not on the filesystem of the
+process running Felan, so Claude Code cannot start in the pi session's cwd. It
+runs in `<agent-storage>/claude-code/workspace` instead. Nothing is lost: the
+provider path gives Claude Code no tools of its own and exposes Felan's tools
+through the in-process MCP server, so Claude never reads the workspace itself.
+Felan's own tools keep operating on the real workspace through the runtime.
+
+Authentication still comes from the environment of the process that spawns
+Claude Code, so a deployment that cannot run an interactive `claude /login`
+supplies `CLAUDE_CODE_OAUTH_TOKEN` from `claude setup-token`, or an API key with
+`inheritAnthropicEnvironment`. Keep that environment scoped to one tenant: these
+variables and the Claude Code configuration directory are per process, not per
+session. Activation reads Claude Code's model list before registering the
+provider, so an unauthenticated runtime logs the failure and registers nothing.
 
 ## Models
 

@@ -5,6 +5,7 @@
 // only sees its own session while provider calls can enter another loaded instance.
 const SESSION_CWDS_KEY = Symbol.for("claude-bridge:sessionCwds");
 const SUMMARY_SESSIONS_KEY = Symbol.for("claude-bridge:summarySessions");
+const CWD_OVERRIDE_KEY = Symbol.for("claude-bridge:sessionCwdOverride");
 
 function summarySessions(): WeakMap<AbortSignal, string> {
 	const g = globalThis as Record<symbol, unknown>;
@@ -18,6 +19,18 @@ export function rememberSummarySession(signal: AbortSignal, sessionId: string): 
 
 export function summarySessionFor(signal: AbortSignal | undefined): string | undefined {
 	return signal ? summarySessions().get(signal) : undefined;
+}
+
+/** Felan: on a runtime whose workspace is not on this process's filesystem, every session
+ *  runs Claude Code in one local directory instead of a pi cwd the child cannot enter.
+ *  Applied when the cwd is read, so a session recorded by another module instance — or a
+ *  summary call that never saw session_start — cannot fall back to the workspace path. */
+export function setSessionCwdOverride(cwd: string | undefined): void {
+	(globalThis as Record<symbol, unknown>)[CWD_OVERRIDE_KEY] = cwd;
+}
+
+function sessionCwdOverride(): string | undefined {
+	return (globalThis as Record<symbol, unknown>)[CWD_OVERRIDE_KEY] as string | undefined;
 }
 
 function store(): Map<string, string> {
@@ -34,5 +47,5 @@ export function forgetSessionCwd(sessionId: string): void {
 }
 
 export function sessionCwdFor(sessionId: string | null | undefined): string {
-	return (sessionId ? store().get(sessionId) : undefined) ?? process.cwd();
+	return sessionCwdOverride() ?? (sessionId ? store().get(sessionId) : undefined) ?? process.cwd();
 }

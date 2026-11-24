@@ -24,7 +24,7 @@ import {
 import { collectCarriedAttachments, placeCarriedAttachments, type CarriedAttachment } from "./attachments.js";
 import { createToolServer } from "./mcp-server.js";
 import { nonSystemMessages, toBridgeContext } from "./transcript.js";
-import { forgetSessionCwd, rememberSessionCwd, rememberSummarySession, sessionCwdFor, summarySessionFor } from "./session-cwd.js";
+import { forgetSessionCwd, rememberSessionCwd, rememberSummarySession, setSessionCwdOverride, sessionCwdFor, summarySessionFor } from "./session-cwd.js";
 import { updateUsage, type SdkUsage } from "./usage.js";
 import { rateLimitResponse } from "./rate-limit.js";
 
@@ -2633,9 +2633,18 @@ async function probeSupportedModels(settings: ClaudeCodeSettings): Promise<SdkMo
 // Felan: accept the host extension API without requiring unrelated CLI flag APIs.
 export function activateClaudeCodeBridge(
 	pi: Pick<ExtensionAPI, "on" | "registerProvider">,
-	options: { settings: ClaudeCodeSettings; agentDir: string; supportedModels: readonly SdkModelInfo[] },
+	options: {
+		settings: ClaudeCodeSettings;
+		agentDir: string;
+		supportedModels: readonly SdkModelInfo[];
+		/** Felan: directory Claude Code runs in when the session workspace is not on this
+		 *  process's filesystem. Claude Code gets no tools here, so it never reads the
+		 *  workspace; the pi session cwd would simply not exist for the child. */
+		sessionCwd?: string;
+	},
 ): void {
 	setBridgeAgentDir(options.agentDir);
+	setSessionCwdOverride(options.sessionCwd);
 	providerSettings = options.settings;
 	// We need these settings to know if we're eligible for 1M context on certain models
 	// Validate at the boundary: a non-array here would throw inside every

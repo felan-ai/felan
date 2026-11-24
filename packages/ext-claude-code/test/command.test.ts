@@ -106,11 +106,13 @@ describe('/claude-code', () => {
     expect(install).not.toHaveBeenCalled();
   });
 
-  it('reports a non-host runtime without reading storage', async () => {
+  // A non-host runtime can load an SDK its image carries, so status inspects instead of
+  // refusing outright.
+  it('inspects agent storage on a non-host runtime', async () => {
     const h = fixture({ kind: 'docker' });
     await h.run('status');
-    expect(h.notify).toHaveBeenLastCalledWith({ text: expect.stringContaining('requires a host runtime'), level: 'warning' });
-    expect(h.storage.readFile).not.toHaveBeenCalled();
+    expect(h.notify).toHaveBeenLastCalledWith({ text: expect.stringContaining('/claude-code install'), level: 'warning' });
+    expect(h.storage.readFile).toHaveBeenCalled();
   });
 
   it('explains that installation requires the local Felan host when the service is absent', async () => {

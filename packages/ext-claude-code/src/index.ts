@@ -13,7 +13,7 @@ import {
 } from './bridge/index.js';
 import { registerClaudeCodeCommand } from './command.js';
 import { CLAUDE_CODE_CONFIG, claudeCodeSettingsFromConfig } from './config.js';
-import { inspectClaudeCodeRuntime } from './managed/index.js';
+import { ensureClaudeCodeLocalWorkspace, inspectClaudeCodeRuntime } from './managed/index.js';
 import { loadClaudeAgentSdk, setClaudeAgentSdk } from './sdk/runtime.js';
 
 const claudeCodeExtension: FelanExtension = async (pi) => {
@@ -23,14 +23,14 @@ const claudeCodeExtension: FelanExtension = async (pi) => {
     getSettings: () => settings,
     isProviderRegistered: () => providerRegistered,
   });
-  if (pi.runtime.kind !== 'host') return;
-
   try {
     const status = await inspectClaudeCodeRuntime(pi.runtime);
     if (status.available === false) {
       pi.runtime.logger.warn({ reason: status.reason }, 'Claude Code provider not registered: SDK unavailable');
       return;
     }
+    // Loading reaches the filesystem directly, so an SDK that agent storage can read but
+    // this process cannot import fails here rather than at the first model call.
     const sdk = await loadClaudeAgentSdk(status.entryPath);
     setClaudeAgentSdk(sdk);
     const supportedModels = await claudeCodeSupportedModels(settings).catch((error: unknown) => {
@@ -41,11 +41,17 @@ const claudeCodeExtension: FelanExtension = async (pi) => {
       return undefined;
     });
     if (!supportedModels) return;
-    activateClaudeCodeBridge(pi, { settings, agentDir: pi.agentDir, supportedModels });
+    const sessionCwd = pi.runtime.kind === 'host' ? undefined : await ensureClaudeCodeLocalWorkspace(pi.runtime);
+    activateClaudeCodeBridge(pi, {
+      settings,
+      agentDir: pi.agentDir,
+      supportedModels,
+      ...(sessionCwd ? { sessionCwd } : {}),
+    });
     providerRegistered = true;
   } catch (error) {
     pi.runtime.logger.error(
-      { error: errorMessage(error) },
+      { error: errorMessage(error), runtime: pi.runtime.kind },
       'Claude Code provider not registered: could not activate the bridge; run /claude-code install',
     );
   }

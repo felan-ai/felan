@@ -703,16 +703,35 @@ describe('managed Claude Agent SDK installation', () => {
 });
 
 describe('unsupported managed Claude Agent SDK runtimes', () => {
-  it.each(['docker', 'daytona'] as const)('rejects %s without accessing storage or executing npm', async (kind) => {
+  it.each(['docker', 'daytona'] as const)('refuses to install on %s without accessing storage or executing npm', async (kind) => {
     const runtime = new MemoryRuntime(kind);
-    for (const operation of [inspectClaudeCodeRuntime, installManagedClaudeAgentSdk]) {
-      await expect(operation(runtime)).resolves.toEqual({
-        available: false,
-        reason: 'The managed Claude Agent SDK requires a host runtime.',
-      });
-    }
+    await expect(installManagedClaudeAgentSdk(runtime)).resolves.toEqual({
+      available: false,
+      reason: `The managed Claude Agent SDK installs only on a host runtime; preinstall version ${MANAGED_CLAUDE_AGENT_SDK_VERSION} in the ${kind} runtime image instead.`,
+    });
     expect(runtime.storageScopes).toEqual([]);
     expect(runtime.events).toEqual([]);
+  });
+
+  // The SDK is imported in process and spawns Claude Code locally, so a runtime whose agent
+  // storage is on this filesystem can load an SDK its image already carries.
+  it.each(['docker', 'daytona'] as const)('loads an SDK preinstalled in a %s runtime image', async (kind) => {
+    const runtime = new MemoryRuntime(kind);
+    runtime.seedComplete();
+    await expect(inspectClaudeCodeRuntime(runtime)).resolves.toMatchObject({
+      available: true,
+      version: MANAGED_CLAUDE_AGENT_SDK_VERSION,
+    });
+    expect(runtime.execCalls).toEqual([]);
+  });
+
+  it.each(['docker', 'daytona'] as const)('reports a missing SDK on %s without executing npm', async (kind) => {
+    const runtime = new MemoryRuntime(kind);
+    await expect(inspectClaudeCodeRuntime(runtime)).resolves.toMatchObject({
+      available: false,
+      reason: expect.stringContaining('not installed or is incomplete'),
+    });
+    expect(runtime.execCalls).toEqual([]);
   });
 
   it.each(['C:\\agent-storage', 'C:/agent-storage', '\\\\server\\share'])('rejects Windows storage %s', async (root) => {

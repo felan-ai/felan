@@ -9,6 +9,7 @@ export const MANAGED_CLAUDE_AGENT_SDK_VERSION = '0.3.322';
 
 const STORAGE_DIRECTORY = 'claude-code';
 const DIRECTORY = `${STORAGE_DIRECTORY}/agent-sdk-${MANAGED_CLAUDE_AGENT_SDK_VERSION}`;
+const LOCAL_WORKSPACE_DIRECTORY = `${STORAGE_DIRECTORY}/workspace`;
 const DEPENDENCIES = packageLock.packages[''].dependencies;
 const INSTALL_TIMEOUT_MS = 15 * 60 * 1000;
 const PROBE_TIMEOUT_MS = 5_000;
@@ -19,6 +20,16 @@ export type ClaudeCodeRuntimeStatus =
 
 export function managedClaudeAgentSdkDirectory(runtime: AgentRuntime): string {
   return joinRuntimePath(runtime.storage('agent').root, DIRECTORY);
+}
+
+/** The provider path gives Claude Code no tools of its own, so it never reads the session
+ *  workspace. On a runtime whose workspace lives elsewhere it still needs a directory it
+ *  can start in, and one is enough: Claude Code keys its own session files by directory
+ *  and session id, as several sessions in one checkout already do on a host. */
+export async function ensureClaudeCodeLocalWorkspace(runtime: AgentRuntime): Promise<string> {
+  const storage = runtime.storage('agent');
+  await storage.mkdir(LOCAL_WORKSPACE_DIRECTORY, { recursive: true });
+  return joinRuntimePath(storage.root, LOCAL_WORKSPACE_DIRECTORY);
 }
 
 export async function inspectClaudeCodeRuntime(runtime: AgentRuntime): Promise<ClaudeCodeRuntimeStatus> {
@@ -79,7 +90,7 @@ export async function installManagedClaudeAgentSdk(
   runtime: AgentRuntime,
   onStatus: (message: string) => void = () => {},
 ): Promise<ClaudeCodeRuntimeStatus> {
-  const unsupported = unsupportedReason(runtime);
+  const unsupported = installUnsupportedReason(runtime);
   if (unsupported) return { available: false, reason: unsupported };
 
   const current = await inspectClaudeCodeRuntime(runtime);
@@ -148,8 +159,9 @@ export async function installManagedClaudeAgentSdk(
   }
 }
 
+// The SDK is loaded with an in-process import and spawns Claude Code as a child of this
+// process, so these checks describe the process reading agent storage, not the workspace.
 function unsupportedReason(runtime: AgentRuntime): string | undefined {
-  if (runtime.kind !== 'host') return 'The managed Claude Agent SDK requires a host runtime.';
   if (process.platform === 'win32' || isWindowsRuntimePath(runtime.storage('agent').root)) {
     return 'The managed Claude Agent SDK supports macOS and Linux only; Windows paths are not supported.';
   }
@@ -157,6 +169,16 @@ function unsupportedReason(runtime: AgentRuntime): string | undefined {
     return `The managed Claude Agent SDK does not support ${process.platform}/${process.arch}; macOS or Linux is required.`;
   }
   return undefined;
+}
+
+// Installation writes into agent storage but runs npm through the runtime, so it needs a
+// runtime whose exec and agent storage are the same filesystem. Other runtimes load an
+// SDK that was installed into their image.
+function installUnsupportedReason(runtime: AgentRuntime): string | undefined {
+  if (runtime.kind !== 'host') {
+    return `The managed Claude Agent SDK installs only on a host runtime; preinstall version ${MANAGED_CLAUDE_AGENT_SDK_VERSION} in the ${runtime.kind} runtime image instead.`;
+  }
+  return unsupportedReason(runtime);
 }
 
 function available(runtime: AgentRuntime): ClaudeCodeRuntimeStatus {

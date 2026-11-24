@@ -9,7 +9,8 @@ portable detection, optional installation, and safe unavailable behavior;
 
 1. Cloud and other non-interactive runtimes preinstall required executables in
    the tool-execution environment. Extensions probe that same `AgentRuntime`.
-   Host-only integrations such as Claude Code do not support non-host runtimes.
+   Claude Code is one of those: it loads a preinstalled SDK on a non-host
+   runtime, but installs only on a host.
 2. An unavailable dependency disables only the behavior that needs it. It must
    not trigger installation, repeatedly execute a missing command, or break
    unrelated extension behavior.
@@ -101,10 +102,16 @@ binary**. Linux downloads both glibc and musl variants, roughly **640 MB** in
 total, although only the host-matched variant is used. It is not a dependency of
 any Felan package; approval installs it
 separately under [Anthropic's SDK license and terms](https://github.com/anthropics/claude-agent-sdk-typescript).
-The managed Claude Code bridge does not support non-host runtimes or native
-Windows paths. This restriction does not apply to the Felan daemon or other
+The managed Claude Code installation requires a host runtime and does not support
+native Windows paths, because it writes to agent storage while running `npm`
+through the runtime. A `docker` or `daytona` runtime instead loads version
+0.3.322 preinstalled in its image under
+`<agent-storage>/claude-code/agent-sdk-0.3.322`, and runs Claude Code in
+`<agent-storage>/claude-code/workspace` rather than the session workspace. This
+restriction does not apply to the Felan daemon or other
 model providers. Claude Code authentication
-is separate: run `claude`, then `/login`, on the host. Installation does not
+is separate: run `claude`, then `/login`, on the host, or supply
+`CLAUDE_CODE_OAUTH_TOKEN` where no interactive login is possible. Installation does not
 sign in, change the subscription, or guarantee model entitlement.
 
 See the [Claude Code guide](../user-guide/claude-code.md) for settings, privacy,
