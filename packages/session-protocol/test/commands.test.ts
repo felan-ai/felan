@@ -72,6 +72,36 @@ describe('complete operation inventory', () => {
   });
 });
 
+describe('catalog command invocation', () => {
+  const params = commandParams['command.invoke'];
+  const attachments = [{ type: 'image', mimeType: 'image/png', data: 'YQ==' }, { type: 'text', text: 'Context' }];
+
+  it('preserves legacy params and accepts attachments and delivery independently', () => {
+    for (const invoked of [params, { ...params, attachments }, { ...params, delivery: 'steer' }, { ...params, attachments, delivery: 'follow_up' }]) {
+      const input = request('command.invoke', invoked);
+      expect(parseClientEnvelope(input)).toEqual(input);
+      expect(JSON.parse(canonicalRequestPayload(input)).params).toEqual(invoked);
+    }
+  });
+
+  it('rejects an invalid delivery', () => {
+    expect(() => parseClientEnvelope(request('command.invoke', { ...params, delivery: 'prompt' })))
+      .toThrowError(expect.objectContaining({ code: 'invalid_request' }));
+  });
+
+  it.each(['AAA_', 'YR=='])('rejects invalid or noncanonical image data %j', data => {
+    const input = request('command.invoke', { ...params, attachments: [{ type: 'image', mimeType: 'image/png', data }] });
+    expect(() => parseClientEnvelope(input)).toThrowError(expect.objectContaining({ code: 'invalid_request' }));
+  });
+
+  it.each([{ status: 'queued', itemId: 'item' }, { status: 'started', runId: 'run' }, { status: 'completed' }, { status: 'waiting' }])
+    ('accepts $status results through the operation and correlated response parsers', result => {
+      expect(parseOperationResult('command.invoke', result)).toEqual(result);
+      const response = { v: 1, re: request('command.invoke').id, outcome: 'accepted', result };
+      expect(parseServerEnvelope(response, 'command.invoke')).toEqual(response);
+    });
+});
+
 describe('queued and handled input results', () => {
   it.each(['steer', 'follow_up'] as const)('accepts either native disposition for %s through the public correlated parser', op => {
     for (const result of [{ itemId: 'actual-item' }, { status: 'handled' }] as const) {

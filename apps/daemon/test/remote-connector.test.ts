@@ -84,8 +84,9 @@ function largeTasks() {
   return Array.from({ length: 200 }, (_, index) => ({ id: `T-${String(index).padStart(6, '0')}`, title: 'Task', status: 'pending' as const, blockedBy: [], notes: '記'.repeat(8000) }));
 }
 
-async function fixture(options: { configured?: boolean; credential?: string; token?: Token; pairing?: FakePairing; platform?: Platform; connector?: Partial<RemoteConnectorOptions>; wired?: boolean } = {}) {
-  const f = await serverFixture(); const clock = new Clock();
+async function fixture(options: { configured?: boolean; credential?: string; token?: Token; pairing?: FakePairing; platform?: Platform; connector?: Partial<RemoteConnectorOptions>; wired?: boolean;
+  session?: Pick<NonNullable<Parameters<typeof serverFixture>[0]>, 'skill' | 'extension'> } = {}) {
+  const f = await serverFixture(options.session); const clock = new Clock();
   startedSession(f.root);
   const configuration = new TestHostConfiguration({ definitions: [], assertCurrent: () => f.registry.assertAdmission() });
   let connector!: RemoteConnector;
@@ -1057,7 +1058,7 @@ describe('RemoteConnector connection and commands', () => {
 
   it('registers capabilities and canonical projects, then re-registers edits and heartbeats', async () => {
     const f = await fixture(); expect(f.platform.registration[0]).toMatchObject({ rowSchemaVersion: 1, capabilities: {
-      operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'], interactionKinds: ['select', 'confirm', 'input', 'editor', 'tool_approval', 'dependency', 'form'], features: ['sessions.create.instructions', 'sessions.create.session-id'],
+      operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking', 'command.invoke'], interactionKinds: ['select', 'confirm', 'input', 'editor', 'tool_approval', 'dependency', 'form'], features: ['sessions.create.instructions', 'sessions.create.session-id'],
     } });
     const status = await f.connector.configure({ action: 'open_project', path: f.cwd }); await f.clock.tick();
     expect(status.projects[0]).toMatchObject({ path: f.cwd, name: 'work' }); expect(f.platform.registration.at(-1)!.projects).toEqual(status.projects);
@@ -1093,6 +1094,35 @@ describe('RemoteConnector connection and commands', () => {
     expect(f.store.database.record('command', id)).toBeDefined();
     await f.clock.tick(1001); expect(submit).toHaveBeenCalledTimes(1); expect(f.platform.complete).toHaveBeenCalledTimes(2); expect(f.store.database.record('command', id)).toBeUndefined();
     const claimed = f.platform.claim.mock.calls.length; await f.clock.tick(100); expect(f.platform.claim.mock.calls.length).toBeGreaterThan(claimed);
+  });
+
+  it('invokes remote skills but never runs or suggests extension commands', async () => {
+    const handler = vi.fn();
+    const f = await fixture({ session: { skill: true, extension: pi => {
+      for (const name of ['skill:shared-test-skills', 'skill:shared-test-skillss']) pi.registerCommand(name, { description: 'Synthetic command', handler });
+    } } });
+    f.connector.setShared(f.id, true); await f.clock.tick();
+    const invoke = async (name: string, delivery?: 'follow_up') => {
+      const id = requestId();
+      f.platform.rows = [{ id, requester: user, expiresAt: now + 1000, state: 'claimed', command: {
+        op: 'command.invoke', session: f.id, params: { name, arguments: delivery ?? 'direct skill argument', ...(delivery ? { delivery } : {}) },
+      } }];
+      f.platform.notify(); await f.clock.tick();
+      await vi.waitFor(() => expect(f.platform.complete).toHaveBeenCalledWith(id, expect.anything()));
+      return f.platform.complete.mock.calls.find(([candidate]) => candidate === id)?.[1];
+    };
+    for (const delivery of [undefined, 'follow_up'] as const) {
+      expect(await invoke('skill:shared-test-skill', delivery)).toMatchObject({ outcome: 'accepted', result: { status: 'started', runId: expect.any(String) } });
+      await vi.waitFor(() => expect(f.store.session(f.id).run.state).toBe('idle'));
+    }
+    expect(await invoke('skill:shared-test-skills')).toMatchObject({ outcome: 'rejected', error: { code: 'unavailable',
+      message: 'Unknown or unavailable command: /skill:shared-test-skills. Did you mean /skill:shared-test-skill?',
+    } });
+    expect(handler).not.toHaveBeenCalled();
+    const users = f.registry.projection(f.id).snapshot().history.entries.filter(entry => entry.role === 'user');
+    expect(users.slice(-2)).toMatchObject(['direct skill argument', 'follow_up'].map(args => ({
+      content: [{ type: 'text', text: expect.stringContaining(`Loaded skill instructions from private fixture.\n</skill>\n\n${args}`) }],
+    })));
   });
 
   it('creates web sessions as always shared before dispatching the initial prompt', async () => {

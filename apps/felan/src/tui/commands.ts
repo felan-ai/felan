@@ -314,7 +314,8 @@ export async function submitTuiInput(controller: TuiSessionController, dialogs: 
     default: {
       const command = snapshot.catalog.commands.find(command => command.name === name);
       if (!command) throw new Error(`Unknown or unavailable command: /${name}`);
-      return (await controller.perform('command.invoke', { name, arguments: argument }, session)).outcome === 'accepted';
+      const steer = command.kind === 'skill' && snapshot.run.state !== 'idle' && snapshot.run.state !== 'interrupted';
+      return (await controller.perform('command.invoke', { name, arguments: argument, ...(steer ? { delivery: 'steer' as const } : {}) }, session)).outcome === 'accepted';
     }
   }
 }

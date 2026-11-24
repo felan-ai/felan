@@ -61,6 +61,7 @@ export function parseClientEnvelope(value: unknown): ClientEnvelope {
     parsed.id = parsed.id.toLowerCase();
   }
   if (parsed.op === 'prompt' || parsed.op === 'steer' || parsed.op === 'follow_up') validatePrompt(parsed.params);
+  if (parsed.op === 'command.invoke' && parsed.params.attachments) validatePrompt({ text: parsed.params.arguments, attachments: parsed.params.attachments });
   if (parsed.op === 'queue.update') {
     const ids = parsed.params.edits.map(edit => edit.id);
     if (new Set(ids).size !== ids.length) throw new ProtocolValidationError('invalid_request', 'Duplicate queue edit');

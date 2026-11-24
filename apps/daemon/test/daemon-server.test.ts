@@ -2,6 +2,7 @@ import type { ProcessAdapter } from '../src/daemon/process-adapter.js';
 import { fakeProcessAdapter } from './fixtures/process-provider.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { configField, defineExtensionConfig, type AgentRuntimeProcess, type ExtensionAPI } from '@felan-ai/agent-core';
+import { parseSkillBlock } from '@earendil-works/pi-coding-agent';
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { realpathSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
@@ -562,8 +563,43 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(await client.request('command.invoke', { name: 'skill:shared-test-skill', arguments: '' }, { session }))
       .toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
     expect(f.store.session(session).run).toMatchObject({ state: 'running', id: runId });
+    for (const delivery of ['steer', 'follow_up'] as const) {
+      const response = await client.request('command.invoke', { name: 'skill:shared-test-skill', arguments: delivery, delivery }, { session });
+      expect(response).toMatchObject({ outcome: 'accepted', result: { status: 'queued', itemId: expect.any(String) } });
+      if (response.outcome !== 'accepted') throw new Error('Skill was not queued');
+      expect(f.registry.projection(session).snapshot().queue).toContainEqual(expect.objectContaining({ kind: delivery, id: response.result.itemId }));
+    }
     release.resolve();
     await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    const users = f.registry.projection(session).snapshot().history.entries.filter(entry => entry.role === 'user');
+    const skills = users.flatMap(entry => entry.content.flatMap(part => part.type === 'text' ? parseSkillBlock(part.text) ?? [] : []));
+    expect(skills).toMatchObject(['steer', 'follow_up'].map(userMessage => ({ name: 'shared-test-skill', userMessage,
+      content: expect.stringContaining('Loaded skill instructions from private fixture.') })));
+    expect(f.registry.projection(session).snapshot().queue).toEqual([]);
+  });
+
+  it('rejects attachments and delivery on extension commands without invoking them', async () => {
+    const handler = vi.fn(); const f = await fixture({ extension: pi => { pi.registerCommand('synthetic-command', { description: 'Synthetic command', handler }); } });
+    const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
+    const inputs: Pick<OperationParams<'command.invoke'>, 'attachments' | 'delivery'>[] = [{ attachments: [{ type: 'text', text: 'attachment' }] }, { delivery: 'steer' }];
+    for (const input of inputs) {
+      const params = { name: 'synthetic-command', arguments: '', ...input };
+      expect(await client.request('command.invoke', params, { session })).toMatchObject({ outcome: 'rejected', error: {
+        code: 'invalid_request', message: 'Extension commands do not accept attachments or delivery.',
+      } });
+    }
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it('suggests close catalog names and omits suggestions for distant names', async () => {
+    const f = await fixture({ skill: true }); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
+    for (const [name, message] of [
+      ['skill:SHARED-tset-skill', 'Unknown or unavailable command: /skill:SHARED-tset-skill. Did you mean /skill:shared-test-skill?'],
+      ['distant\nname', 'Unknown or unavailable command: /distant name.'],
+    ] as const) {
+      expect(await client.request('command.invoke', { name, arguments: '' }, { session }))
+        .toMatchObject({ outcome: 'rejected', error: { code: 'unavailable', message } });
+    }
   });
 
   it('relaxes strict policy after the last ACP attachment detaches', async () => {
@@ -603,6 +639,46 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     const users = f.root.runtime.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'user');
     expect(JSON.stringify(users.at(-1))).toContain('/skill:shared-test-skill unexpanded');
     expect(JSON.stringify(users.at(-1))).not.toContain('Loaded skill instructions');
+  });
+
+  it('expands runtime skill bytes with trimmed arguments and stores image attachments', async () => {
+    const f = await fixture({ skill: true }); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
+    const skill = f.root.runtime.session.resourceLoader.getSkills().skills[0]!;
+    const readSkill = vi.spyOn(f.root.agentRuntime, 'readFile').mockResolvedValueOnce(Buffer.from('---\nname: runtime-only\n---\n  Skill instructions from the workspace runtime.  \n'));
+    f.root.runtime.session.settingsManager.setImageAutoResize(false);
+    const image = { type: 'image' as const, mimeType: 'image/png' as const, data: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1EAAAAASUVORK5CYII=' };
+    expect(await client.request('command.invoke', { name: 'skill:shared-test-skill', arguments: '  literal argument  ', attachments: [image] }, { session }))
+      .toMatchObject({ outcome: 'accepted', result: { status: 'started', runId: expect.any(String) } });
+    await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+    expect(readSkill).toHaveBeenCalledExactlyOnceWith(skill.filePath, { maxBytes: 256 * 1024 + 1 });
+    const user = f.root.runtime.session.sessionManager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'user');
+    if (user?.type !== 'message' || user.message.role !== 'user' || typeof user.message.content === 'string') throw new Error('Expected stored user content');
+    const text = user.message.content.find(part => part.type === 'text')?.text;
+    expect(parseSkillBlock(text ?? '')).toEqual({ name: skill.name, location: skill.filePath,
+      content: `References are relative to ${skill.baseDir}.\n\nSkill instructions from the workspace runtime.`, userMessage: 'literal argument' });
+    expect(user.message.content).toContainEqual(image);
+  });
+
+  it.each(['unreadable', 'oversized', 'invalid UTF-8'] as const)('rejects a skill with %s runtime content before dispatch', async reason => {
+    const f = await fixture({ skill: true }); const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
+    const readSkill = vi.spyOn(f.root.agentRuntime, 'readFile');
+    if (reason === 'unreadable') readSkill.mockRejectedValueOnce(new Error('Private filesystem error'));
+    else readSkill.mockResolvedValueOnce(reason === 'oversized' ? Buffer.alloc(256 * 1024 + 1) : Buffer.from([0xff]));
+    const run = f.store.session(session).run;
+    const prompt = vi.spyOn(f.root.runtime.session, 'prompt');
+    expect(await client.request('command.invoke', { name: 'skill:shared-test-skill', arguments: '' }, { session }))
+      .toMatchObject({ outcome: 'rejected', error: { code: 'unavailable', message: 'Skill "shared-test-skill" could not be read.' } });
+    expect(readSkill).toHaveBeenCalledOnce(); expect(prompt).not.toHaveBeenCalled();
+    expect(f.store.session(session).run).toEqual(run);
+    expect(f.root.runtime.session.sessionManager.getEntries()).not.toContainEqual(expect.objectContaining({ type: 'message', message: expect.objectContaining({ role: 'user' }) }));
+  });
+
+  it('reports completed when an input handler consumes a skill without queuing it', async () => {
+    const f = await fixture({ skill: true, extension: pi => { pi.on('input', async event => parseSkillBlock(event.text) ? { action: 'handled' } : undefined); } });
+    const client = await f.client(); const session = f.root.sessionId; await client.attach(session);
+    expect(await client.request('command.invoke', { name: 'skill:shared-test-skill', arguments: '', delivery: 'steer' }, { session }))
+      .toMatchObject({ outcome: 'accepted', result: { status: 'completed' } });
+    expect(f.registry.projection(session).snapshot().queue).toEqual([]);
   });
 
   it('honors the public setting that disables explicit skill commands', async () => {

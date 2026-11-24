@@ -1,11 +1,11 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import {
-  LIMITS, OriginSchema, PUBLICATION_LIMITS, PUBLISHED_TASK_TEXT_BYTES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, ProtocolValidationError, PublishedTaskDetailSchema, REMOTE_FEATURES, RemoteCommandRowSchema, parseClientEnvelope, parseHostPairingError, parseHostPairingPollRequest, parseHostPairingPollResponse, parseHostPairingStartRequest, parseHostPairingStartResponse,
+  LIMITS, OriginSchema, PUBLICATION_LIMITS, PUBLISHED_TASK_TEXT_BYTES, PUBLISHED_TOOL_OUTPUT_CHARACTERS, ProtocolValidationError, PublishedTaskDetailSchema, REMOTE_FEATURES, RemoteCommandRowSchema, RemoteOperationSchema, parseClientEnvelope, parseHostPairingError, parseHostPairingPollRequest, parseHostPairingPollResponse, parseHostPairingStartRequest, parseHostPairingStartResponse,
   parseHostRegistration, parseHostTokenClaims, parseHostTokenResponse, parseOperationResult, parsePublishedEvent,
   parsePublishedSession, parsePublishedTaskDetails, parseRealtimeNotification, parseRemoteCommand, parseRemoteCommandOutcome, parseSchema, parseServerEnvelope, utf8Bytes,
   type HostTokenClaims, type HostTokenResponse, type OperationParams, type PublishedTaskDetail, type PublishedTaskDetails, type RemoteCommand, type RemoteCommandRow,
 } from '../src/index.js';
-import { tool } from './fixtures.js';
+import { commandParams, tool } from './fixtures.js';
 
 const session = '0199e6a4-8c1a-7c3e-9b1d-2f4a5b6c7d8e';
 const host = '5b1f7c2e-3d4a-4b5c-8d6e-7f8091a2b3c4';
@@ -166,6 +166,29 @@ describe('remote commands', () => {
     expect(() => parseRemoteCommand({ ...input, session: undefined })).toThrow();
     expect(() => parseRemoteCommand({ ...input, params: {} })).toThrow();
     expect(() => parseOperationResult('follow_up', { itemId: 'queued', status: 'handled' })).toThrow();
+  });
+  it('accepts and advertises remote catalog invocations with or without attachments and delivery', () => {
+    const op = 'command.invoke';
+    const params = commandParams[op];
+    const input = { op, session, params };
+    const attachments = [{ type: 'image', mimeType: 'image/png', data: 'YQ==' }];
+    expect(parseRemoteCommand(input)).toEqual(input);
+    for (const delivery of ['steer', 'follow_up']) {
+      const queued = { ...input, params: { ...params, attachments, delivery } };
+      expect(parseRemoteCommand(queued)).toEqual(queued);
+    }
+    expectTypeOf<Extract<RemoteCommand, { op: typeof op }>['params']>().toEqualTypeOf<OperationParams<typeof op>>();
+    expect(parseSchema(RemoteOperationSchema, op)).toBe(op);
+    const notification = { event: 'command', payload: { id: command, op } };
+    expect(parseRealtimeNotification(notification)).toEqual(notification);
+    const registration = { name: 'host', daemonVersion: '0.3.0', rowSchemaVersion: 1, projects: [],
+      capabilities: { operations: [op], interactionKinds: [] } };
+    expect(parseHostRegistration(registration)).toEqual(registration);
+  });
+  it.each(['AAA_', 'YR=='])('rejects invalid or noncanonical image data %j in remote catalog invocations', data => {
+    const input = { op: 'command.invoke', session, params: { ...commandParams['command.invoke'],
+      attachments: [{ type: 'image', mimeType: 'image/png', data }] } };
+    expect(() => parseRemoteCommand(input)).toThrowError(expect.objectContaining({ code: 'invalid_request' }));
   });
   it('reuses local model and thinking schemas for remote commands and capabilities', () => {
     const model = { op: 'set_model', session, params: { provider: 'anthropic', id: 'claude-sonnet' } } as const;

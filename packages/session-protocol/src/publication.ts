@@ -28,7 +28,7 @@ export const PUBLICATION_LIMITS = Object.freeze({
 const UuidSchema = Type.String({ pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' });
 const LowercaseUuidSchema = Type.String({ pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' });
 const SequenceSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
-export const RemoteOperationSchema = enumOf(['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'] as const);
+export const RemoteOperationSchema = enumOf(['sessions.create', 'prompt', 'steer', 'follow_up', 'command.invoke', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'] as const);
 export const REMOTE_FEATURES = ['sessions.create.instructions', 'sessions.create.session-id'] as const;
 
 export const PublishedEventSchema = Type.Object({
@@ -88,6 +88,7 @@ export const RemoteCommandSchema = Type.Union([
   Type.Object({ op: Type.Literal('prompt'), session: UuidSchema, params: OperationSchemas.prompt }),
   Type.Object({ op: Type.Literal('steer'), session: UuidSchema, params: OperationSchemas.steer }),
   Type.Object({ op: Type.Literal('follow_up'), session: UuidSchema, params: OperationSchemas.follow_up }),
+  Type.Object({ op: Type.Literal('command.invoke'), session: UuidSchema, params: OperationSchemas['command.invoke'] }),
   Type.Object({ op: Type.Literal('cancel'), session: UuidSchema, params: OperationSchemas.cancel }),
   Type.Object({ op: Type.Literal('interaction.answer'), session: UuidSchema, params: OperationSchemas['interaction.answer'] }),
   Type.Object({ op: Type.Literal('set_model'), session: UuidSchema, params: OperationSchemas.set_model }),
@@ -223,6 +224,7 @@ export function parseRemoteCommand(value: unknown): RemoteCommand {
   if (command.op === 'sessions.create') {
     if (command.params.prompt) validatePrompt(command.params.prompt);
   } else if (command.op === 'prompt' || command.op === 'steer' || command.op === 'follow_up') validatePrompt(command.params);
+  else if (command.op === 'command.invoke' && command.params.attachments) validatePrompt({ text: command.params.arguments, attachments: command.params.attachments });
   return command;
 }
 

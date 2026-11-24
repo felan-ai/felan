@@ -103,8 +103,19 @@ Clients negotiate the operations and UI vocabulary they implement; native TUI
 components remain client-local. ACP requests strict session
 policy explicitly. Client kinds only describe provenance. The authenticated
 host assigns principals, origins, session bindings and resource/control
-authority. `command.invoke` is for registered
-extension/skill commands only; built-ins have their own typed operations.
+authority. `prompt` carries literal text and never runs a command. `steer` and
+`follow_up` reject extension command text, but Pi's queue still expands
+`/skill:name` and prompt template text in them. Clients must not rely on that
+expansion: `command.invoke` is the supported way to run a registered extension
+or skill command from the catalog. Built-ins have their own typed operations. `command.invoke`
+accepts `name`, `arguments` and optional prompt `attachments`. To queue a skill
+during a run, set `delivery` to `steer` or `follow_up`.
+
+`command.invoke` returns `started` with a `runId` when the host dispatches it in a run,
+`queued` with an `itemId` when the host queues it, or `completed` when the host
+handles it without a run or queue item. The schema still accepts `waiting` for
+compatibility.
+
 Missing handlers reject explicitly. Detach is not cancel, close or host stop.
 
 ## Generic UI elements
@@ -308,6 +319,8 @@ and messages. `ChannelProviderSchema` limits `provider` to
 
 `RemoteOperationSchema` includes `follow_up` with `PromptSchema` params and the
 same `{ itemId }` or `{ status: 'handled' }` result as local follow-ups. Remote
+`command.invoke` uses the same params and results as local invocations. Clients
+send it only when the host advertises it in `capabilities.operations`. Remote
 `sessions.create` accepts an optional lowercase UUID `sessionId`; supporting
 hosts advertise `sessions.create.session-id` in `capabilities.features`.
 Remote and local `sessions.create`

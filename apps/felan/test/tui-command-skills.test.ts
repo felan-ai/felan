@@ -60,3 +60,28 @@ it('loads and invokes every workspace and home skill even when daemon storage us
     expect(last).toContain('Loaded'); expect(last).toContain('literal argument');
   }
 });
+
+it('steers a skill into the active run instead of failing as busy', async () => {
+  let entered!: () => void; let release!: () => void;
+  const streaming = new Promise<void>(resolve => { entered = resolve; }); const finish = new Promise<void>(resolve => { release = resolve; });
+  const f = await serverFixture({ now: Date.now, skill: true, onStream: async () => { entered(); await finish; } });
+  cleanups.push(async () => { release(); await f.dispose(); });
+  const server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture' });
+  cleanups.push(async () => { server.close(); });
+  await server.start();
+  const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
+    expected: f.owner.identity, clientVersion: 'fixture', kind: 'tui' });
+  const controller = new TuiSessionController(client);
+  cleanups.push(() => controller.dispose());
+  await client.connect(); await controller.attach(f.root.sessionId);
+  expect(await controller.submit('long turn')).toBe(true);
+  await streaming; await vi.waitFor(() => expect(controller.snapshot?.run.state).toBe('running'));
+  const dialogs: TuiDialogHost = { select: async () => undefined, input: async () => undefined, confirm: async () => false };
+  expect(await submitTuiInput(controller, dialogs, '/skill:shared-test-skill steered argument', { cwd: f.cwd, exit() {} }), controller.notice).toBe(true);
+  await vi.waitFor(() => expect(controller.snapshot?.queue).toMatchObject([{ kind: 'steer' }]));
+  release();
+  await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('idle'));
+  const users = f.root.runtime.session.sessionManager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'user');
+  expect(users).toHaveLength(2);
+  expect(JSON.stringify(users[1])).toContain('<skill name=\\"shared-test-skill\\"'); expect(JSON.stringify(users[1])).toContain('steered argument');
+});

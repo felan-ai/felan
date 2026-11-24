@@ -27,7 +27,7 @@ import { HostTokenSource, HostTokenExchangeError, PLAIN_HTTP_API_HOSTS, type Hos
 import { HostPairing, HostPairingFailure, type HostPairingOptions } from './pairing.js';
 
 const REMOTE_CAPABILITIES: HostCapabilities = {
-  operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'],
+  operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking', 'command.invoke'],
   interactionKinds: [...INTERACTION_KINDS],
   features: [...REMOTE_FEATURES],
 };

@@ -2,7 +2,7 @@ import type { HostConfiguration, HostSetup } from './host-services.js';
 import { registrySessionExecutions } from './session-services.js';
 import { SessionsServiceError, type AgentSession, type ModelRuntime } from '@felan-ai/agent-core';
 import { truncateTail } from '@earendil-works/pi-coding-agent';
-import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
+import { LIMITS, parseOperationResult, type ClientEnvelope, type Operation, type OperationParams, type OperationResult, type Origin, type Prompt, type Response } from '@felan-ai/session-protocol';
 import type { SessionRegistry } from './registry.js';
 import type { LegacySession } from './legacy-sessions.js';
 import type { AdmittedCommand, AdmissionOutcome } from './admission.js';
@@ -10,6 +10,7 @@ import { boundedText, promptInput } from './projection.js';
 import { projectTreeEntries } from './tree.js';
 import { prepareExport, prepareImport, publishExport, stageImport } from './session-files.js';
 import { canonicalPath } from './profile-storage.js';
+import { expandSkillCommand, unknownCommandMessage } from './skill-commands.js';
 import { dirname } from 'node:path';
 
 /** @internal */
@@ -322,20 +323,36 @@ export class SessionCommands {
         return { response };
       }
       case 'prompt': {
-        return this.prompt(request, context.origin);
+        return this.prompt(request, context.origin, request.params);
       }
       case 'compact': {
         if (request.params.method && request.params.method !== 'summary') throw commandError('unavailable');
         return this.start(request, context.origin, session => this.compact(request.session, session, request.params.instructions));
       }
       case 'command.invoke': {
-        const target = registry.projection(request.session).catalog().commands.find(item => item.name === request.params.name);
-        if (!target) throw commandError('unavailable');
+        const { name, arguments: args, attachments, delivery } = request.params;
+        const catalog = registry.projection(request.session).catalog().commands;
+        const commands = context.remote ? catalog.filter(item => item.kind === 'skill') : catalog;
+        const target = commands.find(item => item.name === name);
+        if (!target) throw commandError('unavailable', unknownCommandMessage(name, commands));
+        if (target.kind === 'skill') {
+          const binding = registry.binding(request.session)!;
+          const skillName = name.slice('skill:'.length);
+          const skill = binding.runtime.session.resourceLoader.getSkills().skills.find(item => item.name === skillName);
+          const text = await expandSkillCommand(binding.agentRuntime, skill, args);
+          command.assertDispatch();
+          if (text === undefined) throw commandError('unavailable', `Skill ${JSON.stringify(skillName)} could not be read.`);
+          const prompt = { text, ...(attachments ? { attachments } : {}) };
+          if (delivery) return this.queueInput(request, context, delivery, prompt, command.assertDispatch);
+          if (registry.isRunPending(request.session)) throw commandError('busy', 'Wait for the current run to start.');
+          return this.startPrompt(request, context.origin, prompt);
+        }
+        if (attachments?.length || delivery) throw commandError('invalid_request', 'Extension commands do not accept attachments or delivery.');
         if (registry.isRunPending(request.session)) throw commandError('busy', 'Wait for the current run to start.');
-        const invoke = (session: AgentSession) => session.prompt(`/${request.params.name}${request.params.arguments ? ` ${request.params.arguments}` : ''}`, { source: 'rpc' });
-        // Like Pi, extension commands execute immediately during an active run; skill commands still wait for it.
+        const invoke = (session: AgentSession) => session.prompt(`/${name}${args ? ` ${args}` : ''}`, { source: 'rpc' });
+        // Like Pi, extension commands execute immediately during an active run.
         const active = registry.options.store.session(request.session).run;
-        if (target.kind === 'extension' && ['running', 'waiting', 'cancelling'].includes(active.state) && active.id !== undefined) {
+        if (['running', 'waiting', 'cancelling'].includes(active.state) && active.id !== undefined) {
           let started = false;
           const work = registry.mutateAdmitted(request.id, request.session, ({ session }) => { started = true; return invoke(session); });
           if (!started) return { response: work.then(() => { throw commandError('unavailable'); }) };
@@ -347,25 +364,7 @@ export class SessionCommands {
         }
         return this.start(request, context.origin, invoke);
       }
-      case 'steer': case 'follow_up': {
-        const projection = registry.projection(request.session);
-        if (request.op === 'follow_up' && context.remote && !projection.holdsCompactionInput && registry.binding(request.session)!.runtime.session.isIdle) {
-          return this.prompt(request, context.origin);
-        }
-        if (!projection.holdsCompactionInput && !projection.canObserveQueue) throw commandError('unavailable');
-        const hold = projection.holdsCompactionInput ? projection.prepareCompactionInput(request.op, request.params, context.origin, request.id) : undefined;
-        const work = registry.mutateAdmitted(request.id, request.session, async ({ session, assertCurrent }) => {
-          if (hold) return { itemId: hold() };
-          const input = promptInput(request.params);
-          const result = await projection.withQueueOrigin(context.origin, () => request.op === 'steer'
-            ? session.steer(input.text, input.images, { source: 'rpc' }) : session.followUp(input.text, input.images, { source: 'rpc' }));
-          assertCurrent();
-          if (result.value === 'handled') return { status: 'handled' as const };
-          if (result.value !== 'queued' || result.ids.length !== 1) throw commandError('indeterminate');
-          return { itemId: result.ids[0]! };
-        });
-        return { response: work.then(result => accepted(request, result)) };
-      }
+      case 'steer': case 'follow_up': return this.queueInput(request, context, request.op, request.params);
       case 'queue.clear': {
         const projection = registry.projection(request.session);
         let response: Response;
@@ -489,12 +488,40 @@ export class SessionCommands {
     return { response: accepted(request, request.op === 'command.invoke' ? { runId, status: 'started' } : request.op === 'follow_up' ? { status: 'handled' } : { runId }) };
   }
 
-  private async prompt(request: Extract<ClientEnvelope, { op: 'prompt' | 'follow_up' }>, origin: Origin): Promise<AdmissionOutcome> {
+  private queueInput(request: Extract<ClientEnvelope, { op: 'steer' | 'follow_up' | 'command.invoke' }>, context: CommandContext,
+    delivery: 'steer' | 'follow_up', prompt: Prompt, assertDispatch?: () => void): AdmissionOutcome | Promise<AdmissionOutcome> {
+    const { registry } = this.options;
+    const projection = registry.projection(request.session);
+    if (delivery === 'follow_up' && context.remote && !projection.holdsCompactionInput && registry.binding(request.session)!.runtime.session.isIdle) {
+      return this.prompt(request, context.origin, prompt, assertDispatch);
+    }
+    if (!projection.holdsCompactionInput && !projection.canObserveQueue) throw commandError('unavailable');
+    const hold = projection.holdsCompactionInput ? projection.prepareCompactionInput(delivery, prompt, context.origin, request.id) : undefined;
+    const work = registry.mutateAdmitted(request.id, request.session, async ({ session, assertCurrent }) => {
+      if (hold) return { itemId: hold() };
+      const input = promptInput(prompt);
+      const result = await projection.withQueueOrigin(context.origin, () => delivery === 'steer'
+        ? session.steer(input.text, input.images, { source: 'rpc' }) : session.followUp(input.text, input.images, { source: 'rpc' }));
+      assertCurrent();
+      if (result.value === 'handled') return { status: 'handled' as const };
+      if (result.value !== 'queued' || result.ids.length !== 1) throw commandError('indeterminate');
+      return { itemId: result.ids[0]! };
+    });
+    return { response: work.then(result => accepted(request, request.op !== 'command.invoke' ? result
+      : result.itemId ? { status: 'queued', itemId: result.itemId } : { status: 'completed' })) };
+  }
+
+  private async prompt(request: ClientEnvelope & { session: string }, origin: Origin, prompt: Prompt, assertDispatch?: () => void): Promise<AdmissionOutcome> {
     const session = this.options.registry.binding(request.session)!.runtime.session;
     const model = session.model;
     if (!model || !(await session.modelRuntime.getAvailable()).some(candidate => candidate.provider === model.provider && candidate.id === model.id)) throw commandError('authentication_required', model ? `Model ${model.provider}/${model.id} is not available. Log in with /login or choose another model.` : 'No model is selected. Choose one with /model.');
+    assertDispatch?.();
+    return this.startPrompt(request, origin, prompt);
+  }
+
+  private startPrompt(request: ClientEnvelope & { session: string }, origin: Origin, prompt: Prompt): AdmissionOutcome {
     return this.start(request, origin, session => {
-      const input = promptInput(request.params);
+      const input = promptInput(prompt);
       return session.prompt(input.text, { images: input.images, source: 'rpc', expandPromptTemplates: false });
     });
   }

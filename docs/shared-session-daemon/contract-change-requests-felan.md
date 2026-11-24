@@ -943,3 +943,67 @@ human-reviewed merge to `main` and the CI-triggered npm release workflow:
 
 Do not start BUG-425 until these versions are confirmed published and the
 platform consumes the released protocol and daemon packages.
+
+## Remote skill invocation
+
+The remote command protocol accepts `command.invoke` with the local operation's
+parameters: `{ name, arguments, attachments?, delivery? }`. Hosts advertise the
+operation name in `HostCapabilities.operations`; the platform must hide skill
+commands for hosts that do not advertise it. `prompt` still carries literal
+text: a `/skill:name` prompt reaches the model unexpanded. `steer` and
+`follow_up` are different. Pi's queue expands `/skill:name` text in them and
+reads the skill file on the daemon host, not through the session runtime. A
+channel that sends `steer` or `follow_up` during a run can therefore run a
+daemon-host skill by text. Until the daemon closes that gap, the platform should
+not send user text that starts with `/skill:` through those two operations.
+
+A remote caller can invoke only catalog commands of kind `skill`, named
+`skill:<name>`. The daemon reads the skill file through the session's
+`AgentRuntime`, so a skill stored in a remote workspace expands the same way as
+a local one. The daemon rejects a file that it cannot read, that exceeds
+256 KiB, or that is not valid UTF-8 with `unavailable` before it starts a run.
+An unknown name, or an extension command name, also returns `unavailable`. The
+error message lists up to three close skill names, for example
+`Unknown or unavailable command: /skill:revew-pr. Did you mean /skill:review-pr?`.
+The platform can show that message as is.
+
+`attachments` has the same shape as prompt attachments and joins the expanded
+skill in the user message. Without `delivery`, the command starts a run and
+returns `{ status: 'started', runId }`; it returns `busy` during an active or
+pending run. With `delivery: 'steer'` or `'follow_up'`, the daemon queues the
+expanded skill like the matching prompt operation and returns
+`{ status: 'queued', itemId }`. A remote `follow_up` on an idle session starts a
+run and returns `started`. The result is `{ status: 'completed' }` when an input
+handler consumes the input without queuing it.
+
+The stored and published user message is Pi's skill block followed by the
+arguments:
+
+```text
+<skill name="NAME" location="PATH">
+References are relative to DIR.
+
+BODY
+</skill>
+
+ARGUMENTS
+```
+
+The TUI parses this text with Pi's `parseSkillBlock` and renders a collapsed
+skill row above the arguments. The platform should apply the same parser to
+user messages instead of rewriting the stored message.
+
+The protocol schema and daemon implementation are not yet released. The
+following are proposed versions, pending a human-reviewed merge to `main` and
+the CI-triggered npm release workflow:
+
+| Package | Current | Proposed |
+| --- | --- | --- |
+| `@felan-ai/session-protocol` | 0.4.5 | 0.4.6 |
+| `@felan-ai/ext-ask-user` | 0.13.0 | 0.13.1 |
+| `@felan-ai/ext-background-bash` | 0.16.0 | 0.16.1 |
+| `@felan-ai/ext-fusion` | 0.5.0 | 0.5.1 |
+| `@felan-ai/ext-prompt-history` | 0.10.0 | 0.10.1 |
+| `@felan-ai/agent-core` | 0.16.0 | 0.16.1 |
+| `@felan-ai/daemon` | 0.8.0 | 0.8.1 |
+| `@felan-ai/felan` | 0.40.0 | 0.40.1 |

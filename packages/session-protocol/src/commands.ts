@@ -1,7 +1,7 @@
 import { Type, type Static, type TSchema } from 'typebox';
 import { ConfigScopeSchema, ConfigValuesSchema, ExtensionSettingsSchema } from './config.js';
 import { ExecutionSchema, ExecutionsPageSchema } from './executions.js';
-import { CatalogSchema, HistoryPageSchema, ProcessPageSchema, PromptSchema, SessionsPageSchema, TreePageSchema } from './data.js';
+import { CatalogSchema, HistoryPageSchema, ProcessPageSchema, PromptAttachmentSchema, PromptSchema, SessionsPageSchema, TreePageSchema } from './data.js';
 import { SessionSnapshotSchema } from './events.js';
 import { InteractionAnswerSchema, InteractionKindSchema, UserCancellationSchema } from './interactions.js';
 import { LIMITS } from './limits.js';
@@ -50,7 +50,8 @@ export const OperationSchemas = {
   set_thinking: Type.Object({ thinking: ThinkingSchema }),
   compact: Type.Object({ instructions: Type.Optional(unboundedText()), method: Type.Optional(text(128, 1)) }),
   fork: Type.Object({ from: Type.Union([Type.Object({ kind: Type.Literal('entry'), entryId: IdSchema }), Type.Object({ kind: Type.Literal('position'), position: CounterSchema })]) }),
-  'command.invoke': Type.Object({ name: text(LIMITS.commandBytes, 1), arguments: unboundedText() }),
+  'command.invoke': Type.Object({ name: text(LIMITS.commandBytes, 1), arguments: unboundedText(),
+    attachments: Type.Optional(Type.Array(PromptAttachmentSchema)), delivery: Type.Optional(enumOf(['steer', 'follow_up'] as const)) }),
   'interaction.answer': Type.Object({ interactionId: IdSchema, answer: Type.Union([InteractionAnswerSchema, UserCancellationSchema]) }),
   'ui.action': UiActionRequestSchema,
   'session.remote': Type.Object({ shared: Type.Boolean() }),
@@ -140,7 +141,8 @@ export const ResultSchemas = {
   'sessions.create': created,
   attach: Type.Object({ attachmentId: IdSchema, snapshot: SessionSnapshotSchema }),
   detach: emptyResult, close: emptyResult, prompt: run, steer: inputResult, follow_up: inputResult, cancel: emptyResult, set_model: emptyResult, set_thinking: emptyResult,
-  compact: run, fork: created, 'command.invoke': Type.Object({ runId: Type.Optional(IdSchema), status: enumOf(['completed', 'started', 'waiting'] as const) }),
+  compact: run, fork: created, 'command.invoke': Type.Object({ runId: Type.Optional(IdSchema), itemId: Type.Optional(IdSchema),
+    status: enumOf(['completed', 'started', 'waiting', 'queued'] as const) }),
   'interaction.answer': emptyResult, 'session.rename': emptyResult, 'session.tree': TreePageSchema, 'session.branch.select': emptyResult, 'session.entry.label': emptyResult,
   'ui.action': emptyResult, 'session.remote': emptyResult,
   'session.clone': created, 'session.import': created, 'session.export': Type.Object({ destination: AbsolutePathSchema }), 'session.delete': emptyResult,
