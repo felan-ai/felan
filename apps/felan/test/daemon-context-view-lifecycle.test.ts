@@ -25,6 +25,12 @@ import { TuiAltScreen, type Terminal } from '@earendil-works/pi-tui';
 import { TuiSessionController } from '../src/tui/controller.js';
 import { runDaemonTerminal } from '../src/tui/run.js';
 
+/** Settlement finishes well under a second on a healthy machine; this only bounds a stall.
+ *  Windows runners pause for seconds at random (commit 00cbc0f), and a deadline shorter
+ *  than such a pause blocks the daemon instead of stopping it. The deadline path itself is
+ *  covered in apps/daemon/test/daemon-lifecycle.test.ts. */
+const SETTLEMENT_DEADLINE_MS = 20_000;
+
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); vi.restoreAllMocks(); });
 
@@ -84,7 +90,7 @@ it.each(['drain', 'force'] as const)('%s stop closes the real context command be
     await expect(f.registry.settleWriters()).resolves.toBeUndefined();
     expect(() => f.owner.assertCurrent()).not.toThrow();
   });
-  const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity, timeoutMs: 2000,
+  const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity, timeoutMs: SETTLEMENT_DEADLINE_MS,
     beginDrain: () => f.registry.beginDrain(), complete,
     settle: mode => settleDaemonWork(f.registry, createRegistryInteractionBroker(f.registry), mode),
   });
@@ -92,7 +98,7 @@ it.each(['drain', 'force'] as const)('%s stop closes the real context command be
   const response = await admission.submit({ v: 1, id, op: 'host.stop', params: { expected: f.owner.identity, mode } }, 'client', command => lifecycle.prepare(command));
   expect(response.outcome).toBe('accepted'); lifecycle.afterResponse(id);
   await work;
-  await vi.waitFor(() => expect(lifecycle.state).toBe('stopped'));
+  await vi.waitFor(() => expect(lifecycle.state, inspect(lifecycle.blocked)).toBe('stopped'), { timeout: SETTLEMENT_DEADLINE_MS });
   expect(complete).toHaveBeenCalledOnce();
 });
 
@@ -109,7 +115,7 @@ it('stops the real daemon on the first force command with an attached context vi
     config.extensions = [{ package: '@felan-ai/ext-context-view' }];
     await writeFile(hostConfigPath, JSON.stringify(config), { mode: 0o600 });
   } finally { await owner.release(); }
-  const service = await startDaemonService(target, { hostConfigPath, drainTimeoutMs: 2000,
+  const service = await startDaemonService(target, { hostConfigPath, drainTimeoutMs: SETTLEMENT_DEADLINE_MS,
     manager: { packageName: '@felan-ai/felan', version: FELAN_VERSION, resolveFrom: import.meta.url,
       resolveProvider: specifier => specifier === '@felan-ai/ext-memory/daemon' ? import.meta.resolve(specifier)
         : new URL(`../src/providers/${specifier.split('/').at(-1)}.ts`, import.meta.url).href },
@@ -124,10 +130,13 @@ it('stops the real daemon on the first force command with an attached context vi
   vi.spyOn(service.registry, 'shutdown').mockImplementation(async options => {
     try { await shutdown(options); } catch (error) { settlementError = error; throw error; }
   });
+  // A settlement deadline rejects inside HostLifecycle without registry.shutdown throwing,
+  // so settlementError stays empty; the blocked record names the step that failed.
+  const stopDetail = () => inspect({ settlementError, blocked: service.lifecycle.blocked });
   cleanups.push(async () => {
     if (service.lifecycle.state !== 'stopped') {
       await service.requestStop('stop', 'force');
-      await vi.waitFor(() => expect(service.lifecycle.state, inspect(settlementError)).toBe('stopped'), { timeout: 3000 });
+      await vi.waitFor(() => expect(service.lifecycle.state, stopDetail()).toBe('stopped'), { timeout: SETTLEMENT_DEADLINE_MS });
     }
   });
   const client = new SessionClient({ target, clientVersion: FELAN_VERSION, kind: 'tui',
@@ -179,10 +188,10 @@ it('stops the real daemon on the first force command with an attached context vi
   cleanups.push(async () => control.close());
   await control.connect();
   expect(await control.control('host.stop', 'force')).toMatchObject({ outcome: 'accepted' });
-  await vi.waitFor(() => expect(service.lifecycle.state, inspect(settlementError)).toBe('stopped'), { timeout: 3000 });
+  await vi.waitFor(() => expect(service.lifecycle.state, stopDetail()).toBe('stopped'), { timeout: SETTLEMENT_DEADLINE_MS });
   await expect(waitForDaemonStop(control)).resolves.toBeUndefined();
   expect(settleTransport).toHaveBeenCalledOnce();
   expect(await service.stopped).toBe('stop');
   const next = await acquireDaemonOwnership(target);
   await next.release();
-}, 20_000);
+}, 90_000);
