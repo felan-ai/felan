@@ -26,6 +26,32 @@ configuration guard.
 `createBrowserExtension` and the existing host types remain available for
 explicit composition.
 
+## Configured live-view service
+
+A trusted provider may also register `BROWSER_LIVE_VIEW_SERVICE` from
+`@felan-ai/ext-browser/service` (`felan.browser.live-view@1`) to watch the
+agent's own browser. Without it, the extension runs no stream commands.
+
+The service implements `report({ sessionId, port })` and
+`withdraw({ sessionId })`. After a successful `browser` run that starts the
+Felan-owned browser, the extension reads `agent-browser stream status` for that
+session and namespace and reports the Felan session ID with `data.port`. It
+reads the port again when a command response shows a new launch or daemon
+restart, or after a failed command, and reports again when the port changes. A
+`close`, `quit`, or `exit` run withdraws the report before it closes the
+browser, and session shutdown withdraws it alongside browser cleanup.
+
+agent-browser binds the stream to `127.0.0.1` in the runtime that runs the
+CLI. The daemon can exit after its one-hour idle timeout without a withdrawal,
+so a consumer should treat a refused port as no open browser. The operating
+system can later assign that port to another agent-browser session in the same
+runtime, so a reachable port is not proof that it still belongs to the
+reported session. Reports never cover a browser attached through
+`browser_authorize`, and the model still cannot run `stream` or `dashboard`.
+Each report or withdrawal has five seconds to settle. Failures and timeouts
+are logged and do not fail the browser command, and a failed report is retried
+after the next successful command.
+
 ## Tool
 
 The extension registers the ordinary `browser` tool and, when its host supplies

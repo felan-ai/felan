@@ -85,26 +85,49 @@ function preparePublicBrowserCommand(runtime: AgentRuntime, args: readonly strin
   return { args: normalized, generatedScreenshotPath: screenshotPath };
 }
 
-export async function runBrowserCli(
+type BrowserCliOptions = {
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
+  readonly json?: boolean;
+  readonly prepareScreenshot?: boolean;
+  readonly attached?: boolean;
+  readonly attachmentEndpoint?: string;
+  readonly internalAttachment?: boolean;
+};
+
+export function runBrowserCli(
   runtime: AgentRuntime,
   invocation: AgentBrowserInvocation,
   args: readonly string[],
   scope: BrowserSessionScope,
-  options: {
-    readonly signal?: AbortSignal;
-    readonly timeoutMs?: number;
-    readonly json?: boolean;
-    readonly prepareScreenshot?: boolean;
-    readonly attached?: boolean;
-    readonly attachmentEndpoint?: string;
-    readonly internalAttachment?: boolean;
-  } = {},
+  options: BrowserCliOptions = {},
+): Promise<BrowserCliResult> {
+  return executeBrowserCli(runtime, invocation, args, scope, options, false);
+}
+
+/** @internal `stream status` starts a daemon when none is running, so read it only for a running isolated session. */
+export function readBrowserStreamStatus(
+  runtime: AgentRuntime,
+  invocation: AgentBrowserInvocation,
+  scope: BrowserSessionScope,
+  options: Pick<BrowserCliOptions, 'signal' | 'timeoutMs'> = {},
+): Promise<BrowserCliResult> {
+  return executeBrowserCli(runtime, invocation, ['stream', 'status'], scope, options, true);
+}
+
+async function executeBrowserCli(
+  runtime: AgentRuntime,
+  invocation: AgentBrowserInvocation,
+  args: readonly string[],
+  scope: BrowserSessionScope,
+  options: BrowserCliOptions,
+  isolatedInternal: boolean,
 ): Promise<BrowserCliResult> {
   const sessionStorage = runtime.storage('session');
   const normalizedArgs = options.internalAttachment || !options.attached
     ? args
     : normalizeAttachedBrowserCommand(args);
-  const prepared = options.internalAttachment
+  const prepared = options.internalAttachment || isolatedInternal
     ? { args: [...normalizedArgs] }
     : preparePublicBrowserCommand(runtime, normalizedArgs, options.prepareScreenshot !== false);
   const attached = options.attached === true || options.internalAttachment === true;

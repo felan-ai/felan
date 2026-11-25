@@ -16,6 +16,8 @@ import {
   formatBrowserOutput,
 } from './boundary.js';
 import { readBrowserImage } from './image.js';
+import { BrowserLiveViewReporter, readBrowserStreamPort } from './live-view.js';
+import type { BrowserLiveViewService } from './live-view.js';
 import { StringEnum } from '@felan-ai/agent-core';
 import { Type, type Static } from 'typebox';
 import type { BrowserAuthorizationHost } from './authorization.js';
@@ -65,6 +67,7 @@ export const BROWSER_AUTHORIZATION_TOOL_NAME = 'browser_authorize';
 
 export interface BrowserExtensionOptions {
   readonly authorizationHost?: BrowserAuthorizationHost;
+  readonly liveView?: BrowserLiveViewService;
 }
 
 interface BrowserToolDetails {
@@ -92,6 +95,8 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
     let invocation: AgentBrowserInvocation | undefined;
     const isolatedScopes = new Map<string, BrowserSessionScope>();
     const attachments = new BrowserAttachments(pi.runtime, options.authorizationHost, signal => getInvocation(pi.runtime, signal));
+    const liveView = options.liveView && new BrowserLiveViewReporter(options.liveView, pi.runtime.logger);
+    let pendingPortRead: Promise<void> = Promise.resolve();
 
     pi.registerCapability({
       id: 'browser',
@@ -120,7 +125,8 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
         if (signal?.aborted) throw new Error('browser tool aborted');
         const normalized = validateBrowserParams(params);
         const currentInvocation = await getInvocation(pi.runtime, signal);
-        const requestedScope = createBrowserSessionScope(pi.runtime, ctx.sessionManager.getSessionId());
+        const sessionId = ctx.sessionManager.getSessionId();
+        const requestedScope = createBrowserSessionScope(pi.runtime, sessionId);
 
         if (normalized.operation === 'skill') {
           const result = await runBrowserSkill(
@@ -175,6 +181,9 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
         } else {
           isolatedScopes.set(`${scope.namespace}/${scope.session}`, scope);
         }
+        const ownedLiveView = attachment ? undefined : liveView;
+        const closesOwnedBrowser = ['close', 'quit', 'exit'].includes(args[0] ?? '');
+        if (ownedLiveView && closesOwnedBrowser) await ownedLiveView.withdraw(sessionId);
         const commandSignal = attachment
           ? AbortSignal.any([attachment.controller.signal, ...(signal ? [signal] : [])])
           : signal;
@@ -191,11 +200,19 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
             throw new Error(formatBrowserFailure(redactBrowserError(result.stderr || result.stdout || `agent-browser exited with code ${result.code}`, attachment?.endpoint)));
           }
         } catch (error) {
+          if (ownedLiveView && !closesOwnedBrowser) ownedLiveView.markStale(sessionId);
           if (attachment && !signal?.aborted && (attachment.controller.signal.aborted || attachment.lease?.signal.aborted)) {
             await attachments.invalidate(attachment);
             throw new Error('Existing-browser authorization is inactive or its target changed. No browser result was returned.');
           }
           throw error;
+        }
+        if (ownedLiveView && !closesOwnedBrowser && ownedLiveView.needsPort(sessionId, result.stdout)) {
+          const port = await readStreamPort(ownedLiveView, scope, currentInvocation, signal);
+          if (port === undefined || signal?.aborted) {
+            ownedLiveView.markStale(sessionId);
+            if (signal?.aborted) throw new Error('browser tool aborted');
+          } else await ownedLiveView.report(sessionId, port);
         }
 
         const content: Array<
@@ -286,16 +303,41 @@ export function createBrowserExtension(options: BrowserExtensionOptions = {}): F
     }
 
     pi.on('session_shutdown', async () => {
+      // Withdrawal runs beside browser cleanup so a slow host cannot keep the browser open.
+      const withdrawn = liveView?.close();
+      // A stream read that outlives the close below would start a new daemon.
+      await pendingPortRead;
       const attachedClosed = await attachments.close();
       const closed = await Promise.allSettled([...isolatedScopes.values()].map(async scope => {
         await options.authorizationHost?.checkExecution?.();
         await closeBrowserScope(pi.runtime, invocation, scope);
       }));
       isolatedScopes.clear();
+      await withdrawn;
       if (!attachedClosed || closed.some(result => result.status === 'rejected')) {
         throw new Error('Browser shutdown cleanup could not be confirmed.');
       }
     });
+
+    async function readStreamPort(
+      reporter: BrowserLiveViewReporter,
+      scope: BrowserSessionScope,
+      currentInvocation: AgentBrowserInvocation,
+      signal: AbortSignal | undefined,
+    ): Promise<number | undefined> {
+      try {
+        await options.authorizationHost?.checkExecution?.();
+        if (reporter.closed) return undefined;
+        const read = readBrowserStreamPort(pi.runtime, currentInvocation, scope, signal);
+        pendingPortRead = read.then(() => {}, () => {});
+        return await read;
+      } catch (error) {
+        if (!signal?.aborted) {
+          pi.runtime.logger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Browser stream port is unavailable');
+        }
+        return undefined;
+      }
+    }
 
     async function getInvocation(
       runtime: typeof pi.runtime,
@@ -388,6 +430,8 @@ export type {
   BrowserAuthorizationRequest,
   BrowserAuthorizationLease,
 } from './authorization.js';
+
+export type { BrowserLiveViewService, BrowserLiveViewSession, BrowserLiveViewStream } from './live-view.js';
 
 export { BROWSER_CONFIG, BROWSER_AUTHORIZATION_POLICIES } from './config.js';
 export type { BrowserAuthorizationPolicy } from './config.js';

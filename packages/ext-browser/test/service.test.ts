@@ -10,6 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 import extension, { BROWSER_CONFIG, createBrowserExtension } from '../src/extension.js';
 import {
   BROWSER_AUTHORIZATION_SERVICE,
+  BROWSER_LIVE_VIEW_SERVICE,
   type BrowserAuthorizationService,
   type BrowserAuthorizationServiceRequest,
 } from '../src/service.js';
@@ -20,7 +21,7 @@ describe('browser service-backed package entry', () => {
     expect(BROWSER_AUTHORIZATION_SERVICE).toMatchObject({
       id: 'felan.browser.authorization', major: 1, key: 'felan.browser.authorization@1',
     });
-    expect(extension.serviceRequirements.optional).toEqual([BROWSER_AUTHORIZATION_SERVICE]);
+    expect(extension.serviceRequirements.optional).toEqual([BROWSER_AUTHORIZATION_SERVICE, BROWSER_LIVE_VIEW_SERVICE]);
     expect(getExtensionConfigDefinition(extension)).toBe(BROWSER_CONFIG);
     expect(typeof createBrowserExtension).toBe('function');
   });

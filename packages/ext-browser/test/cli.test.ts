@@ -8,6 +8,7 @@ import {
   MAX_BROWSER_OUTPUT_CHARACTERS,
   MAX_BROWSER_SKILL_OUTPUT_CHARACTERS,
   prepareBrowserCommand,
+  readBrowserStreamStatus,
   runBrowserCli,
   runBrowserSkill,
 } from '../src/cli.js';
@@ -351,6 +352,29 @@ describe('trusted attached browser command policy', () => {
     }
     expect(new Set(runtime.calls.map((_call, index) => configPath(runtime, index))).size).toBe(1);
     expect(readConfig(runtime)).toMatchObject({ pinTab: true, noAutoDialog: true, noWebmcp: false, engine: null, args: null });
+  });
+});
+
+describe('internal isolated browser commands', () => {
+  it('runs a Felan-issued stream read on the isolated scope and config without a connection endpoint', async () => {
+    const runtime = new BrowserTestRuntime();
+    const scope = createBrowserSessionScope(runtime, 'test');
+    await runBrowserCli(runtime, invocation, ['snapshot'], scope);
+    await readBrowserStreamStatus(runtime, invocation, scope);
+    const call = runtime.calls.at(-1)!;
+    expect(call.args).toEqual(expect.arrayContaining([
+      'stream', 'status', '--session', scope.session, '--namespace', scope.namespace, '--json', '--no-webmcp',
+    ]));
+    expect(call.args).not.toContain('--cdp');
+    expect(configPath(runtime, 1)).toBe(configPath(runtime, 0));
+    expect(readConfig(runtime, 1)).toMatchObject({ pinTab: false, noWebmcp: true, cdp: null });
+  });
+
+  it('keeps the model command policy for stream reads that are not Felan-issued', async () => {
+    const runtime = new BrowserTestRuntime();
+    const scope = createBrowserSessionScope(runtime, 'test');
+    await expect(runBrowserCli(runtime, invocation, ['stream', 'status'], scope)).rejects.toThrow('does not run stream');
+    expect(runtime.calls).toEqual([]);
   });
 });
 
