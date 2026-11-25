@@ -37,7 +37,7 @@ describe('browser live view', () => {
     await harness.run(['close']);
     await harness.run(['open', 'https://example.org']);
     await harness.emit('session_shutdown');
-    expect(harness.commands()).toEqual(['--version', 'open', 'snapshot', 'close', 'open', 'close']);
+    expect(harness.commands()).toEqual(['open', 'snapshot', 'close', 'open', 'close']);
   });
 
   it('reports the owned stream port when the browser starts and again after the port changes', async () => {
@@ -419,7 +419,8 @@ function createHarness(options: {
     }, undefined, undefined, context),
     emit: async (event: string) => { await handlers.get(event)?.({}, context); },
     calls: (command: string) => runtime.calls.filter(call => call.args[0] === command),
-    commands: () => runtime.calls.map(call => call.args[0]),
+    // Executable discovery differs by platform; Linux also probes `ldd --version` for musl.
+    commands: () => runtime.calls.filter(call => call.args[0] !== '--version').map(call => call.args[0]),
     expireDaemons: () => daemons.clear(),
     relaunchNextCommand: () => { relaunch = true; },
     holdStreamReads: () => {
