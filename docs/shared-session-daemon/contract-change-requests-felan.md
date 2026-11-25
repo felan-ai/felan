@@ -1007,3 +1007,39 @@ the CI-triggered npm release workflow:
 | `@felan-ai/agent-core` | 0.16.0 | 0.16.1 |
 | `@felan-ai/daemon` | 0.8.0 | 0.8.1 |
 | `@felan-ai/felan` | 0.40.0 | 0.40.1 |
+
+## Remote compaction
+
+The remote command protocol accepts `compact` with optional
+`{ instructions?, method? }` parameters. `instructions` holds focus
+instructions for the summary, 1 byte to `LIMITS.instructionsBytes` (16 KiB) of
+UTF-8. `method` is optional and must be `summary`; the protocol rejects any other
+value with `invalid_request`. Hosts advertise the operation name in
+`HostCapabilities.operations`; the platform must hide the compact control for
+hosts that do not advertise it.
+
+The daemon runs a remote compaction through the same admission path as a local
+`/compact`. An accepted command starts a run with the web, channel or
+automation origin and returns `{ runId }`. The run publishes `run.updated` when it
+starts and settles, and the compaction summary arrives as a `system`
+`message.completed`. During an active or pending run the command returns
+`busy` and changes nothing; the daemon does not queue it until the run ends.
+`steer` and `follow_up` commands sent during the compaction return
+`{ itemId }`, appear in `queue.updated`, and the daemon delivers them in the
+same run after the compaction finishes. A retried command with the same ID
+returns the original outcome without compacting again.
+
+The protocol schema and daemon implementation are not yet released. The
+following are proposed versions, pending a human-reviewed merge to `main` and
+the CI-triggered npm release workflow:
+
+| Package | Current | Proposed |
+| --- | --- | --- |
+| `@felan-ai/session-protocol` | 0.4.6 | 0.4.7 |
+| `@felan-ai/ext-ask-user` | 0.13.1 | 0.13.2 |
+| `@felan-ai/ext-background-bash` | 0.16.1 | 0.16.2 |
+| `@felan-ai/ext-fusion` | 0.5.1 | 0.5.2 |
+| `@felan-ai/ext-prompt-history` | 0.10.1 | 0.10.2 |
+| `@felan-ai/agent-core` | 0.16.1 | 0.16.2 |
+| `@felan-ai/daemon` | 0.8.1 | 0.8.2 |
+| `@felan-ai/felan` | 0.40.4 | 0.40.5 |

@@ -321,6 +321,9 @@ and messages. `ChannelProviderSchema` limits `provider` to
 same `{ itemId }` or `{ status: 'handled' }` result as local follow-ups. Remote
 `command.invoke` uses the same params and results as local invocations. Clients
 send it only when the host advertises it in `capabilities.operations`. Remote
+`compact` accepts optional focus `instructions` (at most `LIMITS.instructionsBytes`)
+and an optional `method`, which must be `summary`; it returns `{ runId }` like the
+local operation, and clients send it only when the host advertises it. Remote
 `sessions.create` accepts an optional lowercase UUID `sessionId`; supporting
 hosts advertise `sessions.create.session-id` in `capabilities.features`.
 Remote and local `sessions.create`

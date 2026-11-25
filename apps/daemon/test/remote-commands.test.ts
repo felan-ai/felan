@@ -23,7 +23,7 @@ function id() {
 }
 const requester = randomUUID(); const session = randomUUID();
 const expiresAt = Number.MAX_SAFE_INTEGER;
-const capabilities: HostCapabilities = { operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'], interactionKinds: ['confirm'] };
+const capabilities: HostCapabilities = { operations: ['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking', 'compact'], interactionKinds: ['confirm'] };
 function accepted(request: ClientEnvelope): Response {
   return { v: 1, re: request.id, outcome: 'accepted', result: request.op === 'sessions.create' ? { sessionId: session }
     : request.op === 'prompt' ? { runId: 'run' } : request.op === 'steer' || request.op === 'follow_up' ? { itemId: 'item' } : {} };
@@ -61,6 +61,8 @@ it.each([
   { op: 'interaction.answer', session, params: { interactionId: 'question', answer: { kind: 'confirm', confirmed: true } } },
   { op: 'set_model', session, params: { provider: 'offline', id: 'fixture' } },
   { op: 'set_thinking', session, params: { thinking: 'off' } },
+  { op: 'compact', session, params: {} },
+  { op: 'compact', session, params: { method: 'summary', instructions: 'Keep the API decisions.' } },
 ] satisfies RemoteCommand[])('maps $op with the command identity and web requester', async command => {
   const f = await fixture(); const commandId = id();
   const outcome = await f.executor.execute({ id: commandId, requester, expiresAt, command });
@@ -297,9 +299,9 @@ it('bounds the private atomic journal and refuses corrupt recovery', async () =>
   expect(f.submit).toHaveBeenCalledOnce();
 });
 
-async function realServer() {
+async function realServer(options: Omit<Parameters<typeof serverFixture>[0], 'now' | 'onStream'> = {}) {
   const hold = gate(); const streamStarted = gate();
-  const f = await serverFixture({ now: Date.now, onStream: () => { streamStarted.resolve(); return hold.promise; } });
+  const f = await serverFixture({ ...options, now: Date.now, onStream: () => { streamStarted.resolve(); return hold.promise; } });
   const prepareRoot = vi.fn<NonNullable<SessionServerOptions['prepareRoot']>>(async request => ({ cwd: request.cwd, extensionPaths: [] }));
   const server = new SessionServer({ registry: f.registry, configuration: new TestHostConfiguration({ definitions: [], assertCurrent: () => f.registry.assertAdmission() }),
     models: f.root.runtime.session.modelRuntime, version: 'test', prepareRoot });
@@ -351,6 +353,79 @@ it('applies remote model and thinking changes only after admission and persists 
   expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: thinkingId, op: 'set_thinking', session,
     params: { thinking: 'off' } }), { user: requester, command: thinkingId })).toMatchObject({ outcome: 'accepted' });
   expect(publish).toHaveBeenCalledWith({ type: 'model.updated', model: { provider: 'offline', id: 'fixture' }, thinking: 'off' });
+});
+
+async function compactingServer() {
+  const entered = gate(); const release = gate();
+  const f = await realServer({ compaction: { reserveTokens: 256, keepRecentTokens: 16 },
+    extension: pi => pi.on('session_before_compact', async () => { entered.resolve(); await release.promise; }) });
+  f.hold.resolve();
+  for (const text of ['earlier context '.repeat(80), 'retained context '.repeat(80)]) {
+    const command = id();
+    expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'prompt', session: f.root.sessionId, params: { text } }),
+      { user: requester, command })).toMatchObject({ outcome: 'accepted' });
+    await vi.waitFor(() => expect(f.store.session(f.root.sessionId).run.state).toBe('idle'));
+  }
+  return { ...f, entered, release: release.resolve };
+}
+const compactions = (runtime: AgentSession) => runtime.sessionManager.getEntries().filter(entry => entry.type === 'compaction');
+const userTexts = (runtime: AgentSession) => runtime.sessionManager.getEntries().flatMap(entry =>
+  entry.type === 'message' && entry.message.role === 'user' ? [JSON.stringify(entry.message.content)] : []);
+
+it('runs a remote compaction like local /compact and delivers remote input held during it afterwards', async () => {
+  const f = await compactingServer(); const session = f.root.sessionId; const runtime = f.root.runtime.session;
+  const compact = vi.spyOn(runtime, 'compact'); const command = id(); const instructions = 'Keep the API decisions.';
+  const changes: unknown[] = []; cleanups.push(async () => unobserve());
+  const unobserve = f.registry.observe(event => { if ('change' in event) changes.push(event.change); });
+  const response = await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'compact', session,
+    params: { method: 'summary', instructions } }), { user: requester, command });
+  expect(response).toMatchObject({ outcome: 'accepted', result: { runId: expect.any(String) } });
+  expect(f.store.session(session).run).toMatchObject({ state: 'running', origin: { kind: 'web', user: requester, command } });
+  await f.entered.promise;
+  const steering = id(); const following = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: steering, op: 'steer', session, params: { text: 'steer after compaction' } }),
+    { user: requester, command: steering })).toMatchObject({ outcome: 'accepted', result: { itemId: expect.any(String) } });
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: following, op: 'follow_up', session, params: { text: 'follow up after compaction' } }),
+    { user: requester, command: following })).toMatchObject({ outcome: 'accepted', result: { itemId: expect.any(String) } });
+  expect(f.registry.projection(session).snapshot().queue).toMatchObject([{ kind: 'steer' }, { kind: 'follow_up' }]);
+  expect(userTexts(runtime).some(text => text.includes('after compaction'))).toBe(false);
+  f.release();
+  await vi.waitFor(() => {
+    expect(compactions(runtime)).toHaveLength(1);
+    const texts = userTexts(runtime);
+    expect(texts.findIndex(text => text.includes('steer after compaction'))).toBeGreaterThan(-1);
+    expect(texts.findIndex(text => text.includes('follow up after compaction'))).toBeGreaterThan(texts.findIndex(text => text.includes('steer after compaction')));
+    expect(f.store.session(session).run.state).toBe('idle');
+    expect(f.registry.projection(session).snapshot().queue).toEqual([]);
+  });
+  expect(changes).toContainEqual(expect.objectContaining({ type: 'message.completed',
+    message: expect.objectContaining({ role: 'system', entryId: compactions(runtime)[0]!.id }) }));
+  expect(compact).toHaveBeenCalledExactlyOnceWith(instructions);
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'compact', session, params: { method: 'summary', instructions } }),
+    { user: requester, command })).toEqual(response);
+  expect(compact).toHaveBeenCalledOnce();
+});
+
+it.each(['active', 'starting'] as const)('rejects a remote compaction during a %s run as busy without changing the session', async state => {
+  const f = await realServer(); const session = f.root.sessionId; const runtime = f.root.runtime.session;
+  const acquired = gate(); const slot = gate();
+  cleanups.push(async () => slot.resolve());
+  if (state === 'starting') f.registry.options.acquireRun = async () => { acquired.resolve(); await slot.promise; return () => {}; };
+  const prompt = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: prompt, op: 'prompt', session, params: { text: 'Run' } }),
+    { user: requester, command: prompt })).toMatchObject({ outcome: 'accepted' });
+  await (state === 'starting' ? acquired.promise : f.streamStarted.promise);
+  if (state === 'starting') expect(f.registry.isRunPending(session)).toBe(true);
+  const run = f.store.session(session).run; const entries = runtime.sessionManager.getEntries();
+  const compact = vi.spyOn(runtime, 'compact'); const command = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'compact', session, params: {} }), { user: requester, command }))
+    .toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
+  expect(compact).not.toHaveBeenCalled();
+  expect(f.store.session(session).run).toEqual(run);
+  expect(runtime.sessionManager.getEntries()).toEqual(entries);
+  slot.resolve(); f.hold.resolve();
+  await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+  expect(compactions(runtime)).toEqual([]);
 });
 
 it('restores an unloaded shared session before applying remote model selection', async () => {

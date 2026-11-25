@@ -28,7 +28,7 @@ export const PUBLICATION_LIMITS = Object.freeze({
 const UuidSchema = Type.String({ pattern: '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' });
 const LowercaseUuidSchema = Type.String({ pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' });
 const SequenceSchema = Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER });
-export const RemoteOperationSchema = enumOf(['sessions.create', 'prompt', 'steer', 'follow_up', 'command.invoke', 'cancel', 'interaction.answer', 'set_model', 'set_thinking'] as const);
+export const RemoteOperationSchema = enumOf(['sessions.create', 'prompt', 'steer', 'follow_up', 'command.invoke', 'cancel', 'interaction.answer', 'set_model', 'set_thinking', 'compact'] as const);
 export const REMOTE_FEATURES = ['sessions.create.instructions', 'sessions.create.session-id'] as const;
 
 export const PublishedEventSchema = Type.Object({
@@ -93,6 +93,9 @@ export const RemoteCommandSchema = Type.Union([
   Type.Object({ op: Type.Literal('interaction.answer'), session: UuidSchema, params: OperationSchemas['interaction.answer'] }),
   Type.Object({ op: Type.Literal('set_model'), session: UuidSchema, params: OperationSchemas.set_model }),
   Type.Object({ op: Type.Literal('set_thinking'), session: UuidSchema, params: OperationSchemas.set_thinking }),
+  Type.Object({ op: Type.Literal('compact'), session: UuidSchema, params: Type.Object({
+    instructions: Type.Optional(text(LIMITS.instructionsBytes, 1)), method: Type.Optional(Type.Literal('summary')),
+  }) }),
 ]);
 export const RemoteCommandOutcomeSchema = Type.Union([
   ResponseSchema,

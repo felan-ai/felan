@@ -207,6 +207,20 @@ describe('remote commands', () => {
     expect(() => parseRemoteCommand({ ...model, params: { provider: 'anthropic' } })).toThrow();
     expect(() => parseRemoteCommand({ ...thinking, params: { thinking: 'extreme' } })).toThrow();
   });
+  it('accepts and advertises remote summary compaction with bounded focus instructions', () => {
+    const compact = { op: 'compact', session, params: { method: 'summary', instructions: 'é'.repeat(LIMITS.instructionsBytes / 2) } } as const;
+    expect(parseRemoteCommand(compact)).toEqual(compact);
+    expect(parseRemoteCommand({ op: 'compact', session, params: {} })).toEqual({ op: 'compact', session, params: {} });
+    expect(parseSchema(RemoteOperationSchema, 'compact')).toBe('compact');
+    expect(parseHostRegistration({ name: 'host', daemonVersion: '0.8.2', rowSchemaVersion: 1, projects: [],
+      capabilities: { operations: ['compact'], interactionKinds: [] } }).capabilities.operations).toEqual(['compact']);
+    expect(parseRealtimeNotification({ event: 'command', payload: { id: command, op: 'compact' } })).toEqual({ event: 'command', payload: { id: command, op: 'compact' } });
+    for (const params of [{ instructions: '' }, { instructions: 'é'.repeat(LIMITS.instructionsBytes / 2 + 1) }, { method: 'custom' }, { method: '' }]) {
+      expect(() => parseRemoteCommand({ ...compact, params })).toThrowError(expect.objectContaining({ code: 'invalid_request' }));
+    }
+    expect(() => parseRemoteCommand({ op: 'compact', params: {} })).toThrow();
+    expectTypeOf<Extract<RemoteCommand, { op: 'compact' }>['params']>().toEqualTypeOf<{ instructions?: string; method?: 'summary' }>();
+  });
   it('accepts only lowercase UUIDs for optional client-created session IDs', () => {
     const create = { op: 'sessions.create', params: { project: 'workspace', sessionId: session } };
     expect(parseRemoteCommand(create)).toEqual(create);

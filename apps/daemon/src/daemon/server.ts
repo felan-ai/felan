@@ -149,7 +149,7 @@ export class SessionServer {
     let preparing: RootPreparationWork | undefined; let ownsPreparation = false;
     try {
       const request = parseClientEnvelope(value);
-      if (!['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking', 'command.invoke'].includes(request.op)) throw commandError('forbidden');
+      if (!['sessions.create', 'prompt', 'steer', 'follow_up', 'cancel', 'interaction.answer', 'set_model', 'set_thinking', 'command.invoke', 'compact'].includes(request.op)) throw commandError('forbidden');
       const user = remote.user === undefined ? undefined : parseSchema(IdSchema, remote.user); const commandId = parseSchema(IdSchema, remote.command);
       const origin: Origin = parseSchema(OriginSchema, remote.automation ? { kind: 'automation', source: remote.automation.source }
         : remote.channel ? { kind: 'channel', provider: remote.channel.provider, ...(user ? { user } : {}), command: commandId }
