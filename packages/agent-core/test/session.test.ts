@@ -9,6 +9,8 @@ import {
   SettingsManager,
   createAgentSessionRuntime,
   createAssistantMessageEventStream,
+  createProvider,
+  openAICompletionsApi,
   associateExtensionConfig,
   configField,
   createFelanServiceRegistry,
@@ -505,6 +507,49 @@ describe('Agent Core session composition', () => {
       expect(result.session.thinkingLevel).toBe('high');
     } finally {
       result.session.dispose();
+    }
+  });
+
+  it('selects a default model from a native provider configured only by the environment', async () => {
+    const keyEnv = 'AGENT_CORE_NATIVE_PROVIDER_TEST_KEY';
+    vi.stubEnv(keyEnv, 'environment-value');
+    const root = await temporaryDirectory();
+    const cwd = join(root, 'workspace');
+    await mkdir(cwd, { recursive: true });
+    const modelRuntime = await createModelRuntime(join(root, 'agent-dir'));
+    const result = await createAgentCoreSession({
+      runtime: new TestAgentRuntime(cwd),
+      extensionPackages: ['@felan-ai/test-native-provider'],
+      importExtension: async () => ({
+        default: ((pi) => {
+          pi.registerProvider(createProvider({
+            id: 'native-provider',
+            auth: { apiKey: {
+              name: 'Native provider key',
+              resolve: async ({ ctx }) => {
+                const apiKey = await ctx.env(keyEnv);
+                return apiKey ? { auth: { apiKey }, source: keyEnv } : undefined;
+              },
+            } },
+            models: [{
+              id: 'native-model', name: 'Native model', api: 'openai-completions', provider: 'native-provider',
+              baseUrl: 'https://native-provider.invalid/v1', reasoning: true, input: ['text'],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 200_000, maxTokens: 32_000,
+            }],
+            api: openAICompletionsApi(),
+          }));
+        }) satisfies FelanExtension,
+      }),
+      modelRuntime,
+      settingsManager: SettingsManager.inMemory({ defaultProvider: 'native-provider', defaultModel: 'native-model', defaultThinkingLevel: 'high' }),
+      sessionManager: SessionManager.inMemory(cwd),
+    });
+    try {
+      expect(result.modelFallbackMessage).toBeUndefined();
+      expect(result.session.model).toMatchObject({ provider: 'native-provider', id: 'native-model' });
+    } finally {
+      result.session.dispose();
+      vi.unstubAllEnvs();
     }
   });
 

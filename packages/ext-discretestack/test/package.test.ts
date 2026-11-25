@@ -9,7 +9,7 @@ describe('@felan-ai/ext-discretestack package boundary', () => {
     const manifest = JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8'));
     expect(manifest).toMatchObject({
       name: '@felan-ai/ext-discretestack',
-      version: '0.1.0',
+      version: '0.2.0',
       type: 'module',
       license: 'MIT',
       repository: {
@@ -17,7 +17,7 @@ describe('@felan-ai/ext-discretestack package boundary', () => {
         url: 'git+https://github.com/felan-ai/felan.git',
         directory: 'packages/ext-discretestack',
       },
-      peerDependencies: { '@felan-ai/agent-core': 'catalog:agent-core' },
+      peerDependencies: { '@felan-ai/agent-core': '^0.16.3' },
       devDependencies: { '@felan-ai/agent-core': 'workspace:*' },
       publishConfig: { access: 'public', provenance: true },
     });
@@ -37,9 +37,16 @@ describe('@felan-ai/ext-discretestack package boundary', () => {
     const provider = await import('@felan-ai/ext-discretestack/provider');
     expect(extension.default).toBeTypeOf('function');
     expect(extension.createDiscreteStackExtension).toBeTypeOf('function');
+    expect(extension.createDiscreteStackProvider).toBeTypeOf('function');
     expect(provider.DISCRETESTACK_PROVIDER_ID).toBe('discretestack');
+    expect(provider.DISCRETESTACK_PROVIDER_NAME).toBe('DiscreteStack');
     expect(provider.DISCRETESTACK_API_KEY_ENV).toBe('DISCRETESTACK_API_KEY');
-    expect(provider.DISCRETESTACK_PROVIDER.apiKey).toBe('${DISCRETESTACK_API_KEY}');
+    expect(provider.DISCRETESTACK_KEY_TYPE_ENV).toBe('DISCRETESTACK_KEY_TYPE');
+    expect(provider.DISCRETESTACK_BASE_URLS).toEqual({
+      user: 'https://api.discretestack.eu/v1',
+      provider: 'https://api.discretestack.eu/provider/v1',
+    });
+    expect(provider.DISCRETESTACK_MODELS.map(({ id }) => id)).toEqual(['discretestack-max', 'discretestack-compact']);
     await access(join(packageRoot, 'dist', 'index.d.ts'));
     await access(join(packageRoot, 'dist', 'provider.d.ts'));
 

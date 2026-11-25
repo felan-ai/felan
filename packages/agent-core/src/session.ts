@@ -212,7 +212,13 @@ async function composeAgentCoreSession(
       : { appendSystemPrompt: options.appendSystemPrompt }),
   });
   if (projectInstructions !== undefined) projectInstructionsByLoader.set(resourceLoader, projectInstructions);
-  registerLoadedExtensionModels(resourceLoader, options.modelRuntime, diagnostics);
+  if (registerLoadedExtensionModels(resourceLoader, options.modelRuntime, diagnostics).nativeProviders) {
+    // Pi marks a native provider configured right away only when it has a stored credential. An
+    // ambient key, such as an environment variable, counts only after an availability pass, and model
+    // selection below reads that snapshot synchronously. Pi's own service composition awaits the same
+    // offline refresh after registering extension providers.
+    await options.modelRuntime.refresh({ allowNetwork: false });
+  }
   const result = await createAgentSession({
     cwd: options.runtime.cwd,
     agentDir,
@@ -278,8 +284,9 @@ function registerLoadedExtensionModels(
   resourceLoader: ResourceLoader,
   modelRuntime: ModelRuntime,
   diagnostics: AgentSessionServices['diagnostics'],
-): void {
+): { nativeProviders: boolean } {
   const { runtime } = resourceLoader.getExtensions();
+  const nativeProviders = runtime.pendingNativeProviderRegistrations.length > 0;
   const register = (extensionPath: string, apply: () => void) => {
     try {
       apply();
@@ -299,6 +306,7 @@ function registerLoadedExtensionModels(
     register(extensionPath, () => modelRuntime.registerVirtualModel(definition));
   }
   runtime.pendingVirtualModelRegistrations = [];
+  return { nativeProviders };
 }
 
 function optionalDynamicThinkingReporter(provider: SavingsReporterProvider | undefined): SavingsReporter | undefined {

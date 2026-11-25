@@ -256,6 +256,15 @@ handle `aborted` on `agent_settled` events, include `durationMs`, `outputPad`,
 `AssistantMessageEventStream`, typically created by
 `createAssistantMessageEventStream()`.
 
+Extensions that need per-credential request auth, such as a base URL chosen by
+the stored key, register a native provider instead of a provider config. Agent
+Core re-exports Pi's `createProvider`, the `ApiKeyAuth` type, and
+`openAICompletionsApi()` for OpenAI-compatible chat completions, so such
+providers can be built without depending on Pi packages directly. When an
+extension registers a native provider, session composition runs an offline
+model availability pass before it resolves the default or restored model, so a
+provider configured only by an environment variable can be selected.
+
 Tool-argument validation runs on Pi's `@earendil-works/pi-schema`. It coerces
 numeric strings to numbers and single values to arrays, and reports failures
 such as `- path: missing`. It does not apply TypeBox-only features such as

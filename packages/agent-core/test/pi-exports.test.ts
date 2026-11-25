@@ -1,6 +1,8 @@
 import * as piAi from '@earendil-works/pi-ai';
+import * as piOpenAICompletions from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import type {
   Api as PiApi,
+  ApiKeyAuth as PiApiKeyAuth,
   AssistantMessage as PiAssistantMessage,
   AssistantMessageEvent as PiAssistantMessageEvent,
   AssistantMessageEventStream as PiAssistantMessageEventStream,
@@ -38,6 +40,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import * as agentCore from '../src/index.js';
 import type {
   Api,
+  ApiKeyAuth,
   AssistantMessage,
   AssistantMessageEvent,
   AssistantMessageEventStream,
@@ -95,6 +98,7 @@ describe('Agent Core Pi exports', () => {
       'InMemoryCredentialStore',
       'clampThinkingLevel',
       'createAssistantMessageEventStream',
+      'createProvider',
       'getCurrentSystemPrompt',
       'getCurrentTools',
       'getSupportedThinkingLevels',
@@ -107,6 +111,7 @@ describe('Agent Core Pi exports', () => {
     }
 
     expect(agentCore.builtinProviders).toBe(piProviders.builtinProviders);
+    expect(agentCore.openAICompletionsApi).toBe(piOpenAICompletions.openAICompletionsApi);
   });
 
   it('preserves TypeBox string enum schemas', () => {
@@ -119,6 +124,7 @@ describe('Agent Core Pi exports', () => {
 
   it('exposes the Pi types used by Felan applications', () => {
     expectTypeOf<Api>().toEqualTypeOf<PiApi>();
+    expectTypeOf<ApiKeyAuth>().toEqualTypeOf<PiApiKeyAuth>();
     expectTypeOf<AssistantMessage>().toEqualTypeOf<PiAssistantMessage>();
     expectTypeOf<AssistantMessageEvent>().toEqualTypeOf<PiAssistantMessageEvent>();
     expectTypeOf<AssistantMessageEventStream>().toEqualTypeOf<PiAssistantMessageEventStream>();

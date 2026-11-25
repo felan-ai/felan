@@ -251,6 +251,7 @@ export {
   clampThinkingLevel,
   contentText,
   createAssistantMessageEventStream,
+  createProvider,
   getCurrentSystemMessage,
   getCurrentSystemPrompt,
   getCurrentTools,
@@ -260,8 +261,10 @@ export {
   normalizeContext,
   uuidv7,
 } from '@earendil-works/pi-ai';
+export { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 export type {
   Api,
+  ApiKeyAuth,
   AssistantImages,
   AssistantMessage,
   AssistantMessageEvent,

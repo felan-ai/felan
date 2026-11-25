@@ -137,27 +137,36 @@ Pi's `/llama` interface; enabling the integration does not download models.
 
 ### DiscreteStack provider
 
-The Felan-managed DiscreteStack provider channel uses the OpenAI chat
-completions API with base URL `https://api.discretestack.eu/provider/v1`.
-Its provider ID is `discretestack`.
+DiscreteStack uses the OpenAI chat completions API. Its provider ID is
+`discretestack`.
 
 Run `/login`, choose DiscreteStack, and paste your API key. Felan saves the key
 in its auth store. Alternatively, set `DISCRETESTACK_API_KEY` in your shell or
 in the [daemon `.env`](#configuration-files). A stored key takes precedence
 over the environment variable.
 
+The key type selects the endpoint. Personal keys, including keys saved by
+`/login`, use `https://api.discretestack.eu/v1`. A Felan-managed provider
+channel key uses `https://api.discretestack.eu/provider/v1` and needs
+`DISCRETESTACK_KEY_TYPE=provider` next to the key: in the environment for
+`DISCRETESTACK_API_KEY`, or in the saved credential's `env` map. A saved
+personal key stays on `/v1` even when the environment sets the type to
+`provider`.
+
 Prices are in USD per 1 million tokens:
 
-| Model ID | Display name | Underlying model | Input | Cached input | Output |
-| --- | --- | --- | --- | --- | --- |
-| `discretestack/deepseek-v4.1-flash-1017` | DiscreteStack Max | DeepSeek V4.1 Flash | $0.07 | $0.002 | $0.18 |
-| `discretestack/glm-5.3-flash` | DiscreteStack Compact | GLM 5.3 Flash | $0.05 | $0.015 | $0.20 |
+| Model ID | Display name | Input | Cached input | Output |
+| --- | --- | --- | --- | --- |
+| `discretestack/discretestack-max` | DiscreteStack Max | $0.07 | $0.002 | $0.18 |
+| `discretestack/discretestack-compact` | DiscreteStack Compact | $0.05 | $0.015 | $0.20 |
 
 Both models support text and image input, tools, and the `off`, `minimal`,
 `low`, `high`, and `max` thinking levels. `minimal` sends no reasoning, the
 same as `off`, because the gateway has no minimal effort. The gateway accepts at most 1,048,576 tokens of
-prompt plus requested output, so Felan uses a 131,072-token output limit and a
-917,504-token context window to compact sessions before they reach it. Under
+prompt plus requested output, and the personal-key endpoint accepts at most
+64,000 output tokens, so Felan uses a 64,000-token output limit and a
+984,576-token context window to compact sessions before they reach either
+limit. Under
 heavy load, DiscreteStack may return HTTP 429. Pi handles it with its standard
 retry logic.
 

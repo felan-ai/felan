@@ -13,7 +13,7 @@ export const FELAN_DEFAULT_MODEL_PER_PROVIDER = {
   radius: 'balanced',
   nvidia: 'nvidia/nemotron-3.5-super-vl-120b-a12b',
   deepseek: 'deepseek-v4-pro',
-  discretestack: 'deepseek-v4.1-flash-1017',
+  discretestack: 'discretestack-max',
   google: 'gemini-3.8-flash',
   'google-vertex': 'gemini-3.8-flash',
   'github-copilot': 'gpt-5.6-sol',

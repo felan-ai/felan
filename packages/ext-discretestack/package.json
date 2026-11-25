@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-discretestack",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DiscreteStack LLM provider for Felan",
   "license": "MIT",
   "type": "module",
@@ -35,7 +35,7 @@
     "prepack": "pnpm build"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "catalog:agent-core"
+    "@felan-ai/agent-core": "^0.16.3"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

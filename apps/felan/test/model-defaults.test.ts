@@ -1,5 +1,5 @@
 import { builtinProviders } from '@felan-ai/agent-core';
-import { DISCRETESTACK_PROVIDER } from '@felan-ai/ext-discretestack/provider';
+import { DISCRETESTACK_MODELS } from '@felan-ai/ext-discretestack/provider';
 import { describe, expect, it } from 'vitest';
 import { findPackageJSON } from 'node:module';
 import { pathToFileURL } from 'node:url';
@@ -30,8 +30,8 @@ describe('Felan model defaults', () => {
   });
 
   it('defaults DiscreteStack to its registered Max model', () => {
-    expect(FELAN_DEFAULT_MODEL_PER_PROVIDER.discretestack).toBe('deepseek-v4.1-flash-1017');
-    expect(DISCRETESTACK_PROVIDER.models).toContainEqual(expect.objectContaining({ id: FELAN_DEFAULT_MODEL_PER_PROVIDER.discretestack }));
+    expect(FELAN_DEFAULT_MODEL_PER_PROVIDER.discretestack).toBe('discretestack-max');
+    expect(DISCRETESTACK_MODELS).toContainEqual(expect.objectContaining({ id: FELAN_DEFAULT_MODEL_PER_PROVIDER.discretestack }));
   });
 
   it('uses Felan current defaults for the primary frontier providers', () => {
