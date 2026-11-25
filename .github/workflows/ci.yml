@@ -25,15 +25,18 @@ jobs:
       matrix:
         include:
           # Each job runs the root Vitest config so its projects share one worker pool.
+          # The github-actions reporter turns each failed test into a check-run annotation, which
+          # the Felan GitHub App can read without job logs. test-isolated.sh drops GITHUB_ACTIONS,
+          # so Vitest would not add it by itself.
           - name: test daemon
             os: ubuntu-latest
-            run: pnpm test -- --project @felan-ai/daemon
+            run: pnpm test -- --project @felan-ai/daemon --reporter=default --reporter=github-actions
           - name: test felan
             os: ubuntu-latest
-            run: pnpm test -- --project @felan-ai/felan
+            run: pnpm test -- --project @felan-ai/felan --reporter=default --reporter=github-actions
           - name: test packages
             os: ubuntu-latest
-            run: pnpm test -- --project '@felan-ai/ext-*' --project @felan-ai/agent-core --project @felan-ai/session-protocol
+            run: pnpm test -- --project '@felan-ai/ext-*' --project @felan-ai/agent-core --project @felan-ai/session-protocol --reporter=default --reporter=github-actions
           # Build compiles every workspace with the same sources and options as type-check.
           - name: packed install
             os: ubuntu-latest
@@ -45,19 +48,19 @@ jobs:
           # default. Only the CLI flag reaches projects without their own Vitest config.
           - name: test daemon
             os: windows-latest
-            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon --testTimeout=30000
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon --testTimeout=30000 --reporter=default --reporter=github-actions
           - name: test felan
             os: windows-latest
-            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/felan --testTimeout=30000
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/felan --testTimeout=30000 --reporter=default --reporter=github-actions
           - name: test packages
             os: windows-latest
-            run: scripts/test-isolated.sh pnpm test -- --project '@felan-ai/ext-*' --project @felan-ai/agent-core --project @felan-ai/session-protocol --testTimeout=30000
+            run: scripts/test-isolated.sh pnpm test -- --project '@felan-ai/ext-*' --project @felan-ai/agent-core --project @felan-ai/session-protocol --testTimeout=30000 --reporter=default --reporter=github-actions
           - name: packed install
             os: windows-latest
             run: scripts/test-isolated.sh bash -c 'pnpm check:licenses && pnpm pack:all && pnpm test:packed-bin && pnpm test:dist'
           - name: test daemon
             os: windows-11-arm
-            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon --testTimeout=30000
+            run: scripts/test-isolated.sh pnpm test -- --project @felan-ai/daemon --testTimeout=30000 --reporter=default --reporter=github-actions
     steps:
       - uses: actions/checkout@v4
         # Git Bash scripts and the shrinkwrap parser require LF before any run step.
