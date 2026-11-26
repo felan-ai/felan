@@ -917,6 +917,29 @@ describe('session server over private real Unix IPC with fake ownership', () => 
     expect(compact).toHaveBeenCalledOnce();
   });
 
+  it('rejects a compaction that Pi would end without summarizing and leaves the session unchanged', async () => {
+    const f = await fixture({ compaction: { reserveTokens: 256, keepRecentTokens: 500 } }); const client = await f.client(); const session = f.root.sessionId;
+    const runtime = f.root.runtime.session;
+    await client.attach(session); await completedPrompt(f, client, 'short context');
+    const rejectedUnchanged = async (message: string, piError: string) => {
+      const compact = vi.spyOn(runtime, 'compact'); const run = f.store.session(session).run; const entries = runtime.sessionManager.getEntries();
+      expect(await client.request('compact', {}, { session })).toMatchObject({ outcome: 'rejected', error: { code: 'unavailable', message } });
+      expect(compact).not.toHaveBeenCalled();
+      expect(f.store.session(session).run).toEqual(run); expect(runtime.sessionManager.getEntries()).toEqual(entries);
+      compact.mockRestore();
+      await expect(runtime.compact()).rejects.toThrow(piError);
+    };
+    await rejectedUnchanged('Nothing to compact yet. Compaction keeps the most recent 500 tokens of context, and this session has no older messages to summarize.',
+      'Nothing to compact (session too small)');
+    await completedPrompt(f, client, 'earlier context '.repeat(160)); await completedPrompt(f, client, 'retained context '.repeat(160));
+    expect(await client.request('compact', {}, { session })).toMatchObject({ outcome: 'accepted' });
+    await vi.waitFor(() => {
+      expect(runtime.sessionManager.getEntries().filter(entry => entry.type === 'compaction')).toHaveLength(1);
+      expect(f.store.session(session).run.state).toBe('idle');
+    });
+    await rejectedUnchanged('Already compacted. Send another message before compacting again.', 'Already compacted');
+  });
+
   it('delivers input held during manual compaction before the daemon run settles', async () => {
     const f = await compactingFixture(); const { client, session } = f;
     const queued = await client.request('steer', { text: 'after compaction' }, { session });

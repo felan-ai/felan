@@ -509,11 +509,15 @@ export class SessionRegistry {
     if (!manager) { manager = new RegistryExecutions(this, root); this.executionManagers.set(root, manager); }
     return manager.host(id);
   }
+  assertRunAvailable(id: string): void {
+    const stored = this.options.store.sessionMetadata(id);
+    if (stored.state !== 'open' || stored.execution && !stored.execution.completedAt || this.closing.has(id) || this.copyClaims.has(stored.piPath) || this.running(id)) throw registryError('busy', 'Wait for the current run to finish.');
+  }
+
   async runAdmitted<T>(requestId: string, id: string, origin: Origin, effect: (session: AgentSession) => Promise<T>): Promise<T> {
     this.assertNewWork();
     this.assertDispatch(id);
-    const entry = this.require(id); const stored = this.options.store.sessionMetadata(id);
-    if (stored.state !== 'open' || stored.execution && !stored.execution.completedAt || this.closing.has(id) || this.copyClaims.has(stored.piPath) || this.running(id)) throw registryError('busy', 'Wait for the current run to finish.');
+    const entry = this.require(id); this.assertRunAvailable(id);
     const request = this.options.store.request(requestId);
     if (request?.session !== id) throw new Error('Admitted request belongs to another session.');
     const run = { state: 'running' as const, id: randomUUID(), origin };

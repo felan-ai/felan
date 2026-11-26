@@ -11,6 +11,7 @@ import { projectTreeEntries } from './tree.js';
 import { prepareExport, prepareImport, publishExport, stageImport } from './session-files.js';
 import { canonicalPath } from './profile-storage.js';
 import { expandSkillCommand, unknownCommandMessage } from './skill-commands.js';
+import { compactionUnavailableMessage } from './compaction-admission.js';
 import { dirname } from 'node:path';
 
 /** @internal */
@@ -327,6 +328,9 @@ export class SessionCommands {
       }
       case 'compact': {
         if (request.params.method && request.params.method !== 'summary') throw commandError('unavailable');
+        registry.assertRunAvailable(request.session);
+        const unavailable = compactionUnavailableMessage(registry.binding(request.session)!.runtime.session);
+        if (unavailable) throw commandError('unavailable', unavailable);
         return this.start(request, context.origin, session => this.compact(request.session, session, request.params.instructions));
       }
       case 'command.invoke': {

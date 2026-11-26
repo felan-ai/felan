@@ -428,6 +428,23 @@ it.each(['active', 'starting'] as const)('rejects a remote compaction during a %
   expect(compactions(runtime)).toEqual([]);
 });
 
+it('rejects a remote compaction of a session with nothing to summarize and explains why', async () => {
+  const f = await realServer(); const session = f.root.sessionId; const runtime = f.root.runtime.session;
+  f.hold.resolve();
+  const prompt = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: prompt, op: 'prompt', session, params: { text: 'hi' } }),
+    { user: requester, command: prompt })).toMatchObject({ outcome: 'accepted' });
+  await vi.waitFor(() => expect(f.store.session(session).run.state).toBe('idle'));
+  const run = f.store.session(session).run; const entries = runtime.sessionManager.getEntries();
+  const compact = vi.spyOn(runtime, 'compact'); const command = id();
+  expect(await f.server.submitRemote(parseClientEnvelope({ v: 1, id: command, op: 'compact', session, params: {} }), { user: requester, command }))
+    .toMatchObject({ outcome: 'rejected', error: { code: 'unavailable',
+      message: 'Nothing to compact yet. Compaction keeps the most recent 20,000 tokens of context, and this session has no older messages to summarize.' } });
+  expect(compact).not.toHaveBeenCalled();
+  expect(f.store.session(session).run).toEqual(run);
+  expect(runtime.sessionManager.getEntries()).toEqual(entries);
+});
+
 it('restores an unloaded shared session before applying remote model selection', async () => {
   const f = await realServer(); const session = f.root.sessionId; await f.registry.evictIdle();
   expect(f.registry.binding(session)).toBeUndefined();

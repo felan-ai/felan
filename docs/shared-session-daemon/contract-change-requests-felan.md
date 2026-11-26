@@ -1024,6 +1024,11 @@ automation origin and returns `{ runId }`. The run publishes `run.updated` when 
 starts and settles, and the compaction summary arrives as a `system`
 `message.completed`. During an active or pending run the command returns
 `busy` and changes nothing; the daemon does not queue it until the run ends.
+When the session has nothing to summarize, because it already ends in a
+compaction or every message since the latest compaction falls within the recent
+context that compaction keeps, the command returns `unavailable` with a message
+that explains why, starts no run and changes nothing. The platform shows that
+message to the person who asked.
 `steer` and `follow_up` commands sent during the compaction return
 `{ itemId }`, appear in `queue.updated`, and the daemon delivers them in the
 same run after the compaction finishes. A retried command with the same ID
