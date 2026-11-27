@@ -11,6 +11,8 @@ const roots: string[] = [];
 const running: Array<{ manager: BackgroundBashManager; id: string }> = [];
 const decoder = new TextDecoder();
 const TEST_TIMEOUT_MS = 15_000;
+/** The SIGTERM alone waits 5 seconds, and a Windows host spawns a Git Bash shell for every probe and signal. */
+const SIGKILL_TEST_TIMEOUT_MS = 30_000;
 const SESSION = 'session-a';
 const MAX_SHORT_COMMAND_CALLS = 5;
 
@@ -42,7 +44,8 @@ describe('runForegroundCommand', () => {
     expect(await jobFiles(storage, runtime.cwd)).toEqual([]);
   });
 
-  it('returns the log a wait call printed before the deadline cut it off after deleting the job', async () => {
+  // A Windows host waits through storage reads, so no wait call prints the log there.
+  it.skipIf(process.platform === 'win32')('returns the log a wait call printed before the deadline cut it off after deleting the job', async () => {
     const { runtime, storage, manager } = await createRuntime();
     const shell = runtime.shell.bind(runtime);
     vi.spyOn(runtime, 'shell').mockImplementation(async (script, options) => {
@@ -125,15 +128,19 @@ describe('runForegroundCommand', () => {
   it('escalates to SIGKILL when a cancelled command ignores SIGTERM', async () => {
     const { runtime, storage, manager } = await createRuntime();
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 300);
+    const result = runForegroundCommand(manager, runtime, storage, "trap '' TERM; printf '%s' \"$$\" > shell.pid; while :; do sleep 0.05; done", { timeoutMs: 20_000, noticeSession: SESSION, signal: controller.signal });
+    // The command writes its PID after it starts ignoring SIGTERM, so the cancel cannot arrive before the trap.
+    const pid = await vi.waitFor(async () => {
+      const written = decoder.decode(await runtime.readFile('shell.pid'));
+      expect(written).toMatch(/^\d+$/u);
+      return written;
+    }, { timeout: 10_000, interval: 20 });
+    controller.abort();
 
-    await expect(runForegroundCommand(manager, runtime, storage, "trap '' TERM; printf '%s' \"$$\" > shell.pid; while :; do sleep 0.05; done", { timeoutMs: 20_000, noticeSession: SESSION, signal: controller.signal }))
-      .rejects.toThrow('Command cancelled');
-
+    await expect(result).rejects.toThrow('Command cancelled');
     expect(await jobFiles(storage, runtime.cwd)).toEqual([]);
-    const pid = decoder.decode(await runtime.readFile('shell.pid'));
     expect((await runtime.shell(`kill -0 ${pid} 2>/dev/null`, { shellFlavor: 'posix' })).code).not.toBe(0);
-  });
+  }, SIGKILL_TEST_TIMEOUT_MS);
 
   it.each(['before', 'during'])('stops and removes the job when aborted %s the wait', async (when) => {
     const { runtime, storage, manager } = await createRuntime();
