@@ -10,6 +10,8 @@ export interface ProcessRecord {
   readonly outputPath: string;
   readonly commandIdentity: readonly string[];
   readonly exitCode?: number;
+  /** The job still owes its session a finish notice; recovery restores that session so the notice is delivered. */
+  readonly notice?: 'pending';
 }
 
 export interface DetachedProcessInspection {

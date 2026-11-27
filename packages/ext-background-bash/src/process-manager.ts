@@ -1,10 +1,15 @@
+import { randomBytes } from 'node:crypto';
 import { join, resolve } from 'node:path';
-import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
 import { BackgroundBashCoordinator, type InteractiveBashProcess } from './coordinator.js';
 import { shellQuote } from './runtime-support.js';
 import { createOutputLog, readLogTail } from './logs.js';
 import {
   BackgroundBashJobStore,
+  completeJob,
+  jobFromInfo,
+  serializeJobRecord,
+  type BackgroundBashInfo,
   type BackgroundBashJob,
   type BackgroundBashPage,
   type BackgroundBashQuery,
@@ -13,12 +18,31 @@ import {
   isTerminalStatus,
 } from './job-store.js';
 
+/** A finished foreground job, with its output when the wait call returned it. */
+export interface ForegroundExit {
+  job: BackgroundBashJob;
+  /** The whole log, when it was small enough to return; `removed` means the wait call also deleted the job. */
+  output?: { content: Uint8Array; removed: boolean };
+}
+
 export interface WaitBackgroundBashResult {
   job: BackgroundBashJob;
   timedOut: boolean;
 }
 
 const WAIT_POLL_MS = 500;
+/** Remote shell calls have time limits, so a foreground wait blocks in slices of at most this long. */
+const FOREGROUND_WAIT_SLICE_MS = 25_000;
+const FOREGROUND_MAX_FAILED_WAITS = 10;
+const FOREGROUND_DEAD_RECHECK_MS = 500;
+/** A log this small cannot exceed the result limits even if every byte decodes to a three-byte replacement character. */
+const FOREGROUND_INLINE_LOG_BYTES = 16 * 1024;
+const FOREGROUND_INLINE_LOG_LINES = 2_000;
+const FOREGROUND_WAIT_OUTPUT_BYTES = 256 * 1024;
+/** Linux limits one argv string to 128 KiB; a larger launch script falls back to storage writes. */
+const ONE_CALL_LAUNCH_MAX_BYTES = 64 * 1024;
+const LAUNCH_ID_TAKEN_EXIT = 17;
+const LAUNCH_UNSUPPORTED_EXIT = 64;
 const PROCESS_STATUS_GRACE_MS = 5_000;
 const STOP_PROCESS_WAIT_MS = 5_000;
 const RUNNER_MARKER_MAX_AGE_SECONDS = 3;
@@ -26,12 +50,12 @@ const UNATTACHED_PROCESS_ERROR = 'Process is not attached to a live root session
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const pendingLaunches = new Map<string, Promise<void>>();
-const attachedOwners = new Map<string, BackgroundBashManager>();
+/** Marks foreground jobs this process waits on; a job marked by another process lost its waiter to a restart. */
+const PROCESS_INSTANCE = randomBytes(16).toString('hex');
 
 export class BackgroundBashManager {
   readonly #store: BackgroundBashJobStore;
   readonly #storage: AgentRuntimeStorage;
-  readonly #appendedSnapshots = new WeakSet<InteractiveBashProcess>();
 
   readonly #coordinator: BackgroundBashCoordinator;
 
@@ -39,32 +63,6 @@ export class BackgroundBashManager {
     this.#storage = runtime.storage('session');
     this.#store = new BackgroundBashJobStore(runtime, this.#storage);
     this.#coordinator = new BackgroundBashCoordinator(runtime, snapshot => this.#persistInteractiveSnapshot(snapshot.id, snapshot));
-  }
-
-  async promote(command: string, process: AgentRuntimeProcess, startedAt: number): Promise<BackgroundBashJob> {
-    const job = await this.#store.createJob(command, 'attached', {
-      startedAt,
-      ...(process.pid === undefined ? {} : { pid: process.pid, processGroupId: process.pid }),
-      promotedAt: Date.now(),
-    });
-    const key = resolve(job.meta.jobDir);
-    const finishLaunch = trackLaunch(key);
-    try {
-      await createOutputLog(this.#storage, job.meta.logPath);
-      attachedOwners.set(key, this);
-      await this.#coordinator.adopt(job.meta.id, process);
-      const updated = await this.#store.readJob(job.meta.id);
-      if (!updated) throw new Error(`Background process disappeared during promotion: ${job.meta.id}`);
-      return updated;
-    } catch (error) {
-      attachedOwners.delete(key);
-      await this.#store.markStatus(job.meta.id, {
-        status: 'failed', exitCode: null, signal: null, error: errorMessage(error),
-      });
-      throw error;
-    } finally {
-      finishLaunch();
-    }
   }
 
   async startInteractive(command: string): Promise<{ job: BackgroundBashJob; process: InteractiveBashProcess }> {
@@ -116,33 +114,139 @@ export class BackgroundBashManager {
   }
 
   async shutdownInteractive(): Promise<void> {
-    try {
-      await this.#coordinator.shutdown();
-    } finally {
-      this.#releaseAttachedOwners();
-    }
+    await this.#coordinator.shutdown();
   }
 
-  async shutdownAttached(): Promise<void> {
-    try {
-      await this.#coordinator.stopAttached();
-    } finally {
-      this.#releaseAttachedOwners();
-    }
-  }
-
-  #releaseAttachedOwners(): void {
-    for (const [key, owner] of attachedOwners) {
-      if (owner === this) attachedOwners.delete(key);
-    }
-  }
-
-  async markPromoted(id: string, executionMode: 'detached' | 'pty' | 'attached' = 'detached'): Promise<BackgroundBashJob | undefined> {
+  async markPromoted(id: string, executionMode: 'detached' | 'pty' = 'detached'): Promise<BackgroundBashJob | undefined> {
     return this.#store.markRunning(id, executionMode, Date.now());
   }
 
-  async start(command: string): Promise<BackgroundBashJob> {
-    const job = await this.#store.createJob(command);
+  /**
+   * Starts a detached job that a foreground tool call waits on; it stays unlisted until promoted. One shell call
+   * writes the job directory and launches the runner, because each runtime call is a round trip on remote runtimes.
+   */
+  async startForeground(command: string, noticeSession: string): Promise<BackgroundBashJob> {
+    const options = { foreground: PROCESS_INSTANCE, noticeSession };
+    // A launch script of this size reaches Git Bash cut short, so a Windows host writes the job through storage.
+    if (process.platform === 'win32') return this.start(command, options);
+    for (let attempt = 0; ; attempt += 1) {
+      const info = this.#store.prepareJob(command, options);
+      const script = createOneCallLaunchScript(info, this.#store.jobsDir, this.#store.noticesDir);
+      if (command.includes('\0') || encoder.encode(script).byteLength > ONE_CALL_LAUNCH_MAX_BYTES) return this.start(command, options);
+      const job = jobFromInfo(info);
+      const finishLaunch = trackLaunch(info.jobDir);
+      let launchedProcess: ReturnType<typeof parseLaunchResult>;
+      let retry: 'storage' | 'new-id' | undefined;
+      try {
+        const launch = await this.runtime.shell(script, { cwd: this.runtime.cwd, shellFlavor: 'posix', timeout: 10_000 });
+        launchedProcess = launch.killed ? undefined : parseLaunchResult(launch.stdout);
+        // Both codes exit before anything is written.
+        if (!launchedProcess && !launch.killed && launch.code === LAUNCH_UNSUPPORTED_EXIT) retry = 'storage';
+        else if (!launchedProcess && !launch.killed && launch.code === LAUNCH_ID_TAKEN_EXIT && attempt < 4) retry = 'new-id';
+        else {
+          if (launch.killed || launch.code !== 0) throw new Error(launch.stderr || launch.stdout || 'Background runner failed to launch');
+          if (!launchedProcess) throw new Error('Background runner did not report a process id');
+          await this.#store.recordCreated();
+          return jobFromInfo({ ...info, pid: launchedProcess.pid, processGroupId: launchedProcess.processGroupId ?? launchedProcess.pid });
+        }
+      } catch (error) {
+        return await this.#failStart(job, launchedProcess, error);
+      } finally {
+        finishLaunch();
+      }
+      if (retry === 'storage') return this.start(command, options);
+    }
+  }
+
+  /** A foreground job whose waiting tool call ended with an earlier process. */
+  isForegroundOrphan(job: BackgroundBashJob): boolean {
+    return job.meta.foreground !== undefined && job.meta.foreground !== PROCESS_INSTANCE;
+  }
+
+  /**
+   * Waits inside the runtime for a foreground job to finish, in bounded slices; resolves undefined at the deadline.
+   * The call that sees the job finish also returns a small log and deletes the job when no result can need it.
+   */
+  async waitForForeground(job: BackgroundBashJob, deadline: number, signal?: AbortSignal): Promise<ForegroundExit | undefined> {
+    const id = job.meta.id;
+    let failures = 0;
+    let lastFailure: unknown;
+    while (true) {
+      signal?.throwIfAborted();
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return undefined;
+      const sliceMs = Math.min(remaining, FOREGROUND_WAIT_SLICE_MS);
+      const boundary = randomBytes(16).toString('hex');
+      const slice = new AbortController();
+      const abortSlice = () => slice.abort();
+      signal?.addEventListener('abort', abortSlice, { once: true });
+      const timer = setTimeout(abortSlice, sliceMs);
+      let result: Awaited<ReturnType<AgentRuntime['shell']>> | undefined;
+      try {
+        result = await this.runtime.shell(createForegroundWaitScript(job, this.#store.noticesDir, boundary, Math.ceil(sliceMs / 1_000) + 1), {
+          cwd: this.runtime.cwd,
+          shellFlavor: 'posix',
+          signal: slice.signal,
+          timeout: sliceMs + 10_000,
+          maxOutputBytes: FOREGROUND_WAIT_OUTPUT_BYTES,
+        });
+      } catch (error) {
+        lastFailure = error;
+      } finally {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abortSlice);
+      }
+      signal?.throwIfAborted();
+      const parsed = result && !result.truncated && (result.killed || result.code === 0)
+        ? parseForegroundWait(result.stdout, boundary)
+        : undefined;
+      if (parsed?.state === 'done') {
+        const finished = completeJob(job.info, parsed.completion);
+        if (finished && parsed.final) return parsed.output ? { job: finished, output: parsed.output } : { job: finished };
+        // A slice ended at the deadline after printing the whole log may already have deleted the job.
+        if (finished && parsed.output && !await this.#store.readJob(id)) {
+          return { job: finished, output: { content: parsed.output.content, removed: true } };
+        }
+      }
+      if (slice.signal.aborted) continue;
+      if (parsed?.state === 'running') {
+        failures = 0;
+        continue;
+      }
+      if (parsed?.state === 'gone') throw new Error(`Background process not found: ${id}`);
+      if (parsed?.state === 'dead' || parsed?.state === 'done') {
+        // The runner is gone without a readable completion record; the store's normal refresh decides its status.
+        const latest = await this.get(id);
+        if (isTerminalStatus(latest.status.status)) return { job: latest };
+        failures = 0;
+        await sleep(Math.max(0, Math.min(FOREGROUND_DEAD_RECHECK_MS, deadline - Date.now())), signal);
+        continue;
+      }
+      // A remote shell call can fail transiently; only repeated failures end the wait.
+      if (result) lastFailure = new Error(result.stderr || result.stdout || `Waiting for ${id} failed (exit ${result.code})`);
+      if (++failures >= FOREGROUND_MAX_FAILED_WAITS) throw new Error(`Unable to wait for background process ${id}`, { cause: lastFailure });
+      await sleep(Math.max(0, Math.min(100 * failures, deadline - Date.now())), signal);
+    }
+  }
+
+  async removeJob(id: string): Promise<void> {
+    await this.#store.removeJob(id);
+  }
+
+  async watchNotice(id: string, session: string): Promise<BackgroundBashJob | undefined> {
+    return this.#store.watchNotice(id, session);
+  }
+
+  async settleNotice(id: string, session: string): Promise<boolean> {
+    return this.#store.settleNotice(id, session);
+  }
+
+  async pendingNotices(session?: string): Promise<BackgroundBashJob[]> {
+    return this.#store.pendingNotices(session);
+  }
+
+  async start(command: string, options?: { foreground?: string; noticeSession?: string }): Promise<BackgroundBashJob> {
+    const job = await this.#store.createJob(command, 'detached', options);
     const finishLaunch = trackLaunch(job.meta.jobDir);
     let launchedProcess: ReturnType<typeof parseLaunchResult>;
     try {
@@ -170,30 +274,39 @@ export class BackgroundBashManager {
       if (!updated) throw new Error(`Background process disappeared during startup: ${job.meta.id}`);
       return updated;
     } catch (error) {
-      if (launchedProcess) {
-        try {
-          await this.#stopUnregisteredProcess(job, launchedProcess.pid);
-        } catch (cleanupError) {
-          const errors: unknown[] = [error, cleanupError];
-          try {
-            await this.#store.updatePid(job.meta.id, launchedProcess.pid, launchedProcess.processGroupId);
-          } catch (persistenceError) {
-            errors.push(persistenceError);
-          }
-          throw new AggregateError(errors, `Failed to clean up background startup ${job.meta.id} (PID ${launchedProcess.pid})`);
-        }
-      }
-      await this.#store.markStatus(job.meta.id, {
-        status: 'failed',
-        ...(launchedProcess === undefined ? {} : { pid: launchedProcess.pid }),
-        exitCode: null,
-        signal: null,
-        error: errorMessage(error),
-      });
-      throw new Error(`Failed to start background bash process: ${errorMessage(error)}`, { cause: error });
+      return await this.#failStart(job, launchedProcess, error);
     } finally {
       finishLaunch();
     }
+  }
+
+  /** Stops a runner whose startup failed and records the job as failed. */
+  async #failStart(
+    job: BackgroundBashJob,
+    launchedProcess: { pid: number; processGroupId?: number } | undefined,
+    error: unknown,
+  ): Promise<never> {
+    if (launchedProcess) {
+      try {
+        await this.#stopUnregisteredProcess(job, launchedProcess.pid);
+      } catch (cleanupError) {
+        const errors: unknown[] = [error, cleanupError];
+        try {
+          await this.#store.updatePid(job.meta.id, launchedProcess.pid, launchedProcess.processGroupId);
+        } catch (persistenceError) {
+          errors.push(persistenceError);
+        }
+        throw new AggregateError(errors, `Failed to clean up background startup ${job.meta.id} (PID ${launchedProcess.pid})`);
+      }
+    }
+    await this.#store.markStatus(job.meta.id, {
+      status: 'failed',
+      ...(launchedProcess === undefined ? {} : { pid: launchedProcess.pid }),
+      exitCode: null,
+      signal: null,
+      error: errorMessage(error),
+    });
+    throw new Error(`Failed to start background bash process: ${errorMessage(error)}`, { cause: error });
   }
 
   async list(status: BackgroundBashStatusFilter = 'all'): Promise<BackgroundBashJob[]> {
@@ -225,11 +338,7 @@ export class BackgroundBashManager {
     const id = job.meta.id;
     const key = resolve(job.meta.jobDir);
     if (pendingLaunches.has(key) || this.#coordinator.isStarting(id)) return job;
-    if (job.meta.executionMode === 'attached') {
-      const owner = attachedOwners.get(key);
-      if (owner && owner !== this) return owner.get(id);
-      if (owner !== this) return this.#normalizeJob(job);
-    }
+    if (job.meta.executionMode === 'attached') return this.#normalizeJob(job);
     if (this.#coordinator.has(id)) {
       await this.readInteractive(id);
       const refreshed = await this.#store.readJob(id);
@@ -267,13 +376,9 @@ export class BackgroundBashManager {
     const stored = await this.#store.readJob(id);
     if (!stored) throw new Error(`Background process not found: ${id}`);
     if (stored.meta.executionMode === 'attached') {
-      const owner = attachedOwners.get(key);
-      if (owner && owner !== this) return owner.stop(id, signal);
-      if (owner !== this || !this.#coordinator.has(id)) {
-        return await this.#store.markStatus(id, {
-          status: 'unknown', exitCode: null, signal: null, error: UNATTACHED_PROCESS_ERROR,
-        }) ?? stored;
-      }
+      return await this.#store.markStatus(id, {
+        status: 'unknown', exitCode: null, signal: null, error: UNATTACHED_PROCESS_ERROR,
+      }) ?? stored;
     }
     if (this.#coordinator.has(id)) {
       try {
@@ -346,22 +451,13 @@ export class BackgroundBashManager {
   async #persistInteractiveSnapshot(id: string, snapshot: InteractiveBashProcess): Promise<void> {
     const job = await this.#store.readJob(id);
     if (!job) throw new Error(`Background process not found: ${id}`);
-    if (job.meta.executionMode === 'attached') {
-      if (!this.#appendedSnapshots.has(snapshot)) {
-        await this.#storage.appendFile(job.meta.logPath, encoder.encode(snapshot.output));
-        this.#appendedSnapshots.add(snapshot);
-      }
-    } else {
-      await this.#storage.writeFile(job.meta.logPath, encoder.encode(snapshot.output));
-    }
+    await this.#storage.writeFile(job.meta.logPath, encoder.encode(snapshot.output));
     if (snapshot.running) return;
     await this.#store.markStatus(id, snapshot.signal
       ? { status: 'killed', exitCode: null, signal: snapshot.signal }
       : snapshot.exitCode === undefined
         ? { status: 'unknown', exitCode: null, error: 'Interactive process exited without reporting an exit code.' }
         : { status: snapshot.exitCode === 0 ? 'completed' : 'failed', exitCode: snapshot.exitCode });
-    const key = resolve(job.meta.jobDir);
-    if (attachedOwners.get(key) === this) attachedOwners.delete(key);
   }
 
   async #stopUnregisteredProcess(job: BackgroundBashJob, pid: number): Promise<void> {
@@ -523,6 +619,7 @@ function createLaunchCommand(runnerPath: string, processToken: string): string {
     'if command -v setsid >/dev/null 2>&1; then',
     `  nohup setsid sh ${path} ${token} >/dev/null 2>&1 < /dev/null &`,
     '  pid="$!"',
+    '  process_group="$pid"',
     "  printf 'group:%s:%s\\n' \"$pid\" \"$pid\"",
     'else',
     '  set -m 2>/dev/null || true',
@@ -547,6 +644,115 @@ function createLaunchCommand(runnerPath: string, processToken: string): string {
     '  fi',
     'fi',
   ].join('\n');
+}
+
+/** Shell text for an exact string; unlike `shellQuote`, it never rewrites backslashes, so file contents stay intact. */
+function shellLiteral(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+/**
+ * Writes a new job's directory and launches its runner in one shell call. The record is written before the launch, so
+ * a failed launch can still be recorded, and rewritten with the runner's process id afterwards.
+ */
+function createOneCallLaunchScript(info: BackgroundBashInfo, jobsDir: string, noticesDir: string): string {
+  const job = jobFromInfo(info);
+  const withProcess = serializeJobRecord({ ...info, pid: 0, processGroupId: 0 });
+  const processFields = '"pid": 0,\n  "processGroupId": 0\n}\n';
+  if (!withProcess.endsWith(processFields)) throw new Error('Unexpected background job record layout');
+  const recordPrefix = `${withProcess.slice(0, -processFields.length)}"pid": `;
+  const infoPath = shellQuote(info.infoPath);
+  const jobDir = shellQuote(info.jobDir);
+  return [
+    `command -v mkdir >/dev/null 2>&1 || exit ${LAUNCH_UNSUPPORTED_EXIT}`,
+    `mkdir -p ${shellQuote(jobsDir)} || exit 1`,
+    `mkdir ${jobDir} 2>/dev/null || { [ -e ${jobDir} ] && exit ${LAUNCH_ID_TAKEN_EXIT}; mkdir ${jobDir} || exit 1; }`,
+    ...(info.notice === 'pending'
+      ? [`mkdir -p ${shellQuote(noticesDir)} && : > ${shellQuote(join(noticesDir, info.id))} || exit 1`]
+      : []),
+    `printf '%s' ${shellLiteral(serializeJobRecord(info))} > ${infoPath} || exit 1`,
+    `: > ${shellQuote(info.logPath)} || exit 1`,
+    `printf '%s\\n' ${shellLiteral(info.command)} > ${shellQuote(info.commandPath)} || exit 1`,
+    `printf '%s' ${shellLiteral(createRunnerScript(job))} > ${shellQuote(info.runnerPath)} || exit 1`,
+    createLaunchCommand(info.runnerPath, info.processToken!),
+    `record_tmp=${shellQuote(`${info.infoPath}.launch.tmp`)}`,
+    `printf '%s%s%s%s%s' ${shellLiteral(recordPrefix)} "$pid" ${shellLiteral(',\n  "processGroupId": ')} "$process_group" ${shellLiteral('\n}\n')} > "$record_tmp" \\`,
+    `  && mv "$record_tmp" ${infoPath}`,
+  ].join('\n');
+}
+
+/**
+ * Blocks inside the runtime until the job's completion record appears, its directory disappears, its runner dies, or
+ * the slice ends. It checks every 10 ms for the first 0.2 s, then every 30 ms, and probes the runner every 64 checks.
+ * A finished job's whole log is returned when it is small, and the job is deleted when no result can need it. Builtins
+ * replace utilities where they can, because each spawned process adds latency after the command exits.
+ */
+function createForegroundWaitScript(job: BackgroundBashJob, noticesDir: string, boundary: string, sliceSeconds: number): string {
+  const pid = job.meta.pid ?? job.status.pid;
+  const jobDir = shellQuote(job.meta.jobDir);
+  const completion = shellQuote(job.meta.completionPath);
+  const output = shellQuote(job.meta.logPath);
+  const shortPolls = 20;
+  const maxPolls = shortPolls + Math.ceil((sliceSeconds * 1_000 - shortPolls * 10) / 30);
+  return [
+    'short=0.01; long=0.03; every=64; polls=0',
+    `limit=${maxPolls}`,
+    `while [ ! -f ${completion} ]; do`,
+    `  if [ ! -d ${jobDir} ]; then printf 'gone\\n'; exit 0; fi`,
+    '  polls=$((polls + 1))',
+    "  if [ \"$polls\" -gt \"$limit\" ]; then printf 'running\\n'; exit 0; fi",
+    ...(pid === undefined ? [] : [
+      '  if [ $((polls % every)) -eq 0 ] && ! kill -0 ' + String(pid) + ' 2>/dev/null; then',
+      `    [ -f ${completion} ] && break`,
+      "    printf 'dead\\n'; exit 0",
+      '  fi',
+    ]),
+    `  if [ "$polls" -le ${shortPolls} ]; then delay=$short; else delay=$long; fi`,
+    // Without fractional sleep, poll each second and count each poll toward the slice as 30 ms would be.
+    '  sleep "$delay" 2>/dev/null || { sleep 1; short=1; long=1; every=1; limit=$((polls + (limit - polls) * 3 / 100 + 1)); }',
+    'done',
+    "printf 'done\\n'",
+    `while IFS= read -r line || [ -n "$line" ]; do printf '%s\\n' "$line"; done < ${completion}`,
+    `printf '%s\\n' ${boundary}`,
+    `if [ -f ${output} ] && ! tail -c +${FOREGROUND_INLINE_LOG_BYTES + 1} ${output} | LC_ALL=C tr -c x x | { IFS= read -r rest || [ -n "$rest" ]; }; then`,
+    `  cat ${output} || exit 1`,
+    '  newlines=0',
+    `  while IFS= read -r line; do newlines=$((newlines + 1)); done < ${output}`,
+    '  flag=kept',
+    `  if [ "$newlines" -lt ${FOREGROUND_INLINE_LOG_LINES} ] && command -v rm >/dev/null 2>&1; then`,
+    `    rm -rf ${jobDir} ${shellQuote(join(noticesDir, job.meta.id))} && flag=removed`,
+    '  fi',
+    'else',
+    '  flag=large',
+    'fi',
+    `printf '\\n%s:%s\\n' ${boundary} "$flag"`,
+  ].join('\n');
+}
+
+type ForegroundWaitOutput =
+  | { state: 'running' | 'dead' | 'gone' }
+  | { state: 'done'; completion: unknown; final: boolean; output?: { content: Uint8Array; removed: boolean } };
+
+function parseForegroundWait(stdout: string, boundary: string): ForegroundWaitOutput | undefined {
+  if (stdout === 'running\n' || stdout === 'dead\n' || stdout === 'gone\n') {
+    return { state: stdout.slice(0, -1) as 'running' | 'dead' | 'gone' };
+  }
+  if (!stdout.startsWith('done\n')) return undefined;
+  const separator = `\n${boundary}\n`;
+  const recordEnd = stdout.indexOf(separator);
+  if (recordEnd < 0) return undefined;
+  let completion: unknown;
+  try {
+    completion = JSON.parse(stdout.slice('done\n'.length, recordEnd));
+  } catch {
+    completion = undefined;
+  }
+  // Without the final flag line the call was cut off; the text after the record is then at most the whole log.
+  const flagMatch = stdout.match(new RegExp(`\\n${boundary}:(removed|kept|large)\\n$`, 'u'));
+  const flag = flagMatch?.[1];
+  if (flag === 'large') return { state: 'done', completion, final: true };
+  const content = stdout.slice(recordEnd + separator.length, stdout.length - (flagMatch?.[0].length ?? 0));
+  return { state: 'done', completion, final: flag !== undefined, output: { content: encoder.encode(content), removed: flag === 'removed' } };
 }
 
 function createInspectCommand(pid: number): string {

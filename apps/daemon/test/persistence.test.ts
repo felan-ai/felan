@@ -116,6 +116,28 @@ describe.skipIf(!supported)('bounded daemon control persistence', () => {
     expect(reloaded.snapshot().resources.map(item => [item.id, item.state, item.pid])).toEqual([['pty', 'missing', 12345], ['foreground', 'missing', 12345], ['detached', 'reconciling', 12345]]);
     expect(() => reloaded.putResource({ ...reloaded.snapshot().resources[0], pid: 999 })).toThrow(/identity/);
   });
+  it('plans to restore the open root sessions whose background job may still run or still owes a finish notice', async () => {
+    const { owner, store } = await open();
+    const session = (id: string, options: { parent?: string; state?: 'open' | 'closed' } = {}) => store.createSession({ id, root: options.parent ?? id,
+      ...(options.parent ? { parent: options.parent } : {}), cwd: '/fixture', piPath: join(owner.target.agentDir, `${id}.jsonl`),
+      state: options.state ?? 'open', residency: 'warm', run: { state: 'idle' }, policy: { effective: 'host-default', generation: 0 }, title: '' });
+    const resource = (id: string, session: string, root: string, kind: 'detached' | 'pty', state: 'running' | 'exited', notice = false) => store.putResource({
+      id, session, root, kind, state, startIdentity: id, reference: join(owner.target.agentDir, `${id}.record`), updatedAt: now, ...(notice ? { notice: 'pending' } : {}) });
+    for (const id of ['running', 'noticed', 'quiet', 'terminal']) session(id);
+    session('closed', { state: 'closed' }); session('child', { parent: 's' }); session('deleted');
+    resource('running-job', 'running', 'running', 'detached', 'running');
+    resource('noticed-job', 'noticed', 'noticed', 'detached', 'exited', true);
+    resource('quiet-job', 'quiet', 'quiet', 'detached', 'exited');
+    resource('terminal-job', 'terminal', 'terminal', 'pty', 'running');
+    resource('closed-job', 'closed', 'closed', 'detached', 'running');
+    resource('child-job', 'child', 's', 'detached', 'running', true);
+    resource('deleted-job', 'deleted', 'deleted', 'detached', 'running', true);
+    const deletion = { v: 1, id: requestId(), op: 'session.delete', session: 'deleted', params: {} };
+    store.admit(deletion, 'owner'); store.markSessionDeleted(deletion.id);
+    store.close(); const reloaded = reopen(owner); const plan = reloaded.recover().value;
+    expect(plan.restoreSessions).toEqual(['running', 'noticed']);
+    expect(reloaded.resource('noticed-job')).toMatchObject({ state: 'exited', notice: 'pending' });
+  });
   for (const boundary of ['before_commit', 'after_commit'] as PersistenceBoundary[]) {
     it(`fails closed and reloads an atomic snapshot when storage fails at ${boundary}`, async () => {
       let fail = false;
