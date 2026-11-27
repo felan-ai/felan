@@ -3,7 +3,7 @@ import { closeSync, constants, existsSync, fstatSync, openSync, writeFileSync } 
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
-import type { AgentRuntime, AgentSession } from '@felan-ai/agent-core';
+import type { AgentRuntime, AgentSession, SessionEntry } from '@felan-ai/agent-core';
 import { parseInteraction, parseSchema, type Interaction, type InteractionAnswer, type KnownSessionChange, type OperationParams, type Origin, type Policy, type SessionSnapshot } from '@felan-ai/session-protocol';
 import { RegistryExecutions, ExecutionHost } from './executions.js';
 import { syncDescriptor } from './durability.js';
@@ -1640,6 +1640,7 @@ export class SessionRegistry {
           change: { type: 'metadata.updated', title: commit.value.title, state: commit.value.state, residency: commit.value.residency } });
       }
       else if (entry.held && !closed) {
+        this.settleHeldLeaf(id, entry);
         const commit = this.options.store.evictHeldSession(id);
         if (commit.revisions[id] !== undefined) this.publish({ v: 1, session: id, rev: commit.value.revision,
           change: { type: 'metadata.updated', title: commit.value.title, state: commit.value.state, residency: commit.value.residency } });
@@ -1649,6 +1650,25 @@ export class SessionRegistry {
       if (!close && entry.services.size) this.retainedServices.set(id, entry.services);
     })();
     try { await entry.disposing; } catch (error) { delete entry.disposing; this.fence(error); throw error; }
+  }
+  /**
+   * Ending a held run makes Pi append what it kept for the step's end, such as context-only custom messages and user bash
+   * output. When the transcript gained only such entries after the parked leaf, the record moves to the final leaf, so the next
+   * daemon still continues the run. Anything else keeps the parked leaf, and the next daemon interrupts the run.
+   */
+  private settleHeldLeaf(id: string, entry: Entry): void {
+    const record = entry.held!;
+    const manager = entry.binding.runtime.session.sessionManager;
+    const leaf = manager.getLeafId();
+    if (!leaf || leaf === record.leaf) return;
+    const branch = manager.getBranch();
+    const parked = branch.findIndex(item => item.id === record.leaf);
+    if (parked < 0 || !branch.slice(parked + 1).every(contextOnly)) return;
+    try {
+      const moved = { ...record, leaf };
+      this.options.store.putHeldRuns([moved]);
+      entry.held = moved;
+    } catch (error) { this.diagnostic({ scope: 'registry', session: id, error }); }
   }
   private interruptRun(id: string): void {
     this.dropHeld(id);
@@ -1803,3 +1823,9 @@ function profileOptions(profile: SessionProfile | undefined): Pick<RegistryOpenR
 }
 function directoryOf(path: string): string { return path.slice(0, path.lastIndexOf('/')) || '/'; }
 function registryError(code: string, message: string): Error & { code: string } { return Object.assign(new Error(message), { code }); }
+
+/** Entries that add context or metadata without a model turn, so a continued run may follow them. */
+function contextOnly(entry: SessionEntry): boolean {
+  if (entry.type === 'message') return entry.message.role === 'bashExecution' || entry.message.role === 'custom';
+  return entry.type === 'custom_message' || entry.type === 'custom' || entry.type === 'label' || entry.type === 'session_info';
+}

@@ -343,3 +343,36 @@ it('records the held step in a child execution turn count, so the step does not 
   expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
   expect(f.store.heldRuns()).toEqual([expect.objectContaining({ session: child, turns: 1 })]);
 });
+
+it('moves a held run to the leaf Pi writes as the stop ends it, when the stop added only context', async () => {
+  const f = await fixture();
+  const session = await f.run('a');
+  const response = f.hold();
+  f.open('a').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
+  const manager = f.registry.binding(session)!.runtime.session.sessionManager;
+  const parkedLeaf = manager.getLeafId();
+  // Pi keeps a context-only message sent during a run until the step's turn_end, which fires as the stop ends the run.
+  await f.registry.binding(session)!.runtime.session.sendCustomMessage({ customType: 'note', content: 'noted while held', display: false }, { triggerTurn: false });
+  expect(manager.getLeafId()).toBe(parkedLeaf);
+  expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
+  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
+  expect(manager.getLeafId()).not.toBe(parkedLeaf);
+  expect(manager.getBranch().at(-1)).toMatchObject({ type: 'custom_message', customType: 'note' });
+  expect(f.store.heldRuns()).toEqual([expect.objectContaining({ session, leaf: manager.getLeafId() })]);
+});
+
+it('keeps a held run at its parked leaf when the stop added a model turn, so the next daemon interrupts it', async () => {
+  const f = await fixture();
+  const session = await f.run('a');
+  const response = f.hold();
+  f.open('a').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
+  const manager = f.registry.binding(session)!.runtime.session.sessionManager;
+  const parkedLeaf = manager.getLeafId()!;
+  expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
+  // Something other than context lands after the parked leaf, as an assistant message would.
+  manager.appendMessage({ role: 'user', content: 'late input', timestamp: Date.now() });
+  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
+  expect(f.store.heldRuns()).toEqual([expect.objectContaining({ session, leaf: parkedLeaf })]);
+});
