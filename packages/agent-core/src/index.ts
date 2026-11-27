@@ -171,6 +171,8 @@ export {
   runtimeToolsExtensionName,
 } from './resource-loader.js';
 export type { CreateAgentCoreResourceLoaderOptions } from './resource-loader.js';
+export { RUN_HOLD_EVENT, runHoldRefusals } from './run-hold.js';
+export type { RunHoldEvent } from './run-hold.js';
 export { createRuntimeCodingTools } from './tools.js';
 export { extractTranscriptEvidenceEntry, extractTranscriptTextParts } from './transcript-evidence.js';
 export type { TranscriptEvidenceEntry, TranscriptTextParts } from './transcript-evidence.js';
