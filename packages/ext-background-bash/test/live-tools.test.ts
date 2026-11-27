@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -127,6 +128,43 @@ describe('registered Background Bash tools with live host processes', () => {
       // The notice is settled once Pi stores its message, after the message reaches the session.
       const notice = async () => (JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo).notice;
       expect(await eventually(notice, value => value === 'delivered', 'stored notice is settled')).toBe('delivered');
+    });
+  }, TEST_TIMEOUT_MS);
+
+  it('polls a promoted job only inside passive operations', async () => {
+    await withLiveTools(async ({ runtime, abortController }) => {
+      const scope = new AsyncLocalStorage<true>();
+      const calls = { passive: 0, active: 0 };
+      const count = () => { if (scope.getStore()) calls.passive++; else calls.active++; };
+      const counted = <T extends object>(target: T, extra: (key: string | symbol) => unknown): T => new Proxy(target, {
+        get(inner, key) {
+          const own = extra(key); if (own !== undefined) return own;
+          const value: unknown = Reflect.get(inner, key, inner);
+          return typeof value === 'function' ? (...args: unknown[]) => { count(); return Reflect.apply(value, inner, args) as unknown; } : value;
+        },
+      });
+      const storages = new Map<string, unknown>();
+      const observed = counted(runtime, key => {
+        if (key === 'passive') return <T>(operation: () => Promise<T>) => scope.run(true, operation);
+        if (key === 'storage') return (kind = 'session') => {
+          if (!storages.has(kind)) storages.set(kind, counted(runtime.storage(kind as 'session'), () => undefined));
+          return storages.get(kind);
+        };
+        return undefined;
+      });
+      const pending = new Set<Promise<unknown>>();
+      const watcher = await createClient(observed, pending, new Set([abortController()]), 'watcher-session');
+      try {
+        const command = 'while [ ! -f continue ]; do sleep 0.02; done';
+        const details = (await call(watcher, 'bash', { command, timeout: 0.05 })).details as BackgroundBashDetails;
+        expect(details).toMatchObject({ background: true });
+        await Promise.allSettled([...pending]);
+        const before = { ...calls };
+        await eventually(async () => calls.passive, value => value >= before.passive + 6, 'the completion poll runs several times');
+        expect(calls.active).toBe(before.active);
+        await runtime.writeFile('continue', new Uint8Array());
+        await within(watcher.firstCompletion, OPERATION_TIMEOUT_MS, 'promoted process completion message');
+      } finally { await watcher.shutdown(); }
     });
   }, TEST_TIMEOUT_MS);
 

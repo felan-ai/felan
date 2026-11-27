@@ -210,4 +210,10 @@ export interface AgentRuntime {
 
   readAgentFile?(path: string): Promise<Uint8Array>;
   getEnvironmentVariable?(name: string): string | undefined;
+
+  /**
+   * Runs an operation that only observes state, such as a poll of a job that outlives the host. The host does not
+   * count the runtime calls made inside it as work that a stop would interrupt.
+   */
+  passive?<T>(operation: () => Promise<T>): Promise<T>;
 }

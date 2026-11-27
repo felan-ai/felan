@@ -63,6 +63,7 @@ export class RegistryProcesses {
   private readonly foregroundId = new AsyncLocalStorage<string>();
   private readonly foregroundStarts = new Map<string, string>();
   private readonly cleanup = new AsyncLocalStorage<ReadonlySet<string>>();
+  private readonly passiveScope = new AsyncLocalStorage<true>();
   private readonly now: () => number;
   constructor(private readonly options: ProcessTrackerOptions) { this.now = options.now ?? Date.now; }
 
@@ -76,6 +77,7 @@ export class RegistryProcesses {
     const wrapped: AgentRuntime = {
       kind: runtime.kind, cwd: runtime.cwd, logger: runtime.logger, ...(runtime.classifier ? { classifier: runtime.classifier } : {}),
       ...(tasks ? { tasks } : {}),
+      passive: operation => this.passiveScope.run(true, operation),
       storage: (kind = 'session') => {
         let result = storage.get(kind);
         if (!result) {
@@ -633,7 +635,7 @@ export class RegistryProcesses {
     this.views.set(row.id, next);
     this.options.changed(row.session, next, revision);
   }
-  private track<T>(operation: Promise<T>, scope: Scope, passive = false): Promise<T> {
+  private track<T>(operation: Promise<T>, scope: Scope, passive = this.passiveScope.getStore() === true): Promise<T> {
     this.operations.set(operation, { scope, passive }); void operation.then(() => this.operations.delete(operation), () => this.operations.delete(operation)); return operation;
   }
 }

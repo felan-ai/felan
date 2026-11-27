@@ -1225,3 +1225,28 @@ the CI-triggered npm release workflow:
 | `@felan-ai/ext-codex` | 0.13.0 | 0.13.1 |
 | `@felan-ai/daemon` | 0.8.6 | 0.8.7 |
 | `@felan-ai/felan` | 0.40.9 | 0.40.10 |
+
+## Passive runtime operations
+
+`AgentRuntime` has an optional `passive(operation)`. The daemon's runtime
+implements it: runtime calls made inside the operation are not counted in
+`host.status` `active.work` or `workByKind.processes`, and they do not block
+session eviction. A stop still waits for them to end. A runtime without the
+method runs the operation as usual, so a caller falls back to calling it
+directly.
+
+`@felan-ai/ext-background-bash` polls each running job every 500 ms and now
+does so inside `passive`. Before, every poll counted as work. On a remote
+runtime a poll is a network round trip, so a host whose only activity was a
+promoted command reported `work: 1` most of the time and never accepted an
+idle hold.
+
+The following are proposed versions, pending a merge to `main` and the
+CI-triggered npm release workflow:
+
+| Package | Current | Proposed |
+| --- | --- | --- |
+| `@felan-ai/agent-core` | 0.16.5 | 0.16.6 |
+| `@felan-ai/ext-background-bash` | 0.17.1 | 0.17.2 |
+| `@felan-ai/daemon` | 0.8.7 | 0.8.8 |
+| `@felan-ai/felan` | 0.40.10 | 0.40.11 |

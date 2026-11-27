@@ -162,6 +162,9 @@ export function createBackgroundBashExtension(): FelanExtension {
     });
   };
 
+  // A poll every 500 ms would otherwise make a host with one running job look busy for as long as the job runs.
+  const observe = <T>(operation: () => Promise<T>): Promise<T> => pi.runtime.passive ? pi.runtime.passive(operation) : operation();
+
   const pollCompletions = async (generation: number) => {
     if (
       generation !== completionPollGeneration
@@ -173,7 +176,7 @@ export function createBackgroundBashExtension(): FelanExtension {
       for (const id of [...watchedJobIds]) {
         let job: BackgroundBashJob;
         try {
-          job = await manager.get(id);
+          job = await observe(() => manager.get(id));
         } catch {
           continue;
         }

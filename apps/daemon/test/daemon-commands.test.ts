@@ -430,6 +430,29 @@ describe('registry-backed command dispatch', () => {
     await expect(settled).resolves.toBeUndefined();
   });
 
+  it('does not count runtime calls made inside a passive operation as work, and still settles them', async () => {
+    const session = { id: 'root', root: 'root', state: 'open', revision: 0 };
+    const store = { session: () => session, sessionMetadata: () => session, sessionMetadatas: () => [session], resource: () => undefined, resources: () => [] } as unknown as DaemonControlStore;
+    const tracker = new RegistryProcesses({ store, assertCurrent() {}, changed() {} });
+    const finish: (() => void)[] = [];
+    const shell = () => new Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>(resolve => { finish.push(() => resolve({ stdout: '', stderr: '', code: 0, killed: false })); });
+    const runtime = tracker.wrap({ kind: 'host', cwd: '/fixture', storage: () => ({ root: '/fixture' }), shell } as unknown as AgentRuntime, { session: 'root', root: 'root' });
+    const poll = runtime.passive!(async () => { await Promise.resolve(); return runtime.shell('kill -0 1'); });
+    await Promise.resolve(); await Promise.resolve();
+    expect(finish).toHaveLength(1);
+    expect(await tracker.interruptibleCount()).toBe(0);
+    expect(tracker.activeCount('root')).toBe(0);
+    const command = runtime.shell('make');
+    expect(await tracker.interruptibleCount()).toBe(1);
+    let settled = false;
+    const settling = tracker.settle('root').then(() => { settled = true; });
+    finish[1]!(); await command;
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    finish[0]!(); await poll; await settling;
+    expect(settled).toBe(true);
+  });
+
   it('still fails to settle a root whose pending operation fails for another reason', async () => {
     const session = { id: 'root', root: 'root', state: 'open', revision: 0 };
     const store = { session: () => session, sessionMetadata: () => session, sessionMetadatas: () => [session], resource: () => undefined, resources: () => [] } as unknown as DaemonControlStore;
