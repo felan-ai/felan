@@ -9,6 +9,8 @@ import { SessionServer } from '../src/daemon/server.js';
 import { holdDaemonRuns, settleDaemonWork } from '../src/daemon/service.js';
 import { gate, serverFixture } from './fixtures/server.js';
 
+/** Windows runners pause for seconds, so waits on state get a bound well above any expected delay. */
+const WAIT = { timeout: 20_000 };
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
 
@@ -64,7 +66,7 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
     const session = created.result.sessionId;
     await client.attach(session);
     expect(await client.request('prompt', { text: `gate:${name}` }, { session })).toMatchObject({ outcome: 'accepted' });
-    await vi.waitFor(() => expect(started).toContain(name));
+    await vi.waitFor(() => expect(started).toContain(name), WAIT);
     return session;
   }
   const hold = (params: { stepTimeoutMs?: number } = {}) => server.requestManagement({ v: 1, id: requestIdNow(), op: 'host.restart', params: { expected: f.owner.identity, mode: 'hold', ...params } });
@@ -84,7 +86,7 @@ it('holds an active run after its tool results are saved and before its next mod
   const session = await f.run('a');
   let answered = false;
   const response = f.hold().then(value => { answered = true; return value; });
-  await vi.waitFor(() => expect(f.server.admissionClosed()).toBe(true));
+  await vi.waitFor(() => expect(f.server.admissionClosed()).toBe(true), WAIT);
   expect(f.connector.claiming).toBe(false);
   // The step is still in its tool call, so the hold waits and records nothing yet.
   expect(answered).toBe(false); expect(f.store.heldRuns()).toEqual([]);
@@ -109,8 +111,8 @@ it('continues held runs in the same daemon when no restart arrives before the ho
   f.open('a').resolve();
   expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
   const run = f.store.sessionMetadata(session).run;
-  await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'));
-  await vi.waitFor(() => expect(f.store.sessionMetadata(session).run).toMatchObject({ id: run.id, state: 'idle' }));
+  await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'), WAIT);
+  await vi.waitFor(() => expect(f.store.sessionMetadata(session).run).toMatchObject({ id: run.id, state: 'idle' }), WAIT);
   expect(f.requestsFor('a').map(request => request.turn)).toEqual([0, 1]);
   expect(f.store.heldRuns()).toEqual([]);
   expect(f.connector.claiming).toBe(true);
@@ -128,11 +130,11 @@ it('cancels the attempt after stepTimeoutMs: held runs continue, admission reope
   expect(f.server.admissionClosed()).toBe(false); expect(f.connector.claiming).toBe(true);
   expect(f.store.heldRuns()).toEqual([]);
   // The run that held continues at once; the one still in its tool call finishes its step normally.
-  await vi.waitFor(() => expect(f.store.sessionMetadata(parked).run.state).toBe('idle'));
+  await vi.waitFor(() => expect(f.store.sessionMetadata(parked).run.state).toBe('idle'), WAIT);
   expect(f.store.sessionMetadata(busy).run.state).toBe('running');
   expect(await f.client.request('sessions.create', { cwd: f.cwd })).toMatchObject({ outcome: 'accepted' });
   f.open('b').resolve();
-  await vi.waitFor(() => expect(f.store.sessionMetadata(busy).run.state).toBe('idle'));
+  await vi.waitFor(() => expect(f.store.sessionMetadata(busy).run.state).toBe('idle'), WAIT);
   for (const name of ['a', 'b']) expect(f.requestsFor(name).map(request => request.turn)).toEqual([0, 1]);
   expect(f.complete).not.toHaveBeenCalled();
 });
@@ -180,7 +182,7 @@ it('stops a held daemon without interrupting its held runs and leaves them runni
   expect(await response).toMatchObject({ outcome: 'accepted' });
   const run = f.store.sessionMetadata(session).run;
   expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
-  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'));
+  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
   expect(f.store.sessionMetadata(session)).toMatchObject({ residency: 'evicted', run: { id: run.id, state: 'running' } });
   expect(f.store.heldRuns()).toEqual([expect.objectContaining({ session, run: expect.objectContaining({ id: run.id }) })]);
   expect(f.requestsFor('a')).toHaveLength(1);
@@ -193,7 +195,7 @@ it('forgets a held run that is cancelled while the daemon is held', async () => 
   f.open('a').resolve();
   expect(await response).toMatchObject({ outcome: 'accepted' });
   expect(await f.client.request('cancel', {}, { session })).toMatchObject({ outcome: 'accepted' });
-  await vi.waitFor(() => expect(f.store.sessionMetadata(session).run.state).toBe('idle'));
+  await vi.waitFor(() => expect(f.store.sessionMetadata(session).run.state).toBe('idle'), WAIT);
   expect(f.store.heldRuns()).toEqual([]);
   expect(f.requestsFor('a')).toHaveLength(1);
 });
@@ -203,14 +205,14 @@ it('lets a drain that arrives while the hold still waits replace it; the runs fi
   const parked = await f.run('a'); const busy = await f.run('b');
   const response = f.hold();
   f.open('a').resolve();
-  await vi.waitFor(() => expect(f.registry.binding(parked)!.runtime.session.sessionManager.getEntries().at(-1)).toMatchObject({ message: { role: 'toolResult' } }));
+  await vi.waitFor(() => expect(f.registry.binding(parked)!.runtime.session.sessionManager.getEntries().at(-1)).toMatchObject({ message: { role: 'toolResult' } }), WAIT);
   expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted', state: 'draining' });
   expect(await response).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
   expect(f.store.heldRuns()).toEqual([]);
   // The drain waits for both runs: the parked one takes its next step, the other finishes its tool call first.
-  await vi.waitFor(() => expect(f.store.sessionMetadata(parked).run.state).toBe('idle'));
+  await vi.waitFor(() => expect(f.store.sessionMetadata(parked).run.state).toBe('idle'), WAIT);
   f.open('b').resolve();
-  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'));
+  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
   for (const [id, name] of [[parked, 'a'], [busy, 'b']] as const) {
     expect(f.store.sessionMetadata(id).run.state).toBe('idle');
     expect(f.requestsFor(name).map(request => request.turn)).toEqual([0, 1]);
