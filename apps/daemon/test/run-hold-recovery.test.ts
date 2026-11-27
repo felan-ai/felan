@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -102,6 +102,26 @@ describe('continuing held runs after a restart', () => {
     await registry.restoreRecovered();
     expect(store.sessionMetadata(root.sessionId).run).toMatchObject({ id: 'held-run', state: 'interrupted' });
     expect(() => registry.assertRunAvailable(root.sessionId)).not.toThrow();
+  });
+});
+
+describe('a held root run that fails to continue', () => {
+  it('ends interrupted rather than idle', async () => {
+    const f = await fixture();
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    await root.runtime.session.prompt('start');
+    const record: ContinueRecord = { version: 1, session: root.sessionId, root: root.sessionId, run: { id: 'held-run' },
+      leaf: root.runtime.session.sessionManager.getLeafId()!, heldAt: 1, queue: [] };
+    await f.registry.shutdown();
+    f.store.updateSession(root.sessionId, { residency: 'evicted', run: { state: 'running', id: 'held-run' } });
+    f.store.putHeldRuns([record]);
+    f.store.close();
+    const store = new DaemonControlStore(f.owner);
+    const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+    // The fixture session cannot start a step, so the continued run fails with an error that is not an abort.
+    await registry.restoreRecovered();
+    await vi.waitFor(() => expect(store.sessionMetadata(root.sessionId).run.state).not.toBe('running'));
+    expect(store.sessionMetadata(root.sessionId).run).toMatchObject({ id: 'held-run', state: 'interrupted' });
   });
 });
 

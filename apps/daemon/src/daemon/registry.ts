@@ -539,16 +539,20 @@ export class SessionRegistry {
     const writer = new Promise<void>(resolve => { finish = resolve; });
     entry.writers.add(writer); entry.dispatches.add(key); entry.projection.setOrigin(origin);
     this.continuing.delete(id);
+    let failed = false;
     try {
       entry.projection.syncCursor();
       await this.executeRun(id, entry, () => this.continueFrom(entry, record)).catch((error: unknown) => {
-        if (!(error instanceof Error && error.name === 'AbortError')) throw error;
+        if (error instanceof Error && error.name === 'AbortError') return;
+        failed = true; throw error;
       });
     } finally {
       try {
         entry.dispatches.delete(key);
         if (!this.failure && !entry.projectionFailed) {
-          if (!entry.cancelling && !entry.held) entry.projection.settleRun(record.run.id);
+          // Nobody watched the continued run fail, so it reads as a restart interruption rather than a finished run.
+          if (failed && !entry.cancelling) this.interruptRun(id);
+          else if (!entry.cancelling && !entry.held) entry.projection.settleRun(record.run.id);
           entry.projection.refresh();
         }
       } catch (error) { this.projectionFailed(id, error); throw error; }
