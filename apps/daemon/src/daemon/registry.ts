@@ -1841,6 +1841,6 @@ function registryError(code: string, message: string): Error & { code: string } 
 
 /** Entries that add context or metadata without a model turn, so a continued run may follow them. */
 function contextOnly(entry: SessionEntry): boolean {
-  if (entry.type === 'message') return entry.message.role === 'bashExecution' || entry.message.role === 'custom';
+  if (entry.type === 'message') return entry.message.role === 'bashExecution';
   return entry.type === 'custom_message' || entry.type === 'custom' || entry.type === 'label' || entry.type === 'session_info';
 }
