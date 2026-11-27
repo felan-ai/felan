@@ -373,7 +373,7 @@ it('moves a held run to the leaf Pi writes as the stop ends it, when the stop ad
   expect(f.store.heldRuns()).toEqual([expect.objectContaining({ session, leaf: manager.getLeafId() })]);
 });
 
-it('keeps a held run at its parked leaf when the stop added a model turn, so the next daemon interrupts it', async () => {
+it('keeps a held run at its parked leaf when a model turn follows it at eviction, so the next daemon interrupts it', async () => {
   const f = await fixture();
   const session = await f.run('a');
   const response = f.hold();
@@ -381,13 +381,26 @@ it('keeps a held run at its parked leaf when the stop added a model turn, so the
   expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
   const manager = f.registry.binding(session)!.runtime.session.sessionManager;
   const parkedLeaf = manager.getLeafId()!;
-  expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
-  // Something other than context lands after the parked leaf, as an assistant message would.
+  // Something other than context lands after the parked leaf, as an assistant message would. It goes in before the stop is
+  // requested, because the stop may evict the session before the request returns.
   manager.appendMessage({ role: 'user', content: 'late input', timestamp: Date.now() });
+  expect(manager.getLeafId()).not.toBe(parkedLeaf);
+  expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
   await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
   expect(f.store.heldRuns()).toEqual([expect.objectContaining({ session, leaf: parkedLeaf })]);
 });
 
+/**
+ * Resolves once the hold waits for runs, after its first look at activity, and calls `then` at that point. Waiting only for
+ * admission to close is too early: the daemon closes admission before it counts questions and live processes.
+ */
+function holdWaits(f: Awaited<ReturnType<typeof fixture>>, then: () => void = () => {}): Promise<void> {
+  const holdRuns = f.registry.holdRuns.bind(f.registry);
+  let entered!: () => void;
+  const waiting = new Promise<void>(resolve => { entered = resolve; });
+  vi.spyOn(f.registry, 'holdRuns').mockImplementation((signal, outside) => { then(); entered(); return holdRuns(signal, outside); });
+  return waiting;
+}
 const waitingQuestions = (f: Awaited<ReturnType<typeof fixture>>) => f.store.interactions().filter(item => item.state === 'waiting').length;
 /** Cancels the run, which withdraws its question, so the fixture can stop. */
 async function withdraw(f: Awaited<ReturnType<typeof fixture>>, session: string) {
@@ -410,15 +423,15 @@ it('refuses at once and reopens admission when a run waits for a person', async 
 it('cancels the attempt at once when a run starts waiting for a person during the hold', async () => {
   const f = await fixture();
   const session = await f.run('q', { ask: true });
-  const started = Date.now();
-  const response = f.hold({ stepTimeoutMs: 60_000 });
-  await vi.waitFor(() => expect(f.server.admissionClosed()).toBe(true), WAIT);
+  const waits = holdWaits(f);
+  // The step limit is ten times the test timeout, so an attempt that waited for it would fail the test, not pass it.
+  const response = f.hold({ stepTimeoutMs: 600_000 });
+  await waits;
   f.open('q').resolve();
   const cancelled = await response;
   expect(cancelled).toMatchObject({ outcome: 'rejected', error: { code: 'hold_cancelled' } });
+  // The message names the question, not the step limit an expired attempt reports.
   expect(cancelled.outcome === 'rejected' && cancelled.error.message).toContain('answer');
-  // Well under the step timeout: nothing the daemon does would let the run reach its step end.
-  expect(Date.now() - started).toBeLessThan(30_000);
   expect(f.lifecycle.state).toBe('ready'); expect(f.server.admissionClosed()).toBe(false);
   expect(waitingQuestions(f)).toBe(1);
   await withdraw(f, session);
@@ -435,10 +448,10 @@ it('refuses at once when a live process would outlast every run', async () => {
 it('cancels the attempt at once when a live process remains after every run held', async () => {
   const f = await fixture();
   await f.run('a');
-  const response = f.hold({ stepTimeoutMs: 60_000 });
-  await vi.waitFor(() => expect(f.server.admissionClosed()).toBe(true), WAIT);
   // The process starts after the hold looked, as one a step leaves running would.
-  vi.spyOn(f.registry.processes, 'liveCount').mockResolvedValue(1);
+  const waits = holdWaits(f, () => { vi.spyOn(f.registry.processes, 'liveCount').mockResolvedValue(1); });
+  const response = f.hold({ stepTimeoutMs: 60_000 });
+  await waits;
   f.open('a').resolve();
   const cancelled = await response;
   expect(cancelled).toMatchObject({ outcome: 'rejected', error: { code: 'hold_cancelled' } });
