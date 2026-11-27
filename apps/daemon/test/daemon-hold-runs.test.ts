@@ -305,3 +305,20 @@ it('releases the parked runs when their records cannot be deleted as the hold en
   await vi.waitFor(() => expect(f.store.sessionMetadata(session).run.state).toBe('idle'), WAIT);
   expect(f.requestsFor('a').map(request => request.turn)).toEqual([0, 1]);
 }, TEST_TIMEOUT_MS);
+
+it('starts a queued subagent once a hold ends without a restart', async () => {
+  const f = await fixture({ holdTimeoutMs: 200, refuse: 'first' });
+  const root = await f.idle();
+  f.registry.executionHost(root).configure({ concurrency: 1 });
+  await f.child(root, 'first');
+  await vi.waitFor(() => expect(f.started).toContain('first'), WAIT);
+  const queued = await f.child(root, 'queued');
+  expect(f.store.sessionMetadata(queued).execution!.startedAt).toBeUndefined();
+  const response = f.hold();
+  // The first child finishes while admission is closed, so the queued one cannot start until the hold ends.
+  f.open('first').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 0 } } });
+  expect(f.started).not.toContain('queued');
+  await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'), WAIT);
+  await vi.waitFor(() => expect(f.started).toContain('queued'), WAIT);
+}, TEST_TIMEOUT_MS);

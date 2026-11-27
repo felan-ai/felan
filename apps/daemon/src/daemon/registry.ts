@@ -233,6 +233,8 @@ export class SessionRegistry {
     this.assertAdmission();
     this.releaseHeld();
     this.draining = false;
+    // Children queued while admission was closed could not start, and a hold may end without any job finishing to start them.
+    for (const entry of this.entries.values()) entry.host?.resumeQueued();
   }
 
   /**
