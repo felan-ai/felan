@@ -276,3 +276,32 @@ it('holds a run that starts while the daemon is held and reaches its step end du
   for (const id of [session, late]) expect(f.store.sessionMetadata(id).run.state).toBe('running');
   expect(f.requestsFor('late')).toHaveLength(1);
 }, TEST_TIMEOUT_MS);
+
+it('lets a run that parks after held continue when its record cannot be written', async () => {
+  const f = await fixture({ holdTimeoutMs: 60_000 });
+  const late = await f.idle();
+  const session = await f.run('a');
+  const response = f.hold();
+  f.open('a').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
+  vi.spyOn(f.store, 'putHeldRuns').mockImplementation(() => { throw new Error('disk full'); });
+  void f.registry.binding(late)!.runtime.session.sendCustomMessage({ customType: 'notice', content: 'gate:late', display: false }, { triggerTurn: true });
+  await vi.waitFor(() => expect(f.started).toContain('late'), WAIT);
+  f.open('late').resolve();
+  // Without a record the run cannot wait for the next daemon, so it takes its next step instead of staying parked.
+  await vi.waitFor(() => expect(f.store.sessionMetadata(late).run.state).toBe('idle'), WAIT);
+  expect(f.requestsFor('late').map(request => request.turn)).toEqual([0, 1]);
+  expect(f.store.heldRuns().map(record => record.session)).toEqual([session]);
+}, TEST_TIMEOUT_MS);
+
+it('releases the parked runs when their records cannot be deleted as the hold ends', async () => {
+  const f = await fixture({ holdTimeoutMs: 200 });
+  const session = await f.run('a');
+  const response = f.hold();
+  f.open('a').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
+  vi.spyOn(f.store, 'deleteHeldRuns').mockImplementationOnce(() => { throw new Error('disk full'); });
+  // The failed delete keeps admission closed, but the run is no longer held and takes its next step.
+  await vi.waitFor(() => expect(f.store.sessionMetadata(session).run.state).toBe('idle'), WAIT);
+  expect(f.requestsFor('a').map(request => request.turn)).toEqual([0, 1]);
+}, TEST_TIMEOUT_MS);

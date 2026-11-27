@@ -281,12 +281,15 @@ export class SessionRegistry {
     return !!entry && !entry.parked && !entry.held && !entry.dispatches.size && !entry.writers.size && entry.binding.runtime.session.isIdle;
   }
 
-  /** Deletes every continue record before the parked runs take their next step, so a later crash cannot continue them twice. */
+  /**
+   * Deletes every continue record before the parked runs take their next step, so a later crash cannot continue them twice.
+   * The steps are released even when the delete fails; a stale record then fails its transcript check once the run goes on.
+   */
   private releaseHeld(): void {
     if (!this.stepHold) return;
     this.stepHold = undefined;
-    this.options.store.deleteHeldRuns([...this.entries].filter(([, entry]) => entry.held).map(([id]) => id));
-    for (const entry of this.entries.values()) { delete entry.held; entry.parked?.release('continue'); }
+    try { this.options.store.deleteHeldRuns([...this.entries].filter(([, entry]) => entry.held).map(([id]) => id)); }
+    finally { for (const entry of this.entries.values()) { delete entry.held; entry.parked?.release('continue'); } }
   }
 
   /**
@@ -325,8 +328,13 @@ export class SessionRegistry {
         const record = this.continueRecord(id, entry, step);
         this.options.store.putHeldRuns([record]);
         entry.held = record;
-        for (const check of this.heldWaiters) check();
-      } catch (error) { this.diagnostic({ scope: 'registry', session: id, error }); }
+      } catch (error) {
+        // Without a record the next daemon cannot continue the run, so it goes on here instead of waiting parked.
+        this.diagnostic({ scope: 'registry', session: id, error });
+        step.release('continue');
+        return;
+      }
+      for (const check of this.heldWaiters) check();
     }
     hold.changed();
   }
