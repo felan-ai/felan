@@ -1,128 +1,94 @@
-import { randomBytes } from 'node:crypto';
-import { join } from 'node:path';
-import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import type { AgentRuntime, AgentRuntimeStorage } from '@felan-ai/agent-core';
+import type { BackgroundBashJob } from './job-store.js';
+import { isTerminalStatus } from './job-store.js';
+import { readLogBytes } from './logs.js';
+import type { BackgroundBashManager, ForegroundExit } from './process-manager.js';
 
 export const FOREGROUND_MAX_LINES = 2000;
 export const FOREGROUND_MAX_BYTES = 50 * 1024;
-/** @internal */
-export const RETAINED_SPILL_FILES = 20;
 
 export type ForegroundRunResult =
-  | { kind: 'exited'; output: string; exitCode?: number; signal?: 'SIGTERM' | 'SIGKILL'; truncated: boolean; fullOutputPath?: string }
-  | { kind: 'timeout'; process: AgentRuntimeProcess; startedAt: number };
+  | { kind: 'exited'; output: string; exitCode?: number; signal?: string; truncated: boolean; fullOutputPath?: string }
+  | { kind: 'timeout'; job: BackgroundBashJob };
 
-export async function runForegroundCommand(runtime: AgentRuntime, command: string, options: {
-  timeoutMs: number;
-  storage: AgentRuntimeStorage;
-  spillDir: string;
-  signal?: AbortSignal;
-}): Promise<ForegroundRunResult> {
-  if (!runtime.processes) throw new Error('Runtime does not support processes');
+/**
+ * Runs a command as a detached job and waits on it, so a command that outlives the timeout is already a
+ * job that survives the daemon. A job that finishes in time is removed unless its full output is needed.
+ */
+export async function runForegroundCommand(
+  manager: BackgroundBashManager,
+  runtime: Pick<AgentRuntime, 'shell'>,
+  storage: AgentRuntimeStorage,
+  command: string,
+  options: { timeoutMs: number; noticeSession: string; signal?: AbortSignal },
+): Promise<ForegroundRunResult> {
   if (Number.isNaN(options.timeoutMs) || options.timeoutMs <= 0) throw new Error('timeoutMs must be positive');
-  const { storage } = options;
-  const startedAt = Date.now();
-  const process = await runtime.processes.startShell(command, { cwd: runtime.cwd, shellFlavor: 'posix', login: false });
-  let offset = 0;
-  let newlines = 0;
-  let lastByte: number | undefined;
-  const tail: Uint8Array[] = [];
-  let tailBytes = 0;
-  let pending: Uint8Array[] = [];
-  let truncated = false;
-  let spillFailed = false;
-  let fullOutputPath: string | undefined;
-
+  const job = await manager.startForeground(command, options.noticeSession);
+  const id = job.meta.id;
   try {
-    while (true) {
-      if (options.signal?.aborted) throw new Error('Command cancelled');
-      const remaining = Math.max(0, startedAt + options.timeoutMs - Date.now());
-      const snapshot = await process.read(offset, {
-        waitMs: Math.min(1_000, remaining),
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
-      if (options.signal?.aborted) throw new Error('Command cancelled');
-      if (snapshot.nextOffset > offset + snapshot.output.byteLength) truncated = true;
-      offset = snapshot.nextOffset;
-      const output = snapshot.output;
-      if (output.byteLength > 0) {
-        for (const byte of output) if (byte === 10) newlines += 1;
-        lastByte = output[output.byteLength - 1];
-        const lines = newlines + (lastByte === 10 ? 0 : 1);
-        if (offset > FOREGROUND_MAX_BYTES || lines > FOREGROUND_MAX_LINES) {
-          truncated = true;
-          if (!spillFailed) {
-            try {
-              if (!fullOutputPath) {
-                await storage.mkdir(options.spillDir, { recursive: true });
-                const timestamp = new Date().toISOString().replace(/\D/gu, '').slice(0, 14);
-                fullOutputPath = join(options.spillDir, `output-${timestamp}-${randomBytes(3).toString('hex')}.log`);
-                const content = new Uint8Array(pending.reduce((size, chunk) => size + chunk.byteLength, 0));
-                let position = 0;
-                for (const chunk of pending) {
-                  content.set(chunk, position);
-                  position += chunk.byteLength;
-                }
-                await storage.writeFile(fullOutputPath, content);
-                pending = [];
-                await storage.appendFile(fullOutputPath, output);
-                await pruneSpills(storage, options.spillDir);
-              } else {
-                await storage.appendFile(fullOutputPath, output);
-              }
-            } catch {
-              spillFailed = true;
-              fullOutputPath = undefined;
-              pending = [];
-            }
-          }
-        } else {
-          pending.push(output);
-        }
-        const retained = output.byteLength > 2 * FOREGROUND_MAX_BYTES ? output.slice(-2 * FOREGROUND_MAX_BYTES) : output;
-        tail.push(retained);
-        tailBytes += retained.byteLength;
-        while (tailBytes > 2 * FOREGROUND_MAX_BYTES) {
-          const first = tail[0]!;
-          const excess = tailBytes - 2 * FOREGROUND_MAX_BYTES;
-          if (first.byteLength <= excess) {
-            tail.shift();
-            tailBytes -= first.byteLength;
-          } else {
-            tail[0] = first.subarray(excess);
-            tailBytes -= excess;
-          }
-        }
-      }
-      if (options.signal?.aborted) throw new Error('Command cancelled');
-      if (!snapshot.running && output.byteLength === 0) {
-        await process.dispose();
-        return {
-          kind: 'exited', output: decodeTail(tail, tailBytes), truncated,
-          ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }),
-          ...(snapshot.signal === undefined ? {} : { signal: snapshot.signal }),
-          ...(fullOutputPath === undefined ? {} : { fullOutputPath }),
-        };
-      }
-      if (snapshot.running && Date.now() >= startedAt + options.timeoutMs) return { kind: 'timeout', process, startedAt };
+    let finished = await manager.waitForForeground(job, Date.now() + options.timeoutMs, options.signal);
+    if (!finished) {
+      const promoted = await manager.markPromoted(id, 'detached');
+      if (!promoted) throw new Error(`Background process disappeared during promotion: ${id}`);
+      if (!isTerminalStatus(promoted.status.status)) return { kind: 'timeout', job: promoted };
+      finished = { job: promoted };
     }
+    return await collectForegroundResult(manager, runtime, storage, finished, options.noticeSession);
   } catch (error) {
     const failures: unknown[] = [];
-    try { await process.terminate('SIGTERM'); } catch (failure) { failures.push(failure); }
-    try { await process.dispose(); } catch (failure) { failures.push(failure); }
+    try { await discardForegroundJob(manager, id); } catch (failure) { failures.push(failure); }
     if (options.signal?.aborted) throw new Error('Command cancelled', { cause: failures.length ? new AggregateError(failures) : error });
     if (failures.length) throw new AggregateError([error, ...failures], 'Command and process cleanup failed');
     throw error;
   }
 }
 
-function decodeTail(chunks: Uint8Array[], size: number): string {
-  const bytes = new Uint8Array(size);
-  let position = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, position);
-    position += chunk.byteLength;
+/** Stops and removes an abandoned foreground job; one that survives SIGKILL is promoted so it stays visible and stoppable. */
+async function discardForegroundJob(manager: BackgroundBashManager, id: string): Promise<void> {
+  try {
+    await manager.stop(id, 'SIGTERM');
+  } catch {
+    try {
+      await manager.stop(id, 'SIGKILL');
+    } catch (error) {
+      await manager.markPromoted(id, 'detached');
+      throw error;
+    }
   }
-  const text = new TextDecoder().decode(bytes).replace(/\r?\n$/u, '').split('\n').slice(-FOREGROUND_MAX_LINES).join('\n');
+  await manager.removeJob(id);
+}
+
+async function collectForegroundResult(
+  manager: BackgroundBashManager,
+  runtime: Pick<AgentRuntime, 'shell'>,
+  storage: AgentRuntimeStorage,
+  { job, output }: ForegroundExit,
+  noticeSession: string,
+): Promise<ForegroundRunResult> {
+  const content = output?.content ?? await readLogBytes(runtime, storage, job.meta.logPath, 2 * FOREGROUND_MAX_BYTES);
+  const tail = decodeTail(content);
+  const truncated = content.byteLength > 2 * FOREGROUND_MAX_BYTES || tail.truncated;
+  // A truncated result points at the job's log, so the job is kept, unlisted, until retention removes it.
+  // The wait call removes only a job whose log is too small to truncate.
+  if (!output?.removed) {
+    if (truncated) await manager.settleNotice(job.meta.id, noticeSession);
+    else await manager.removeJob(job.meta.id);
+  }
+  const exitCode = job.status.exitCode ?? undefined;
+  const signal = job.status.signal ?? undefined;
+  return {
+    kind: 'exited', output: tail.text, truncated,
+    ...(exitCode === undefined ? {} : { exitCode }),
+    ...(signal === undefined ? {} : { signal }),
+    ...(truncated ? { fullOutputPath: job.meta.logPath } : {}),
+  };
+}
+
+function decodeTail(bytes: Uint8Array): { text: string; truncated: boolean } {
+  let begin = 0;
+  while (begin < bytes.byteLength && begin < 4 && (bytes[begin]! & 0xc0) === 0x80) begin += 1;
+  const lines = new TextDecoder().decode(bytes.subarray(begin)).replace(/\r?\n$/u, '').split('\n');
+  const text = lines.slice(-FOREGROUND_MAX_LINES).join('\n');
   let start = text.length;
   let retainedBytes = 0;
   while (start > 0) {
@@ -133,12 +99,5 @@ function decodeTail(chunks: Uint8Array[], size: number): string {
     retainedBytes += width;
     start -= paired ? 2 : 1;
   }
-  return text.slice(start);
-}
-
-async function pruneSpills(storage: AgentRuntimeStorage, spillDir: string): Promise<void> {
-  try {
-    const files = (await storage.listFiles(spillDir, { pattern: 'output-*.log' })).sort();
-    await Promise.allSettled(files.slice(0, -RETAINED_SPILL_FILES).map((file) => storage.remove(join(spillDir, file))));
-  } catch {}
+  return { text: text.slice(start), truncated: lines.length > FOREGROUND_MAX_LINES || start > 0 };
 }

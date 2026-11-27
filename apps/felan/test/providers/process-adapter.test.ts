@@ -36,3 +36,24 @@ it.each(['detached', 'pty', 'attached'] as const)('handles %s background job rec
   }
   expect(() => adapter.describeJob(runtime, job.meta.infoPath, new TextEncoder().encode('{'))).toThrow('record');
 });
+
+it('hides a foreground job until promotion and reports a pending finish notice', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'felan-process-adapter-')); temporary.push(directory);
+  await mkdir(join(directory, 'session'));
+  await mkdir(join(directory, 'agent'));
+  // The foreground start writes its record from the launch shell call, so this test runs a real job.
+  const runtime = new HostAgentRuntime(directory, { sessionStorageRoot: join(directory, 'session'), agentStorageRoot: join(directory, 'agent') });
+  const manager = new BackgroundBashManager(runtime);
+  const job = await manager.startForeground('sleep 30', 'session-a');
+  try {
+    const adapter = createLocalProcessAdapter();
+    const describe = async () => adapter.describeJob(runtime, job.meta.infoPath, await runtime.storage('session').readFile(job.meta.infoPath));
+    expect(await describe()).toBeUndefined();
+    await manager.markPromoted(job.meta.id);
+    expect(await describe()).toMatchObject({ id: job.meta.id, kind: 'detached', status: 'running', notice: 'pending' });
+    expect(await manager.settleNotice(job.meta.id, 'session-a')).toBe(true);
+    expect(await describe()).not.toHaveProperty('notice');
+  } finally {
+    await manager.stop(job.meta.id, 'SIGKILL');
+  }
+});
