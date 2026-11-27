@@ -13,7 +13,7 @@ export function fakeProcessAdapter(directory = 'background-bash'): ProcessAdapte
         || info.logPath !== join(info.jobDir, 'output.log')) throw new Error('Invalid process identity');
       return { id: info.id, kind: info.executionMode, status: info.status, command: info.command,
         startedAt: info.startedAt, startIdentity: info.processToken, outputPath: info.logPath,
-        commandIdentity: [info.runnerPath, info.processToken], ...(info.notice === 'pending' ? { notice: 'pending' as const } : {}) };
+        commandIdentity: [info.runnerPath, info.processToken] };
     },
     async inspectDetached(runtime, id) {
       try {

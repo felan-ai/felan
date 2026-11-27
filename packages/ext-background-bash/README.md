@@ -35,8 +35,8 @@ runtime's explicit POSIX shell flavor and `runtime.processes.startShell`.
 
 ## Tools and controls
 
-- `bash({ command })` waits on a detached job and removes it when the command finishes within its timeout.
-- `bash({ command, timeout: 120 })` runs the command as a detached job, waits up to 120 seconds, then promotes the same job to a listed background job without restarting it.
+- `bash({ command })` runs an in-process child through `runtime.processes.startShell` without creating a job record.
+- `bash({ command, timeout: 120 })` waits up to 120 seconds, then promotes the same child to an attached background job without restarting it.
 - `bash({ command, background: true })` or `bash({ command, timeout: 0 })` starts a detached process with a durable job record.
 - `bash({ command, timeout: 0, tty: true })` starts an interactive PTY immediately. All `tty: true` jobs create their record before launch so the daemon can register the PTY under its job ID.
 - `write_background_bash({ id, chars })` sends exact stdin/control bytes to a PTY job.
@@ -53,43 +53,28 @@ runtime's explicit POSIX shell flavor and `runtime.processes.startShell`.
 The native TUI process/log view uses an inline frame. Its completion messages use
 a compact one-line summary; `Alt+A` reveals bounded details.
 
-A non-PTY foreground command runs as a detached job that the tool call waits
-on. Its result returns the last 2000 lines / 50 KB of the job's `output.log`. A
-command that finishes within its timeout leaves no job record unless its output
-exceeds either limit; the result then names that `output.log`, and the job stays
-unlisted until retention removes it.
-
-Each runtime call is a network round trip on a remote runtime, so a foreground
-command that finishes in time with at most 16 KB and fewer than 2000 lines of
-output makes two `runtime.shell` calls and no session-storage calls. The first
-call writes the job directory and launches the runner. The second waits inside
-the runtime: it checks for the completion file every 10 ms for 0.2 s and every
-30 ms after that, and probes the runner with `kill -0` every 64 checks. When the
-job finishes, the same call returns its exit status and output and deletes the
-job. A wait ends after at most 25 seconds and the extension starts the next one,
-because remote shell calls have time limits. Larger output is read from storage
-afterwards. Commands whose launch script would exceed 64 KB keep the
-storage-based start, and so does every command on a Windows host, where a
-launch script of this size reaches Git Bash cut short.
+Non-PTY foreground output returns the last 2000 lines / 50 KB. Only output above
+either limit is written in full to
+`<session-storage>/background-bash/<workspace-key>/output/output-*.log`. The
+extension keeps the newest 20 spill files in that workspace's output directory.
 
 The default foreground promotion window is 120 seconds and can be changed with
-`extensionConfig.backgroundBash.foregroundTimeoutSeconds`. Promotion lists the
-same job and records `promotedAt`; its `executionMode` stays `detached`. The
-process runs in its own session and process group with file-based output, so it
-keeps running when the session that started it closes or reloads, when its
-subagent ends, and when the daemon restarts. Cancelling a turn does not stop
-it. Promoted jobs have no stdin; use `tty: true` for interactive input. Records
-written by earlier releases with `executionMode: 'attached'` are reported as
-`unknown`.
+`extensionConfig.backgroundBash.foregroundTimeoutSeconds`. Promotion creates a
+job with `executionMode: 'attached'`, an `output.log`, and completion messages.
+It appears in `list_background_bash` and `/processes`, but stops when the session
+that started it closes or reloads; a subagent's promoted job ends with that
+subagent. Cancelling a turn does not stop it. Stopped attached jobs record
+`killed` and are never reattached. They have no stdin; use `tty: true` for
+interactive input. Attached output is appended to `output.log` as it is read.
 
 A foreground command finishes when its shell exits. A background descendant
-started with `cmd &` keeps running, is not tracked, and does not delay the
-result.
+started with `cmd &` that keeps the output pipes open delays the result by at
+most 500 ms; it keeps running and is not tracked.
 
-The daemon does not track a job while a foreground tool call waits on it. After
-promotion it tracks the job as a detached process, which is not interruptible
-work for a daemon stop. The native TUI footer counts running detached and PTY
-jobs, including promoted commands.
+The daemon tracks the live child as a `foreground` process before and after
+promotion so it can stop the child on shutdown. The native TUI footer excludes
+foreground processes, including promoted commands, from its running-process
+count. It counts running detached and PTY jobs.
 
 Cancelling a foreground wait terminates its process tree; cancelling a wait for
 an already-backgrounded job does not terminate that job. Detached jobs remain
@@ -103,18 +88,8 @@ Jobs returned as background processes by `bash` in the active session deliver a
 completion message automatically. The message steers an active run at its next
 model-call boundary or triggers a turn when the agent is idle. A terminal result
 returned directly by `list_background_bash`, `read_background_bash`,
-`wait_background_bash`, or `stop_background_bash` in the session owed the
-notice suppresses the duplicate completion message.
-
-Non-PTY jobs record their notice in `info.json`: `notice` is `pending` or
-`delivered`, and `noticeSession` names the session that receives it. A marker
-file under `<workspace-key>/notices` indexes pending notices so a session start
-does not read every job. When a session starts, the extension watches every job
-that still owes it a notice, delivers the notice once for each job that already
-finished, and promotes a foreground job whose tool call a restart cut off. The
-daemon restores each open root session that has a running job or a pending
-notice after it restarts, so the notice arrives without a new prompt. PTY job
-notices stay in memory and are lost with the session.
+`wait_background_bash`, or `stop_background_bash` suppresses the duplicate
+completion message.
 
 ## Listing API and retention
 

@@ -1,6 +1,6 @@
 # ADR 0047: Run foreground Bash in-process
 
-> Status: Superseded by [ADR 0049](0049-wait-on-a-detached-job-for-foreground-bash.md)
+> Status: Accepted
 > Date: 2026-11-06
 > Deciders: Felan maintainers
 > Related: [ADR 0002](0002-share-bash-process-surface.md),

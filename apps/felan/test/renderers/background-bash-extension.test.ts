@@ -250,11 +250,19 @@ describe('background bash extension activation', () => {
   it('promotes a foreground command after its timeout without killing it', async () => {
     const running = backgroundJob('running');
     const start = vi.spyOn(BackgroundBashManager.prototype, 'start');
-    const startForeground = vi.spyOn(BackgroundBashManager.prototype, 'startForeground').mockResolvedValue(running);
-    const waitForForeground = vi.spyOn(BackgroundBashManager.prototype, 'waitForForeground').mockResolvedValue(undefined);
-    const promote = vi.spyOn(BackgroundBashManager.prototype, 'markPromoted').mockResolvedValue(running);
-    const stop = vi.spyOn(BackgroundBashManager.prototype, 'stop');
-    const harness = createHarness({ ...unusedRuntime(), processes: { startShell: vi.fn() } });
+    const promote = vi.spyOn(BackgroundBashManager.prototype, 'promote').mockResolvedValue(running);
+    const terminate = vi.fn(async () => {});
+    const child = {
+      pid: 123,
+      read: async (_offset: number, options?: { waitMs?: number }) => {
+        await new Promise((resolve) => setTimeout(resolve, options?.waitMs ?? 0));
+        return { output: new Uint8Array(), nextOffset: 0, running: true };
+      },
+      write: vi.fn(async () => {}),
+      terminate,
+      dispose: vi.fn(async () => {}),
+    };
+    const harness = createHarness({ ...unusedRuntime(), processes: { startShell: vi.fn(async () => child) } });
     await harness.activate();
     await harness.emit('session_start', {}, context('anthropic'));
     const bash = registeredTool(harness, 'bash');
@@ -264,11 +272,9 @@ describe('background bash extension activation', () => {
       content: [{ type: 'text', text: expect.stringContaining('Started background process.') }],
       details: { background: true, id: running.meta.id },
     });
-    expect(startForeground).toHaveBeenCalledWith('sleep 5', 'session-1');
-    expect(waitForForeground).toHaveBeenCalledWith(running, expect.any(Number), undefined);
-    expect(promote).toHaveBeenCalledWith(running.meta.id, 'detached');
+    expect(promote).toHaveBeenCalledWith('sleep 5', child, expect.any(Number));
     expect(start).not.toHaveBeenCalled();
-    expect(stop).not.toHaveBeenCalled();
+    expect(terminate).not.toHaveBeenCalled();
   });
 
   it('waits through PTY output until the command actually exits', async () => {
@@ -464,7 +470,6 @@ function context(provider: string): ExtensionContext {
   return {
     mode: 'print',
     model: model(provider),
-    sessionManager: { getSessionId: () => 'session-1' },
   } as unknown as ExtensionContext;
 }
 
@@ -473,7 +478,6 @@ function tuiContext(provider: string): ExtensionContext {
     mode: 'tui',
     hasUI: true,
     model: model(provider),
-    sessionManager: { getSessionId: () => 'session-1' },
     ui: {
       custom: vi.fn(async () => undefined),
       notify: vi.fn(),

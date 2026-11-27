@@ -5,18 +5,11 @@ export interface RecoveryPlan {
   resumableContinuations: string[];
   reconcileDetached: string[];
   missingResources: string[];
-  /** Open root sessions with a background job that may still run or still owes a finish notice. */
-  restoreSessions: string[];
   changedSessions: Set<string>;
 }
 
 export function recoverControlState(state: ControlState, now: number): RecoveryPlan {
-  const plan: RecoveryPlan = { resumableContinuations: [], reconcileDetached: [], missingResources: [], restoreSessions: [], changedSessions: new Set() };
-  const owed = new Set(state.resources.filter(resource => resource.kind === 'detached'
-    && (resource.state === 'running' || resource.state === 'reconciling' || resource.notice === 'pending')).map(resource => resource.session));
-  // A child's notice would start a turn nobody waits for, so only roots are restored.
-  plan.restoreSessions = state.sessions.filter(session => owed.has(session.id) && session.state === 'open'
-    && session.deletedAt === undefined && session.parent === undefined).map(session => session.id);
+  const plan: RecoveryPlan = { resumableContinuations: [], reconcileDetached: [], missingResources: [], changedSessions: new Set() };
   for (const request of state.requests) {
     if (request.phase === 'terminal') continue;
     const dispatched = request.phase === 'dispatch_intent';

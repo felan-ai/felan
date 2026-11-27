@@ -1,6 +1,140 @@
 import type { AgentRuntime, AgentRuntimeProcess, AgentRuntimeProcessReadOptions, AgentRuntimeProcessSnapshot } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import { BackgroundBashCoordinator } from '../src/coordinator.js';
+import { BackgroundBashCoordinator, type InteractiveBashProcess } from '../src/coordinator.js';
+
+describe('BackgroundBashCoordinator attached processes', () => {
+  it('adopts buffered output from offset zero and rejects stdin without writing', async () => {
+    const process = new ControlledProcess();
+    process.output = new TextEncoder().encode('before');
+    const snapshot = vi.fn(async (_snapshot: InteractiveBashProcess) => {});
+    const coordinator = new BackgroundBashCoordinator({} as AgentRuntime, snapshot);
+    try {
+      await expect(coordinator.adopt('attached', process)).resolves.toMatchObject({ output: 'before', running: true });
+      process.output = new TextEncoder().encode('before\nafter');
+      await expect(coordinator.read('attached')).resolves.toMatchObject({ output: '\nafter' });
+      await expect(coordinator.read('attached')).resolves.toMatchObject({ output: '' });
+      await expect(coordinator.write('attached', 'input')).rejects.toThrow(
+        'Process stdin is unavailable; start the command with tty: true for interactive input.',
+      );
+      expect(process.input).toBe('');
+      expect(snapshot).toHaveBeenCalledTimes(2);
+      expect(snapshot.mock.calls.map(([value]) => value.output)).toEqual(['before', '\nafter']);
+    } finally {
+      await coordinator.shutdown();
+    }
+  });
+
+  it('persists the final delta before disposing and removing an attached process', async () => {
+    const process = new ControlledProcess();
+    const dispose = vi.spyOn(process, 'dispose');
+    const saving = deferred();
+    const releaseSave = deferred();
+    const coordinator = new BackgroundBashCoordinator({} as AgentRuntime, async (snapshot) => {
+      if (!snapshot.running) {
+        expect(snapshot.output).toBe('final');
+        saving.resolve();
+        await releaseSave.promise;
+      }
+    });
+    await coordinator.adopt('attached', process);
+    process.output = new TextEncoder().encode('final');
+    process.running = false;
+    const reading = coordinator.read('attached');
+    await saving.promise;
+    const queued = coordinator.read('attached');
+    try {
+      expect(dispose).not.toHaveBeenCalled();
+      expect(coordinator.has('attached')).toBe(true);
+    } finally {
+      releaseSave.resolve();
+      await Promise.all([reading, queued]);
+      await coordinator.shutdown();
+    }
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(coordinator.has('attached')).toBe(false);
+    await expect(coordinator.read('attached')).rejects.toThrow('not found');
+  });
+
+  it('decodes split UTF-8 bytes without retaining earlier attached output', async () => {
+    const process = new ControlledProcess();
+    const coordinator = new BackgroundBashCoordinator({} as AgentRuntime);
+    const bytes = new TextEncoder().encode('🌍');
+    process.output = bytes.slice(0, 2);
+    await expect(coordinator.adopt('attached', process)).resolves.toMatchObject({ output: '' });
+    process.output = new TextEncoder().encode('🌍next');
+    await expect(coordinator.read('attached')).resolves.toMatchObject({ output: '🌍next' });
+    process.output = new TextEncoder().encode('🌍next\ud83c');
+    process.running = false;
+    await expect(coordinator.read('attached')).resolves.toMatchObject({ output: '\uFFFD', running: false });
+    expect(coordinator.has('attached')).toBe(false);
+  });
+
+  it('stops attached children without stopping host-owned terminals', async () => {
+    const attached = new ControlledProcess();
+    const pty = new ControlledProcess();
+    const terminate = vi.spyOn(attached, 'terminate');
+    const dispose = vi.spyOn(attached, 'dispose');
+    const snapshots = vi.fn(async () => {});
+    const coordinator = new BackgroundBashCoordinator({
+      terminals: { startShell: async () => pty, attach: (id: string) => id === 'pty' ? pty : undefined },
+    } as unknown as AgentRuntime, snapshots);
+    await coordinator.start('pty', 'command');
+    await coordinator.adopt('attached', attached);
+    await Promise.all([coordinator.stopAttached(), coordinator.stopAttached()]);
+
+    expect(attached.running).toBe(false);
+    expect(terminate).toHaveBeenCalledWith('SIGTERM');
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(coordinator.has('attached')).toBe(false);
+    expect(pty.running).toBe(true);
+    expect(snapshots).toHaveBeenCalledWith(expect.objectContaining({ id: 'attached', running: false, signal: 'SIGTERM' }));
+    await coordinator.shutdown();
+    expect(pty.running).toBe(true);
+    await pty.dispose();
+  });
+
+  it.each(['stopAttached', 'shutdown'] as const)('%s succeeds when a poll removes an attached process before stop', async (shutdown) => {
+    const process = new ControlledProcess();
+    const dispose = vi.spyOn(process, 'dispose');
+    const snapshots = vi.fn(async (_snapshot: InteractiveBashProcess) => {});
+    const coordinator = new BackgroundBashCoordinator({} as AgentRuntime, snapshots);
+    await coordinator.adopt('attached', process);
+    const stop = coordinator.stop.bind(coordinator);
+    vi.spyOn(coordinator, 'stop').mockImplementationOnce(async (id, signal) => {
+      process.running = false;
+      await coordinator.read(id);
+      return stop(id, signal);
+    });
+
+    await expect(coordinator[shutdown]()).resolves.toBeUndefined();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(coordinator.has('attached')).toBe(false);
+    expect(snapshots).toHaveBeenLastCalledWith(expect.objectContaining({ id: 'attached', running: false, exitCode: 0 }));
+  });
+
+  it('leaves cleanup to the caller when adoption fails', async () => {
+    const process = new ControlledProcess();
+    const terminate = vi.spyOn(process, 'terminate');
+    const dispose = vi.spyOn(process, 'dispose');
+    const coordinator = new BackgroundBashCoordinator({} as AgentRuntime, async () => { throw new Error('save failed'); });
+    await expect(coordinator.adopt('attached', process)).rejects.toThrow('save failed');
+    await coordinator.shutdown();
+    expect(coordinator.has('attached')).toBe(false);
+    expect(terminate).not.toHaveBeenCalled();
+    expect(dispose).not.toHaveBeenCalled();
+    await process.dispose();
+  });
+
+  it('shuts down attached children even when terminals are host-owned', async () => {
+    const process = new ControlledProcess();
+    const coordinator = new BackgroundBashCoordinator({ terminals: { attach: () => undefined } } as unknown as AgentRuntime);
+    await coordinator.adopt('attached', process);
+    await coordinator.shutdown();
+    expect(process.running).toBe(false);
+    expect(coordinator.has('attached')).toBe(false);
+    await expect(coordinator.adopt('later', process)).rejects.toThrow('coordinator is shut down');
+  });
+});
 
 describe('BackgroundBashCoordinator concurrent reads', () => {
   it('keeps snapshots and input responsive while another caller waits for output', async () => {

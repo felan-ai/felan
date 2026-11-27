@@ -3,6 +3,8 @@ import { shellQuote } from './runtime-support.js';
 
 const DEFAULT_TAIL_LINES = 80;
 const MAX_TAIL_BYTES = 128 * 1024;
+// Four extra bytes keep a split leading UTF-8 character outside the retained tail.
+const TAIL_READ_BYTES = MAX_TAIL_BYTES + 4;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -19,10 +21,19 @@ export async function readLogTail(
   const maxLines = Math.max(1, lines);
   let content: Uint8Array;
   try {
-    content = await readLogBytes(runtime, storage, logPath, MAX_TAIL_BYTES);
+    content = await storage.readFile(logPath, { maxBytes: MAX_TAIL_BYTES });
   } catch (error) {
     if (isMissingPathError(error)) return '(log file not found)';
-    throw error;
+    if (!isReadLimitError(error)) throw error;
+    const result = await runtime.shell(`tail -c ${TAIL_READ_BYTES} -- ${shellQuote(logPath)}`, {
+      shellFlavor: 'posix',
+      maxOutputBytes: TAIL_READ_BYTES,
+      timeout: 5_000,
+    });
+    if (result.killed) throw new Error('Reading process log timed out or was terminated');
+    if (result.code !== 0) throw new Error(result.stderr.trim() || `Unable to read process log (exit ${result.code})`);
+    if (result.truncated) throw new Error('Process log tail exceeded its read bound');
+    content = encoder.encode(result.stdout);
   }
   if (content.byteLength === 0) return '(log is empty)';
   const truncatedByBytes = content.byteLength > MAX_TAIL_BYTES;
@@ -36,31 +47,6 @@ export async function readLogTail(
     return `[Showing last ${maxLines} log lines. Full output: ${logPath}]\n${selected}`;
   }
   return selected;
-}
-
-/** Reads a whole log of at most `maxBytes`, or a little more than its last `maxBytes`, so a longer result means the log was cut. */
-export async function readLogBytes(
-  runtime: Pick<AgentRuntime, 'shell'>,
-  storage: AgentRuntimeStorage,
-  logPath: string,
-  maxBytes: number,
-): Promise<Uint8Array> {
-  try {
-    return await storage.readFile(logPath, { maxBytes });
-  } catch (error) {
-    if (!isReadLimitError(error)) throw error;
-  }
-  // Four extra bytes keep a split leading UTF-8 character outside the retained tail.
-  const readBytes = maxBytes + 4;
-  const result = await runtime.shell(`tail -c ${readBytes} -- ${shellQuote(logPath)}`, {
-    shellFlavor: 'posix',
-    maxOutputBytes: readBytes,
-    timeout: 5_000,
-  });
-  if (result.killed) throw new Error('Reading process log timed out or was terminated');
-  if (result.code !== 0) throw new Error(result.stderr.trim() || `Unable to read process log (exit ${result.code})`);
-  if (result.truncated) throw new Error('Process log tail exceeded its read bound');
-  return encoder.encode(result.stdout);
 }
 
 function isMissingPathError(error: unknown): boolean {

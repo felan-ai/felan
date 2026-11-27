@@ -113,7 +113,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
     let finish!: (action: HostAction) => void;
     const stopped = new Promise<HostAction>(resolve => { finish = resolve; });
     let hold: ReturnType<typeof setInterval> | undefined;
-    const warmup = new AbortController(); let warming: Promise<void> = Promise.resolve(); let restoring: Promise<void> = Promise.resolve();
+    const warmup = new AbortController(); let warming: Promise<void> = Promise.resolve();
     const lifecycle = new HostLifecycle({ target: owner.target, identity: owner.identity,
       ...(options.drainTimeoutMs ? { timeoutMs: options.drainTimeoutMs } : {}),
       beginDrain: () => { connector?.beginDrain(); liveSetup.beginDrain(); liveRegistry.beginDrain(); },
@@ -139,7 +139,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
       record: event => log.record(event),
       complete: async action => {
         clearInterval(idleTimer); clearInterval(hold); removeLoss();
-        warmup.abort(); await warming; await restoring;
+        warmup.abort(); await warming;
         await connector?.stop();
         liveServer.sealCommands(); await liveServer.settleCommands();
         await agentLogs.close(); await liveSessionLifecycle.dispose(); await loadedProviders.dispose();
@@ -190,7 +190,6 @@ export async function startDaemonService(target: DaemonTarget, options: {
     });
     await server.start(); connector?.start(); log.record('started');
     warming = liveRegistry.warmLegacySessions(warmup.signal).catch(() => { if (!warmup.signal.aborted) log.record('legacy_warmup_failed'); });
-    restoring = liveRegistry.restoreRecovered();
     return { owner, registry: liveRegistry, server: liveServer, lifecycle, stopped,
       async requestStop(action: HostAction = 'stop', mode: HostMode = 'drain') {
         return liveServer.requestManagement({ v: 1, id: requestId(), op: action === 'stop' ? 'host.stop' : 'host.restart',

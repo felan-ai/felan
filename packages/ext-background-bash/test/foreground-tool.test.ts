@@ -1,6 +1,8 @@
+import { join } from 'node:path';
 import {
   createUnavailableExtensionUi,
   type AgentRuntime,
+  type AgentRuntimeProcess,
   type ExtensionContext,
   type FelanExtensionAPI,
   type ToolDefinition,
@@ -8,7 +10,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runForegroundCommand } from '../src/foreground.js';
 import { createBackgroundBashExtension } from '../src/index.js';
-import type { BackgroundBashJob } from '../src/job-store.js';
+import { getBackgroundBashRoot } from '../src/job-store.js';
 import { BackgroundBashManager } from '../src/process-manager.js';
 
 vi.mock('../src/foreground.js', async importOriginal => ({
@@ -33,8 +35,11 @@ describe('foreground bash routing', () => {
     const command = "export RTK_DB_PATH='/tmp/rtk.db'; rtk git status";
     const controller = new AbortController();
     const result = await f.bash({ command, ...(timeout === undefined ? {} : { timeout }) }, controller.signal);
-    expect(runForegroundCommand).toHaveBeenCalledExactlyOnceWith(expect.any(BackgroundBashManager), f.runtime,
-      expect.objectContaining({ root: '/storage' }), command, { timeoutMs: expected, noticeSession: 'session-1', signal: controller.signal });
+    expect(runForegroundCommand).toHaveBeenCalledExactlyOnceWith(f.runtime, command, {
+      timeoutMs: expected, signal: controller.signal,
+      spillDir: join(getBackgroundBashRoot('/storage', '/workspace'), 'output'),
+      storage: expect.objectContaining({ root: '/storage' }),
+    });
     expect(result.details).toEqual({ background: false, exitCode: 0, truncated: false });
     expect(f.start).not.toHaveBeenCalled();
   });
@@ -49,31 +54,21 @@ describe('foreground bash routing', () => {
     });
   });
 
-  it('returns a job promoted at the deadline as a background process', async () => {
+  it.each([false, true])('terminates and disposes the child if promotion fails, termination failure: %s', async terminationFails => {
     const f = await fixture();
-    const job = {
-      meta: { id: 'bash-20261126000000-abcdef', command: 'command', cwd: '/workspace', jobDir: '/storage/job', logPath: '/storage/job/output.log',
-        infoPath: '/storage/job/info.json', startedAt: 1, pid: 42 },
-      status: { status: 'running', startedAt: 1, updatedAt: 1, pid: 42 },
-    } as unknown as BackgroundBashJob;
-    vi.mocked(runForegroundCommand).mockResolvedValue({ kind: 'timeout', job });
-    const result = await f.bash({ command: 'command' });
-    expect(result.details).toMatchObject({ background: true, id: job.meta.id, status: 'running', pid: 42 });
-    expect(result.content[0]).toMatchObject({ text: expect.stringContaining('Started background process.') });
+    const failure = new Error('promotion failed');
+    const terminate = vi.fn<AgentRuntimeProcess['terminate']>(async () => {
+      if (terminationFails) throw new Error('termination failed');
+    });
+    const dispose = vi.fn<AgentRuntimeProcess['dispose']>(async () => {});
+    const process = { terminate, dispose } as unknown as AgentRuntimeProcess;
+    vi.mocked(runForegroundCommand).mockResolvedValue({ kind: 'timeout', process, startedAt: 42 });
+    const promote = vi.spyOn(BackgroundBashManager.prototype, 'promote').mockRejectedValue(failure);
+    await expect(f.bash({ command: 'command' })).rejects.toBe(failure);
+    expect(promote).toHaveBeenCalledExactlyOnceWith('command', process, 42);
+    expect(terminate).toHaveBeenCalledExactlyOnceWith('SIGTERM');
+    expect(dispose).toHaveBeenCalledOnce();
     expect(f.start).not.toHaveBeenCalled();
-  });
-
-  it('stops a background start cancelled during launch and settles its notice', async () => {
-    const f = await fixture();
-    const controller = new AbortController();
-    const job = { meta: { id: 'bash-20261126000000-abcdef' }, status: { status: 'running' } } as unknown as BackgroundBashJob;
-    f.start.mockImplementation(async () => { controller.abort(); return job; });
-    const stop = vi.spyOn(BackgroundBashManager.prototype, 'stop').mockResolvedValue(job);
-    const settle = vi.spyOn(BackgroundBashManager.prototype, 'settleNotice').mockResolvedValue(true);
-    await expect(f.bash({ command: 'command', background: true }, controller.signal)).rejects.toThrow('Command cancelled');
-    expect(f.start).toHaveBeenCalledWith('command', { noticeSession: 'session-1' });
-    expect(stop).toHaveBeenCalledWith(job.meta.id);
-    expect(settle).toHaveBeenCalledWith(job.meta.id, 'session-1');
   });
 
   it('rejects an already-cancelled call before starting a process', async () => {
@@ -99,7 +94,7 @@ async function fixture(options: { config?: number | undefined; processes?: boole
   const shell = vi.fn(async () => ({ code: 0, stdout: '', stderr: '', killed: false }));
   const runtime = {
     cwd: '/workspace', shell,
-    storage: () => ({ root: '/storage', mkdir: async () => {}, listFiles: async () => [] }),
+    storage: () => ({ root: '/storage' }),
     ...(options.processes === false ? {} : { processes: { startShell: vi.fn() } }),
   } as unknown as AgentRuntime;
   let activeTools = ['bash'];
@@ -112,7 +107,7 @@ async function fixture(options: { config?: number | undefined; processes?: boole
     setActiveTools: (names: string[]) => { activeTools = names; },
     on(name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) { handlers.set(name, handler); },
   } as unknown as FelanExtensionAPI;
-  const ctx = { mode: 'print', cwd: runtime.cwd, sessionManager: { getSessionId: () => 'session-1' } } as unknown as ExtensionContext;
+  const ctx = { mode: 'print', cwd: runtime.cwd } as unknown as ExtensionContext;
   await createBackgroundBashExtension()(pi);
   cleanups.push(async () => { await handlers.get('session_shutdown')?.({ reason: 'shutdown' }, ctx); });
   vi.mocked(runForegroundCommand).mockResolvedValue({ kind: 'exited', output: 'output', exitCode: 0, truncated: false });

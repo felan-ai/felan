@@ -5,7 +5,6 @@ import { BackgroundBashRetention } from './retention.js';
 
 export type BackgroundBashStatus = 'running' | 'completed' | 'failed' | 'killed' | 'unknown';
 export type BackgroundBashStatusFilter = BackgroundBashStatus | 'all';
-export type BackgroundBashNotice = 'pending' | 'delivered';
 
 export interface BackgroundBashQuery {
   limit?: number;
@@ -43,9 +42,6 @@ export interface BackgroundBashInfo {
   executionMode?: 'detached' | 'pty' | 'attached';
   promotedAt?: number;
   outputTruncated?: boolean;
-  foreground?: string;
-  notice?: BackgroundBashNotice;
-  noticeSession?: string;
   pid?: number;
   processGroupId?: number;
   processToken?: string;
@@ -76,11 +72,6 @@ export interface BackgroundBashMeta {
   executionMode?: 'detached' | 'pty' | 'attached';
   promotedAt?: number;
   outputTruncated?: boolean;
-  /** Identifies the process whose foreground tool call waits on the job; such jobs are not listed until promoted. */
-  foreground?: string;
-  notice?: BackgroundBashNotice;
-  /** The session that receives the finish notice. */
-  noticeSession?: string;
 }
 
 export interface BackgroundBashStatusFile {
@@ -133,7 +124,6 @@ function getBackgroundBashWorkspaceKey(cwd: string): string {
   return `${label}-${digest}`;
 }
 
-/** @internal */
 export function getBackgroundBashRoot(storageRoot: string, cwd: string): string {
   return join(storageRoot, 'background-bash', getBackgroundBashWorkspaceKey(cwd));
 }
@@ -174,8 +164,8 @@ export class BackgroundBashJobStore {
 
   async createJob(
     command: string,
-    executionMode: 'detached' | 'pty' = 'detached',
-    options?: { foreground?: string; noticeSession?: string },
+    executionMode: 'detached' | 'pty' | 'attached' = 'detached',
+    options?: { startedAt?: number; pid?: number; processGroupId?: number; promotedAt?: number },
   ): Promise<BackgroundBashJob> {
     await this.#storage.mkdir(this.jobsDir, { recursive: true });
 
@@ -192,36 +182,8 @@ export class BackgroundBashJobStore {
       }
     }
 
-    const info = this.#buildInfo(id, jobDir, command, executionMode, options);
-    const job = await this.withJob(id, async () => {
-      if (info.notice === 'pending') await this.writeNoticeMarker(id);
-      await this.writeInfo(info);
-      return jobFromInfo(info);
-    });
-    await this.#retention.recordMutation();
-    return job;
-  }
-
-  /** Builds the record of a new job without writing it, for a caller that creates the job directory in one runtime call. */
-  prepareJob(command: string, options?: { foreground?: string; noticeSession?: string }): BackgroundBashInfo {
-    const id = generateJobId();
-    return this.#buildInfo(id, join(this.jobsDir, id), command, 'detached', options);
-  }
-
-  /** Counts a job created outside `createJob` toward retention. */
-  async recordCreated(): Promise<void> {
-    await this.#retention.recordMutation();
-  }
-
-  #buildInfo(
-    id: string,
-    jobDir: string,
-    command: string,
-    executionMode: 'detached' | 'pty',
-    options?: { foreground?: string; noticeSession?: string },
-  ): BackgroundBashInfo {
     const now = Date.now();
-    return {
+    const info: BackgroundBashInfo = {
       id,
       command,
       cwd: this.runtime.cwd,
@@ -233,15 +195,23 @@ export class BackgroundBashJobStore {
       runnerPath: join(jobDir, 'runner.sh'),
       shell: 'sh',
       shellArgs: [],
-      startedAt: now,
+      startedAt: options?.startedAt ?? now,
       updatedAt: now,
       status: 'running',
       executionMode,
       creatorPid: process.pid,
-      processToken: randomBytes(16).toString('hex'),
-      ...(options?.foreground === undefined ? {} : { foreground: options.foreground }),
-      ...(options?.noticeSession === undefined ? {} : { notice: 'pending' as const, noticeSession: options.noticeSession }),
+      ...(executionMode === 'attached' ? {} : { processToken: randomBytes(16).toString('hex') }),
+      ...(options?.pid === undefined ? {} : { pid: options.pid }),
+      ...(options?.processGroupId === undefined ? {} : { processGroupId: options.processGroupId }),
+      ...(options?.promotedAt === undefined ? {} : { promotedAt: options.promotedAt }),
     };
+
+    const job = await this.withJob(id, async () => {
+      await this.writeInfo(info);
+      return jobFromInfo(info);
+    });
+    await this.#retention.recordMutation();
+    return job;
   }
 
   async readJob(id: string): Promise<BackgroundBashJob | undefined> {
@@ -253,7 +223,7 @@ export class BackgroundBashJobStore {
     const jobs: BackgroundBashJob[] = [];
     for (const id of ids) {
       const job = await this.readJob(id);
-      if (!job || job.meta.foreground !== undefined) continue;
+      if (!job) continue;
       if (status !== 'all' && job.status.status !== status) continue;
       jobs.push(job);
     }
@@ -283,8 +253,7 @@ export class BackgroundBashJobStore {
       }
       return cache.get(id);
     };
-    const matches = (job: BackgroundBashJob) => job.meta.foreground === undefined
-      && (options.status === undefined || options.status === 'all' || job.status.status === options.status)
+    const matches = (job: BackgroundBashJob) => (options.status === undefined || options.status === 'all' || job.status.status === options.status)
       && (!search || `${job.meta.id}\n${job.meta.command}`.toLowerCase().includes(search));
     const jobs: BackgroundBashJob[] = [];
     let scanned = 0;
@@ -312,7 +281,7 @@ export class BackgroundBashJobStore {
     id: string,
     pid: number,
     processGroupId?: number,
-    options?: { executionMode?: 'detached' | 'pty'; promotedAt?: number },
+    options?: { executionMode?: 'detached' | 'pty' | 'attached'; promotedAt?: number },
   ): Promise<BackgroundBashJob | undefined> {
     return this.withJob(id, async () => {
       const job = await this.readStoredJob(id);
@@ -363,21 +332,14 @@ export class BackgroundBashJobStore {
 
   async markRunning(
     id: string,
-    executionMode: 'detached' | 'pty',
+    executionMode: 'detached' | 'pty' | 'attached',
     promotedAt: number,
   ): Promise<BackgroundBashJob | undefined> {
     return this.withJob(id, async () => {
       const job = await this.readStoredJob(id);
-      if (!job) return undefined;
-      const { foreground, ...rest } = job.info;
-      if (isTerminalStatus(job.status.status)) {
-        // A foreground job that finished unwatched becomes listed without changing its outcome.
-        if (foreground === undefined) return job;
-        await this.writeInfo(rest);
-        return jobFromInfo(rest);
-      }
+      if (!job || isTerminalStatus(job.status.status)) return job;
       const info: BackgroundBashInfo = {
-        ...rest,
+        ...job.info,
         status: 'running',
         executionMode,
         promotedAt,
@@ -386,74 +348,6 @@ export class BackgroundBashJobStore {
       await this.writeInfo(info);
       return jobFromInfo(info);
     });
-  }
-
-  /** Records that `session` is owed a finish notice for the job. */
-  async watchNotice(id: string, session: string): Promise<BackgroundBashJob | undefined> {
-    return this.withJob(id, async () => {
-      const job = await this.readStoredJob(id);
-      if (!job || (job.info.notice === 'pending' && job.info.noticeSession === session)) return job;
-      const info: BackgroundBashInfo = { ...job.info, notice: 'pending', noticeSession: session };
-      await this.writeNoticeMarker(id);
-      await this.writeInfo(info);
-      return jobFromInfo(info);
-    });
-  }
-
-  /** Marks the pending notice of `session` delivered; only the call that changes it returns true. */
-  async settleNotice(id: string, session: string): Promise<boolean> {
-    return this.withJob(id, async () => {
-      const job = await this.readStoredJob(id);
-      if (!job || job.info.notice !== 'pending' || job.info.noticeSession !== session) return false;
-      await this.writeInfo({ ...job.info, notice: 'delivered' });
-      await this.removeNoticeMarker(id);
-      return true;
-    });
-  }
-
-  /** Jobs that still owe a finish notice, to `session` when given, found through the notice index rather than a full job scan. */
-  async pendingNotices(session?: string): Promise<BackgroundBashJob[]> {
-    await this.#storage.mkdir(this.noticesDir, { recursive: true });
-    const ids = await this.#storage.listFiles(this.noticesDir, { recursive: false });
-    const present = new Set(await this.listIds());
-    const jobs: BackgroundBashJob[] = [];
-    for (const id of new Set(ids.filter(isBackgroundBashJobId))) {
-      const job = await this.withJob(id, async () => {
-        if (!present.has(id)) {
-          await this.removeNoticeMarker(id);
-          return undefined;
-        }
-        // An unreadable record keeps its marker; only a record that no longer owes a notice drops it.
-        const stored = await this.readStoredJob(id);
-        if (stored && stored.info.notice !== 'pending') await this.removeNoticeMarker(id);
-        return stored?.info.notice === 'pending' ? stored : undefined;
-      });
-      if (job && (session === undefined || job.info.noticeSession === session)) jobs.push(job);
-    }
-    jobs.sort((a, b) => a.meta.startedAt - b.meta.startedAt);
-    return jobs;
-  }
-
-  async removeJob(id: string): Promise<void> {
-    if (!isBackgroundBashJobId(id)) return;
-    await this.withJob(id, async () => {
-      await this.removeNoticeMarker(id);
-      await this.#storage.remove(join(this.jobsDir, id), { recursive: true });
-    });
-  }
-
-  get noticesDir(): string {
-    return join(this.rootDir, 'notices');
-  }
-
-  private async writeNoticeMarker(id: string): Promise<void> {
-    await this.#storage.mkdir(this.noticesDir, { recursive: true });
-    await this.#storage.writeFile(join(this.noticesDir, id), new Uint8Array());
-  }
-
-  /** The marker only indexes pending notices; `info.json` stays authoritative, so a marker that outlives its notice is harmless. */
-  private async removeNoticeMarker(id: string): Promise<void> {
-    await this.#storage.remove(join(this.noticesDir, id)).catch(() => {});
   }
 
   private async withJob<T>(id: string, operation: () => Promise<T>): Promise<T> {
@@ -539,18 +433,7 @@ export class BackgroundBashJobStore {
   }
 }
 
-/** @internal Applies a runner's completion record to a job; undefined when it is not a terminal record of that job. */
-export function completeJob(info: BackgroundBashInfo, completion: unknown): BackgroundBashJob | undefined {
-  const status = normalizeStatus(completion, info);
-  return status && isTerminalStatus(status.status) ? jobFromInfo(mergeStatus(info, status)) : undefined;
-}
-
-/** @internal */
-export function serializeJobRecord(value: unknown): string {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-export function jobFromInfo(info: BackgroundBashInfo): BackgroundBashJob {
+function jobFromInfo(info: BackgroundBashInfo): BackgroundBashJob {
   const meta: BackgroundBashMeta = {
     id: info.id,
     command: info.command,
@@ -568,9 +451,6 @@ export function jobFromInfo(info: BackgroundBashInfo): BackgroundBashJob {
     ...(info.executionMode === undefined ? {} : { executionMode: info.executionMode }),
     ...(info.promotedAt === undefined ? {} : { promotedAt: info.promotedAt }),
     ...(info.outputTruncated === undefined ? {} : { outputTruncated: info.outputTruncated }),
-    ...(info.foreground === undefined ? {} : { foreground: info.foreground }),
-    ...(info.notice === undefined ? {} : { notice: info.notice }),
-    ...(info.noticeSession === undefined ? {} : { noticeSession: info.noticeSession }),
     ...(info.pid === undefined ? {} : { pid: info.pid }),
     ...(info.processGroupId === undefined ? {} : { processGroupId: info.processGroupId }),
     ...(info.processToken === undefined ? {} : { processToken: info.processToken }),
@@ -640,9 +520,6 @@ function normalizeInfo(value: unknown, id: string, jobDir: string): BackgroundBa
     executionMode: executionMode(value.executionMode),
     ...(numberValue(value.promotedAt) === undefined ? {} : { promotedAt: numberValue(value.promotedAt)! }),
     ...(typeof value.outputTruncated !== 'boolean' ? {} : { outputTruncated: value.outputTruncated }),
-    ...(typeof value.foreground === 'string' && value.foreground ? { foreground: value.foreground } : {}),
-    ...(value.notice === 'pending' || value.notice === 'delivered' ? { notice: value.notice } : {}),
-    ...(typeof value.noticeSession === 'string' && value.noticeSession ? { noticeSession: value.noticeSession } : {}),
   };
 }
 
@@ -678,7 +555,7 @@ async function readJson(storage: AgentRuntimeStorage, path: string): Promise<unk
 }
 
 async function writeJson(storage: AgentRuntimeStorage, path: string, value: unknown): Promise<void> {
-  await storage.writeFile(path, encoder.encode(serializeJobRecord(value)));
+  await storage.writeFile(path, encoder.encode(`${JSON.stringify(value, null, 2)}\n`));
 }
 
 function statusValue(value: unknown): BackgroundBashStatus | undefined {

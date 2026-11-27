@@ -124,14 +124,14 @@ scan progress and keeps the next action available. `Enter` reads output,
 In output, `s` stops, `k` kills, and `[` / `]` moves through bounded log chunks.
 The same history, search, and paging actions are available to generic UI clients.
 
-Ordinary non-PTY `bash` commands leave no job record when they finish within the
-foreground timeout, which defaults to 120 seconds. A command that runs longer is
-promoted to a background job without restarting. It appears in
-`list_background_bash` and `/processes`, has an `output.log`, and delivers a
-completion message. It keeps running when its session closes or reloads and
-when the daemon restarts; a completion missed during a restart is delivered
-once the daemon is back. Pressing `Esc` to cancel a turn does not stop it. It
-has no stdin; use `tty: true` for interactive input.
+Ordinary non-PTY `bash` commands run without job records. After the foreground
+timeout, which defaults to 120 seconds, the same child becomes an attached
+background job without restarting. It appears in `list_background_bash` and
+`/processes`, has an `output.log`, and delivers a completion message. Attached
+jobs stop when the session that started them closes or reloads (a subagent's
+attached jobs end with that subagent), record `killed` when stopped, and are
+never reattached. Pressing `Esc` to cancel a turn does not stop them. They have
+no stdin; use `tty: true` for interactive input.
 PTY jobs keep their record from the start. Non-PTY commands with
 `background: true` or `timeout: 0` use durable detached records instead.
 

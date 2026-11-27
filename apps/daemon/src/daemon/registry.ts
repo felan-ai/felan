@@ -331,19 +331,6 @@ export class SessionRegistry {
     if (path === resources.agentDir || reserved.some(root => pathInside(root, path))) throw registryError('forbidden', 'Client session directory is reserved for daemon state.');
   }
 
-  /**
-   * Restores the sessions startup recovery found with a background job that may still run or still owes a finish notice,
-   * so their extensions watch the jobs and deliver the notices without waiting for a prompt.
-   */
-  async restoreRecovered(): Promise<void> {
-    for (const id of this.recovery?.restoreSessions ?? []) {
-      if (this.stopping || this.draining || this.failure) return;
-      try { await this.restore(id); } catch (error) {
-        try { this.options.onDiagnostic?.({ scope: 'registry', session: id, error }); } catch { /* Diagnostics cannot block recovery. */ }
-      }
-    }
-  }
-
   restore(id: string, context: Pick<RegistryOpenRequest, 'systemPromptAppend' | 'providerContext'> = {}): Promise<SessionBinding> {
     this.assertAdmission();
     const stored = this.options.store.findSessionMetadata(id);

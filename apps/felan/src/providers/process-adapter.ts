@@ -18,15 +18,13 @@ export function createLocalProcessAdapter(): ProcessAdapter {
         || typeof info.command !== 'string' || !Number.isSafeInteger(info.startedAt)
         || !['running', 'completed', 'failed', 'killed', 'unknown'].includes(info.status)
         || info.processToken !== undefined && typeof info.processToken !== 'string') throw new Error('Invalid background job identity.');
-      // A foreground wait is the tool call's own work until promotion; a legacy attached job has no daemon-visible identity.
-      if (info.executionMode === 'attached' || info.foreground !== undefined) return undefined;
+      if (info.executionMode === 'attached') return undefined;
       return {
         id: info.id, kind: info.executionMode === 'pty' ? 'pty' : 'detached', status: info.status,
         command: info.command, startedAt: info.startedAt, outputPath: info.logPath,
         commandIdentity: [info.runnerPath, ...(info.processToken ? [info.processToken] : [])],
         ...(info.processToken ? { startIdentity: info.processToken } : {}),
         ...(typeof info.exitCode === 'number' && Number.isInteger(info.exitCode) ? { exitCode: info.exitCode } : {}),
-        ...(info.notice === 'pending' ? { notice: 'pending' as const } : {}),
       };
     },
     async inspectDetached(runtime, id): Promise<DetachedProcessInspection> {

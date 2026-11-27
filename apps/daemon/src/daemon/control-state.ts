@@ -85,7 +85,6 @@ export const ControlResourceSchema = Type.Object({
   startIdentity: Type.Optional(text(128, 1)), updatedAt: CounterSchema,
   command: Type.Optional(text(16384)), startedAt: Type.Optional(CounterSchema),
   exitCode: Type.Optional(Type.Integer()),
-  notice: Type.Optional(Type.Literal('pending')),
 });
 export type ControlResource = Static<typeof ControlResourceSchema>;
 const ControlStateSchema = Type.Object({

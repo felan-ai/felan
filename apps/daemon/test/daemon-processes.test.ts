@@ -523,34 +523,6 @@ describe.skipIf(!supported)('registry process ownership', () => {
     expect(f.store.snapshot().resources[0]!.state).toBe('running');
   });
 
-  it('keeps a pending finish notice on the job row until the job reports it delivered', async () => {
-    const f = await fixture(); const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
-    const runtime = await wrappedRuntime(f, root, root, { shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }) });
-    const job = await new BackgroundBashManager(runtime).start('synthetic detached');
-    const write = (patch: Record<string, unknown>) => runtime.storage().writeFile(job.meta.infoPath, new TextEncoder().encode(JSON.stringify({ ...job.meta, ...patch })));
-    expect(f.store.resource(job.meta.id)).not.toHaveProperty('notice');
-    await write({ notice: 'pending' });
-    expect(f.store.resource(job.meta.id)).toMatchObject({ state: 'running', notice: 'pending' });
-    await write({ status: 'completed', exitCode: 0, notice: 'pending' });
-    expect(f.store.resource(job.meta.id)).toMatchObject({ state: 'exited', notice: 'pending' });
-    await write({ status: 'completed', exitCode: 0, notice: 'delivered' });
-    expect(f.store.resource(job.meta.id)).toMatchObject({ state: 'exited' });
-    expect(f.store.resource(job.meta.id)).not.toHaveProperty('notice');
-  });
-
-  it('restores the sessions recovery found owing background work without a prompt and skips ones that fail', async () => {
-    const f = await fixture();
-    const first = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
-    const second = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
-    expect((await f.registry.evictIdle()).sort()).toEqual([first, second].sort());
-    const opened = f.opened.length;
-    Object.assign(f.registry, { recovery: { changedSessions: new Set(), resumableContinuations: [], reconcileDetached: [], missingResources: [], restoreSessions: ['missing-session', first, second] } });
-    await f.registry.restoreRecovered();
-    expect(f.registry.binding(first)).toBeDefined(); expect(f.registry.binding(second)).toBeDefined();
-    expect(f.opened.slice(opened).map(request => request.target.kind)).toEqual(['resume', 'resume']);
-    expect(f.store.sessionMetadata(first).run.state).toBe('idle');
-  });
-
   it('refuses control from persisted PID references without a verified live identity', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     f.store.putResource({ id: 'lost', kind: 'pty', session: b.sessionId, root: b.sessionId, pid: 4242, state: 'missing', updatedAt: Date.now() });

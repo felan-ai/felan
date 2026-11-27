@@ -831,18 +831,20 @@ long-context behavior, and troubleshooting.
 
 `extensionConfig.backgroundBash.foregroundTimeoutSeconds` controls how long a
 non-PTY foreground `bash` call waits before promotion. It defaults to `120`
-seconds. A foreground command runs as an unlisted detached job that the call
-waits on. It returns the last 2000 lines / 50 KB of output. A command that
-finishes in time leaves no job record unless its output exceeds either limit;
-the result then names the job's `output.log`, which retention removes later.
+seconds. Foreground commands run as in-process children through
+`runtime.processes.startShell` without a job record. They return the last 2000
+lines / 50 KB of output. Larger output spills in full to
+`<session-storage>/background-bash/<workspace-key>/output/output-*.log`; the
+newest 20 spill files are kept.
 
-A command that outlives a positive timeout is promoted without restarting: the
-same job appears in `list_background_bash` and `/processes` and delivers a
-completion message. It keeps running when its session closes or reloads, when
-its subagent ends, and when the daemon restarts. After a restart the daemon
-restores the session, and a notice missed while it was down arrives without a
-new prompt. Cancelling a turn does not stop it, and the TUI footer counts it with
-other running jobs. Promoted jobs have no stdin.
+A command that outlives a positive timeout becomes an attached background job
+without restarting. It gets a record with `executionMode: 'attached'`, an
+`output.log`, and completion messages, and appears in `list_background_bash` and
+`/processes`. It stops when the session that started it closes or reloads (a
+subagent's attached jobs end with that subagent), records `killed` when stopped,
+and is never reattached. Cancelling a turn does not stop it. The daemon still tracks the child
+as a `foreground` process, so the TUI footer does not count it. Attached jobs have
+no stdin.
 
 For non-PTY commands, setting `background: true` or a timeout of `0` starts a
 detached job immediately. Detached records remain discoverable after restart

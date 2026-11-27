@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import {
   StringEnum,
   associateExtensionConfig,
@@ -10,7 +11,11 @@ import {
 import { Type, type Static } from 'typebox';
 import { normalizeBackgroundCommand } from './command-normalizer.js';
 import { FOREGROUND_MAX_BYTES, FOREGROUND_MAX_LINES, runForegroundCommand } from './foreground.js';
-import { isTerminalStatus, type BackgroundBashJob } from './job-store.js';
+import {
+  getBackgroundBashRoot,
+  isTerminalStatus,
+  type BackgroundBashJob,
+} from './job-store.js';
 import { BackgroundBashManager } from './process-manager.js';
 import { inspectBackgroundBashRuntime } from './runtime-support.js';
 import { createCommonProcessPresentation } from './common-ui.js';
@@ -138,7 +143,6 @@ export function createBackgroundBashExtension(): FelanExtension {
     write: async (id, chars) => { await manager.writeInteractive(id, chars); },
   };
   const watchedJobIds = new Set<string>();
-  let sessionId: string | undefined;
 
   const clearCompletionPollTimer = () => {
     if (!completionPollTimer) return;
@@ -182,21 +186,6 @@ export function createBackgroundBashExtension(): FelanExtension {
 
         watchedJobIds.delete(id);
         changed = true;
-        if (job.meta.notice !== undefined) {
-          let claimed: boolean;
-          try {
-            claimed = await claimNotice(job);
-          } catch {
-            watchedJobIds.add(id);
-            continue;
-          }
-          if (!claimed) continue;
-          if (generation !== completionPollGeneration || !completionPollingEnabled) {
-            // Shutdown began during the claim; leave the notice to the session's next runtime.
-            await manager.watchNotice(id, job.meta.noticeSession!).catch(() => {});
-            return;
-          }
-        }
         deliverCompletion(job);
       }
       if (changed) await commonPresentation.refresh().catch(() => {});
@@ -218,32 +207,6 @@ export function createBackgroundBashExtension(): FelanExtension {
 
   const watchCompletion = (id: string) => {
     watchedJobIds.add(id);
-    ensureCompletionPolling();
-  };
-
-  /** Only the session owed the notice records it; another session in the root seeing the job leaves it pending. */
-  const claimNotice = async (job: BackgroundBashJob): Promise<boolean> => job.meta.noticeSession !== undefined
-    && job.meta.noticeSession === sessionId
-    && manager.settleNotice(job.meta.id, job.meta.noticeSession);
-
-  /** The agent saw the terminal state; a failed write only risks a duplicate notice later. */
-  const acknowledgeCompletion = async (job: BackgroundBashJob) => {
-    suppressCompletion(job.meta.id);
-    if (job.meta.notice === 'pending') await claimNotice(job).catch(() => false);
-  };
-
-  /**
-   * Watches the jobs a previous runtime or daemon left owing this session a notice; finished ones are delivered by the
-   * next poll. A foreground job whose tool call ended with an earlier process is promoted, whichever session owns it,
-   * so the root can see and stop it.
-   */
-  const restoreCompletionWatches = async () => {
-    if (sessionId === undefined) return;
-    for (const job of await manager.pendingNotices()) {
-      if (manager.isForegroundOrphan(job)) await manager.markPromoted(job.meta.id, 'detached');
-      else if (job.meta.foreground !== undefined) continue;
-      if (job.meta.noticeSession === sessionId) watchedJobIds.add(job.meta.id);
-    }
     ensureCompletionPolling();
   };
 
@@ -296,7 +259,7 @@ export function createBackgroundBashExtension(): FelanExtension {
         'Use list_background_bash to discover processes started in this root session and workspace, including its subagents.',
       ],
       parameters: BashParams,
-      async execute(_toolCallId, params: BashParams, signal, _onUpdate, ctx) {
+      async execute(_toolCallId, params: BashParams, signal, _onUpdate, _ctx) {
         if (signal?.aborted) throw new Error('Command cancelled');
         const timeoutSeconds = params.timeout ?? config.foregroundTimeoutSeconds;
         const interactive = params.tty === true;
@@ -306,9 +269,10 @@ export function createBackgroundBashExtension(): FelanExtension {
           : normalizeBackgroundCommand(params.command);
         let job: BackgroundBashJob;
         if (foreground) {
-          const result = await runForegroundCommand(manager, pi.runtime, storage, params.command, {
+          const result = await runForegroundCommand(pi.runtime, params.command, {
             timeoutMs: timeoutSeconds * 1_000,
-            noticeSession: ctx.sessionManager.getSessionId(),
+            storage,
+            spillDir: join(getBackgroundBashRoot(storage.root, pi.runtime.cwd), 'output'),
             ...(signal === undefined ? {} : { signal }),
           });
           if (result.kind === 'exited') {
@@ -326,19 +290,21 @@ export function createBackgroundBashExtension(): FelanExtension {
               },
             };
           }
-          job = result.job;
+          try {
+            job = await manager.promote(params.command, result.process, result.startedAt);
+          } catch (error) {
+            await result.process.terminate('SIGTERM').catch(() => {});
+            await result.process.dispose().catch(() => {});
+            throw error;
+          }
         } else {
           job = interactive
             ? (await manager.startInteractive(normalized.command)).job
-            : await manager.start(normalized.command, { noticeSession: ctx.sessionManager.getSessionId() });
+            : await manager.start(normalized.command);
         }
         if (signal?.aborted) {
           if (interactive) await manager.stopInteractive(job.meta.id).catch(() => {});
-          else {
-            await manager.stop(job.meta.id).catch(() => {});
-            // The cancelled call returns no job, so no notice is owed for it.
-            await manager.settleNotice(job.meta.id, ctx.sessionManager.getSessionId()).catch(() => {});
-          }
+          else await manager.stop(job.meta.id).catch(() => {});
           throw new Error('Command cancelled');
         }
         if (interactive && params.background !== true && timeoutSeconds > 0) {
@@ -411,7 +377,7 @@ export function createBackgroundBashExtension(): FelanExtension {
         const page = await manager.query(params);
         const jobs = page.jobs;
         for (const job of jobs) {
-          if (isTerminalStatus(job.status.status)) await acknowledgeCompletion(job);
+          if (isTerminalStatus(job.status.status)) suppressCompletion(job.meta.id);
         }
         return formatProcessListResult(page);
       },
@@ -426,7 +392,7 @@ export function createBackgroundBashExtension(): FelanExtension {
       async execute(_toolCallId, params: ReadBackgroundBashParams, _signal, _onUpdate, _ctx) {
         const output = await manager.tail(params.id, params.lines ?? 80);
         const job = await manager.get(params.id);
-        if (isTerminalStatus(job.status.status)) await acknowledgeCompletion(job);
+        if (isTerminalStatus(job.status.status)) suppressCompletion(job.meta.id);
         await commonPresentation.refresh().catch(() => {});
         return {
           content: [{ type: 'text', text: output }],
@@ -451,7 +417,6 @@ export function createBackgroundBashExtension(): FelanExtension {
           throw error;
         }
         if (wasWatched && result.timedOut) watchCompletion(params.id);
-        if (!result.timedOut) await acknowledgeCompletion(result.job);
         await commonPresentation.refresh().catch(() => {});
         return {
           content: [{ type: 'text', text: formatWaitResult(result.job, result.timedOut) }],
@@ -475,7 +440,6 @@ export function createBackgroundBashExtension(): FelanExtension {
           if (wasWatched) watchCompletion(params.id);
           throw error;
         }
-        if (isTerminalStatus(job.status.status)) await acknowledgeCompletion(job);
         await commonPresentation.refresh().catch(() => {});
         return {
           content: [{ type: 'text', text: `Background process stop result.\n\n${formatJobDetails(job)}` }],
@@ -493,7 +457,7 @@ export function createBackgroundBashExtension(): FelanExtension {
       async execute(_toolCallId, params: WriteBackgroundBashParams, _signal, _onUpdate, _ctx) {
         const result = await manager.writeInteractive(params.id, params.chars);
         const job = await manager.get(params.id);
-        if (!result.running) await acknowledgeCompletion(job);
+        if (!result.running) suppressCompletion(job.meta.id);
         return {
           content: [{ type: 'text', text: result.output || '(no output)' }],
           details: { id: params.id, status: job.status.status, tty: true },
@@ -559,15 +523,8 @@ export function createBackgroundBashExtension(): FelanExtension {
   };
 
   pi.on('session_start', async (_event, ctx) => {
-    sessionId = ctx.sessionManager.getSessionId();
     registerControls();
     await enableExtension(ctx);
-    if (backgroundBashActive) {
-      await restoreCompletionWatches().catch((error: unknown) => {
-        pi.runtime.logger.warn({ component: 'background-bash', error: error instanceof Error ? error.message : String(error) },
-          'Finish notices of earlier background processes could not be restored.');
-      });
-    }
   });
   pi.on('model_select', async (_event, ctx) => {
     await enableExtension(ctx);
@@ -577,7 +534,8 @@ export function createBackgroundBashExtension(): FelanExtension {
     clearCompletionWatches();
     try { await commonPresentation.dispose(); }
     finally {
-      if (event.reason !== 'reload') await manager.shutdownInteractive();
+      if (event.reason === 'reload') await manager.shutdownAttached();
+      else await manager.shutdownInteractive();
     }
   });
   };
@@ -666,7 +624,6 @@ export type {
   BackgroundBashInfo,
   BackgroundBashJob,
   BackgroundBashMeta,
-  BackgroundBashNotice,
   BackgroundBashStatus,
   BackgroundBashStatusFile,
   BackgroundBashStatusFilter,
