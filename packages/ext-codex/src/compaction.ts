@@ -1,4 +1,4 @@
-import type { ExtensionContext, FelanExtensionAPI } from '@felan-ai/agent-core';
+import { RUN_HOLD_EVENT, type ExtensionContext, type FelanExtensionAPI, type RunHoldEvent } from '@felan-ai/agent-core';
 import type { CodexConfig } from './config.js';
 import { supportsCodexModel } from './model-policy.js';
 
@@ -66,6 +66,11 @@ export function registerPostAgentRunCompaction(
 
   pi.on('agent_settled', (_event, ctx) => {
     startDeferredCompaction(ctx);
+  });
+
+  // The owed compaction lives only in memory and starts when the run ends, which a held run's stop would trigger mid-shutdown.
+  pi.events.on(RUN_HOLD_EVENT, (event) => {
+    if (deferredAgentRun === agentRun) (event as RunHoldEvent).refuse('A compaction is deferred until this run ends.');
   });
 
   pi.on('agent_start', () => {

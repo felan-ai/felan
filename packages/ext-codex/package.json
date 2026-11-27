@@ -38,7 +38,7 @@
     "typebox": "1.1.38"
   },
   "peerDependencies": {
-    "@felan-ai/agent-core": "^0.16.0"
+    "@felan-ai/agent-core": "^0.16.5"
   },
   "devDependencies": {
     "@felan-ai/agent-core": "workspace:*"

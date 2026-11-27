@@ -31,6 +31,7 @@ it.each([['root', rootExtension]] as const)('preserves configured generic loadin
   let active = [...ordinary];
   await extension.factory({
     registerTool: vi.fn(),
+    events: { on: () => () => {}, emit: () => {} },
     on: (name: string, handler: (event: any, ctx: ExtensionContext) => unknown) => {
       handlers.set(name, [...(handlers.get(name) ?? []), handler]);
     },
