@@ -48,6 +48,7 @@ export class ExecutionHost {
   hasExecutingJobs(): boolean { return this.hasActiveJobs(); }
   resumeQueued(): void { this.manager.drain(); }
   resumeHeld(id: string, turns: number, trigger: () => Promise<void>): Promise<void> { return this.manager.resumeHeld(id, turns, trigger); }
+  abandonHeld(id: string): void { this.manager.abandonHeld(id); }
   executionTurns(id: string): number | undefined { return this.manager.turns(id); }
   settle(): Promise<void> { return this.manager.settle(this.sessionId); }
   shutdown(): Promise<void> { return this.manager.shutdown(this.sessionId); }
@@ -241,6 +242,13 @@ export class RegistryExecutions {
     return promise;
   }
   turns(id: string): number | undefined { return this.active.get(id)?.turns; }
+  /** Finishes a held execution the next daemon could not continue, as a restart does an unheld one, and tells its parent. */
+  abandonHeld(id: string): void {
+    const execution = this.registry.options.store.session(id).execution;
+    if (!execution || execution.completedAt || this.active.has(id)) return;
+    this.finish(id, 'cancelled', { code: 'host_shutdown', message: 'Execution was interrupted by daemon restart.' });
+    void this.deliver(id);
+  }
   private async run(id: string, signal: AbortSignal, resume?: { turns: number; trigger: () => Promise<void> }): Promise<void> {
     const row = this.registry.options.store.session(id); const execution = row.execution!;
     const session = this.registry.binding(id)!.runtime.session;

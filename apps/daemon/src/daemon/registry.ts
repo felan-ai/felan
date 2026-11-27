@@ -512,6 +512,7 @@ export class SessionRegistry {
         try {
           if (this.entries.has(record.session)) this.interruptRun(record.session);
           else if (this.options.store.findSessionMetadata(record.session)) this.options.store.interruptSessionRun(record.session, record.run.id);
+          if (this.options.store.findSessionMetadata(record.session)?.execution) this.executionHost(record.session).abandonHeld(record.session);
         } catch (cleanup) { this.diagnostic({ scope: 'registry', session: record.session, error: cleanup }); }
       }
     }

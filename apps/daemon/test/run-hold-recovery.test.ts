@@ -105,6 +105,27 @@ describe('continuing held runs after a restart', () => {
   });
 });
 
+describe('a held child that cannot continue', () => {
+  it('finishes its execution as cancelled by the restart, so its parent is still told', async () => {
+    const f = await fixture();
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const now = new Date().toISOString();
+    const execution = { request: { ...request, notifyOnCompletion: true }, createdAt: now, startedAt: now, deliveryId: 'delivery', completionPending: false };
+    const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: root.sessionId, rootSessionId: root.sessionId, execution });
+    await f.registry.shutdown();
+    // What a held daemon's stop leaves behind; the record's leaf no longer matches the child's transcript.
+    f.store.updateSession(child.sessionId, { residency: 'evicted', run: { state: 'running', id: 'child-run' }, execution });
+    f.store.putHeldRuns([{ version: 1, session: child.sessionId, root: root.sessionId, parent: root.sessionId, run: { id: 'child-run' }, leaf: 'gone', heldAt: 1, queue: [] }]);
+    f.store.close();
+    const store = new DaemonControlStore(f.owner);
+    const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+    expect(store.sessionMetadata(child.sessionId).execution).not.toHaveProperty('completedAt');
+    await registry.restoreRecovered();
+    expect(store.sessionMetadata(child.sessionId)).toMatchObject({ run: { state: 'interrupted', id: 'child-run' },
+      execution: { outcome: 'cancelled', error: { code: 'host_shutdown' }, completionPending: true } });
+  });
+});
+
 describe('restoring after a restart', () => {
   it('reports restoring until the held runs have been continued or interrupted', async () => {
     const f = await fixture();
