@@ -1,7 +1,19 @@
+import type { Context } from '@felan-ai/agent-core';
 import { afterEach, expect, it, vi } from 'vitest';
 import { cleanups, harness, session, text, TEST_TIMEOUT_MS } from './fixtures/hold-runs.js';
 
 const WAIT_MS = 30_000;
+
+/** Tools a request offers; system messages add and remove them as the transcript goes on. */
+function availableTools(context: Context): string[] {
+  const tools = new Set<string>();
+  for (const message of context.messages) {
+    if (message.role !== 'system') continue;
+    for (const tool of message.toolsAdded ?? []) tools.add(tool.name);
+    for (const tool of message.toolsRemoved ?? []) tools.delete(tool.name);
+  }
+  return [...tools];
+}
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 it('holds two runs and a subagent at their step ends, restarts, and continues each run once with its queued messages', async () => {
@@ -51,7 +63,12 @@ it('holds two runs and a subagent at their step ends, restarts, and continues ea
   const said = (index: number, value: string) => bCalls[index]!.context.messages.filter(message => text(message).includes(value)).length;
   expect([said(1, 'STEER-B'), said(1, 'FOLLOW-B'), said(2, 'STEER-B'), said(2, 'FOLLOW-B')]).toEqual([1, 0, 1, 1]);
   // The subagent kept its instructions and the task created before the hold survived the restore.
-  expect(h.model.calls.filter(call => call.who === 'child-a').map(call => call.turn)).toEqual([0, 1]);
+  const childCalls = h.model.calls.filter(call => call.who === 'child-a');
+  expect(childCalls.map(call => call.turn)).toEqual([0, 1]);
+  // Its turn limit of 2 counted the held step, so the continued request is its last: no tools and the summary instruction.
+  expect(availableTools(childCalls[0]!.context)).toContain('bash');
+  expect(availableTools(childCalls[1]!.context)).toEqual([]);
+  expect(childCalls[1]!.context.messages.filter(message => text(message).includes('Stop using tools.'))).toHaveLength(1);
   const listed = h.model.calls.find(call => call.who === 'root-a' && call.turn === 2)!.context.messages.at(-1)!;
   expect(text(listed)).toContain('held task');
 }, TEST_TIMEOUT_MS);

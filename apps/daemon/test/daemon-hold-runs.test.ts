@@ -89,9 +89,9 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
     return created.result.sessionId;
   }
   /** Spawns a child execution of `parent` whose first step waits on `name`. */
-  async function child(parent: string, name: string) {
+  async function child(parent: string, name: string, limits: { maxTurns?: number } = {}) {
     const spawned = await f.registry.executionHost(parent).spawnSession({ prompt: `gate:${name}`, description: name, label: 'general',
-      model: { provider: 'offline', id: 'fixture' }, notifyOnCompletion: true });
+      model: { provider: 'offline', id: 'fixture' }, notifyOnCompletion: true, ...limits });
     if (!spawned.ok) throw new Error(spawned.error.message);
     return spawned.value.executionId;
   }
@@ -331,4 +331,15 @@ it('answers busy without closing admission while the daemon still continues the 
   expect(f.lifecycle.state).toBe('ready');
   expect(f.server.admissionClosed()).toBe(false); expect(f.connector.claiming).toBe(true);
   expect(f.connector.beginDrain).not.toHaveBeenCalled();
+});
+
+it('records the held step in a child execution turn count, so the step does not count again in the next daemon', async () => {
+  const f = await fixture();
+  const root = await f.idle();
+  const child = await f.child(root, 'c', { maxTurns: 3 });
+  await vi.waitFor(() => expect(f.started).toContain('c'), WAIT);
+  const response = f.hold();
+  f.open('c').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
+  expect(f.store.heldRuns()).toEqual([expect.objectContaining({ session: child, turns: 1 })]);
 });

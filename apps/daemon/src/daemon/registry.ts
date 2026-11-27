@@ -346,7 +346,7 @@ export class SessionRegistry {
     const stored = this.options.store.sessionMetadata(id);
     const queue = entry.projection.heldInput();
     if (!stored.run.id || !queue || !step.leaf) throw new Error('The parked run cannot be recorded.');
-    const turns = stored.execution ? this.executionHost(id).executionTurns(id) : undefined;
+    const turns = stored.execution ? this.executionHost(id).heldTurns(id) : undefined;
     return { version: 1, session: id, root: stored.root, ...(stored.parent ? { parent: stored.parent } : {}),
       run: { id: stored.run.id, ...(stored.run.origin ? { origin: stored.run.origin } : {}), ...(stored.run.turnId ? { turnId: stored.run.turnId } : {}) },
       leaf: step.leaf, heldAt: this.now(), queue, ...(turns === undefined ? {} : { turns }) };
@@ -503,7 +503,7 @@ export class SessionRegistry {
         await this.restore(record.session, execution ? { systemPromptAppend: execution.request.appendSystemPrompt ?? '' } : {});
         const entry = this.require(record.session);
         if (entry.binding.runtime.session.sessionManager.getLeafId() !== record.leaf) throw new Error('The transcript changed after the run was held.');
-        const work = execution ? this.executionHost(record.session).resumeHeld(record.session, record.turns ?? 0, () => this.continueFrom(entry, record))
+        const work = execution ? this.executionHost(record.session).resumeHeld(record.session, record.turns ?? 0, steer => this.continueFrom(entry, record, steer))
           : this.continueRoot(record.session, entry, record);
         void work.catch(error => this.diagnostic({ scope: 'registry', session: record.session, error }));
       } catch (error) {
@@ -560,8 +560,8 @@ export class SessionRegistry {
     }
   }
 
-  /** Re-queues the held run's user input, then starts the next step through Pi's normal run start. */
-  private async continueFrom(entry: Entry, record: ContinueRecord): Promise<void> {
+  /** Re-queues the held run's user input and then `steer`, and starts the next step through Pi's normal run start. */
+  private async continueFrom(entry: Entry, record: ContinueRecord, steer?: string): Promise<void> {
     this.continuing.delete(entry.binding.sessionId);
     const session = entry.binding.runtime.session;
     for (const item of record.queue) {
@@ -569,6 +569,7 @@ export class SessionRegistry {
         if (item.kind === 'steer') session.agent.steer(item.message); else session.agent.followUp(item.message);
       });
     }
+    if (steer) await session.steer(steer);
     entry.projection.clearInterruptedQueue();
     await session.sendCustomMessage({ customType: RUN_CONTINUED_MESSAGE_TYPE, content: RUN_CONTINUED_TEXT, display: false }, { triggerTurn: true });
   }

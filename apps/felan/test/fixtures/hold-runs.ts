@@ -49,7 +49,7 @@ function scriptedModel() {
         let content: AssistantMessage['content'] = [{ type: 'text', text: `${who} turn ${turn}` }];
         if (who === 'root-a' && turn === 0) content = [
           { type: 'toolCall', id: 'a-task', name: 'TaskCreate', arguments: { title: 'held task' } },
-          { type: 'toolCall', id: 'a-agent', name: 'Agent', arguments: { prompt: 'CHILD-A do the child step', description: 'child step', subagent_type: 'general', model: 'inherit' } },
+          { type: 'toolCall', id: 'a-agent', name: 'Agent', arguments: { prompt: 'CHILD-A do the child step', description: 'child step', subagent_type: 'general', model: 'inherit', max_turns: 2 } },
           { type: 'toolCall', id: 'a-bash', name: 'bash', arguments: { command: gated('root-a') } },
         ];
         else if (who === 'root-a' && turn === 1) content = [{ type: 'toolCall', id: 'a-list', name: 'TaskList', arguments: {} }];
