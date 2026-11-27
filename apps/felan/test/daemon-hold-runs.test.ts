@@ -73,6 +73,8 @@ it('holds two runs and a subagent at their step ends, restarts, and continues ea
   expect(availableTools(childCalls[0]!.context)).toContain('bash');
   expect(availableTools(childCalls[1]!.context)).toEqual([]);
   expect(childCalls[1]!.context.messages.filter(message => text(message).includes('Stop using tools.'))).toHaveLength(1);
-  const listed = h.model.calls.find(call => call.who === 'root-a' && call.turn === 2)!.context.messages.at(-1)!;
-  expect(text(listed)).toContain('held task');
+  // The child's completion may reach root A before or after its TaskList result, so the result is found by its tool call.
+  const listed = h.model.calls.find(call => call.who === 'root-a' && call.turn === 2)!.context.messages
+    .find(message => message.role === 'toolResult' && message.toolCallId === 'a-list');
+  expect(listed && text(listed)).toContain('held task');
 }, TEST_TIMEOUT_MS);
