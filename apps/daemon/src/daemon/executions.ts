@@ -330,8 +330,9 @@ export class RegistryExecutions {
     const existing = this.deliveries.get(id); if (existing) return existing;
     const delivery = (async () => {
       try {
-        // A completion starts a parent run; while runs are held it waits, and a restart leaves it to the next daemon.
-        if (this.registry.holdingRuns) throw new Error('Runs are held.');
+        // While runs are held, a busy parent would queue the notice into a run that a restart ends without it, so only an idle
+        // parent gets it now. Otherwise it waits for the hold to end or for the next daemon to restore the parent.
+        if (this.registry.holdingRuns && !this.registry.idleForCompletion(row.parent!)) throw new Error('Runs are held.');
         this.registry.assertDispatch(row.parent!);
         const record = this.view(row);
         const outcome = await this.parents.get(row.parent!)!.deliverCompletion({ deliveryId: execution.deliveryId, executionId: id, parentSessionId: row.parent!, label: record.label,

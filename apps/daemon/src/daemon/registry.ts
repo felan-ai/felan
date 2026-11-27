@@ -129,6 +129,7 @@ export class SessionRegistry {
   private commandDispatcher: ((session: string, name: string) => boolean) | undefined;
   private stepHold: StepHold | undefined;
   private readonly continuing = new Set<string>();
+  private readonly heldWaiters = new Set<() => void>();
 
   constructor(readonly options: RegistryOptions) {
     options.owner.assertCurrent();
@@ -269,10 +270,16 @@ export class SessionRegistry {
     }
   }
 
-  /** True while a hold waits for or holds runs; subagent completions wait until it ends, so no new run starts meanwhile. */
+  /** True while a hold waits for or holds runs; a subagent completion then reaches only an idle parent. */
   get holdingRuns(): boolean { return this.stepHold !== undefined; }
 
   isHeld(id: string): boolean { return this.entries.get(id)?.held !== undefined; }
+
+  /** True when the session is resident with no run, so a completion can start one even while runs are held. */
+  idleForCompletion(id: string): boolean {
+    const entry = this.entries.get(id);
+    return !!entry && !entry.parked && !entry.held && !entry.dispatches.size && !entry.writers.size && entry.binding.runtime.session.isIdle;
+  }
 
   /** Deletes every continue record before the parked runs take their next step, so a later crash cannot continue them twice. */
   private releaseHeld(): void {
@@ -280,6 +287,24 @@ export class SessionRegistry {
     this.stepHold = undefined;
     this.options.store.deleteHeldRuns([...this.entries].filter(([, entry]) => entry.held).map(([id]) => id));
     for (const entry of this.entries.values()) { delete entry.held; entry.parked?.release('continue'); }
+  }
+
+  /**
+   * Waits for `work`, or less once `held()` is true: a run held after `held` was reported waits for the next daemon, so a stop
+   * must not wait for it to end.
+   */
+  private async untilHeld(held: () => boolean, work: Promise<unknown> | undefined): Promise<void> {
+    if (!work) return;
+    if (!this.stepHold?.held) { await work; return; }
+    let wake!: () => void;
+    const reached = new Promise<void>(resolve => { wake = resolve; });
+    const check = () => { if (held()) wake(); };
+    this.heldWaiters.add(check); check();
+    try { await Promise.race([work, reached]); } finally { this.heldWaiters.delete(check); }
+  }
+
+  private rootHeld(root: string): boolean {
+    return [...this.entries.values()].some(entry => entry.held && entry.binding.rootSessionId === root);
   }
 
   /** Forgets one run's hold when the run is cancelled, closed or interrupted, so no later daemon continues it. */
@@ -300,6 +325,7 @@ export class SessionRegistry {
         const record = this.continueRecord(id, entry, step);
         this.options.store.putHeldRuns([record]);
         entry.held = record;
+        for (const check of this.heldWaiters) check();
       } catch (error) { this.diagnostic({ scope: 'registry', session: id, error }); }
     }
     hold.changed();
@@ -337,10 +363,13 @@ export class SessionRegistry {
       await this.hostWorkers.settle();
       for (const entry of this.entries.values()) {
         if (entry.held) continue;
-        if (![...this.entries.values()].some(other => other.held && other.binding.rootSessionId === entry.binding.rootSessionId)) await entry.host?.settle();
+        const root = entry.binding.rootSessionId;
+        // A held child keeps its execution job open, so its root's executions settle only in the next daemon.
+        if (!this.rootHeld(root)) await this.untilHeld(() => this.rootHeld(root), entry.host?.settle());
         await entry.cancelling;
         await entry.projectionCancellation;
-        if (!entry.binding.runtime.session.isIdle) await entry.binding.runtime.session.waitForIdle();
+        if (!entry.binding.runtime.session.isIdle) await this.untilHeld(() => entry.held !== undefined, entry.binding.runtime.session.waitForIdle());
+        if (entry.held) continue;
         await this.join([...entry.writers]);
         for (const service of entry.services) await service.settle('drain');
       }

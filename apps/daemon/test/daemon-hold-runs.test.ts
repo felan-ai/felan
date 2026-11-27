@@ -11,6 +11,8 @@ import { gate, serverFixture } from './fixtures/server.js';
 
 /** Windows runners pause for seconds, so waits on state get a bound well above any expected delay. */
 const WAIT = { timeout: 20_000 };
+/** Longer than any single wait, so a wait that runs out reports its own assertion. */
+const TEST_TIMEOUT_MS = 60_000;
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
 
@@ -18,7 +20,7 @@ afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const dis
  * A daemon whose model answers each session's first request with a `wait` tool call on the gate named in its prompt, and its
  * second with text. The `wait` tool returns when the test opens that gate.
  */
-async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: ExtensionAPI) => void } = {}) {
+async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: ExtensionAPI) => void; refuse?: string } = {}) {
   const gates = new Map<string, ReturnType<typeof gate>>();
   const open = (name: string) => { let found = gates.get(name); if (!found) { found = gate(); gates.set(name, found); } return found; };
   const started: string[] = []; const requests: Array<{ prompt: string; turn: number }> = [];
@@ -37,6 +39,14 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
         return { content: [{ type: 'text', text: `passed ${params.gate}` }], details: {} };
       } });
     options.extension?.(pi);
+    if (options.refuse) {
+      // Refuses holds for the session whose prompt names the gate, as an extension that keeps state in memory does.
+      let context: { sessionManager: { getEntries(): unknown[] } } | undefined;
+      pi.on('session_start', (_event, ctx) => { context = ctx; });
+      pi.events.on(RUN_HOLD_EVENT, event => {
+        if (JSON.stringify(context?.sessionManager.getEntries() ?? []).includes(`gate:${options.refuse}`)) (event as RunHoldEvent).refuse('test');
+      });
+    }
   } });
   const broker = createRegistryInteractionBroker(f.registry);
   const connector = { claiming: true, beginDrain: vi.fn(() => { connector.claiming = false; }), endDrain: vi.fn(() => { connector.claiming = true; }) };
@@ -71,7 +81,20 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
   }
   const hold = (params: { stepTimeoutMs?: number } = {}) => server.requestManagement({ v: 1, id: requestIdNow(), op: 'host.restart', params: { expected: f.owner.identity, mode: 'hold', ...params } });
   const requestsFor = (name: string) => requests.filter(request => request.prompt.includes(`gate:${name}`));
-  return { ...f, client, lifecycle, server, connector, complete, run, hold, open, requestsFor };
+  /** Creates a session that runs nothing until the test starts a run in it. */
+  async function idle() {
+    const created = await client.request('sessions.create', { cwd: f.cwd, model: { provider: 'offline', id: 'fixture' } });
+    if (created.outcome !== 'accepted') throw new Error(JSON.stringify(created));
+    return created.result.sessionId;
+  }
+  /** Spawns a child execution of `parent` whose first step waits on `name`. */
+  async function child(parent: string, name: string) {
+    const spawned = await f.registry.executionHost(parent).spawnSession({ prompt: `gate:${name}`, description: name, label: 'general',
+      model: { provider: 'offline', id: 'fixture' }, notifyOnCompletion: true });
+    if (!spawned.ok) throw new Error(spawned.error.message);
+    return spawned.value.executionId;
+  }
+  return { ...f, client, lifecycle, server, connector, complete, run, idle, child, hold, open, requestsFor, started };
 }
 
 function requestIdNow(): string {
@@ -218,3 +241,38 @@ it('lets a drain that arrives while the hold still waits replace it; the runs fi
     expect(f.requestsFor(name).map(request => request.turn)).toEqual([0, 1]);
   }
 });
+
+it('delivers a subagent completion to its idle parent while a hold waits, so the stop after held finishes', async () => {
+  const f = await fixture({ refuse: 'c' });
+  const root = await f.idle();
+  const delivered: string[] = [];
+  f.registry.executionHost(root).attachParent({ deliverCompletion: async notice => { delivered.push(notice.executionId); return 'delivered'; } });
+  const child = await f.child(root, 'c');
+  await vi.waitFor(() => expect(f.started).toContain('c'), WAIT);
+  const response = f.hold();
+  // The child refuses the hold, so it takes its next step and finishes while the hold waits; its parent is idle.
+  f.open('c').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 0 } } });
+  await vi.waitFor(() => expect(delivered).toEqual([child]), WAIT);
+  expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
+  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
+  expect(f.store.sessionMetadata(child).execution).toMatchObject({ outcome: 'completed', completionPending: false });
+}, TEST_TIMEOUT_MS);
+
+it('holds a run that starts while the daemon is held and reaches its step end during the stop', async () => {
+  const f = await fixture();
+  const late = await f.idle();
+  const session = await f.run('a');
+  const response = f.hold();
+  f.open('a').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
+  // An extension starts a run in an idle session, as a background command's finish notice does.
+  void f.registry.binding(late)!.runtime.session.sendCustomMessage({ customType: 'notice', content: 'gate:late', display: false }, { triggerTurn: true });
+  await vi.waitFor(() => expect(f.started).toContain('late'), WAIT);
+  expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
+  f.open('late').resolve();
+  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
+  expect(f.store.heldRuns().map(record => record.session).sort()).toEqual([session, late].sort());
+  for (const id of [session, late]) expect(f.store.sessionMetadata(id).run.state).toBe('running');
+  expect(f.requestsFor('late')).toHaveLength(1);
+}, TEST_TIMEOUT_MS);
