@@ -7,7 +7,7 @@ import type {
   ModelsService,
   Provider,
 } from '@felan-ai/agent-core';
-import { createExtensionServiceAccess, createFelanServiceRegistry, MODELS_SERVICE } from '@felan-ai/agent-core';
+import { createExtensionServiceAccess, createFelanServiceRegistry, MODELS_SERVICE, RUN_HOLD_EVENT, type RunHoldEvent } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
 import codexExtension from '../src/index.js';
 
@@ -136,6 +136,27 @@ describe('Codex extension activation', () => {
     await harness.emit('agent_settled', {}, ctx);
 
     expect(compact).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a run hold while it owes the run a deferred compaction', async () => {
+    const harness = createHarness();
+    await codexExtension(harness.pi);
+    const ctx = context('openai-codex', 'gpt-5.3-codex');
+    ctx.isIdle = () => false;
+    ctx.compact = vi.fn();
+    const refusals = () => {
+      const reasons: string[] = [];
+      harness.pi.events.emit(RUN_HOLD_EVENT, { refuse: (reason: string) => reasons.push(reason) } satisfies RunHoldEvent);
+      return reasons;
+    };
+
+    await harness.emit('agent_start', {}, ctx);
+    expect(refusals()).toEqual([]);
+    await harness.emit('session_before_compact', { reason: 'threshold' }, ctx);
+    expect(refusals()).toHaveLength(1);
+    await harness.emit('agent_settled', {}, ctx);
+    expect(ctx.compact).toHaveBeenCalledTimes(1);
+    expect(refusals()).toEqual([]);
   });
 
   it('schedules at most one post-agent compaction per agent run', async () => {
@@ -558,6 +579,7 @@ describe('Codex image provider registration', () => {
 
 function createHarness(config: Record<string, unknown> = {}, modelsAvailable = true) {
   const handlers = new Map<string, Handler[]>();
+  const bus = new Map<string, Array<(data: unknown) => void>>();
   const activeTools = ['read', 'bash', 'edit', 'write', 'grep', 'find', 'ls', 'ask_user', 'Agent', 'TaskCreate'];
   const registerTool = vi.fn();
   const registerProvider = vi.fn<(provider: Provider) => void>();
@@ -577,7 +599,11 @@ function createHarness(config: Record<string, unknown> = {}, modelsAvailable = t
     unregisterProvider,
     appendEntry: vi.fn(),
     events: {
-      emit: () => {},
+      emit: (channel: string, data: unknown) => { for (const handler of bus.get(channel) ?? []) handler(data); },
+      on: (channel: string, handler: (data: unknown) => void) => {
+        bus.set(channel, [...(bus.get(channel) ?? []), handler]);
+        return () => bus.set(channel, (bus.get(channel) ?? []).filter(item => item !== handler));
+      },
     },
     getActiveTools: () => [...activeTools],
     setActiveTools: (names: string[]) => activeTools.splice(0, activeTools.length, ...names),

@@ -24,7 +24,7 @@ export interface ExecutionRecord {
   readonly model?: ModelReference; readonly usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cacheWrite1h: number; cost: number };
 }
 type Result<T> = { ok: true; value: T } | { ok: false; error: { code: string; message: string } };
-interface Job { readonly id: string; readonly controller: AbortController; readonly promise: Promise<void>; cancelling?: Promise<void> }
+interface Job { readonly id: string; readonly controller: AbortController; readonly promise: Promise<void>; cancelling?: Promise<void>; turns: number }
 const synthesis = 'Stop using tools. Summarize the work completed, findings, and any remaining uncertainty in a concise final response.';
 
 export class ExecutionHost {
@@ -44,9 +44,13 @@ export class ExecutionHost {
   cancel(id: string, reason?: string) { return this.manager.cancel(this.sessionId, id, reason); }
   subscribe(listener: (records: readonly ExecutionRecord[]) => void): () => void { return this.manager.subscribe(() => listener(this.listExecutions(true))); }
   hasPendingWork(): boolean { return this.manager.pending(this.sessionId); }
+  hasDeliverableCompletion(): boolean { return this.manager.deliverable(this.sessionId); }
   hasActiveJobs(): boolean { return this.manager.jobs(this.sessionId).length > 0; }
   hasExecutingJobs(): boolean { return this.hasActiveJobs(); }
   resumeQueued(): void { this.manager.drain(); }
+  resumeHeld(id: string, turns: number, trigger: (steer?: string) => Promise<void>): Promise<void> { return this.manager.resumeHeld(id, turns, trigger); }
+  abandonHeld(id: string): void { this.manager.abandonHeld(id); }
+  heldTurns(id: string): number | undefined { return this.manager.heldTurns(id); }
   settle(): Promise<void> { return this.manager.settle(this.sessionId); }
   shutdown(): Promise<void> { return this.manager.shutdown(this.sessionId); }
 }
@@ -84,6 +88,14 @@ export class RegistryExecutions {
   pending(id: string): boolean {
     const ids = this.descendants(id);
     return this.rows().some(row => ids.has(row.id) && (!row.execution!.completedAt || row.parent === id && row.execution!.completionPending));
+  }
+  /**
+   * A completion to `id` that this daemon still delivers while runs are held: one in flight, or one owed while `id` is idle and
+   * can start a run. A held child's unfinished job is not counted; the next daemon finishes it.
+   */
+  deliverable(id: string): boolean {
+    if (this.closed.has(this.root) || !this.parents.has(id)) return false;
+    return this.rows().some(row => row.parent === id && row.execution!.completionPending && (this.deliveries.has(row.id) || this.registry.idleForCompletion(id)));
   }
   private checkParent(id: string): void {
     this.registry.assertNewWork(); this.registry.assertDispatch(id);
@@ -193,7 +205,7 @@ export class RegistryExecutions {
   }
   private async cancelTree(id: string, message: string, code = 'cancelled_by_parent', outcome: 'cancelled' | 'timed_out' = 'cancelled'): Promise<void> {
     const ids = this.descendants(id);
-    for (const row of this.rows().filter(row => ids.has(row.id) && !row.execution!.completedAt)) {
+    for (const row of this.rows().filter(row => ids.has(row.id) && !row.execution!.completedAt && !this.registry.isHeld(row.id))) {
       this.finish(row.id, outcome, { code, message });
       const job = this.active.get(row.id);
       if (job) {
@@ -218,7 +230,7 @@ export class RegistryExecutions {
           this.update(row.id, { ...row.execution!, startedAt: new Date().toISOString() });
           const controller = new AbortController();
           const promise = Promise.resolve().then(() => this.run(row.id, controller.signal));
-          const job: Job = { id: row.id, controller, promise };
+          const job: Job = { id: row.id, controller, promise, turns: 0 };
           this.active.set(row.id, job);
           void promise.catch(error => this.failures.add(error)).finally(() => { this.active.delete(row.id); this.drain(); });
         }
@@ -226,22 +238,49 @@ export class RegistryExecutions {
       finally { this.draining = false; }
     });
   }
-  private async run(id: string, signal: AbortSignal): Promise<void> {
+  /**
+   * Runs a child execution that a previous daemon held, starting its next step with `trigger` instead of its prompt. The turns
+   * it took before the hold count toward its turn limit, and its timeout runs from its original start. `trigger` receives the
+   * summary instruction when the next step is the execution's last. When the held step used the last turn, the execution ends
+   * with `turn_limit_reached` and `trigger` is not called.
+   */
+  resumeHeld(id: string, turns: number, trigger: (steer?: string) => Promise<void>): Promise<void> {
+    if (this.active.has(id)) throw new Error('Execution is already running.');
+    const controller = new AbortController();
+    const promise = Promise.resolve().then(() => this.run(id, controller.signal, { turns, trigger }));
+    this.active.set(id, { id, controller, promise, turns });
+    void promise.catch(error => this.failures.add(error)).finally(() => { this.active.delete(id); this.drain(); });
+    return promise;
+  }
+  /** Turns the execution has taken, counting the step it is parked at: that step's `turn_end` fires only once it is released. */
+  heldTurns(id: string): number | undefined { const job = this.active.get(id); return job ? job.turns + 1 : undefined; }
+  /** Finishes a held execution the next daemon could not continue, as a restart does an unheld one, and tells its parent. */
+  abandonHeld(id: string): void {
+    const execution = this.registry.options.store.session(id).execution;
+    if (!execution || execution.completedAt || this.active.has(id)) return;
+    this.finish(id, 'cancelled', { code: 'host_shutdown', message: 'Execution was interrupted by daemon restart.' });
+    void this.deliver(id);
+  }
+  private async run(id: string, signal: AbortSignal, resume?: { turns: number; trigger: (steer?: string) => Promise<void> }): Promise<void> {
     const row = this.registry.options.store.session(id); const execution = row.execution!;
     const session = this.registry.binding(id)!.runtime.session;
     const tools = session.getActiveToolNames();
     const start = session.sessionManager.getEntries().length;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    let turns = 0; let limit = false; let unsubscribe = () => {};
+    let turns = resume?.turns ?? 0; let limit = false; let unsubscribe = () => {};
     try {
       if (execution.request.timeoutMs) {
-        timeout = setTimeout(() => { void this.cancelTree(id, `Execution timed out after ${execution.request.timeoutMs} milliseconds`, 'timed_out', 'timed_out').catch(error => this.failures.add(error)); }, execution.request.timeoutMs);
+        const elapsed = resume && execution.startedAt ? Math.max(0, Date.now() - Date.parse(execution.startedAt)) : 0;
+        timeout = setTimeout(() => { void this.cancelTree(id, `Execution timed out after ${execution.request.timeoutMs} milliseconds`, 'timed_out', 'timed_out').catch(error => this.failures.add(error)); },
+          Math.max(1, execution.request.timeoutMs - elapsed));
         timeout.unref();
       }
       session.setActiveToolsByName(tools.filter(name => !execution.request.excludedTools?.includes(name)));
       unsubscribe = session.subscribe(event => {
-        if (event.type !== 'turn_end') return;
+        // A held step's turn_end fires when the stop releases it; the next daemon has already counted that step.
+        if (event.type !== 'turn_end' || this.registry.isHeld(id)) return;
         this.emit(); turns++;
+        const job = this.active.get(id); if (job) job.turns = turns;
         if (execution.request.maxTurns && event.message.role === 'assistant' && event.message.stopReason === 'toolUse') {
           if (turns >= execution.request.maxTurns) { limit = true; void session.abort().catch(error => this.failures.add(error)); }
           else if (turns === execution.request.maxTurns - 1) { session.setActiveToolsByName([]); void session.steer(synthesis).catch(error => this.failures.add(error)); }
@@ -249,12 +288,22 @@ export class RegistryExecutions {
       });
       let prompt = execution.message ?? execution.request.prompt;
       if (execution.request.maxTurns === 1) { session.setActiveToolsByName([]); prompt += `\n\n${synthesis}`; }
-      if (!signal.aborted) {
-        this.registry.assertDispatch(id);
-        this.registry.projection(id).setOrigin({ kind: 'automation', source: 'execution' });
-        await session.prompt(prompt);
+      // The held step's turn_end, which would make this the last turn or end the run at its limit, fired in no daemon, so its
+      // decision is made here.
+      const lastTurn = resume !== undefined && execution.request.maxTurns !== undefined && turns >= execution.request.maxTurns - 1;
+      if (resume && execution.request.maxTurns !== undefined && turns >= execution.request.maxTurns) {
+        limit = true; this.registry.settleContinued(id);
+      } else {
+        if (lastTurn) session.setActiveToolsByName([]);
+        if (!signal.aborted) {
+          this.registry.assertDispatch(id);
+          this.registry.projection(id).setOrigin({ kind: 'automation', source: 'execution' });
+          if (resume) await resume.trigger(lastTurn ? synthesis : undefined); else await session.prompt(prompt);
+        }
       }
       await this.active.get(id)?.cancelling;
+      // A held child stays unfinished; the next daemon continues it and delivers its completion then.
+      if (this.registry.isHeld(id)) return;
       if (!this.registry.options.store.session(id).execution!.completedAt) {
         const assistant = session.sessionManager.getEntries().slice(start).reverse().find(entry => entry.type === 'message' && entry.message.role === 'assistant');
         if (limit) this.finish(id, 'cancelled', { code: 'turn_limit_reached', message: `Execution reached its ${execution.request.maxTurns} turn limit` });
@@ -266,6 +315,8 @@ export class RegistryExecutions {
       }
     } catch (error) {
       if (!this.registry.options.store.session(id).execution!.completedAt) this.finish(id, 'failed', { code: 'internal_error', message: 'Execution failed unexpectedly' });
+      // A continued run that fails reads as a restart interruption, not as a run that went on.
+      if (resume) this.registry.interruptContinued(id);
       if (this.active.get(id)?.cancelling) this.failures.add(error);
     } finally {
       if (timeout) clearTimeout(timeout);
@@ -310,6 +361,9 @@ export class RegistryExecutions {
     const existing = this.deliveries.get(id); if (existing) return existing;
     const delivery = (async () => {
       try {
+        // While runs are held, a busy parent would queue the notice into a run that a restart ends without it, so only an idle
+        // parent gets it now. Otherwise it waits for the hold to end or for the next daemon to restore the parent.
+        if (this.registry.holdingRuns && !this.registry.idleForCompletion(row.parent!)) throw new Error('Runs are held.');
         this.registry.assertDispatch(row.parent!);
         const record = this.view(row);
         const outcome = await this.parents.get(row.parent!)!.deliverCompletion({ deliveryId: execution.deliveryId, executionId: id, parentSessionId: row.parent!, label: record.label,

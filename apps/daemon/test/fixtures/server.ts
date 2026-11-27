@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { closeSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, sep } from 'node:path';
-import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream, type ExtensionAPI, type ExtensionConfigDefinition } from '@felan-ai/agent-core';
+import { HostAgentRuntime, InMemoryCredentialStore, ModelRuntime, createAssistantMessageEventStream, type AssistantMessage, type Context, type ExtensionAPI, type ExtensionConfigDefinition } from '@felan-ai/agent-core';
 import { DaemonControlStore, type ControlCapacity } from '../../src/daemon/control-store.js';
 import { createTestSessionLifecycle } from './session-runtime.js';
 import type { SessionExtensionBindings as ProfileExtensionBindings, SessionExtensionContext as ProfileExtensionContext } from '../../src/daemon/session-execution.js';
@@ -30,6 +30,8 @@ export function gate() {
 }
 
 export async function serverFixture(options: { now?: () => number; capacity?: Partial<ControlCapacity>; onStream?: () => Promise<void>; extension?: (pi: ExtensionAPI) => void;
+  /** Scripts the model: the content of each response, given the request context. Tool calls end the response with `toolUse`. */
+  respond?: (context: Context) => AssistantMessage['content'];
   namespace?: (directory: string) => string;
   configDefinitions?: readonly ExtensionConfigDefinition[];
   configuration?: HostConfiguration;
@@ -91,9 +93,14 @@ export async function serverFixture(options: { now?: () => number; capacity?: Pa
       ...(options.configuration ? { configuration: () => options.configuration! } : {}),
       createModelRuntime: async () => {
         const models = await ModelRuntime.create({ modelsPath: null, credentials: new InMemoryCredentialStore(), refreshOnCreate: false });
-        models.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel], streamSimple: () => {
+        models.registerProvider('offline', { api: 'openai-completions', baseUrl: offlineModel.baseUrl, apiKey: 'fixture', models: [offlineModel], streamSimple: (_model, context) => {
           const stream = createAssistantMessageEventStream();
-          void Promise.resolve().then(options.onStream).then(() => stream.push({ type: 'done', reason: 'stop', message: assistant() }));
+          void Promise.resolve().then(options.onStream).then(() => {
+            if (!options.respond) { stream.push({ type: 'done', reason: 'stop', message: assistant() }); return; }
+            const content = options.respond(context);
+            const reason = content.some(part => part.type === 'toolCall') ? 'toolUse' as const : 'stop' as const;
+            stream.push({ type: 'done', reason, message: { ...assistant(), content, stopReason: reason } });
+          });
           return stream;
         } });
         return models;

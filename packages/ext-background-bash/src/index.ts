@@ -138,6 +138,10 @@ export function createBackgroundBashExtension(): FelanExtension {
     write: async (id, chars) => { await manager.writeInteractive(id, chars); },
   };
   const watchedJobIds = new Set<string>();
+  /** Notices sent but not yet stored: a queued steer that a stop or restart drops stays pending for the next runtime. */
+  const unstoredNotices = new Set<string>();
+  /** Notices whose message ended; Pi appends their entries after the message_end handlers, before its next event. */
+  const storedNotices = new Set<string>();
   let sessionId: string | undefined;
 
   const clearCompletionPollTimer = () => {
@@ -183,19 +187,9 @@ export function createBackgroundBashExtension(): FelanExtension {
         watchedJobIds.delete(id);
         changed = true;
         if (job.meta.notice !== undefined) {
-          let claimed: boolean;
-          try {
-            claimed = await claimNotice(job);
-          } catch {
-            watchedJobIds.add(id);
-            continue;
-          }
-          if (!claimed) continue;
-          if (generation !== completionPollGeneration || !completionPollingEnabled) {
-            // Shutdown began during the claim; leave the notice to the session's next runtime.
-            await manager.watchNotice(id, job.meta.noticeSession!).catch(() => {});
-            return;
-          }
+          // Only the session owed the notice sends it, and it is settled once Pi stores its message.
+          if (job.meta.notice !== 'pending' || job.meta.noticeSession !== sessionId) continue;
+          unstoredNotices.add(id);
         }
         deliverCompletion(job);
       }
@@ -558,6 +552,21 @@ export function createBackgroundBashExtension(): FelanExtension {
     ]);
   };
 
+  pi.on('message_end', (event) => {
+    const { message } = event;
+    if (message.role !== 'custom' || message.customType !== BACKGROUND_BASH_COMPLETION_MESSAGE_TYPE) return;
+    const id = completionJobId(message.details);
+    if (id !== undefined && unstoredNotices.delete(id)) storedNotices.add(id);
+  });
+  /** A failed write only risks a duplicate notice later. */
+  const settleStoredNotices = () => {
+    for (const id of storedNotices) {
+      storedNotices.delete(id);
+      if (sessionId !== undefined) void manager.settleNotice(id, sessionId).catch(() => false);
+    }
+  };
+  pi.on('message_start', settleStoredNotices);
+  pi.on('agent_end', settleStoredNotices);
   pi.on('session_start', async (_event, ctx) => {
     sessionId = ctx.sessionManager.getSessionId();
     registerControls();
@@ -642,6 +651,12 @@ function completionDetails(job: BackgroundBashJob) {
     ...(job.status.signal === undefined ? {} : { signal: job.status.signal }),
     ...(job.status.error === undefined ? {} : { error: job.status.error }),
   };
+}
+
+function completionJobId(details: unknown): string | undefined {
+  const job = typeof details === 'object' && details !== null ? Reflect.get(details, 'job') : undefined;
+  const id = typeof job === 'object' && job !== null ? Reflect.get(job, 'id') : undefined;
+  return typeof id === 'string' ? id : undefined;
 }
 
 function formatWaitResult(job: BackgroundBashJob, timedOut: boolean): string {

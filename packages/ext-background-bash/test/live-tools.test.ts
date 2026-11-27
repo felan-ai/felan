@@ -47,8 +47,11 @@ type LiveFixture = {
   runtime: AgentRuntime;
   owner: LiveClient;
   child: LiveClient;
-  /** Starts another extension instance on the same storage, as a new runtime or daemon does for a session. */
-  connect(sessionId: string): Promise<LiveClient>;
+  /**
+   * Starts another extension instance on the same storage, as a new runtime or daemon does for a session. With `stores: false`
+   * its session queues messages without storing them, like a held run that a stop ends before its next step.
+   */
+  connect(sessionId: string, options?: { stores?: boolean }): Promise<LiveClient>;
   abortController(): AbortController;
 };
 
@@ -121,8 +124,9 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(completion).toMatchObject({ details: { job: { id: details.id, status: 'completed', exitCode: 0 } } });
       expect(text(await call(child, 'read_background_bash', { id: details.id }))).toContain('before\nafter');
       expect(owner.messages).toHaveLength(1);
-      const delivered = JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo;
-      expect(delivered.notice).toBe('delivered');
+      // The notice is settled once Pi stores its message, after the message reaches the session.
+      const notice = async () => (JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo).notice;
+      expect(await eventually(notice, value => value === 'delivered', 'stored notice is settled')).toBe('delivered');
     });
   }, TEST_TIMEOUT_MS);
 
@@ -200,6 +204,27 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(again.messages).toEqual([]);
       expect(next.messages).toHaveLength(2);
       expect(child.messages).toEqual([]);
+    });
+  }, TEST_TIMEOUT_MS);
+
+  it('leaves a notice its session queued but never stored to the next runtime, which delivers it once', async () => {
+    await withLiveTools(async ({ runtime, connect }) => {
+      const parked = await connect('parked-session', { stores: false });
+      const job = (await call(parked, 'bash', { command: 'while [ ! -f finish ]; do sleep 0.02; done', background: true })).details as BackgroundBashDetails;
+      await runtime.writeFile('finish', new Uint8Array());
+      await within(parked.firstCompletion, OPERATION_TIMEOUT_MS, 'queued completion message');
+      await parked.shutdown();
+      const info = () => runtime.storage('session').readFile(job.infoPath).then(data => JSON.parse(decoder.decode(data)) as BackgroundBashInfo);
+      expect((await info()).notice).toBe('pending');
+
+      const next = await connect('parked-session');
+      await eventually(async () => next.messages.length, count => count === 1, 'queued notice is delivered again');
+      expect(next.messages[0]).toMatchObject({ details: { job: { id: job.id, status: 'completed' } } });
+      await eventually(async () => (await info()).notice, notice => notice === 'delivered', 'stored notice is settled');
+      const again = await connect('parked-session');
+      await delay(1_000);
+      expect(again.messages).toEqual([]);
+      expect(next.messages).toHaveLength(1);
     });
   }, TEST_TIMEOUT_MS);
 
@@ -497,8 +522,8 @@ async function withLiveTools(run: (fixture: LiveFixture) => Promise<void>): Prom
     clients.push(child);
     await run({
       runtime, owner, child,
-      async connect(sessionId) {
-        const client = await createClient(runtime, pending, controllers, sessionId);
+      async connect(sessionId, options) {
+        const client = await createClient(runtime, pending, controllers, sessionId, options?.stores);
         clients.push(client);
         return client;
       },
@@ -542,6 +567,7 @@ async function createClient(
   pending: Set<Promise<unknown>>,
   controllers: Set<AbortController>,
   sessionId: string,
+  stores = true,
 ): Promise<LiveClient> {
   const tools = new Map<string, ToolDefinition>();
   const handlers = new Map<string, Handler[]>();
@@ -558,7 +584,12 @@ async function createClient(
     registerTool(tool: ToolDefinition) { tools.set(tool.name, tool); },
     registerMessageRenderer() {},
     registerCommand() {},
-    sendMessage(message: LiveClient['messages'][number]) { messages.push(message); completed(message); },
+    sendMessage(message: LiveClient['messages'][number]) {
+      messages.push(message); completed(message);
+      // Pi stores a delivered custom message after the extensions see its message_end, before the run's next event.
+      if (stores) void emit('message_end', { type: 'message_end', message: { role: 'custom', ...message, timestamp: Date.now() } })
+        .then(() => emit('agent_end', { type: 'agent_end', messages: [] }));
+    },
     getActiveTools: () => activeTools,
     setActiveTools: (names: string[]) => { activeTools = names; },
     on(name: string, handler: Handler) {

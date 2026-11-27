@@ -4,14 +4,17 @@ import { TestHostConfiguration as DaemonConfiguration } from './fixtures/host-se
 import { createRegistryInteractionBroker } from '../src/daemon/broker.js';
 import { HostLifecycle } from '../src/daemon/lifecycle.js';
 import { SessionServer } from '../src/daemon/server.js';
-import { settleDaemonWork } from '../src/daemon/service.js';
+import { holdDaemonRuns, settleDaemonWork } from '../src/daemon/service.js';
 import { gate, serverFixture } from './fixtures/server.js';
 
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { vi.useRealTimers(); vi.restoreAllMocks(); for (const dispose of cleanup.splice(0).reverse()) await dispose(); });
 
-/** Wires the lifecycle the way `startDaemonService` does, with a connector stub that records when claims stop and resume. */
-async function fixture(options: { holdTimeoutMs?: number; providersBusy?: () => boolean } = {}) {
+/**
+ * Wires the lifecycle the way `startDaemonService` does, with a connector stub that records when claims stop and resume.
+ * `holdRuns: false` builds a lifecycle that holds only an idle daemon, as before runs could be held.
+ */
+async function fixture(options: { holdTimeoutMs?: number; providersBusy?: () => boolean; holdRuns?: false } = {}) {
   const turn = gate(); const release = gate();
   const f = await serverFixture({ now: Date.now, extension: pi => { pi.on('agent_end', async () => { turn.resolve(); await release.promise; }); } });
   const broker = createRegistryInteractionBroker(f.registry);
@@ -24,6 +27,7 @@ async function fixture(options: { holdTimeoutMs?: number; providersBusy?: () => 
     endDrain: () => { f.registry.endDrain(); connector.endDrain(); },
     holdAdmission: () => { connector.beginDrain(); f.registry.holdAdmission(); },
     activity: () => server.activity(),
+    ...(options.holdRuns === false ? {} : { holdRuns: (signal: AbortSignal) => holdDaemonRuns(f.registry, server, signal) }),
     settle: (mode, signal) => settleDaemonWork(f.registry, broker, mode, signal), complete });
   server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture', broker,
     ...(options.providersBusy ? { providersBusy: options.providersBusy } : {}),
@@ -74,8 +78,9 @@ it('accepts the same hold again and refuses a hold for the other action', async 
   expect(await client.control('host.restart', 'hold')).toMatchObject({ outcome: 'rejected', error: { code: 'busy' }, held: first.held });
 });
 
-it('rejects a hold as busy while a run is active and leaves admission open', async () => {
-  const f = await fixture(); const client = await f.client();
+it('rejects a hold as busy while a run is active and leaves admission open when the daemon does not hold runs', async () => {
+  const f = await fixture({ holdRuns: false }); const client = await f.client();
+  expect(await client.control('host.status')).not.toHaveProperty('holdsRuns');
   const running = f.root.runtime.session.prompt('existing'); await f.turn.promise;
   const response = await client.control('host.restart', 'hold');
   expect(response).toMatchObject({ outcome: 'rejected', state: 'ready', error: { code: 'busy' } });

@@ -15,6 +15,7 @@ import { messageDisplay } from './message-display.js';
 import { sessionTip } from './session-cursor.js';
 import { catalogEntry, plainJson, sanitizeMessage, toolId, toolName, undisplayableMessage } from './message-sanitize.js';
 import { boundSnapshot } from './snapshot-bounds.js';
+import type { HeldInput } from './run-hold.js';
 
 export type ProjectionOutput = SessionEvent | TextStreamEvent;
 type ProjectionExtras = Pick<SessionSnapshot, 'children' | 'processes' | 'interactions'>;
@@ -111,6 +112,19 @@ export class SessionProjection {
   setOrigin(origin: Origin): void { this.origin = structuredClone(origin); }
 
   get canObserveQueue(): boolean { return this.queueObserved && !this.queueLost; }
+
+  /** Queued user messages with their origins, in queue order; undefined while queue observation is incomplete. */
+  heldInput(): HeldInput[] | undefined {
+    if (!this.canObserveQueue || this.compactionQueue.length) return undefined;
+    return [...this.queued.values()].flatMap(({ message, item }) => message.role !== 'user' ? [] : [{ kind: item.kind, origin: structuredClone(item.origin),
+      message: { role: 'user' as const, timestamp: message.timestamp, content: typeof message.content === 'string' ? message.content
+        : message.content.map(part => part.type === 'text' ? { type: 'text' as const, text: part.text } : { type: 'image' as const, data: part.data, mimeType: part.mimeType }) } }]);
+  }
+
+  /** A continued run re-queued its saved input, so the restart notice about lost queued turns no longer applies. */
+  clearInterruptedQueue(): void {
+    if (this.presentation.has('interrupted-queue')) this.setPresentation({ id: 'interrupted-queue', remove: true });
+  }
   get holdsCompactionInput(): boolean { return this.manualCompaction; }
   get compactionInputs(): readonly QueueItem[] { return this.compactionQueue; }
 

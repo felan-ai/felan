@@ -119,6 +119,8 @@ export async function startDaemonService(target: DaemonTarget, options: {
       beginDrain: () => { connector?.beginDrain(); liveSetup.beginDrain(); liveRegistry.beginDrain(); },
       holdAdmission: () => { connector?.beginDrain(); liveRegistry.holdAdmission(); },
       activity: (): Promise<HostActivity> => liveServer.activity(),
+      holdRuns: (signal: AbortSignal): Promise<number> => holdDaemonRuns(liveRegistry, liveServer, signal),
+      restoring: () => liveRegistry.restoring,
       ...(options.holdTimeoutMs ? { holdTimeoutMs: options.holdTimeoutMs } : {}),
       endDrain: () => { liveRegistry.endDrain(); liveSetup.endDrain?.(); connector?.endDrain(); },
       canRetry: () => { owner.assertCurrent(); liveStore.assertCurrent(); return !liveRegistry.fenced; },
@@ -221,6 +223,14 @@ export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown
   } else {
     await draining; await shutdownStep('drain-wait', () => registry.waitForDrain(signal)); signal?.throwIfAborted(); await registry.shutdown();
   }
+}
+
+/** @internal Holds every active run at a step end. Busy providers keep the hold waiting; a question for a person cancels it. */
+export function holdDaemonRuns(registry: Pick<SessionRegistry, 'holdRuns'>, server: Pick<SessionServer, 'activity'>, signal: AbortSignal): Promise<number> {
+  return registry.holdRuns(signal, async () => {
+    const { workByKind, blocking } = await server.activity();
+    return { busy: workByKind.providers > 0, questions: blocking.questions };
+  });
 }
 
 async function acquireForLaunch(target: DaemonTarget, replacing?: DaemonIdentity) {

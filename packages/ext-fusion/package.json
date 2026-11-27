@@ -1,6 +1,6 @@
 {
   "name": "@felan-ai/ext-fusion",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Review parallel model answers and explicitly fuse them with a selected model",
   "license": "MIT",
   "type": "module",

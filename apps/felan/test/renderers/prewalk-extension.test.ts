@@ -3,7 +3,7 @@ import type {
   FelanExtensionAPI,
 } from '@felan-ai/agent-core';
 import { describe, expect, it, vi } from 'vitest';
-import { SESSIONS_SERVICE, SettingsManager, createSilentLogger } from '@felan-ai/agent-core';
+import { RUN_HOLD_EVENT, SESSIONS_SERVICE, SettingsManager, createSilentLogger } from '@felan-ai/agent-core';
 import { createTurnClassificationRegistry } from '../../../../packages/agent-core/src/classifier/turn-classification.js';
 import { installModelSelectionPersistenceScope } from '../../../../packages/agent-core/src/model-selection.js';
 import { createPrewalkExtension, type PrewalkHost } from '../../../../packages/ext-prewalk/src/index.js';
@@ -293,7 +293,13 @@ function createHarness(
   ));
   const sendMessage = vi.fn();
   const sendUserMessage = vi.fn();
+  const bus = new Map<string, Array<(data: unknown) => void>>();
+  const events = {
+    on: vi.fn((channel: string, handler: (data: unknown) => void) => { bus.set(channel, [...bus.get(channel) ?? [], handler]); return () => {}; }),
+    emit: (channel: string, data: unknown) => { for (const handler of bus.get(channel) ?? []) handler(data); },
+  };
   const pi = {
+    events,
     registerCapability: (capability: { id: string; instructions: string }) => capabilities.push(capability),
     registerTool: vi.fn((tool: any) => tools.set(tool.name, tool)),
     on: vi.fn((event: string, handler: Handler) => {
@@ -326,6 +332,7 @@ function createHarness(
     pi,
     ctx,
     ui,
+    events,
     capabilities,
     tools,
     emit,
@@ -3440,5 +3447,21 @@ describe('classifier guidance', () => {
     });
     await harness.emit('agent_settled');
     expect(harness.currentModel).toBe(plannerModel);
+  });
+});
+
+describe('run holds', () => {
+  it('lets an idle session be held and refuses a hold once Prewalk is armed or planning', async () => {
+    const harness = createHarness();
+    const refusals = () => {
+      const reasons: string[] = [];
+      harness.events.emit(RUN_HOLD_EVENT, { refuse: (reason: string) => { reasons.push(reason); } });
+      return reasons;
+    };
+    expect(refusals()).toEqual([]);
+    await harness.command.handler('', harness.ctx);
+    expect(refusals()).toEqual([expect.stringContaining('Prewalk')]);
+    await harness.emit('before_agent_start', { type: 'before_agent_start', messageType: 'user', prompt: 'Next prompt', systemPrompt: 'system', systemPromptOptions: {} });
+    expect(refusals()).toEqual([expect.stringContaining('Prewalk')]);
   });
 });

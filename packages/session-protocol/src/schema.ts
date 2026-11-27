@@ -44,7 +44,11 @@ export const HostBlockedSchema = Type.Object({
  * A daemon that accepted a `hold` stop or restart while idle. Admission stays closed until a `drain` or `force` stop or
  * restart arrives, or until `until`, when the daemon reopens admission by itself.
  */
-export const HostHeldSchema = Type.Object({ action: enumOf(['stop', 'restart'] as const), since: CounterSchema, until: CounterSchema });
+export const HostHeldSchema = Type.Object({ action: enumOf(['stop', 'restart'] as const), since: CounterSchema, until: CounterSchema,
+  /** Runs held at a step end that the next daemon continues; absent from daemons that hold only while idle. */
+  runs: Type.Optional(CounterSchema) });
+/** How long a `hold` waits for active runs to reach a step end before the attempt is cancelled. */
+export const StepTimeoutSchema = Type.Integer({ minimum: 1, maximum: 600_000 });
 export const HostModeSchema = enumOf(['drain', 'force', 'hold'] as const);
 export type DaemonTarget = Static<typeof DaemonTargetSchema>;
 export type DaemonIdentity = Static<typeof DaemonIdentitySchema>;

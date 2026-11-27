@@ -94,6 +94,7 @@ export function extensionFixture() {
     registerCommand: (name: string, command: { handler: (args: string, ctx: ExtensionCommandContext) => unknown }) => commands.set(name, command),
     registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
     registerCapability: vi.fn(), registerShortcut: vi.fn(), getActiveTools: () => ['read', 'bash', 'edit', 'write'],
+    events: { on: () => () => {}, emit: () => {} },
     getAllTools: () => [], getCommands: () => [], getThinkingLevel: () => 'off', appendEntry: vi.fn(),
   } as unknown as FelanExtensionAPI;
   return { api, context, services, forms, elements, statuses, storage, entries, tools, commands,

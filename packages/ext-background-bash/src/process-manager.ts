@@ -268,10 +268,6 @@ export class BackgroundBashManager {
     await this.#store.removeJob(id);
   }
 
-  async watchNotice(id: string, session: string): Promise<BackgroundBashJob | undefined> {
-    return this.#store.watchNotice(id, session);
-  }
-
   async settleNotice(id: string, session: string): Promise<boolean> {
     return this.#store.settleNotice(id, session);
   }

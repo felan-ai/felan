@@ -1,12 +1,14 @@
 import {
   DefaultResourceLoader,
   SettingsManager,
+  createEventBus,
   type InlineExtension,
   type ResourceLoader,
   type Skill,
 } from '@earendil-works/pi-coding-agent';
 import { collectCapabilities, formatCapabilitiesSection } from './capabilities.js';
 import { FELAN_BASE_SYSTEM_PROMPT } from './system-prompt.js';
+import { registerSessionEventBus } from './run-hold.js';
 
 export const runtimeToolsExtensionName = '@felan-ai/agent-core/runtime-tools';
 const runtimeToolsExtensionPath = `<inline:${runtimeToolsExtensionName}>`;
@@ -48,7 +50,9 @@ export async function createAgentCoreResourceLoaderWithContextFiles(
     prompts: [],
     themes: [],
   });
+  const eventBus = createEventBus();
   const loader = new DefaultResourceLoader({
+    eventBus,
     cwd: options.cwd,
     agentDir: options.agentDir,
     settingsManager: resourceSettings,
@@ -82,6 +86,7 @@ export async function createAgentCoreResourceLoaderWithContextFiles(
     },
   });
 
+  registerSessionEventBus(loader, eventBus);
   await loader.reload();
   const extensionsResult = loader.getExtensions();
   const actionableErrors = extensionsResult.errors.filter(({ path, error }) => (

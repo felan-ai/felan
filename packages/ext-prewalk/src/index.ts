@@ -1,4 +1,5 @@
 import {
+  RUN_HOLD_EVENT,
   SESSIONS_SERVICE,
   associateExtensionConfig,
   configField,
@@ -16,6 +17,7 @@ import {
   type ExtensionContext,
   type FelanExtension,
   type FelanExtensionAPI,
+  type RunHoldEvent,
   type SavingsModelReference,
   type SavingsReporter,
   type SavingsTokenUsage,
@@ -1248,6 +1250,12 @@ function registerPrewalk(pi: FelanExtensionAPI, host?: PrewalkHost): void {
       else clearAutomation(ctx);
       notify(ctx, 'Prewalk ended before a qualifying first mutation.', 'warning');
     }
+  });
+
+  // Prewalk keeps its phase in memory and a restored session starts idle, so a held run would continue without its plan,
+  // handoff or completion gate, and shutdown may switch the model back to the planner.
+  pi.events.on(RUN_HOLD_EVENT, event => {
+    if (state.phase !== 'idle' || plannerSnapshot !== undefined) (event as RunHoldEvent).refuse('Prewalk is active and keeps its phase in memory.');
   });
 
   pi.on('session_shutdown', async (_event, ctx) => {
