@@ -7,19 +7,23 @@ import { setTimeout as delay } from 'node:timers/promises';
 // kills, and a signal-0 probe keeps finding a terminated process until the kernel releases
 // its PID. Poll instead of demanding an instant reap, so a process that genuinely outlives
 // cleanup still fails while a slow teardown does not.
-async function assertExited(pid, timeoutMs = 15_000) {
+async function assertExited(pid, isAlive, label, timeoutMs = 15_000) {
   const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    try {
-      process.kill(pid, 0);
-    } catch (error) {
-      if (error.code === 'ESRCH') return;
-      throw error;
-    }
+  while (await isAlive(pid)) {
     if (Date.now() >= deadline) {
-      throw new Error(`Background Bash smoke process ${pid} survived cleanup for ${timeoutMs}ms`);
+      throw new Error(`Background Bash smoke ${label} ${pid} survived cleanup for ${timeoutMs}ms`);
     }
     await delay(50);
+  }
+}
+
+function isHostProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH') return false;
+    throw error;
   }
 }
 
@@ -29,6 +33,10 @@ export async function testBackgroundBashTools(initialRuntime, workspace, reload)
   await runtime.session.bindExtensions({ mode: 'print', onError: (error) => extensionErrors.push(error) });
   const ownedJobs = new Set();
   const ownedPids = new Set();
+  // A detached job reports the PID its runner has in the POSIX shell that launched it. Git Bash numbers its
+  // processes independently of Windows, so only that shell can tell whether the runner still exists; a Windows
+  // probe of the same number inspects an unrelated process.
+  const ownedShellPids = new Set();
   const interactivePath = join(workspace, 'background-smoke-interactive.mjs');
   const silentPath = join(workspace, 'background-smoke-silent.mjs');
   const pidPath = join(workspace, 'background-smoke-pids.json');
@@ -40,9 +48,14 @@ export async function testBackgroundBashTools(initialRuntime, workspace, reload)
     assert.ok(tool, `Registered tool is missing: ${name}`);
     return tool.execute(`background-smoke-${++sequence}`, params, signal);
   };
-  const remember = (job) => {
+  const remember = (job, pids = ownedPids) => {
     ownedJobs.add(job.meta?.id ?? job.id);
-    if (job.status?.pid ?? job.pid) ownedPids.add(job.status?.pid ?? job.pid);
+    if (job.status?.pid ?? job.pid) pids.add(job.status?.pid ?? job.pid);
+  };
+  const isShellProcessAlive = async (pid) => {
+    const result = await call('bash', { command: `kill -0 ${Number(pid)} 2>/dev/null` });
+    assert.equal(typeof result.details.exitCode, 'number', `Shell process probe returned no exit code: ${JSON.stringify(result.details)}`);
+    return result.details.exitCode === 0;
   };
   await writeFile(interactivePath, [
     "console.log('tty=' + process.stdin.isTTY + '/' + process.stdout.isTTY);",
@@ -75,9 +88,10 @@ export async function testBackgroundBashTools(initialRuntime, workspace, reload)
     for (const params of [{}, { background: true }, { background: true, tty: true }]) {
       const result = await call('bash', { command: `node -e ${JSON.stringify(largeOutput)}`, timeout: 10, ...params });
       if (params.background) {
-        remember(result.details);
+        const pids = params.tty ? ownedPids : ownedShellPids;
+        remember(result.details, pids);
         const job = (await call('wait_background_bash', { id: result.details.id, timeout: 5 })).details.job;
-        remember(job);
+        remember(job, pids);
         assert.equal(job.status.exitCode, 7);
         const tail = await call('read_background_bash', { id: result.details.id, lines: 2 });
         assert.match(tail.content[0].text, /\ntail-one\ntail-two 🌍$/u);
@@ -153,11 +167,16 @@ export async function testBackgroundBashTools(initialRuntime, workspace, reload)
     }
     const cleanup = await Promise.allSettled([...ownedJobs].map((id) => call('stop_background_bash', { id, signal: 'SIGKILL' })));
     errors.push(...cleanup.filter((result) => result.status === 'rejected').map((result) => result.reason));
-    for (const pid of ownedPids) {
-      try {
-        await assertExited(pid);
-      } catch (error) {
-        errors.push(error);
+    for (const [pids, isAlive, label] of [
+      [ownedPids, isHostProcessAlive, 'process'],
+      [ownedShellPids, isShellProcessAlive, 'shell process'],
+    ]) {
+      for (const pid of pids) {
+        try {
+          await assertExited(pid, isAlive, label);
+        } catch (error) {
+          errors.push(error);
+        }
       }
     }
     await Promise.all([interactivePath, silentPath, pidPath].map((path) => rm(path, { force: true })));
