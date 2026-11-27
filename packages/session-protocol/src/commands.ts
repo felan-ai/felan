@@ -8,7 +8,7 @@ import { LIMITS } from './limits.js';
 import { RemoteConfigureParamsSchema, RemoteStatusSchema } from './remote.js';
 import { UiActionRequestSchema, UiCapabilitySchema } from './ui.js';
 import { SetupCatalogSchema, SetupJobSchema, SetupStartSchema } from './setup.js';
-import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, HostBlockedSchema, HostHeldSchema, HostModeSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
+import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, HostBlockedSchema, HostHeldSchema, HostModeSchema, IdSchema, StepTimeoutSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
 
 const empty = Type.Object({});
 const identity = { expected: DaemonIdentitySchema };
@@ -24,6 +24,8 @@ export const HostStatusSchema = Type.Object({
   composition: Type.Optional(HostCompositionSchema), blocked: Type.Optional(HostBlockedSchema), held: Type.Optional(HostHeldSchema),
   /** Modes this daemon accepts for `host.stop` and `host.restart`; absent from daemons that accept only `drain` and `force`. */
   stopModes: Type.Optional(Type.Array(HostModeSchema, { maxItems: 8, uniqueItems: true })),
+  /** True when a `hold` waits for active runs to reach a step end and the next daemon continues them; absent when a hold on a busy host answers `busy`. */
+  holdsRuns: Type.Optional(Type.Literal(true)),
   active: Type.Object({ sessions: CounterSchema, runs: CounterSchema, work: CounterSchema, attachments: CounterSchema,
     workByKind: Type.Optional(Type.Object({ sessions: CounterSchema, processes: CounterSchema, interactions: CounterSchema, providers: CounterSchema })) }),
   setupNeeds: Type.Array(Type.Object({ code: IdSchema, message: DiagnosticTextSchema, provisioningId: Type.Optional(IdSchema) })),
@@ -90,8 +92,8 @@ export const OperationSchemas = {
   'executions.read': Type.Object({ executionId: IdSchema }),
   'executions.steer': Type.Object({ executionId: IdSchema, message: unboundedText(1) }),
   'executions.cancel': Type.Object({ executionId: IdSchema, reason: Type.Optional(unboundedText()) }),
-  'host.stop': Type.Object({ ...identity, mode: HostModeSchema }),
-  'host.restart': Type.Object({ ...identity, mode: HostModeSchema }),
+  'host.stop': Type.Object({ ...identity, mode: HostModeSchema, stepTimeoutMs: Type.Optional(StepTimeoutSchema) }),
+  'host.restart': Type.Object({ ...identity, mode: HostModeSchema, stepTimeoutMs: Type.Optional(StepTimeoutSchema) }),
   'host.logs': PageRequestSchema,
 } as const;
 export type Operation = keyof typeof OperationSchemas;

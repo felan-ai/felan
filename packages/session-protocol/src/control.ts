@@ -1,6 +1,6 @@
 import { Type, type Static } from 'typebox';
 import { CONTROL_VERSION, ProtocolValidationError } from './limits.js';
-import { DaemonIdentitySchema, DiagnosticTextSchema, HostBlockedSchema, HostHeldSchema, HostModeSchema, IdSchema, NameSchema, enumOf, parseSchema, text } from './schema.js';
+import { DaemonIdentitySchema, DiagnosticTextSchema, HostBlockedSchema, HostHeldSchema, HostModeSchema, IdSchema, StepTimeoutSchema, NameSchema, enumOf, parseSchema, text } from './schema.js';
 import { requestTimestamp } from './request-id.js';
 
 export const BootstrapHelloSchema = Type.Object({
@@ -11,12 +11,13 @@ const identity = { expected: DaemonIdentitySchema };
 export const ControlRequestSchema = Type.Union([
   Type.Object({ control: Type.Literal(CONTROL_VERSION), id: IdSchema, op: Type.Literal('host.status'), params: Type.Object(identity, { additionalProperties: false }) }, { additionalProperties: false }),
   Type.Object({ control: Type.Literal(CONTROL_VERSION), id: IdSchema, op: enumOf(['host.stop', 'host.restart'] as const),
-    params: Type.Object({ ...identity, mode: HostModeSchema }, { additionalProperties: false }) }, { additionalProperties: false }),
+    params: Type.Object({ ...identity, mode: HostModeSchema, stepTimeoutMs: Type.Optional(StepTimeoutSchema) }, { additionalProperties: false }) }, { additionalProperties: false }),
 ]);
 export const ControlResponseSchema = Type.Object({
   control: Type.Literal(CONTROL_VERSION), re: IdSchema, daemonVersion: text(128, 1), supportedProtocol: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }), identity: DaemonIdentitySchema,
   state: enumOf(['starting', 'ready', 'draining', 'stopped', 'blocked'] as const), blocked: Type.Optional(HostBlockedSchema), held: Type.Optional(HostHeldSchema),
   stopModes: Type.Optional(Type.Array(HostModeSchema, { maxItems: 8, uniqueItems: true })),
+  holdsRuns: Type.Optional(Type.Literal(true)),
   outcome: enumOf(['mismatch', 'accepted', 'rejected'] as const),
   error: Type.Optional(Type.Object({ code: NameSchema, message: DiagnosticTextSchema, retryable: Type.Boolean() })),
 });
