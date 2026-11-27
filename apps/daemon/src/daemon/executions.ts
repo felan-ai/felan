@@ -44,6 +44,7 @@ export class ExecutionHost {
   cancel(id: string, reason?: string) { return this.manager.cancel(this.sessionId, id, reason); }
   subscribe(listener: (records: readonly ExecutionRecord[]) => void): () => void { return this.manager.subscribe(() => listener(this.listExecutions(true))); }
   hasPendingWork(): boolean { return this.manager.pending(this.sessionId); }
+  hasDeliverableCompletion(): boolean { return this.manager.deliverable(this.sessionId); }
   hasActiveJobs(): boolean { return this.manager.jobs(this.sessionId).length > 0; }
   hasExecutingJobs(): boolean { return this.hasActiveJobs(); }
   resumeQueued(): void { this.manager.drain(); }
@@ -87,6 +88,14 @@ export class RegistryExecutions {
   pending(id: string): boolean {
     const ids = this.descendants(id);
     return this.rows().some(row => ids.has(row.id) && (!row.execution!.completedAt || row.parent === id && row.execution!.completionPending));
+  }
+  /**
+   * A completion to `id` that this daemon still delivers while runs are held: one in flight, or one owed while `id` is idle and
+   * can start a run. A held child's unfinished job is not counted; the next daemon finishes it.
+   */
+  deliverable(id: string): boolean {
+    if (this.closed.has(this.root) || !this.parents.has(id)) return false;
+    return this.rows().some(row => row.parent === id && row.execution!.completionPending && (this.deliveries.has(row.id) || this.registry.idleForCompletion(id)));
   }
   private checkParent(id: string): void {
     this.registry.assertNewWork(); this.registry.assertDispatch(id);

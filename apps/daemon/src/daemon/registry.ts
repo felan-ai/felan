@@ -411,8 +411,10 @@ export class SessionRegistry {
     this.options.owner.assertCurrent();
     const processes = await this.processes.interruptibleCount();
     const held = new Set([...this.entries.values()].filter(entry => entry.held).map(entry => entry.binding.rootSessionId));
+    // A root with a held run keeps that run's execution job open, so only completions this daemon can still deliver count there.
     const busy = [...this.entries].filter(([id, entry]) => !entry.held && (this.lateWriters.has(id) || !entry.binding.runtime.session.isIdle || entry.dispatches.size || entry.writers.size
-      || !held.has(entry.binding.rootSessionId) && (entry.host?.hasPendingWork() || entry.host?.hasActiveJobs()) || [...entry.services].some(service => service.busy()))).length;
+      || (held.has(entry.binding.rootSessionId) ? entry.host?.hasDeliverableCompletion() : entry.host?.hasPendingWork() || entry.host?.hasActiveJobs())
+      || [...entry.services].some(service => service.busy()))).length;
     return { sessions: busy + [...this.lateWriters.keys()].filter(id => !this.entries.has(id)).length, processes };
   }
 

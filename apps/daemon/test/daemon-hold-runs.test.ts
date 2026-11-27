@@ -271,6 +271,35 @@ it('delivers a subagent completion to its idle parent while a hold waits, so the
   expect(f.store.sessionMetadata(child).execution).toMatchObject({ outcome: 'completed', completionPending: false });
 }, TEST_TIMEOUT_MS);
 
+it('waits during the stop for a completion it delivers to an idle parent whose root has a held child, and holds the run it starts', async () => {
+  const f = await fixture({ refuse: 'c' });
+  const root = await f.idle();
+  const delivering = gate();
+  f.registry.executionHost(root).attachParent({ deliverCompletion: async () => {
+    // The delivery is still in flight when the stop drains, and then starts a run in the idle parent, as the parent port does.
+    await delivering.promise;
+    void f.registry.binding(root)!.runtime.session.sendCustomMessage({ customType: 'completion', content: 'gate:late', display: false }, { triggerTurn: true });
+    return 'delivered';
+  } });
+  const held = await f.child(root, 'h');
+  const finished = await f.child(root, 'c');
+  await vi.waitFor(() => expect(f.started).toEqual(expect.arrayContaining(['h', 'c'])), WAIT);
+  const response = f.hold();
+  f.open('h').resolve();
+  // The refusing child takes its next step and finishes, so its completion goes to the idle root while the other child holds.
+  f.open('c').resolve();
+  expect(await response).toMatchObject({ outcome: 'accepted', result: { held: { runs: 1 } } });
+  await vi.waitFor(() => expect(f.store.sessionMetadata(finished).execution).toHaveProperty('completedAt'), WAIT);
+  expect(await f.client.control('host.restart', 'drain')).toMatchObject({ outcome: 'accepted' });
+  delivering.resolve();
+  await vi.waitFor(() => expect(f.started).toContain('late'), WAIT);
+  expect(f.complete).not.toHaveBeenCalled();
+  f.open('late').resolve();
+  await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
+  expect(f.store.heldRuns().map(record => record.session).sort()).toEqual([held, root].sort());
+  for (const id of [held, root]) expect(f.store.sessionMetadata(id).run.state).toBe('running');
+}, TEST_TIMEOUT_MS);
+
 it('holds a run that starts while the daemon is held and reaches its step end during the stop', async () => {
   const f = await fixture();
   const late = await f.idle();
