@@ -8,6 +8,10 @@ import type { ContinueRecord } from '../src/daemon/run-hold.js';
 import { fixture, fixtures } from './fixtures/registry.js';
 
 afterEach(async () => { for (const cleanup of fixtures.splice(0)) await cleanup(); });
+// The waits cover work in a real registry, which a loaded Windows runner can pause for seconds.
+const WAIT = { timeout: 20_000 };
+/** Longer than two waits in a row, so a wait that runs out reports its own assertion. */
+const TEST_TIMEOUT_MS = 60_000;
 const request = { prompt: 'child task', description: 'child task', label: 'general', model: { provider: 'offline', id: 'fixture' } };
 
 /** A root and a started child execution, both with a running run, as a held daemon leaves them. */
@@ -120,9 +124,9 @@ describe('a held root run that fails to continue', () => {
     const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
     // The fixture session cannot start a step, so the continued run fails with an error that is not an abort.
     await registry.restoreRecovered();
-    await vi.waitFor(() => expect(store.sessionMetadata(root.sessionId).run.state).not.toBe('running'));
+    await vi.waitFor(() => expect(store.sessionMetadata(root.sessionId).run.state).not.toBe('running'), WAIT);
     expect(store.sessionMetadata(root.sessionId).run).toMatchObject({ id: 'held-run', state: 'interrupted' });
-  });
+  }, TEST_TIMEOUT_MS);
 });
 
 describe('a held child that cannot continue', () => {
@@ -163,10 +167,10 @@ describe('a held child whose next step fails', () => {
     const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
     // The fixture session cannot start a step, so the continued child fails with an error that is not an abort.
     await registry.restoreRecovered();
-    await vi.waitFor(() => expect(store.sessionMetadata(child.sessionId).execution).toHaveProperty('completedAt'));
-    await vi.waitFor(() => expect(store.sessionMetadata(child.sessionId).run.state).not.toBe('running'));
+    await vi.waitFor(() => expect(store.sessionMetadata(child.sessionId).execution).toHaveProperty('completedAt'), WAIT);
+    await vi.waitFor(() => expect(store.sessionMetadata(child.sessionId).run.state).not.toBe('running'), WAIT);
     expect(store.sessionMetadata(child.sessionId).run).toMatchObject({ id: 'child-run', state: 'interrupted' });
-  });
+  }, TEST_TIMEOUT_MS);
 });
 
 describe('restoring after a restart', () => {
