@@ -1106,3 +1106,82 @@ the CI-triggered npm release workflow:
 | `@felan-ai/agent-core` | 0.16.3 | 0.16.4 |
 | `@felan-ai/daemon` | 0.8.4 | 0.8.5 |
 | `@felan-ai/felan` | 0.40.7 | 0.40.8 |
+
+## Holding active runs for host restarts
+
+A daemon that holds active runs adds `holdsRuns: true` to the `host.status`
+result and to every control response, next to `stopModes`. A daemon without the
+field answers a `hold` on a host with an active run with `busy`, as in the
+idle-hold contract above. A caller checks `holdsRuns` before it sends `hold` to
+a busy host or sends `stepTimeoutMs`. Callers built against
+`@felan-ai/session-protocol` 0.4.8 ignore the field and keep working.
+
+`host.stop` and `host.restart` accept an optional `stepTimeoutMs` with
+`mode: 'hold'`: an integer from 1 to 600000 milliseconds, 180000 when absent.
+With `drain` or `force` it is rejected with `invalid_request`. A daemon without
+`holdsRuns` rejects it in control requests, whose parameters are strict, and
+ignores it in v1 envelopes.
+
+- With no active run, a hold behaves as the idle hold above. On a daemon with
+  `holdsRuns`, `held` also carries `runs: 0`.
+- With active runs, the daemon closes admission and remote claims and the
+  response waits. Each run, subagent runs included, finishes its current step:
+  the model response in flight and the tool calls it asked for. It stops after
+  their results are saved and before the next model request. A step whose
+  response asked for no tool calls, or whose tool calls end the run, takes its
+  normal course; that run ends or holds at a later step. Unanswered host
+  questions, busy providers, in-flight runtime operations and live processes
+  keep the hold waiting too.
+- Once every run is held and nothing else runs, the daemon writes one continue
+  record per held run (`version: 1`) and answers `outcome: 'accepted'`,
+  `state: 'draining'`, `held: { action, since, until, runs }`, where `runs` is
+  the number of held runs and `until` is 60 seconds after `since`. If no stop or
+  restart arrives before `until`, admission reopens and the held runs continue
+  in the same daemon.
+- If a run has not reached its step end within `stepTimeoutMs`, the attempt is
+  cancelled: the response is `outcome: 'rejected'` with `state: 'ready'`, no
+  `held`, and `error.code: 'hold_cancelled'`. Held runs continue at once,
+  admission and remote claims reopen, and nothing is interrupted.
+- A `drain` or `force` request, or SIGTERM, that arrives while the hold still
+  waits replaces it: the hold request answers `busy` and the runs continue under
+  that stop. One that arrives after `held` stops the daemon without interrupting
+  the held runs. They stay `running` with `residency: 'evicted'`.
+- A held run stays `running` to every client. The protocol has no new run state.
+- Cancelling or closing a held session, or interrupting its run, deletes its
+  record. Subagent completion notices wait while a hold is active and are
+  delivered by the daemon that runs next.
+
+The next daemon reads the records at startup and deletes them. For each record
+whose session is still open, has the same run `running` or `waiting`, and whose
+transcript still ends at the entry recorded at the hold, it restores the session
+and its parent sessions. It re-queues the saved steering and follow-up user
+messages and continues the run under its run ID: it starts the next step with
+a hidden custom message of type `felan-daemon-run-continued` (`display: false`)
+that tells the model the host restarted between two steps. A record that is
+unreadable, of another version or no longer matches leaves its run
+`interrupted`, as a restart does today. A crash during the continued run also
+interrupts it, because the record is already consumed.
+
+An extension whose in-memory state a restored session cannot rebuild can keep
+its session's run from being held. It subscribes to `RUN_HOLD_EVENT`
+(`'felan:run-hold'`, exported by `@felan-ai/agent-core`) on `pi.events` and
+calls `event.refuse(reason)` from a synchronous handler. The run then takes its
+next step instead of holding. `@felan-ai/ext-prewalk` refuses while Prewalk is
+active. [ADR 0050](../decisions/0050-hold-active-runs-at-a-step-end.md)
+records the design.
+
+The protocol schema and daemon implementation are not yet released. The
+following are proposed versions, pending a human-reviewed merge to `main` and
+the CI-triggered npm release workflow:
+
+| Package | Current | Proposed |
+| --- | --- | --- |
+| `@felan-ai/session-protocol` | 0.4.8 | 0.4.9 |
+| `@felan-ai/agent-core` | 0.16.4 | 0.16.5 |
+| `@felan-ai/ext-prewalk` | 0.15.0 | 0.15.1 |
+| `@felan-ai/ext-ask-user` | 0.13.3 | 0.13.4 |
+| `@felan-ai/ext-background-bash` | 0.17.0 | 0.17.1 |
+| `@felan-ai/ext-fusion` | 0.5.3 | 0.5.4 |
+| `@felan-ai/ext-prompt-history` | 0.10.3 | 0.10.4 |
+| `@felan-ai/daemon` | 0.8.6 | 0.8.7 |
+| `@felan-ai/felan` | 0.40.9 | 0.40.10 |
