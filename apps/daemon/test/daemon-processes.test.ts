@@ -45,6 +45,40 @@ describe.skipIf(!supported)('registry process ownership', () => {
     }
   });
 
+  it.each([
+    { platform: 'Windows', windows: true },
+    { platform: 'POSIX', windows: false },
+  ])('takes the adapter identity check only on a $platform host that cannot see the runner PID', async ({ windows }) => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    let verified = true;
+    const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42, verified }));
+    const exec = vi.fn<AgentRuntime['exec']>(async () => ({ stdout: 'unrelated process', stderr: '', code: 0, killed: false }));
+    const adapter = { ...fakeProcessAdapter(), inspectDetached,
+      describeJob: (_runtime: AgentRuntime, path: string) => ({ id: 'job', kind: 'detached' as const,
+        status: 'running' as const, command: 'worker', startedAt: now - 100, startIdentity: 'launch', commandIdentity: ['worker'], outputPath: path }),
+    };
+    const processes = new RegistryProcesses({ store: f.store, processAdapter: adapter, assertCurrent: () => f.owner.assertCurrent(), changed() {} });
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, raw => ({ exec, storage: () => ({ ...raw.storage(), readFile: async () => new Uint8Array() }) }), processes);
+    f.store.putResource({ id: 'job', session: b.sessionId, root: b.rootSessionId, kind: 'detached', state: 'reconciling',
+      reference: join(adapter.storageDirectory(runtime), 'job'), startIdentity: 'launch', updatedAt: now });
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+    const refresh = async () => {
+      Object.defineProperty(process, 'platform', { ...platform, value: windows ? 'win32' : 'linux' });
+      try { await processes.refresh(b.rootSessionId); } finally { Object.defineProperty(process, 'platform', platform); }
+    };
+    await refresh();
+    expect(inspectDetached).toHaveBeenCalledOnce();
+    if (windows) {
+      expect(exec).not.toHaveBeenCalled();
+      expect(f.store.resource('job')?.state).toBe('running');
+      expect(processes.list(b.rootSessionId)[0]?.controllable).toBe(true);
+      verified = false;
+      await refresh();
+    } else expect(exec).toHaveBeenCalledOnce();
+    expect(f.store.resource('job')?.state).toBe('reconciling');
+    expect(processes.list(b.rootSessionId)[0]?.controllable).toBe(false);
+  });
+
   it('does not probe terminal records or renew their timestamps', async () => {
     let time = now; const f = await fixture({ now: () => time }); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42 }));

@@ -30,9 +30,9 @@ export function createLocalProcessAdapter(): ProcessAdapter {
       };
     },
     async inspectDetached(runtime, id): Promise<DetachedProcessInspection> {
-      const job = await new BackgroundBashManager(runtime).get(id);
+      const { job, verified } = await new BackgroundBashManager(runtime).inspect(id);
       return {
-        status: job.status.status,
+        status: job.status.status, verified,
         ...(job.status.pid === undefined && job.meta.pid === undefined ? {} : { pid: job.status.pid ?? job.meta.pid }),
       };
     },

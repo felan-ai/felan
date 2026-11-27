@@ -65,6 +65,9 @@ notice.
   Git Bash receives the one-call launch script cut short. It also waits through
   storage reads at the same intervals, because ending the in-runtime wait at the
   deadline means killing a Git Bash process tree.
+- Windows does not know Git Bash process IDs, so after a restart the daemon on a
+  Windows host relies on the local process adapter's identity check of each
+  detached job.
 - Each command counts as a job-store mutation, so retention scans a batch every
   32 commands.
 - A background descendant (`cmd &`) no longer delays a foreground result.

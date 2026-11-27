@@ -54,7 +54,10 @@ handles only after their users settle.
 `RegistryProcesses` wraps process, terminal and storage ports. A stored PID or
 terminal status is not proof of ownership or exit. Live PTYs retain their
 process handles; restored records cannot recreate a PTY or authorize signals
-to an arbitrary PID. Detached jobs require verified identity. Closing one child
+to an arbitrary PID. Detached jobs require verified identity. Windows does not
+know the process IDs of a POSIX layer such as Git Bash, so on a Windows host
+the registry takes the process adapter's identity check when the adapter
+reports one. Closing one child
 must not stop sibling processes. Process reads and control continuations join
 the same lifetime barriers as launches and writes.
 

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { HostAgentRuntime, type AgentRuntime } from '@felan-ai/agent-core';
 import { BackgroundBashManager } from '@felan-ai/ext-background-bash';
 import { createLocalProcessAdapter } from '../../src/providers/process-adapter.js';
@@ -37,7 +37,7 @@ it.each(['detached', 'pty', 'attached'] as const)('handles %s background job rec
   expect(() => adapter.describeJob(runtime, job.meta.infoPath, new TextEncoder().encode('{'))).toThrow('record');
 });
 
-it('hides a foreground job until promotion and reports a pending finish notice', async () => {
+it('hides a foreground job until promotion and reports a pending finish notice and a verified runner', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'felan-process-adapter-')); temporary.push(directory);
   await mkdir(join(directory, 'session'));
   await mkdir(join(directory, 'agent'));
@@ -53,6 +53,11 @@ it('hides a foreground job until promotion and reports a pending finish notice',
     expect(await describe()).toMatchObject({ id: job.meta.id, kind: 'detached', status: 'running', notice: 'pending' });
     expect(await manager.settleNotice(job.meta.id, 'session-a')).toBe(true);
     expect(await describe()).not.toHaveProperty('notice');
+    // The daemon of a Windows host relies on this identity check, because it cannot inspect a Git Bash PID itself.
+    await vi.waitFor(async () => expect(await adapter.inspectDetached(runtime, job.meta.id))
+      .toEqual({ status: 'running', pid: job.meta.pid, verified: true }), { timeout: 10_000 });
+    await manager.stop(job.meta.id, 'SIGKILL');
+    expect(await adapter.inspectDetached(runtime, job.meta.id)).toMatchObject({ status: 'killed', verified: false });
   } finally {
     await manager.stop(job.meta.id, 'SIGKILL');
   }

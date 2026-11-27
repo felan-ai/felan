@@ -120,7 +120,10 @@ does not read every job. When a session starts, the extension watches every job
 that still owes it a notice, delivers the notice once for each job that already
 finished, and promotes a foreground job whose tool call a restart cut off. The
 daemon restores each open root session that has a running job or a pending
-notice after it restarts, so the notice arrives without a new prompt. PTY job
+notice after it restarts, so the notice arrives without a new prompt. Windows
+does not know the process IDs of Git Bash, so on a Windows host the daemon
+treats a restored job as running and controllable when the local process
+adapter reports that the job passes the identity check a stop makes. PTY job
 notices stay in memory and are lost with the session.
 
 ## Listing API and retention
