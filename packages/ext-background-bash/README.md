@@ -69,7 +69,8 @@ job finishes, the same call returns its exit status and output and deletes the
 job. A wait ends after at most 25 seconds and the extension starts the next one,
 because remote shell calls have time limits. Larger output is read from storage
 afterwards. Commands whose launch script would exceed 64 KB keep the
-storage-based start.
+storage-based start, and so does every command on a Windows host, where a
+launch script of this size reaches Git Bash cut short.
 
 The default foreground promotion window is 120 seconds and can be changed with
 `extensionConfig.backgroundBash.foregroundTimeoutSeconds`. Promotion lists the

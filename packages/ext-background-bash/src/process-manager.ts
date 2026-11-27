@@ -127,6 +127,8 @@ export class BackgroundBashManager {
    */
   async startForeground(command: string, noticeSession: string): Promise<BackgroundBashJob> {
     const options = { foreground: PROCESS_INSTANCE, noticeSession };
+    // A launch script of this size reaches Git Bash cut short, so a Windows host writes the job through storage.
+    if (process.platform === 'win32') return this.start(command, options);
     for (let attempt = 0; ; attempt += 1) {
       const info = this.#store.prepareJob(command, options);
       const script = createOneCallLaunchScript(info, this.#store.jobsDir, this.#store.noticesDir);
