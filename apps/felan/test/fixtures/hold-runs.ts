@@ -33,7 +33,8 @@ const gated = (name: string) => `echo ${name} >> calls.log; while [ ! -f ${name}
 
 /**
  * Root A creates a task, starts a subagent and runs a gated command; its continued step lists the tasks. The subagent runs a
- * gated command. Root B runs a gated command. Every later request is answered with text.
+ * gated command. Root B runs a gated command. Root C starts a background command that waits for `c-job.go` and runs a gated
+ * command. Every later request is answered with text.
  */
 function scriptedModel() {
   const calls: Array<{ who: string; turn: number; context: Context }> = [];
@@ -43,7 +44,8 @@ function scriptedModel() {
       streamSimple: (_model, context) => {
         const stream = createAssistantMessageEventStream();
         const users = context.messages.filter(message => message.role === 'user').map(text).join('\n');
-        const who = users.includes('CHILD-A') ? 'child-a' : users.includes('ROOT-A') ? 'root-a' : users.includes('ROOT-B') ? 'root-b' : 'other';
+        const who = users.includes('CHILD-A') ? 'child-a' : users.includes('ROOT-A') ? 'root-a' : users.includes('ROOT-B') ? 'root-b'
+          : users.includes('ROOT-C') ? 'root-c' : 'other';
         const turn = context.messages.filter(message => message.role === 'assistant').length;
         calls.push({ who, turn, context: structuredClone(context) });
         let content: AssistantMessage['content'] = [{ type: 'text', text: `${who} turn ${turn}` }];
@@ -55,6 +57,10 @@ function scriptedModel() {
         else if (who === 'root-a' && turn === 1) content = [{ type: 'toolCall', id: 'a-list', name: 'TaskList', arguments: {} }];
         else if (who === 'child-a' && turn === 0) content = [{ type: 'toolCall', id: 'c-bash', name: 'bash', arguments: { command: gated('child-a') } }];
         else if (who === 'root-b' && turn === 0) content = [{ type: 'toolCall', id: 'b-bash', name: 'bash', arguments: { command: gated('root-b') } }];
+        else if (who === 'root-c' && turn === 0) content = [
+          { type: 'toolCall', id: 'c-job', name: 'bash', arguments: { command: 'while [ ! -f c-job.go ]; do sleep 0.05; done; echo c-job-finished', background: true } },
+          { type: 'toolCall', id: 'c-bash', name: 'bash', arguments: { command: gated('root-c') } },
+        ];
         queueMicrotask(() => stream.push({ type: 'done', reason: content[0]!.type === 'toolCall' ? 'toolUse' : 'stop', message: assistant(content) }));
         return stream;
       } });
