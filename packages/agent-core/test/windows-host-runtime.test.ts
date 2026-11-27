@@ -461,9 +461,12 @@ it.runIf(process.platform === 'win32')('captures taskkill before a Windows timeo
     if (command === process.execPath) { started = child; vi.stubEnv('SystemRoot', 'relative'); }
     return child;
   });
-  const execution = runtime.exec(process.execPath, ['-e', "setTimeout(() => { process.stdout.write('not killed'); process.exit(99); }, 2500)"], { timeout: 50 });
+  // killChild gives taskkill 5 s, so the target outlives a slow kill on a loaded runner by a wide margin.
+  const begun = Date.now();
+  const execution = runtime.exec(process.execPath, ['-e', "setTimeout(() => { process.stdout.write('not killed'); process.exit(99); }, 20000)"], { timeout: 50 });
   try {
-    await expect(execution).resolves.toMatchObject({ killed: true, stdout: '' });
+    const result = await execution;
+    expect(result, `exec settled ${Date.now() - begun} ms after it started`).toMatchObject({ killed: true, stdout: '' });
     const options = vi.mocked(spawn).mock.calls.find(([command]) => command === taskkill)![2]!;
     expect(options.windowsHide).toBe(true);
     expect(options.env?.SystemRoot ?? options.env?.SYSTEMROOT).toBe(systemRoot);
