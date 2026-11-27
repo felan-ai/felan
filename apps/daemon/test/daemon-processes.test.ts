@@ -45,10 +45,10 @@ describe.skipIf(!supported)('registry process ownership', () => {
     }
   });
 
-  it.each([
-    { platform: 'Windows', windows: true },
-    { platform: 'POSIX', windows: false },
-  ])('takes the adapter identity check only on a $platform host that cannot see the runner PID', async ({ windows }) => {
+  // Ownership checks read process.platform too, so each case runs on the host whose branch it covers.
+  const windows = process.platform === 'win32';
+  it(windows ? 'takes the adapter identity check on a Windows host, which cannot see the runner PID'
+    : 'keeps its own ps identity check on a POSIX host and ignores the adapter verdict', async () => {
     const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     let verified = true;
     const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42, verified }));
@@ -61,11 +61,7 @@ describe.skipIf(!supported)('registry process ownership', () => {
     const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, raw => ({ exec, storage: () => ({ ...raw.storage(), readFile: async () => new Uint8Array() }) }), processes);
     f.store.putResource({ id: 'job', session: b.sessionId, root: b.rootSessionId, kind: 'detached', state: 'reconciling',
       reference: join(adapter.storageDirectory(runtime), 'job'), startIdentity: 'launch', updatedAt: now });
-    const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
-    const refresh = async () => {
-      Object.defineProperty(process, 'platform', { ...platform, value: windows ? 'win32' : 'linux' });
-      try { await processes.refresh(b.rootSessionId); } finally { Object.defineProperty(process, 'platform', platform); }
-    };
+    const refresh = () => processes.refresh(b.rootSessionId);
     await refresh();
     expect(inspectDetached).toHaveBeenCalledOnce();
     if (windows) {
