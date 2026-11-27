@@ -173,6 +173,30 @@ describe('a held child whose next step fails', () => {
   }, TEST_TIMEOUT_MS);
 });
 
+describe('a held child that used its last turn', () => {
+  it('ends with turn_limit_reached and takes no further step, as its turn_end would have ended it', async () => {
+    const f = await fixture();
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const now = new Date().toISOString();
+    const execution = { request: { ...request, notifyOnCompletion: true, maxTurns: 2 }, createdAt: now, startedAt: now, deliveryId: 'delivery', completionPending: false };
+    const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: root.sessionId, rootSessionId: root.sessionId, execution });
+    await child.runtime.session.prompt('start');
+    const leaf = child.runtime.session.sessionManager.getLeafId()!;
+    await f.registry.shutdown();
+    f.store.updateSession(child.sessionId, { residency: 'evicted', run: { state: 'running', id: 'child-run' }, execution });
+    f.store.putHeldRuns([{ version: 1, session: child.sessionId, root: root.sessionId, parent: root.sessionId, run: { id: 'child-run' }, leaf, queue: [], turns: 2 }]);
+    f.store.close();
+    const store = new DaemonControlStore(f.owner);
+    const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+    // A step here would fail, because the fixture session cannot start one, and leave the run interrupted.
+    await registry.restoreRecovered();
+    await vi.waitFor(() => expect(store.sessionMetadata(child.sessionId).execution).toHaveProperty('completedAt'), WAIT);
+    expect(store.sessionMetadata(child.sessionId)).toMatchObject({ run: { id: 'child-run', state: 'idle' },
+      execution: { outcome: 'cancelled', error: { code: 'turn_limit_reached' }, completionPending: true } });
+    expect(registry.binding(child.sessionId)!.runtime.session.sessionManager.getLeafId()).toBe(leaf);
+  }, TEST_TIMEOUT_MS);
+});
+
 describe('restoring after a restart', () => {
   it('reports restoring until the held runs have been continued or interrupted', async () => {
     const f = await fixture();

@@ -241,7 +241,8 @@ export class RegistryExecutions {
   /**
    * Runs a child execution that a previous daemon held, starting its next step with `trigger` instead of its prompt. The turns
    * it took before the hold count toward its turn limit, and its timeout runs from its original start. `trigger` receives the
-   * summary instruction when the next step is the execution's last.
+   * summary instruction when the next step is the execution's last. When the held step used the last turn, the execution ends
+   * with `turn_limit_reached` and `trigger` is not called.
    */
   resumeHeld(id: string, turns: number, trigger: (steer?: string) => Promise<void>): Promise<void> {
     if (this.active.has(id)) throw new Error('Execution is already running.');
@@ -287,13 +288,18 @@ export class RegistryExecutions {
       });
       let prompt = execution.message ?? execution.request.prompt;
       if (execution.request.maxTurns === 1) { session.setActiveToolsByName([]); prompt += `\n\n${synthesis}`; }
-      // The held step's turn_end, which would make this the last turn, fired in no daemon, so its decision is made here.
+      // The held step's turn_end, which would make this the last turn or end the run at its limit, fired in no daemon, so its
+      // decision is made here.
       const lastTurn = resume !== undefined && execution.request.maxTurns !== undefined && turns >= execution.request.maxTurns - 1;
-      if (lastTurn) session.setActiveToolsByName([]);
-      if (!signal.aborted) {
-        this.registry.assertDispatch(id);
-        this.registry.projection(id).setOrigin({ kind: 'automation', source: 'execution' });
-        if (resume) await resume.trigger(lastTurn ? synthesis : undefined); else await session.prompt(prompt);
+      if (resume && execution.request.maxTurns !== undefined && turns >= execution.request.maxTurns) {
+        limit = true; this.registry.settleContinued(id);
+      } else {
+        if (lastTurn) session.setActiveToolsByName([]);
+        if (!signal.aborted) {
+          this.registry.assertDispatch(id);
+          this.registry.projection(id).setOrigin({ kind: 'automation', source: 'execution' });
+          if (resume) await resume.trigger(lastTurn ? synthesis : undefined); else await session.prompt(prompt);
+        }
       }
       await this.active.get(id)?.cancelling;
       // A held child stays unfinished; the next daemon continues it and delivers its completion then.

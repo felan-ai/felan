@@ -288,6 +288,12 @@ export class SessionRegistry {
   /** Ends a continued child run whose next step failed, as a restart interruption. */
   interruptContinued(id: string): void { this.interruptRun(id); }
 
+  /** Ends a continued child run that reached its turn limit before another step, as the limit's abort ends an unheld run. */
+  settleContinued(id: string): void {
+    this.continuing.delete(id);
+    this.require(id).projection.settleRun(this.options.store.sessionMetadata(id).run.id);
+  }
+
   /** True when the session is resident with no run, so a completion can start one even while runs are held. */
   idleForCompletion(id: string): boolean {
     const entry = this.entries.get(id);
