@@ -35,6 +35,8 @@ const WAIT_POLL_MS = 500;
 const FOREGROUND_WAIT_SLICE_MS = 25_000;
 const FOREGROUND_MAX_FAILED_WAITS = 10;
 const FOREGROUND_DEAD_RECHECK_MS = 500;
+const FOREGROUND_SHORT_POLLS = 20;
+const FOREGROUND_PROBE_POLLS = 64;
 /** A log this small cannot exceed the result limits even if every byte decodes to a three-byte replacement character. */
 const FOREGROUND_INLINE_LOG_BYTES = 16 * 1024;
 const FOREGROUND_INLINE_LOG_LINES = 2_000;
@@ -58,8 +60,11 @@ export class BackgroundBashManager {
   readonly #storage: AgentRuntimeStorage;
 
   readonly #coordinator: BackgroundBashCoordinator;
+  /** The host runtime of a Windows host runs POSIX calls through Git Bash. */
+  readonly #gitBashHost: boolean;
 
   constructor(private readonly runtime: AgentRuntime) {
+    this.#gitBashHost = process.platform === 'win32' && runtime.kind === 'host';
     this.#storage = runtime.storage('session');
     this.#store = new BackgroundBashJobStore(runtime, this.#storage);
     this.#coordinator = new BackgroundBashCoordinator(runtime, snapshot => this.#persistInteractiveSnapshot(snapshot.id, snapshot));
@@ -128,7 +133,7 @@ export class BackgroundBashManager {
   async startForeground(command: string, noticeSession: string): Promise<BackgroundBashJob> {
     const options = { foreground: PROCESS_INSTANCE, noticeSession };
     // A launch script of this size reaches Git Bash cut short, so a Windows host writes the job through storage.
-    if (process.platform === 'win32') return this.start(command, options);
+    if (this.#gitBashHost) return this.start(command, options);
     for (let attempt = 0; ; attempt += 1) {
       const info = this.#store.prepareJob(command, options);
       const script = createOneCallLaunchScript(info, this.#store.jobsDir, this.#store.noticesDir);
@@ -168,6 +173,7 @@ export class BackgroundBashManager {
    * The call that sees the job finish also returns a small log and deletes the job when no result can need it.
    */
   async waitForForeground(job: BackgroundBashJob, deadline: number, signal?: AbortSignal): Promise<ForegroundExit | undefined> {
+    if (this.#gitBashHost) return this.#pollForeground(job, deadline, signal);
     const id = job.meta.id;
     let failures = 0;
     let lastFailure: unknown;
@@ -226,6 +232,35 @@ export class BackgroundBashManager {
       if (result) lastFailure = new Error(result.stderr || result.stdout || `Waiting for ${id} failed (exit ${result.code})`);
       if (++failures >= FOREGROUND_MAX_FAILED_WAITS) throw new Error(`Unable to wait for background process ${id}`, { cause: lastFailure });
       await sleep(Math.max(0, Math.min(100 * failures, deadline - Date.now())), signal);
+    }
+  }
+
+  /**
+   * A Windows host polls the job through storage reads. Ending Git Bash's in-runtime wait loop at the deadline means
+   * killing its process tree, which does not end that shell call promptly.
+   */
+  async #pollForeground(job: BackgroundBashJob, deadline: number, signal?: AbortSignal): Promise<ForegroundExit | undefined> {
+    const id = job.meta.id;
+    const pid = job.meta.pid ?? job.status.pid;
+    let misses = 0;
+    for (let polls = 1; ; polls += 1) {
+      signal?.throwIfAborted();
+      const latest = await this.#store.readJob(id);
+      if (!latest) {
+        // A record that another process is rewriting reads as missing for a moment.
+        if (++misses >= FOREGROUND_MAX_FAILED_WAITS) throw new Error(`Background process not found: ${id}`);
+      } else {
+        misses = 0;
+        if (isTerminalStatus(latest.status.status)) return { job: latest };
+        // As in the in-runtime wait, only a runner that `kill -0` no longer finds goes through the store's refresh.
+        if (polls % FOREGROUND_PROBE_POLLS === 0 && pid !== undefined && !await this.#isProcessAlive(pid)) {
+          const refreshed = await this.get(id);
+          if (isTerminalStatus(refreshed.status.status)) return { job: refreshed };
+        }
+      }
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return undefined;
+      await sleep(Math.min(remaining, polls <= FOREGROUND_SHORT_POLLS ? 10 : 30), signal);
     }
   }
 
@@ -332,6 +367,18 @@ export class BackgroundBashManager {
     if (!job) throw new Error(`Background process not found: ${id}`);
     if (wasStarting) return job;
     return this.#refreshJob(job);
+  }
+
+  /** Reads a job and reports whether its runner is alive and passes the identity check a stop makes before it signals. */
+  async inspect(id: string): Promise<{ job: BackgroundBashJob; verified: boolean }> {
+    const stored = await this.#store.readJob(id);
+    if (!stored) throw new Error(`Background process not found: ${id}`);
+    const pid = stored.status.pid ?? stored.meta.pid;
+    if (stored.status.status === 'running' && stored.meta.executionMode === 'detached' && pid !== undefined
+      && !pendingLaunches.has(resolve(stored.meta.jobDir)) && await this.#isJobProcessAlive(stored, pid)) {
+      return { job: stored, verified: true };
+    }
+    return { job: await this.get(id), verified: false };
   }
 
   async #refreshJob(job: BackgroundBashJob): Promise<BackgroundBashJob> {
@@ -692,10 +739,10 @@ function createForegroundWaitScript(job: BackgroundBashJob, noticesDir: string, 
   const jobDir = shellQuote(job.meta.jobDir);
   const completion = shellQuote(job.meta.completionPath);
   const output = shellQuote(job.meta.logPath);
-  const shortPolls = 20;
+  const shortPolls = FOREGROUND_SHORT_POLLS;
   const maxPolls = shortPolls + Math.ceil((sliceSeconds * 1_000 - shortPolls * 10) / 30);
   return [
-    'short=0.01; long=0.03; every=64; polls=0',
+    `short=0.01; long=0.03; every=${FOREGROUND_PROBE_POLLS}; polls=0`,
     `limit=${maxPolls}`,
     `while [ ! -f ${completion} ]; do`,
     `  if [ ! -d ${jobDir} ]; then printf 'gone\\n'; exit 0; fi`,
@@ -780,6 +827,11 @@ function parseProcessInspection(output: string): { processGroupId: number; comma
   return undefined;
 }
 
+/**
+ * Git Bash's `ps` omits arguments, so there a fresh heartbeat marker is what identifies the runner to a stop. The
+ * heartbeat ignores the signals sent to the process group and lasts as long as the runner, so a SIGKILL that follows a
+ * SIGTERM the command ignored still finds the runner.
+ */
 function createRunnerScript(job: BackgroundBashJob): string {
   const id = shellQuote(job.meta.id);
   const processToken = shellQuote(job.meta.processToken ?? '');
@@ -807,9 +859,19 @@ write_heartbeat() {
 }
 
 heartbeat() {
-  while write_heartbeat; do
+  trap '' TERM INT HUP
+  while kill -0 "$$" 2>/dev/null; do
+    write_heartbeat || rm -f "$tmp_path" 2>/dev/null
     sleep 1
   done
+}
+
+stop_heartbeat() {
+  if [ -n "$heartbeat_pid" ]; then
+    kill -KILL "$heartbeat_pid" 2>/dev/null
+    wait "$heartbeat_pid" 2>/dev/null
+    heartbeat_pid=
+  fi
 }
 
 write_completion() {
@@ -840,15 +902,12 @@ EOF
 
 terminate() {
   signal_name="$1"
-  if [ -n "$heartbeat_pid" ]; then
-    kill "$heartbeat_pid" 2>/dev/null
-    wait "$heartbeat_pid" 2>/dev/null
-  fi
   short_signal=\${signal_name#SIG}
   if [ -n "$child_pid" ]; then
     kill -"$short_signal" "$child_pid" 2>/dev/null
     wait "$child_pid" 2>/dev/null
   fi
+  stop_heartbeat
   write_completion killed null "$signal_name"
   exit 143
 }
@@ -865,11 +924,7 @@ child_pid=$!
 wait "$child_pid"
 exit_code=$?
 trap - TERM INT HUP
-
-if [ -n "$heartbeat_pid" ]; then
-  kill "$heartbeat_pid" 2>/dev/null
-  wait "$heartbeat_pid" 2>/dev/null
-fi
+stop_heartbeat
 
 if [ ! -f "$completion_path" ]; then
   if [ "$exit_code" -eq 0 ]; then

@@ -61,6 +61,10 @@ notice.
   ADR 0047, and the result arrives a median of 25 to 28 ms after the command
   exits. Spawning the runner and writing its completion file take most of that
   time. On a remote runtime the two round trips dominate.
+- A Windows host starts each foreground job through storage writes, because
+  Git Bash receives the one-call launch script cut short. It also waits through
+  storage reads at the same intervals, because ending the in-runtime wait at the
+  deadline means killing a Git Bash process tree.
 - Each command counts as a job-store mutation, so retention scans a batch every
   32 commands.
 - A background descendant (`cmd &`) no longer delays a foreground result.

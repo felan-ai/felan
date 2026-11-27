@@ -22,7 +22,11 @@ leaves its tools inactive when the runtime is incompatible. On native Windows,
 `FELAN_POSIX_SHELL`, `PATH`, or standard Git-for-Windows locations. WSL is not
 selected automatically because its path and process namespace does not match
 the host runtime. Git Bash's process tools use its `ps -l` format when GNU
-`ps -o` is unavailable. Host dependency configuration can disable the extension
+`ps -o` is unavailable. That format shows no arguments, so a stop identifies a
+Git Bash runner by the heartbeat marker it rewrites every second. The heartbeat
+ignores the signals sent to the job's process group and ends with the runner,
+so a `SIGKILL` that follows a `SIGTERM` the command ignored still reaches the
+job. Host dependency configuration can disable the extension
 when the runtime is incompatible; Felan does not install operating-system
 utilities.
 
@@ -70,7 +74,10 @@ job. A wait ends after at most 25 seconds and the extension starts the next one,
 because remote shell calls have time limits. Larger output is read from storage
 afterwards. Commands whose launch script would exceed 64 KB keep the
 storage-based start, and so does every command on a Windows host, where a
-launch script of this size reaches Git Bash cut short.
+launch script of this size reaches Git Bash cut short. A Windows host also
+waits through storage: it reads the job record every 10 ms for 0.2 s and every
+30 ms after that, and probes the runner with `kill -0` every 64 reads.
+Promotion there never kills a Git Bash shell call at the deadline.
 
 The default foreground promotion window is 120 seconds and can be changed with
 `extensionConfig.backgroundBash.foregroundTimeoutSeconds`. Promotion lists the

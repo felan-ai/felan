@@ -365,6 +365,33 @@ describe('BackgroundBashManager', () => {
     }
   }, INTEGRATION_TEST_TIMEOUT_MS);
 
+  it('keeps the runner verifiable for a SIGKILL after its command ignored SIGTERM', async () => {
+    const { manager, runtime } = await createManager();
+    const job = await manager.start("trap '' TERM; printf '%s' \"$$\" > ignoring.pid; while :; do sleep 0.05; done");
+    trackJob(manager, job.meta.id);
+    const commandPid = await vi.waitFor(async () => {
+      const pid = Number(new TextDecoder().decode(await runtime.readFile('ignoring.pid')));
+      expect(pid).toBeGreaterThan(0);
+      return pid;
+    }, { timeout: 10_000 });
+    await vi.waitFor(async () => expect(await manager.inspect(job.meta.id))
+      .toMatchObject({ verified: true, job: { status: { status: 'running' } } }), { timeout: 5_000 });
+
+    await expect(manager.stop(job.meta.id, 'SIGTERM')).rejects.toThrow('did not exit after 5 seconds');
+    // Git Bash's ps shows no arguments, so there this marker is what identifies the runner to the SIGKILL.
+    await vi.waitFor(async () => {
+      const marker = new TextDecoder().decode(await runtime.storage('session').readFile(join(job.meta.jobDir, 'runner-heartbeat')));
+      const [id, token, markerPid, timestamp] = marker.trim().split('\n');
+      expect({ id, token, markerPid }).toEqual({ id: job.meta.id, token: job.meta.processToken, markerPid: String(job.meta.pid) });
+      expect(Math.floor(Date.now() / 1_000) - Number(timestamp)).toBeLessThanOrEqual(3);
+      expect(await manager.inspect(job.meta.id)).toMatchObject({ verified: true, job: { status: { status: 'running' } } });
+    }, { timeout: 5_000 });
+
+    await expect(manager.stop(job.meta.id, 'SIGKILL')).resolves.toMatchObject({ status: { status: 'killed', signal: 'SIGKILL' } });
+    await waitForProcessExit(runtime, commandPid);
+    expect(await manager.inspect(job.meta.id)).toMatchObject({ verified: false, job: { status: { status: 'killed' } } });
+  }, INTEGRATION_TEST_TIMEOUT_MS);
+
   it('does not inspect or signal an orphaned PTY PID', async () => {
     const { runtime } = await createManager();
     const store = new BackgroundBashJobStore(runtime, runtime.storage('session'));
