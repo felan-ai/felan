@@ -34,7 +34,10 @@ the control store. Then the daemon answers `held`.
   wait, or a live process left once every run waits, cancels the attempt at
   once.
 - A hold answers `busy` while the daemon still continues the runs its
-  predecessor held, because closing admission then would interrupt them.
+  predecessor held, because closing admission then would interrupt them. It
+  answers `busy` too, idle holds included, while the daemon restores at
+  startup the sessions whose background jobs may still run or still owe a
+  finish notice, because a closed admission stops that restore.
 - A cancelled or expired hold deletes the records and releases each waiting
   step with its original decision, so the run continues in place as if it had
   only paused. The steps are released even if the delete fails. Subagents that
@@ -47,10 +50,13 @@ the control store. Then the daemon answers `held`.
 - A stop after `held` does not wait for held runs. A run that starts after
   `held`, such as for a background command's finish notice, gets its record
   when it reaches a step end, including during the stop's drain. If that
-  record cannot be written, the run takes its next step instead. The stop then
-  aborts the waiting runs. An abort releases the hook with `{ action: 'end' }`,
-  so the run ends without another request and without an aborted message.
-  Their runs stay `running` and their child executions stay unfinished.
+  record cannot be written, the run takes its next step instead. A completion
+  the daemon can still deliver to an idle parent, in flight or owed, keeps the
+  drain waiting even in a root with a held run, so the run it starts holds
+  too. The stop then aborts the waiting runs. An abort releases the hook with
+  `{ action: 'end' }`, so the run ends without another request and without an
+  aborted message. Their runs stay `running` and their child executions stay
+  unfinished.
 - Ending the run makes Pi append what it kept for the step's end, such as
   context-only custom messages. When only such context or metadata follows the
   recorded leaf, the record moves to the final leaf as the session is evicted.
@@ -62,7 +68,8 @@ the control store. Then the daemon answers `held`.
   restarted after the tool results above were saved. Continue the task from
   where you stopped." When a subagent's next step is its last, its tools are
   removed and the summary instruction is queued after the saved messages, as
-  the held step's `turn_end` would have done.
+  the held step's `turn_end` would have done. When the held step used its last
+  turn, the subagent ends with `turn_limit_reached` and takes no step.
 - A record that does not match, or a continued run whose next step fails,
   leaves the run `interrupted`. A subagent whose run cannot continue finishes
   as `cancelled` with `host_shutdown`, and its parent is told.
@@ -98,13 +105,29 @@ while it owes the run a deferred compaction.
 ## Consequences
 
 - A normal step pays one call that returns `false` in the wrapped `finishTurn`,
-  and one comparison per tool call in the wrapped `afterToolCall`. It adds no
-  runtime call, no storage write and no model request.
+  and one comparison per tool call in the wrapped `afterToolCall`. A subagent
+  also pays one `Map` lookup per `turn_end` to skip a held step's count.
+  ext-background-bash runs a handler on every `message_start`, `message_end`
+  and `agent_end`, which returns after a type check or a loop over an empty
+  set. A normal step adds no runtime call, no storage write and no model
+  request.
+- `host.status` observes live processes twice: once to count interruptible
+  work and once for the `blocking` count. While a hold waits, each check reads
+  activity and the process counts again, on every park and at least every
+  100 ms.
 - A continued run gets one hidden message in its transcript and model context.
   The model reads it as a user turn, so it names its sender.
-- Only user messages are carried across. Custom notices queued by extensions
-  are delivered again by their owners: subagent completions from the daemon's
-  execution records, background-bash notices from the job store.
+- Only user messages are carried across. A custom message an extension steers
+  into a held run waits in Pi's queue, and the stop that ends the run drops
+  it. Its owner delivers it again only if the owner marks it delivered after Pi
+  stores it. The daemon keeps a subagent completion pending until the parent
+  port finds its entry in the transcript. ext-background-bash settles a finish
+  notice on the first `message_start` or `agent_end` after its `message_end`,
+  which Pi emits once it has appended the entry. An extension that marks a
+  steer delivered when it sends it loses that steer at a restart. The other
+  bundled extensions that send custom messages use `triggerTurn: false`
+  (ext-memory, ext-fusion) or send them only while they refuse holds
+  (ext-prewalk).
 - A run that keeps answering without tool calls never waits at a step end, so a
   hold during it waits until the run ends or `stepTimeoutMs` cancels it.
 - A run started after `held` that has not reached a step end when a force stop

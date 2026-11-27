@@ -1138,8 +1138,10 @@ ignores it in v1 envelopes.
   is closed. If such a question appears while the hold waits, or a live process
   remains once every run waits, the attempt ends at once with
   `hold_cancelled`.
-- While a daemon still continues the runs its predecessor held, it answers a
-  hold with `busy` without closing admission.
+- While a daemon still continues the runs its predecessor held, or still
+  restores at startup the sessions whose background jobs may still run or
+  still owe a finish notice, it answers every hold with `busy` without closing
+  admission. That includes a hold on a host with no active run.
 - Once every run is held and nothing else runs, the daemon writes one continue
   record per held run (`version: 1`) and answers `outcome: 'accepted'`,
   `state: 'draining'`, `held: { action, since, until, runs }`, where `runs` is
@@ -1155,7 +1157,9 @@ ignores it in v1 envelopes.
   that stop. One that arrives after `held` stops the daemon without interrupting
   the held runs. They stay `running` with `residency: 'evicted'`. A run that
   started after `held` is held too if it reaches a step end: a drain stop waits
-  for that, and a force stop interrupts it.
+  for that, and a force stop interrupts it. A subagent completion that the
+  daemon can still deliver to an idle parent, either in flight or owed, keeps
+  a drain stop waiting, so the run it starts is held at a step end too.
 - A held run stays `running` to every client. The protocol has no new run state.
 - Cancelling or closing a held session, or interrupting its run, deletes its
   record. While a hold is active, a subagent completion reaches its parent
@@ -1164,6 +1168,12 @@ ignores it in v1 envelopes.
   parent waits until the hold ends or the next daemon restores the parent.
   Subagents queued while admission is closed start once the hold ends, and a
   restart cancels them with `host_shutdown`.
+- A custom message an extension steers into a held run waits in Pi's queue,
+  and the stop that ends the run drops it. The record keeps only user
+  messages. The owner delivers such a message again only if it marks it
+  delivered after Pi stores it. The daemon does this for subagent
+  completions, and `@felan-ai/ext-background-bash` does it for finish
+  notices from 0.17.1.
 
 When a stop ends a held run, Pi may append context it kept for the step's end,
 such as custom messages sent with `triggerTurn: false`. If only custom
@@ -1181,7 +1191,9 @@ whose text is "Notice from the session host, not from the user: the host
 restarted after the tool results above were saved. Continue the task from
 where you stopped." A subagent's record counts the held step toward its turn
 limit; when the next step is its last, its tools are removed and the summary
-instruction is queued after the saved messages. A record that is unreadable,
+instruction is queued after the saved messages. When the held step used its
+last turn, the subagent finishes as `cancelled` with `turn_limit_reached` and
+takes no further step, as its unheld run would have. A record that is unreadable,
 of another version or no longer matches leaves its run `interrupted`, as a
 restart does today, and so does a continued run whose next step fails. A
 subagent whose run cannot continue finishes as `cancelled` with
