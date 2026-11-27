@@ -453,15 +453,17 @@ export class SessionServer {
    * Runs plus everything a restart would interrupt: busy sessions (including child executions), in-flight runtime operations and
    * live processes, unanswered host questions and busy providers.
    */
-  async activity(): Promise<{ runs: number; work: number; workByKind: { sessions: number; processes: number; interactions: number; providers: number } }> {
+  async activity(): Promise<{ runs: number; work: number; workByKind: { sessions: number; processes: number; interactions: number; providers: number };
+    blocking: { questions: number; processes: number } }> {
     const { registry } = this.options;
     // A draft gets listed only once its first message is projected, but a run in it is already active.
     const runs = registry.list().filter(row => ['running', 'waiting', 'cancelling'].includes(row.run.state)).length;
-    const interactions = (this.options.broker?.pending?.() ?? registry.options.store.interactions())
-      .filter(item => item.state === 'waiting' && item.scope.kind === 'host').length;
+    const waiting = (this.options.broker?.pending?.() ?? registry.options.store.interactions()).filter(item => item.state === 'waiting');
+    const interactions = waiting.filter(item => item.scope.kind === 'host').length;
     const { sessions, processes } = await registry.activeWorkByKind();
     const providers = Number(this.options.providersBusy?.() ?? false);
-    return { runs, work: sessions + processes + interactions + providers, workByKind: { sessions, processes, interactions, providers } };
+    return { runs, work: sessions + processes + interactions + providers, workByKind: { sessions, processes, interactions, providers },
+      blocking: { questions: waiting.length, processes: await registry.processes.liveCount() } };
   }
 
   /** True once a stop, restart or hold closed admission; remote commands rejected then are retried by the next claim. */

@@ -8,7 +8,12 @@ export type HostState = OperationResult<'host.status'>['state'];
 export type HostAction = 'stop' | 'restart';
 export type HostMode = OperationParams<'host.stop'>['mode'];
 export type SettleMode = Exclude<HostMode, 'hold'>;
-export interface HostActivity { runs: number; work: number }
+export interface HostActivity {
+  runs: number;
+  work: number;
+  /** Work no run finishes by itself: questions waiting for a person and live processes. A hold of active runs refuses it at once. */
+  blocking?: { questions: number; processes: number };
+}
 export interface HostLifecycleOptions {
   target: ResolvedDaemonTarget;
   identity: DaemonIdentity;
@@ -148,7 +153,8 @@ export class HostLifecycle {
       })]);
     } catch (error) { failure = error; } finally { clearTimeout(timer); }
     if (pending.generation !== this.generation) return { response: rejection(request, 'busy', 'Another stop or restart replaced the hold.') };
-    if (observed?.runs && this.options.holdRuns) {
+    const blocked = observed?.blocking && observed.blocking.questions + observed.blocking.processes > 0;
+    if (observed?.runs && this.options.holdRuns && !blocked) {
       const limit = (request.params as { stepTimeoutMs?: number }).stepTimeoutMs ?? STEP_TIMEOUT_MS;
       return { response: this.awaitRuns(request, pending, action, limit) };
     }
@@ -157,7 +163,9 @@ export class HostLifecycle {
         this.block(new Error('Admission could not reopen after a refused hold.'), 'end-drain');
         return { response: rejection(request, 'host_blocked', 'Admission could not reopen after a refused hold.') };
       }
-      return { response: observed ? rejection(request, 'busy', `The daemon has ${observed.runs} active runs and ${observed.work} units of interruptible work; it holds only while idle.`)
+      return { response: observed ? rejection(request, 'busy', observed.runs && this.options.holdRuns && blocked
+        ? `The daemon has ${observed.blocking!.questions} questions waiting for a person and ${observed.blocking!.processes} live processes; a run held now could not reach the end of its step.`
+        : `The daemon has ${observed.runs} active runs and ${observed.work} units of interruptible work; it holds only while idle.`)
         : rejection(request, 'unavailable', failure instanceof Error ? failure.message : 'Daemon activity could not be read.') };
     }
     try { this.options.beginDrain(); } catch (error) { this.block(error, 'begin-drain'); return { response: rejection(request, 'host_blocked', 'The daemon could not close admission.') }; }

@@ -379,9 +379,12 @@ export class RegistryProcesses {
   }
   /** Work a daemon stop would interrupt: in-flight runtime operations and live non-transport processes. Detached jobs survive the daemon. */
   async interruptibleCount(): Promise<number> {
+    return [...this.operations.values()].filter(({ passive }) => !passive).length + await this.liveCount();
+  }
+  /** Live non-transport processes. Unlike an in-flight runtime operation, such a process need not end with its step. */
+  async liveCount(): Promise<number> {
     await this.observeLive();
-    return [...this.operations.values()].filter(({ passive }) => !passive).length
-      + [...this.live.values()].filter(item => !item.transport && !item.settled && !item.disposed).length;
+    return [...this.live.values()].filter(item => !item.transport && !item.settled && !item.disposed).length;
   }
 
   async observeLive(): Promise<void> {

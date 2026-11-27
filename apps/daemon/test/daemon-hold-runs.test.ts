@@ -24,12 +24,15 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
   const gates = new Map<string, ReturnType<typeof gate>>();
   const open = (name: string) => { let found = gates.get(name); if (!found) { found = gate(); gates.set(name, found); } return found; };
   const started: string[] = []; const requests: Array<{ prompt: string; turn: number }> = [];
+  let broker!: ReturnType<typeof createRegistryInteractionBroker>;
   const respond = (context: Context): AssistantMessage['content'] => {
     const prompt = context.messages.filter(message => message.role === 'user').map(message => typeof message.content === 'string' ? message.content
       : message.content.map(part => part.type === 'text' ? part.text : '').join('')).join('\n');
     const turn = context.messages.filter(message => message.role === 'assistant').length;
     requests.push({ prompt, turn });
     const name = /gate:(\S+)/u.exec(prompt)?.[1];
+    const question = /ask:(\S+)/u.exec(prompt)?.[1];
+    if (turn === 0 && question) return [{ type: 'toolCall', id: `ask-${question}`, name: 'ask', arguments: { gate: question } }];
     return turn === 0 && name ? [{ type: 'toolCall', id: `wait-${name}`, name: 'wait', arguments: { gate: name } }] : [{ type: 'text', text: `done ${turn}` }];
   };
   const f = await serverFixture({ now: Date.now, respond, extension: pi => {
@@ -37,6 +40,13 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
       async execute(_id, params: { gate: string }) {
         started.push(params.gate); await open(params.gate).promise;
         return { content: [{ type: 'text', text: `passed ${params.gate}` }], details: {} };
+      } });
+    pi.registerTool({ name: 'ask', label: 'ask', description: 'Asks the person a question once the test opens a gate.', parameters: Type.Object({ gate: Type.String() }),
+      async execute(_id, params: { gate: string }, signal, _update, ctx) {
+        started.push(params.gate); await open(params.gate).promise;
+        const session = ctx.sessionManager.getSessionId();
+        const answer = await broker.request({ kind: 'confirm', title: 'Question', message: 'Continue?' }, { kind: 'session', session, root: session }, { ...(signal ? { signal } : {}) });
+        return { content: [{ type: 'text', text: `answered ${answer.state}` }], details: {} };
       } });
     options.extension?.(pi);
     if (options.refuse) {
@@ -48,7 +58,7 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
       });
     }
   } });
-  const broker = createRegistryInteractionBroker(f.registry);
+  broker = createRegistryInteractionBroker(f.registry);
   const connector = { claiming: true, beginDrain: vi.fn(() => { connector.claiming = false; }), endDrain: vi.fn(() => { connector.claiming = true; }) };
   const complete = vi.fn(async () => {});
   let server!: SessionServer;
@@ -70,18 +80,18 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
   const client = new SessionClient({ target: { kind: 'isolated', directory: f.directory, namespaceId: f.owner.target.namespaceId, storeRoots: [f.directory] },
     clientVersion: 'fixture', kind: 'tui', expected: f.owner.identity });
   clients.push(client); await client.connect();
-  /** Starts a daemon run in a new session whose first step waits on `name`. */
-  async function run(name: string) {
+  /** Starts a daemon run in a new session whose first step waits on `name`, then asks the person a question when `ask` is set. */
+  async function run(name: string, { ask = false } = {}) {
     const created = await client.request('sessions.create', { cwd: f.cwd, model: { provider: 'offline', id: 'fixture' } });
     if (created.outcome !== 'accepted') throw new Error(JSON.stringify(created));
     const session = created.result.sessionId;
     await client.attach(session);
-    expect(await client.request('prompt', { text: `gate:${name}` }, { session })).toMatchObject({ outcome: 'accepted' });
+    expect(await client.request('prompt', { text: ask ? `ask:${name}` : `gate:${name}` }, { session })).toMatchObject({ outcome: 'accepted' });
     await vi.waitFor(() => expect(started).toContain(name), WAIT);
     return session;
   }
   const hold = (params: { stepTimeoutMs?: number } = {}) => server.requestManagement({ v: 1, id: requestIdNow(), op: 'host.restart', params: { expected: f.owner.identity, mode: 'hold', ...params } });
-  const requestsFor = (name: string) => requests.filter(request => request.prompt.includes(`gate:${name}`));
+  const requestsFor = (name: string) => requests.filter(request => request.prompt.includes(`gate:${name}`) || request.prompt.includes(`ask:${name}`));
   /** Creates a session that runs nothing until the test starts a run in it. */
   async function idle() {
     const created = await client.request('sessions.create', { cwd: f.cwd, model: { provider: 'offline', id: 'fixture' } });
@@ -165,7 +175,8 @@ it('cancels the attempt after stepTimeoutMs: held runs continue, admission reope
 
 it('waits three minutes for runs to hold when the request names no limit', async () => {
   const f = await fixture();
-  vi.spyOn(f.server, 'activity').mockResolvedValue({ runs: 1, work: 1, workByKind: { sessions: 1, processes: 0, interactions: 0, providers: 0 } });
+  vi.spyOn(f.server, 'activity').mockResolvedValue({ runs: 1, work: 1, workByKind: { sessions: 1, processes: 0, interactions: 0, providers: 0 },
+    blocking: { questions: 0, processes: 0 } });
   vi.spyOn(f.registry, 'holdRuns').mockImplementation(signal => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true })));
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   let settled = false;
@@ -376,3 +387,61 @@ it('keeps a held run at its parked leaf when the stop added a model turn, so the
   await vi.waitFor(() => expect(f.complete).toHaveBeenCalledExactlyOnceWith('restart'), WAIT);
   expect(f.store.heldRuns()).toEqual([expect.objectContaining({ session, leaf: parkedLeaf })]);
 });
+
+const waitingQuestions = (f: Awaited<ReturnType<typeof fixture>>) => f.store.interactions().filter(item => item.state === 'waiting').length;
+/** Cancels the run, which withdraws its question, so the fixture can stop. */
+async function withdraw(f: Awaited<ReturnType<typeof fixture>>, session: string) {
+  expect(await f.client.request('cancel', {}, { session })).toMatchObject({ outcome: 'accepted' });
+  await vi.waitFor(() => expect(f.store.sessionMetadata(session).run.state).not.toBe('running'), WAIT);
+}
+
+it('refuses at once and reopens admission when a run waits for a person', async () => {
+  const f = await fixture();
+  const session = await f.run('q', { ask: true });
+  f.open('q').resolve();
+  await vi.waitFor(() => expect(waitingQuestions(f)).toBe(1), WAIT);
+  const response = await f.hold({ stepTimeoutMs: 60_000 });
+  expect(response).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
+  expect(f.lifecycle.state).toBe('ready');
+  expect(f.server.admissionClosed()).toBe(false); expect(f.connector.claiming).toBe(true);
+  await withdraw(f, session);
+}, TEST_TIMEOUT_MS);
+
+it('cancels the attempt at once when a run starts waiting for a person during the hold', async () => {
+  const f = await fixture();
+  const session = await f.run('q', { ask: true });
+  const started = Date.now();
+  const response = f.hold({ stepTimeoutMs: 60_000 });
+  await vi.waitFor(() => expect(f.server.admissionClosed()).toBe(true), WAIT);
+  f.open('q').resolve();
+  const cancelled = await response;
+  expect(cancelled).toMatchObject({ outcome: 'rejected', error: { code: 'hold_cancelled' } });
+  expect(cancelled.outcome === 'rejected' && cancelled.error.message).toContain('answer');
+  // Well under the step timeout: nothing the daemon does would let the run reach its step end.
+  expect(Date.now() - started).toBeLessThan(30_000);
+  expect(f.lifecycle.state).toBe('ready'); expect(f.server.admissionClosed()).toBe(false);
+  expect(waitingQuestions(f)).toBe(1);
+  await withdraw(f, session);
+}, TEST_TIMEOUT_MS);
+
+it('refuses at once when a live process would outlast every run', async () => {
+  const f = await fixture();
+  await f.run('a');
+  vi.spyOn(f.registry.processes, 'liveCount').mockResolvedValue(1);
+  expect(await f.hold({ stepTimeoutMs: 60_000 })).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
+  expect(f.lifecycle.state).toBe('ready'); expect(f.server.admissionClosed()).toBe(false);
+}, TEST_TIMEOUT_MS);
+
+it('cancels the attempt at once when a live process remains after every run held', async () => {
+  const f = await fixture();
+  await f.run('a');
+  const response = f.hold({ stepTimeoutMs: 60_000 });
+  await vi.waitFor(() => expect(f.server.admissionClosed()).toBe(true), WAIT);
+  // The process starts after the hold looked, as one a step leaves running would.
+  vi.spyOn(f.registry.processes, 'liveCount').mockResolvedValue(1);
+  f.open('a').resolve();
+  const cancelled = await response;
+  expect(cancelled).toMatchObject({ outcome: 'rejected', error: { code: 'hold_cancelled' } });
+  expect(cancelled.outcome === 'rejected' && cancelled.error.message).toContain('process');
+  await vi.waitFor(() => expect(f.requestsFor('a').map(request => request.turn)).toEqual([0, 1]), WAIT);
+}, TEST_TIMEOUT_MS);

@@ -244,15 +244,22 @@ export class SessionRegistry {
    * gets its record when it parks. When `signal` aborts or a record cannot be written, the parked runs continue and no
    * record remains.
    */
-  async holdRuns(signal: AbortSignal, otherWork: () => Promise<boolean>): Promise<number> {
+  async holdRuns(signal: AbortSignal, outside: () => Promise<{ busy: boolean; questions: number }>): Promise<number> {
     this.assertAdmission();
     if (!this.draining || this.stepHold) throw new Error('Runs are held only once, after admission closed.');
     const hold: StepHold = { held: false, changed: () => {} };
     this.stepHold = hold;
     try {
-      // The synchronous check comes last, so no run can start between it and the record write.
-      while (await this.processes.interruptibleCount() || await otherWork() || !this.runsQuiet()) {
+      for (;;) {
         signal.throwIfAborted();
+        const { busy, questions } = await outside();
+        // A run waiting for a person or a process that outlasts every held run ends only with outside help.
+        if (questions) throw new Error('A run waits for a person\'s answer, so it cannot reach the end of its step.');
+        const work = await this.processes.interruptibleCount(); const live = await this.processes.liveCount();
+        // The synchronous check comes last, so no run can start between it and the record write.
+        const quiet = this.runsQuiet();
+        if (live && quiet) throw new Error('A live process keeps running after every run reached the end of its step; a restart would interrupt it.');
+        if (!busy && !work && quiet) break;
         // Parks and settled runs wake the wait; the interval only re-reads process and provider work.
         await new Promise<void>(resolve => {
           const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); hold.changed = () => {}; resolve(); };

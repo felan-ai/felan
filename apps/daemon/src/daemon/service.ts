@@ -225,11 +225,11 @@ export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown
   }
 }
 
-/** @internal Holds every active run at a step end; unanswered host questions and busy providers keep the hold waiting too. */
+/** @internal Holds every active run at a step end. Busy providers keep the hold waiting; a question for a person cancels it. */
 export function holdDaemonRuns(registry: Pick<SessionRegistry, 'holdRuns'>, server: Pick<SessionServer, 'activity'>, signal: AbortSignal): Promise<number> {
   return registry.holdRuns(signal, async () => {
-    const { workByKind } = await server.activity();
-    return workByKind.interactions + workByKind.providers > 0;
+    const { workByKind, blocking } = await server.activity();
+    return { busy: workByKind.providers > 0, questions: blocking.questions };
   });
 }
 
