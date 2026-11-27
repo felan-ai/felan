@@ -146,6 +146,29 @@ describe('a held child that cannot continue', () => {
   });
 });
 
+describe('a held child whose next step fails', () => {
+  it('finishes its execution and ends its run instead of leaving it running', async () => {
+    const f = await fixture();
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    const now = new Date().toISOString();
+    const execution = { request: { ...request, notifyOnCompletion: true }, createdAt: now, startedAt: now, deliveryId: 'delivery', completionPending: false };
+    const child = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' }, parentSessionId: root.sessionId, rootSessionId: root.sessionId, execution });
+    await child.runtime.session.prompt('start');
+    const leaf = child.runtime.session.sessionManager.getLeafId()!;
+    await f.registry.shutdown();
+    f.store.updateSession(child.sessionId, { residency: 'evicted', run: { state: 'running', id: 'child-run' }, execution });
+    f.store.putHeldRuns([{ version: 1, session: child.sessionId, root: root.sessionId, parent: root.sessionId, run: { id: 'child-run' }, leaf, heldAt: 1, queue: [] }]);
+    f.store.close();
+    const store = new DaemonControlStore(f.owner);
+    const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+    // The fixture session cannot start a step, so the continued child fails with an error that is not an abort.
+    await registry.restoreRecovered();
+    await vi.waitFor(() => expect(store.sessionMetadata(child.sessionId).execution).toHaveProperty('completedAt'));
+    await vi.waitFor(() => expect(store.sessionMetadata(child.sessionId).run.state).not.toBe('running'));
+    expect(store.sessionMetadata(child.sessionId).run).toMatchObject({ id: 'child-run', state: 'interrupted' });
+  });
+});
+
 describe('restoring after a restart', () => {
   it('reports restoring until the held runs have been continued or interrupted', async () => {
     const f = await fixture();

@@ -300,6 +300,8 @@ export class RegistryExecutions {
       }
     } catch (error) {
       if (!this.registry.options.store.session(id).execution!.completedAt) this.finish(id, 'failed', { code: 'internal_error', message: 'Execution failed unexpectedly' });
+      // A continued run that fails reads as a restart interruption, not as a run that went on.
+      if (resume) this.registry.interruptContinued(id);
       if (this.active.get(id)?.cancelling) this.failures.add(error);
     } finally {
       if (timeout) clearTimeout(timeout);

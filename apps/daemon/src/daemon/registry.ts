@@ -278,6 +278,9 @@ export class SessionRegistry {
 
   isHeld(id: string): boolean { return this.entries.get(id)?.held !== undefined; }
 
+  /** Ends a continued child run whose next step failed, as a restart interruption. */
+  interruptContinued(id: string): void { this.interruptRun(id); }
+
   /** True when the session is resident with no run, so a completion can start one even while runs are held. */
   idleForCompletion(id: string): boolean {
     const entry = this.entries.get(id);
