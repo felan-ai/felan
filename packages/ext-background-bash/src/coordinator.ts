@@ -15,7 +15,6 @@ export interface InteractiveBashProcess {
 }
 
 interface Entry {
-  readonly kind: 'pty' | 'attached';
   readonly process: AgentRuntimeProcess;
   readonly onSnapshot: ((snapshot: InteractiveBashProcess) => Promise<void>) | undefined;
   readonly decoder: TextDecoder;
@@ -24,16 +23,14 @@ interface Entry {
   operation: Promise<void>;
   stopping?: Promise<void>;
   snapshot?: InteractiveBashProcess;
-  pendingSnapshot?: InteractiveBashProcess;
   signal?: 'SIGTERM' | 'SIGKILL';
 }
 
-/** Addressable terminals remain host-owned; attached children stop with their coordinator. */
+/** Addressable terminals remain host-owned. */
 export class BackgroundBashCoordinator {
   readonly #entries = new Map<string, Entry>();
   readonly #starting = new Map<string, Promise<InteractiveBashProcess>>();
   #shutdownPromise: Promise<void> | undefined;
-  #stoppingAttached: Promise<void> | undefined;
 
   constructor(private readonly runtime: AgentRuntime, private readonly onSnapshot?: (snapshot: InteractiveBashProcess) => Promise<void>) {}
 
@@ -56,7 +53,6 @@ export class BackgroundBashCoordinator {
         ...(cwd === undefined ? {} : { cwd }),
       });
       const entry: Entry = {
-        kind: 'pty',
         process,
         onSnapshot,
         offset: 0,
@@ -92,27 +88,6 @@ export class BackgroundBashCoordinator {
     }
   }
 
-  async adopt(
-    id: string,
-    process: AgentRuntimeProcess,
-    onSnapshot = this.onSnapshot,
-  ): Promise<InteractiveBashProcess> {
-    if (this.#shutdownPromise) throw new Error('Background process coordinator is shut down');
-    if (this.#entries.has(id) || this.#starting.has(id)) {
-      throw new Error(`Interactive background process already exists: ${id}`);
-    }
-    const entry: Entry = {
-      kind: 'attached', process, onSnapshot, decoder: new TextDecoder(), offset: 0, output: '', operation: Promise.resolve(),
-    };
-    this.#entries.set(id, entry);
-    try {
-      return await this.read(id);
-    } catch (error) {
-      this.#entries.delete(id);
-      throw error;
-    }
-  }
-
   async read(id: string, waitMs = 0, signal?: AbortSignal): Promise<InteractiveBashProcess> {
     const entry = this.#require(id);
     signal?.throwIfAborted();
@@ -129,9 +104,6 @@ export class BackgroundBashCoordinator {
 
   async write(id: string, chars: string): Promise<InteractiveBashProcess> {
     const entry = this.#require(id);
-    if (entry.kind === 'attached') {
-      throw new Error('Process stdin is unavailable; start the command with tty: true for interactive input.');
-    }
     await entry.process.write(encoder.encode(chars));
     return this.#serialize(entry, () => this.#readUnlocked(id, entry));
   }
@@ -168,47 +140,11 @@ export class BackgroundBashCoordinator {
     return this.#starting.has(id);
   }
 
-  async stopAttached(): Promise<void> {
-    if (this.#stoppingAttached) return this.#stoppingAttached;
-    this.#stoppingAttached = (async () => {
-      const entries = [...this.#entries.entries()].filter(([, entry]) => entry.kind === 'attached');
-      const results = await Promise.allSettled(entries.map(async ([id, entry]) => {
-        if (this.#entries.get(id) !== entry) return;
-        const errors: unknown[] = [];
-        try {
-          await this.stop(id);
-        } catch (error) {
-          if (this.#entries.get(id) !== entry) return;
-          errors.push(error);
-        }
-        if (this.#entries.get(id) === entry) {
-          try {
-            await entry.process.dispose();
-          } catch (error) {
-            errors.push(error);
-          }
-        }
-        if (errors.length > 0) throw new AggregateError(errors, `Failed to clean up attached process ${id}`);
-        if (this.#entries.get(id) === entry) this.#entries.delete(id);
-      }));
-      const failures = results.filter((result) => result.status === 'rejected');
-      if (failures.length > 0) {
-        throw new AggregateError(failures.map((result) => result.reason), 'Failed to stop attached background processes');
-      }
-    })();
-    try {
-      await this.#stoppingAttached;
-    } finally {
-      this.#stoppingAttached = undefined;
-    }
-  }
-
   async shutdown(): Promise<void> {
     if (this.#shutdownPromise) return this.#shutdownPromise;
     this.#shutdownPromise = (async () => {
-      const attached = await Promise.allSettled([this.stopAttached()]);
       const starts = await Promise.allSettled(this.#starting.values());
-      const entries = [...this.#entries.entries()].filter(([, entry]) => entry.kind === 'pty');
+      const entries = [...this.#entries.entries()];
       const results = await Promise.allSettled(entries.map(async ([id, entry]) => {
         if (this.runtime.terminals?.attach) {
           this.#entries.delete(id);
@@ -228,7 +164,7 @@ export class BackgroundBashCoordinator {
         if (errors.length > 0) throw new AggregateError(errors, `Failed to clean up interactive process ${id}`);
         this.#entries.delete(id);
       }));
-      const failures = [...attached, ...starts, ...results].filter((result) => result.status === 'rejected');
+      const failures = [...starts, ...results].filter((result) => result.status === 'rejected');
       if (failures.length > 0) {
         throw new AggregateError(failures.map((result) => result.reason), 'Failed to shut down interactive background processes');
       }
@@ -258,24 +194,20 @@ export class BackgroundBashCoordinator {
   }
 
   async #readUnlocked(id: string, entry: Entry): Promise<InteractiveBashProcess> {
-    if (entry.kind === 'attached' && entry.snapshot && !entry.snapshot.running) return entry.snapshot;
-    let result = entry.pendingSnapshot;
-    if (!result) {
-      const snapshot = await entry.process.read(entry.offset);
-      entry.offset = snapshot.nextOffset;
-      let output = entry.decoder.decode(snapshot.output, { stream: snapshot.running });
-      if (!snapshot.running) output += entry.decoder.decode();
-      if (entry.kind === 'pty') entry.output = boundedTail(`${entry.output}${output}`);
-      result = {
-        id,
-        pid: entry.process.pid,
-        output: entry.kind === 'attached' ? output : entry.output,
-        running: snapshot.running,
-        nextOffset: snapshot.nextOffset,
-        ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }),
-        ...(snapshot.signal === undefined && entry.signal === undefined ? {} : { signal: snapshot.signal ?? entry.signal! }),
-      };
-    }
+    const snapshot = await entry.process.read(entry.offset);
+    entry.offset = snapshot.nextOffset;
+    let output = entry.decoder.decode(snapshot.output, { stream: snapshot.running });
+    if (!snapshot.running) output += entry.decoder.decode();
+    entry.output = boundedTail(`${entry.output}${output}`);
+    const result: InteractiveBashProcess = {
+      id,
+      pid: entry.process.pid,
+      output: entry.output,
+      running: snapshot.running,
+      nextOffset: snapshot.nextOffset,
+      ...(snapshot.exitCode === undefined ? {} : { exitCode: snapshot.exitCode }),
+      ...(snapshot.signal === undefined && entry.signal === undefined ? {} : { signal: snapshot.signal ?? entry.signal! }),
+    };
     const previous = entry.snapshot;
     if (
       !previous
@@ -284,17 +216,8 @@ export class BackgroundBashCoordinator {
       || previous.exitCode !== result.exitCode
       || previous.signal !== result.signal
     ) {
-      if (entry.kind === 'attached') entry.pendingSnapshot = result;
       await entry.onSnapshot?.(result);
-      entry.snapshot = entry.kind === 'attached' ? { ...result, output: '' } : result;
-      delete entry.pendingSnapshot;
-    }
-    if (entry.kind === 'attached' && !result.running && this.#entries.get(id) === entry) {
-      try {
-        await entry.process.dispose();
-      } finally {
-        this.#entries.delete(id);
-      }
+      entry.snapshot = result;
     }
     return result;
   }
@@ -304,7 +227,7 @@ export class BackgroundBashCoordinator {
     if (!entry) {
       const process = this.runtime.terminals?.attach?.(id);
       if (!process) throw new Error(`Interactive background process not found: ${id}`);
-      entry = { kind: 'pty', process, onSnapshot: this.onSnapshot, decoder: new TextDecoder(), offset: 0, output: '', operation: Promise.resolve() };
+      entry = { process, onSnapshot: this.onSnapshot, decoder: new TextDecoder(), offset: 0, output: '', operation: Promise.resolve() };
       this.#entries.set(id, entry);
     }
     return entry;

@@ -10,11 +10,18 @@ export interface ProcessRecord {
   readonly outputPath: string;
   readonly commandIdentity: readonly string[];
   readonly exitCode?: number;
+  /** The job still owes its session a finish notice; recovery restores that session so the notice is delivered. */
+  readonly notice?: 'pending';
 }
 
 export interface DetachedProcessInspection {
   readonly status: ProcessRecord['status'];
   readonly pid?: number;
+  /**
+   * Whether the adapter matched `pid` to the job's own runner. A Windows host relies on it instead of its own process
+   * inspection, because processes of a POSIX layer such as Git Bash have process IDs that Windows does not know.
+   */
+  readonly verified?: boolean;
 }
 
 export interface ProcessAdapter {

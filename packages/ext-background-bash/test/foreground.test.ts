@@ -1,169 +1,163 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { HostAgentRuntime, type AgentRuntimeProcess, type AgentRuntimeStorage } from '@felan-ai/agent-core';
+import { HostAgentRuntime, type AgentRuntimeStorage } from '@felan-ai/agent-core';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FOREGROUND_MAX_BYTES, RETAINED_SPILL_FILES, runForegroundCommand } from '../src/foreground.js';
+import { FOREGROUND_MAX_BYTES, FOREGROUND_MAX_LINES, runForegroundCommand } from '../src/foreground.js';
+import { getBackgroundBashRoot, type BackgroundBashInfo } from '../src/job-store.js';
+import { BackgroundBashManager } from '../src/process-manager.js';
 
 const roots: string[] = [];
-const processes: AgentRuntimeProcess[] = [];
-const encoder = new TextEncoder();
+const running: Array<{ manager: BackgroundBashManager; id: string }> = [];
 const decoder = new TextDecoder();
 const TEST_TIMEOUT_MS = 15_000;
+/** The SIGTERM alone waits 5 seconds, and a Windows host spawns a Git Bash shell for every probe and signal. */
+const SIGKILL_TEST_TIMEOUT_MS = 30_000;
+const SESSION = 'session-a';
+const MAX_SHORT_COMMAND_CALLS = 5;
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(processes.splice(0).map((process) => process.dispose()));
+  await Promise.allSettled(running.splice(0).map(({ manager, id }) => manager.stop(id, 'SIGKILL')));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
 describe('runForegroundCommand', () => {
-  it('returns short output and its exit code without changing the session storage tree', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    await storage.mkdir(join(storage.root, 'existing'));
-    await storage.writeFile(join(storage.root, 'existing', 'keep.txt'), encoder.encode('keep'));
-    const before = await storage.listFiles(storage.root, { recursive: true, includeDirectories: true });
+  // A Windows host starts the job through storage writes, which takes more calls.
+  it.skipIf(process.platform === 'win32').each(['echo hi', 'sleep 0.3; echo hi'])('makes at most five runtime calls for a short command: %s', async (command) => {
+    const { runtime, storage, manager, calls } = await createCountingRuntime();
+    const result = await runForegroundCommand(manager, runtime, storage, command, { timeoutMs: 5_000, noticeSession: SESSION });
 
-    const result = await runForegroundCommand(runtime, "printf 'first\\nsecond\\n'", { timeoutMs: 5_000, storage, spillDir });
-
-    expect(result).toEqual({ kind: 'exited', output: 'first\nsecond', exitCode: 0, truncated: false });
-    expect(await storage.listFiles(storage.root, { recursive: true, includeDirectories: true })).toEqual(before);
-    expect(decoder.decode(await storage.readFile(join(storage.root, 'existing', 'keep.txt')))).toBe('keep');
+    expect(result).toEqual({ kind: 'exited', output: 'hi', exitCode: 0, truncated: false });
+    // Each runtime shell or session-storage call is a network round trip on a remote runtime.
+    expect(calls.total, JSON.stringify(calls.byName)).toBeLessThanOrEqual(MAX_SHORT_COMMAND_CALLS);
+    expect(await jobFiles(storage, runtime.cwd)).toEqual([]);
+    expect(await storage.listFiles(join(getBackgroundBashRoot(storage.root, runtime.cwd), 'notices'), { recursive: true })).toEqual([]);
   });
 
-  it('limits bytes and appends output received after creating the spill', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    const first = 'a'.repeat(FOREGROUND_MAX_BYTES + 1);
-    const last = 'last chunk\n';
-    mockOutput(runtime, [encoder.encode(first), encoder.encode(last)]);
-    const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir });
+  it('starts a command too long for one launch call through storage writes', async () => {
+    const { runtime, storage, manager, calls } = await createCountingRuntime();
+    const result = await runForegroundCommand(manager, runtime, storage, `: ${'x'.repeat(70_000)}; echo hi`, { timeoutMs: 5_000, noticeSession: SESSION });
 
-    expect(result.kind).toBe('exited');
-    if (result.kind !== 'exited') throw new Error('Expected an exited command');
-    expect(result.truncated).toBe(true);
-    expect(encoder.encode(result.output)).toHaveLength(FOREGROUND_MAX_BYTES);
-    expect(result.output).toBe((first + last).slice(0, -1).slice(-FOREGROUND_MAX_BYTES));
-    expect(decoder.decode(await storage.readFile(result.fullOutputPath!))).toBe(first + last);
+    expect(result).toEqual({ kind: 'exited', output: 'hi', exitCode: 0, truncated: false });
+    expect(calls.byName.writeFile).toBeGreaterThan(0);
+    expect(await jobFiles(storage, runtime.cwd)).toEqual([]);
   });
 
-  it('does not split multi-byte UTF-8 characters at the byte limit', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    const output = '界'.repeat(30_000);
-    const result = await runForegroundCommand(runtime, nodeCommand("process.stdout.write('界'.repeat(30000))"), { timeoutMs: 5_000, storage, spillDir });
+  // A Windows host waits through storage reads, so no wait call prints the log there.
+  it.skipIf(process.platform === 'win32')('returns the log a wait call printed before the deadline cut it off after deleting the job', async () => {
+    const { runtime, storage, manager } = await createRuntime();
+    const shell = runtime.shell.bind(runtime);
+    vi.spyOn(runtime, 'shell').mockImplementation(async (script, options) => {
+      const result = await shell(script, options);
+      if (!result.stdout.startsWith('done\n')) return result;
+      return { ...result, stdout: result.stdout.replace(/\n[a-f0-9]{32}:removed\n$/u, ''), killed: true, code: 143 };
+    });
 
-    expect(result.kind).toBe('exited');
+    await expect(runForegroundCommand(manager, runtime, storage, "printf 'kept\\n'", { timeoutMs: 5_000, noticeSession: SESSION }))
+      .resolves.toEqual({ kind: 'exited', output: 'kept', exitCode: 0, truncated: false });
+    expect(await jobFiles(storage, runtime.cwd)).toEqual([]);
+  });
+
+  it('returns short output and its exit code and removes the job it waited on', async () => {
+    const { runtime, storage, manager } = await createRuntime();
+    const result = await runForegroundCommand(manager, runtime, storage, "printf 'first\\nsecond\\n'; exit 3", { timeoutMs: 5_000, noticeSession: SESSION });
+
+    expect(result).toEqual({ kind: 'exited', output: 'first\nsecond', exitCode: 3, truncated: false });
+    expect(await jobFiles(storage, runtime.cwd)).toEqual([]);
+    expect(await manager.pendingNotices(SESSION)).toEqual([]);
+  });
+
+  it('returns when the shell exits even while a background descendant keeps its output open', async () => {
+    const { runtime, storage, manager } = await createRuntime();
+    const started = Date.now();
+    const result = await runForegroundCommand(manager, runtime, storage, '(sleep 3) & echo started', { timeoutMs: 5_000, noticeSession: SESSION });
+
+    expect(result).toEqual({ kind: 'exited', output: 'started', exitCode: 0, truncated: false });
+    expect(Date.now() - started).toBeLessThan(2_500);
+  });
+
+  it('keeps the full output of a truncated result in the unlisted job log', async () => {
+    const { runtime, storage, manager } = await createRuntime();
+    const output = Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join('\n') + '\n';
+    const result = await runForegroundCommand(manager, runtime, storage, 'i=1; while [ $i -le 3000 ]; do echo "line $i"; i=$((i+1)); done', { timeoutMs: 5_000, noticeSession: SESSION });
+
+    expect(result).toMatchObject({ kind: 'exited', exitCode: 0, truncated: true, output: output.trimEnd().split('\n').slice(-FOREGROUND_MAX_LINES).join('\n') });
     if (result.kind !== 'exited') throw new Error('Expected an exited command');
-    expect(result.truncated).toBe(true);
-    expect(result.output).toBe('界'.repeat(Math.floor(FOREGROUND_MAX_BYTES / 3)));
-    expect(result.output).not.toContain('\uFFFD');
-    expect(encoder.encode(result.output).byteLength).toBeLessThanOrEqual(FOREGROUND_MAX_BYTES);
     expect(decoder.decode(await storage.readFile(result.fullOutputPath!))).toBe(output);
+    expect(await manager.list()).toEqual([]);
+    expect(await manager.pendingNotices(SESSION)).toEqual([]);
   });
 
-  it.each(['界', '🌍'])('preserves the retained tail across chunks and split UTF-8 %s sequences', async character => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    const output = encoder.encode(character.repeat(80_000) + '\r\n');
-    const chunks = [output.subarray(0, 130_001), output.subarray(130_001, 170_000), output.subarray(170_000)];
-    mockOutput(runtime, chunks);
+  it('limits bytes without splitting multi-byte UTF-8 characters', async () => {
+    const { runtime, storage, manager } = await createRuntime();
+    const result = await runForegroundCommand(manager, runtime, storage, nodeCommand("process.stdout.write('界'.repeat(60000))"), { timeoutMs: 5_000, noticeSession: SESSION });
 
-    const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir });
-
-    expect(result).toMatchObject({ kind: 'exited', exitCode: 0, truncated: true, output: character.repeat(Math.floor(FOREGROUND_MAX_BYTES / encoder.encode(character).byteLength)) });
+    expect(result).toMatchObject({ kind: 'exited', exitCode: 0, truncated: true, output: '界'.repeat(Math.floor(FOREGROUND_MAX_BYTES / 3)) });
+    if (result.kind !== 'exited') throw new Error('Expected an exited command');
+    expect(decoder.decode(await storage.readFile(result.fullOutputPath!))).toBe('界'.repeat(60000));
   });
 
   it('keeps decoded replacement characters within the byte limit for invalid UTF-8', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    mockOutput(runtime, [new Uint8Array(3 * FOREGROUND_MAX_BYTES).fill(0xff)]);
-
-    const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir });
+    const { runtime, storage, manager } = await createRuntime();
+    const result = await runForegroundCommand(manager, runtime, storage, nodeCommand(`process.stdout.write(Buffer.alloc(${3 * FOREGROUND_MAX_BYTES}, 0xff))`), { timeoutMs: 5_000, noticeSession: SESSION });
 
     expect(result).toMatchObject({ kind: 'exited', exitCode: 0, truncated: true, output: '\uFFFD'.repeat(Math.floor(FOREGROUND_MAX_BYTES / 3)) });
   });
 
-  it.each(['mkdir', 'writeFile', 'appendFile', 'later append'] as const)('preserves output and exit status after a spill %s failure', async operation => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    const chunks = [encoder.encode('a'.repeat(FOREGROUND_MAX_BYTES)), encoder.encode('b'), encoder.encode('c'), encoder.encode('done\n')];
-    const child = mockOutput(runtime, chunks, 7);
-    const method = operation === 'later append' ? 'appendFile' : operation;
-    const original = storage[method].bind(storage);
-    let calls = 0;
-    const failingCall = operation === 'later append' ? 2 : 1;
-    vi.spyOn(storage, method).mockImplementation(async (...args: Parameters<typeof original>) => {
-      if (++calls === failingCall) throw new Error('Storage unavailable');
-      return Reflect.apply(original, storage, args);
-    });
-
-    const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir });
-
-    expect(result).toEqual({ kind: 'exited', exitCode: 7, truncated: true, output: 'a'.repeat(FOREGROUND_MAX_BYTES - 6) + 'bcdone' });
-    expect(child.terminate).not.toHaveBeenCalled();
-    expect(child.dispose).toHaveBeenCalledOnce();
-  });
-
-  it('hands a live process back at the deadline without disposing it', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000);
-    const child = mockOutput(runtime, []);
-    vi.mocked(child.read).mockImplementationOnce(async () => {
-      now.mockReturnValue(1_020);
-      return { output: new Uint8Array(), nextOffset: 0, running: true };
-    });
-    const result = await runForegroundCommand(runtime, 'command', { timeoutMs: 20, storage, spillDir });
+  it('hands back a listed detached job at the deadline that keeps running and owes its notice', async () => {
+    const { runtime, storage, manager } = await createRuntime();
+    const result = await runForegroundCommand(manager, runtime, storage, "printf 'before\\n'; while [ ! -f continue ]; do sleep 0.02; done; printf 'after\\n'", { timeoutMs: 300, noticeSession: SESSION });
 
     expect(result.kind).toBe('timeout');
     if (result.kind !== 'timeout') throw new Error('Expected a timeout');
-    expect(result.startedAt).toBe(1_000);
-    expect(result.process).toBe(child);
-    expect(child.terminate).not.toHaveBeenCalled();
-    expect(child.dispose).not.toHaveBeenCalled();
-    vi.mocked(child.read).mockResolvedValue({ output: encoder.encode('done'), nextOffset: 4, running: false, exitCode: 7 });
-    expect(await result.process.read(0)).toMatchObject({ output: encoder.encode('done'), running: false, exitCode: 7 });
-    await result.process.dispose();
+    running.push({ manager, id: result.job.meta.id });
+    expect(result.job.status.status).toBe('running');
+    const info = JSON.parse(decoder.decode(await storage.readFile(result.job.meta.infoPath))) as BackgroundBashInfo;
+    expect(info).toMatchObject({ executionMode: 'detached', promotedAt: expect.any(Number), notice: 'pending', noticeSession: SESSION });
+    expect(info.foreground).toBeUndefined();
+    expect((await manager.list('running')).map(job => job.meta.id)).toEqual([result.job.meta.id]);
+    expect((await manager.pendingNotices(SESSION)).map(job => job.meta.id)).toEqual([result.job.meta.id]);
+
+    await runtime.writeFile('continue', new Uint8Array());
+    const finished = await manager.wait(result.job.meta.id, 5);
+    expect(finished).toMatchObject({ timedOut: false, job: { status: { status: 'completed', exitCode: 0 } } });
+    expect(await manager.tail(result.job.meta.id)).toBe('before\nafter');
   });
 
-  it.each(['before', 'during'])('terminates and disposes when aborted %s the read loop', async (when) => {
-    const { runtime, storage, spillDir } = await createRuntime();
+  it('escalates to SIGKILL when a cancelled command ignores SIGTERM', async () => {
+    const { runtime, storage, manager } = await createRuntime();
     const controller = new AbortController();
-    let running = true;
-    const child: AgentRuntimeProcess = {
-      pid: undefined,
-      read: vi.fn(async () => {
-        if (when === 'during') controller.abort();
-        return { output: new Uint8Array(), nextOffset: 0, running };
-      }),
-      write: vi.fn(async () => {}),
-      terminate: vi.fn(async () => { running = false; }),
-      dispose: vi.fn(async () => {}),
-    };
-    vi.mocked(runtime.processes!.startShell).mockResolvedValue(child);
-    if (when === 'before') controller.abort();
+    const result = runForegroundCommand(manager, runtime, storage, "trap '' TERM; printf '%s' \"$$\" > shell.pid; while :; do sleep 0.05; done", { timeoutMs: 20_000, noticeSession: SESSION, signal: controller.signal });
+    // The command writes its PID after it starts ignoring SIGTERM, so the cancel cannot arrive before the trap.
+    const pid = await vi.waitFor(async () => {
+      const written = decoder.decode(await runtime.readFile('shell.pid'));
+      expect(written).toMatch(/^\d+$/u);
+      return written;
+    }, { timeout: 10_000, interval: 20 });
+    controller.abort();
 
-    await expect(runForegroundCommand(runtime, 'command', { timeoutMs: 5_000, storage, spillDir, signal: controller.signal }))
+    await expect(result).rejects.toThrow('Command cancelled');
+    expect(await jobFiles(storage, runtime.cwd)).toEqual([]);
+    expect((await runtime.shell(`kill -0 ${pid} 2>/dev/null`, { shellFlavor: 'posix' })).code).not.toBe(0);
+  }, SIGKILL_TEST_TIMEOUT_MS);
+
+  it.each(['before', 'during'])('stops and removes the job when aborted %s the wait', async (when) => {
+    const { runtime, storage, manager } = await createRuntime();
+    const controller = new AbortController();
+    if (when === 'before') controller.abort();
+    else setTimeout(() => controller.abort(), 200);
+
+    await expect(runForegroundCommand(manager, runtime, storage, "printf '%s' \"$$\" > shell.pid; exec sleep 30", { timeoutMs: 5_000, noticeSession: SESSION, signal: controller.signal }))
       .rejects.toThrow('Command cancelled');
 
-    expect(child.terminate).toHaveBeenCalledWith('SIGTERM');
-    expect(child.dispose).toHaveBeenCalled();
-    expect(running).toBe(false);
-  });
-
-  it('prunes only the oldest spill files down to the newest 20 names', async () => {
-    const { runtime, storage, spillDir } = await createRuntime();
-    await storage.mkdir(spillDir, { recursive: true });
-    const oldFiles = Array.from({ length: 23 }, (_, index) => `output-20200101000000-${index.toString(16).padStart(6, '0')}.log`);
-    await Promise.all([...oldFiles, 'keep.txt'].map((file) => storage.writeFile(join(spillDir, file), encoder.encode(file))));
-
-    const result = await runForegroundCommand(runtime, nodeCommand(`process.stdout.write('a'.repeat(${FOREGROUND_MAX_BYTES + 1}))`), { timeoutMs: 5_000, storage, spillDir });
-
-    expect(result.kind).toBe('exited');
-    if (result.kind !== 'exited') throw new Error('Expected an exited command');
-    const files = await storage.listFiles(spillDir, { pattern: 'output-*.log' });
-    expect(files).toHaveLength(RETAINED_SPILL_FILES);
-    expect(files).toEqual([...oldFiles.slice(4), result.fullOutputPath!.slice(spillDir.length + 1)].sort());
-    expect(await storage.listFiles(spillDir)).toContain('keep.txt');
+    expect(await jobFiles(storage, runtime.cwd)).toEqual([]);
+    const pid = await runtime.readFile('shell.pid').then(bytes => decoder.decode(bytes), () => undefined);
+    if (pid) expect((await runtime.shell(`kill -0 ${pid} 2>/dev/null`, { shellFlavor: 'posix' })).code).not.toBe(0);
   });
 }, TEST_TIMEOUT_MS);
 
-async function createRuntime(): Promise<{ runtime: HostAgentRuntime; storage: AgentRuntimeStorage; spillDir: string }> {
+async function createRuntime(): Promise<{ runtime: HostAgentRuntime; storage: AgentRuntimeStorage; manager: BackgroundBashManager }> {
   const root = await mkdtemp(join(tmpdir(), 'felan-foreground-'));
   roots.push(root);
   const cwd = join(root, 'workspace');
@@ -171,29 +165,30 @@ async function createRuntime(): Promise<{ runtime: HostAgentRuntime; storage: Ag
   const agentStorageRoot = join(root, 'agent-storage');
   await Promise.all([cwd, sessionStorageRoot, agentStorageRoot].map((path) => mkdir(path, { recursive: true })));
   const runtime = new HostAgentRuntime(cwd, { sessionStorageRoot, agentStorageRoot });
-  const start = runtime.processes!.startShell.bind(runtime.processes);
-  vi.spyOn(runtime.processes!, 'startShell').mockImplementation(async (command, options) => {
-    const process = await start(command, options);
-    processes.push(process);
-    return process;
-  });
-  return { runtime, storage: runtime.storage('session'), spillDir: join(sessionStorageRoot, 'spills') };
+  return { runtime, storage: runtime.storage('session'), manager: new BackgroundBashManager(runtime) };
 }
 
-function mockOutput(runtime: HostAgentRuntime, chunks: Uint8Array[], exitCode = 0): AgentRuntimeProcess {
-  let index = 0;
-  let offset = 0;
-  const child = {
-    read: vi.fn(async () => {
-      const output = chunks[index++] ?? new Uint8Array();
-      offset += output.byteLength;
-      return { output, nextOffset: offset, running: output.byteLength > 0, exitCode };
-    }),
-    terminate: vi.fn(async () => {}),
-    dispose: vi.fn(async () => {}),
-  } as unknown as AgentRuntimeProcess;
-  vi.mocked(runtime.processes!.startShell).mockResolvedValue(child);
-  return child;
+/** Counts every `runtime.shell` call and every session-storage method call made by the manager. */
+async function createCountingRuntime() {
+  const { runtime } = await createRuntime();
+  const calls = { total: 0, byName: {} as Record<string, number> };
+  const count = (name: string) => { calls.total += 1; calls.byName[name] = (calls.byName[name] ?? 0) + 1; };
+  const storage = runtime.storage('session');
+  const counted = new Proxy(storage, {
+    get(target, key, receiver) {
+      const value: unknown = Reflect.get(target, key, receiver);
+      if (typeof value !== 'function') return value;
+      return (...args: unknown[]) => { count(String(key)); return (value as (...items: unknown[]) => unknown).apply(target, args); };
+    },
+  });
+  vi.spyOn(runtime, 'storage').mockReturnValue(counted);
+  const shell = runtime.shell.bind(runtime);
+  vi.spyOn(runtime, 'shell').mockImplementation((script, options) => { count('shell'); return shell(script, options); });
+  return { runtime, storage: counted, manager: new BackgroundBashManager(runtime), calls };
+}
+
+async function jobFiles(storage: AgentRuntimeStorage, cwd: string): Promise<string[]> {
+  return storage.listFiles(join(getBackgroundBashRoot(storage.root, cwd), 'jobs'), { recursive: true });
 }
 
 function nodeCommand(source: string): string {

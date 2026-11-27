@@ -53,18 +53,78 @@ describe('BackgroundBashJobStore metadata compatibility', () => {
     expect(job?.status).toMatchObject({ executionMode, promotedAt: 3, outputTruncated: true });
   });
 
-  it('creates an attached record with its original start and no runner identity', async () => {
+  it('records whether a job owes its session a finish notice and finds pending notices through its index', async () => {
     const storage = new MemoryStorage();
     const store = new BackgroundBashJobStore(runtime('/workspace/project'), storage);
-    const job = await store.createJob('sleep 30', 'attached', { startedAt: 0, pid: 1234, processGroupId: 1234, promotedAt: 50 });
+    const owed = await store.createJob('sleep 30', 'detached', { noticeSession: 'session-a' });
+    const other = await store.createJob('sleep 30', 'detached', { noticeSession: 'session-b' });
+    const silent = await store.createJob('sleep 30');
 
-    expect(job.info).toMatchObject({ executionMode: 'attached', startedAt: 0, pid: 1234, processGroupId: 1234, promotedAt: 50 });
-    expect(job.meta.processToken).toBeUndefined();
-    expect(job.info).not.toHaveProperty('processToken');
-    expect(job.meta.commandPath).toBe(join(job.meta.jobDir, 'command.sh'));
-    expect(job.meta.runnerPath).toBe(join(job.meta.jobDir, 'runner.sh'));
-    expect([...storage.files.keys()]).toEqual([job.meta.infoPath]);
-    await expect(store.readJob(job.meta.id)).resolves.toEqual(job);
+    expect(owed.info).toMatchObject({ notice: 'pending', noticeSession: 'session-a' });
+    expect(silent.info).not.toHaveProperty('notice');
+    expect((await store.pendingNotices('session-a')).map(job => job.meta.id)).toEqual([owed.meta.id]);
+    await store.markStatus(owed.meta.id, { status: 'completed', exitCode: 0 });
+    expect((await store.pendingNotices('session-a')).map(job => job.status.status)).toEqual(['completed']);
+
+    expect(await store.settleNotice(owed.meta.id, 'session-b')).toBe(false);
+    expect(await store.settleNotice(owed.meta.id, 'session-a')).toBe(true);
+    expect(await store.settleNotice(owed.meta.id, 'session-a')).toBe(false);
+    expect((await store.readJob(owed.meta.id))?.info).toMatchObject({ notice: 'delivered', noticeSession: 'session-a', status: 'completed' });
+    expect(await store.pendingNotices('session-a')).toEqual([]);
+    expect((await store.pendingNotices('session-b')).map(job => job.meta.id)).toEqual([other.meta.id]);
+
+    await store.watchNotice(silent.meta.id, 'session-a');
+    expect((await store.pendingNotices('session-a')).map(job => job.meta.id)).toEqual([silent.meta.id]);
+  });
+
+  it('keeps a foreground job unlisted until it is promoted', async () => {
+    const storage = new MemoryStorage();
+    const store = new BackgroundBashJobStore(runtime('/workspace/project'), storage);
+    const job = await store.createJob('sleep 30', 'detached', { foreground: 'process-a', noticeSession: 'session-a' });
+
+    expect(job.meta.foreground).toBe('process-a');
+    expect(await store.listJobs()).toEqual([]);
+    expect((await store.query()).jobs).toEqual([]);
+    const promoted = await store.markRunning(job.meta.id, 'detached', 50);
+    expect(promoted?.meta).toMatchObject({ executionMode: 'detached', promotedAt: 50, notice: 'pending' });
+    expect(promoted?.meta).not.toHaveProperty('foreground');
+    expect((await store.listJobs()).map(item => item.meta.id)).toEqual([job.meta.id]);
+
+    const finished = await store.createJob('true', 'detached', { foreground: 'process-a' });
+    await store.markStatus(finished.meta.id, { status: 'completed', exitCode: 0 });
+    const listed = await store.markRunning(finished.meta.id, 'detached', 60);
+    expect(listed?.status).toMatchObject({ status: 'completed', exitCode: 0 });
+    expect(listed?.meta).not.toHaveProperty('foreground');
+    expect(listed?.meta).not.toHaveProperty('promotedAt');
+  });
+
+  it('keeps a notice marker while its record is unreadable and drops it once the job is gone', async () => {
+    const storage = new MemoryStorage();
+    const store = new BackgroundBashJobStore(runtime('/workspace/project'), storage);
+    const job = await store.createJob('sleep 30', 'detached', { noticeSession: 'session-a' });
+    const marker = [...storage.files.keys()].find(path => path.endsWith(`notices${sep}${job.meta.id}`))!;
+    const info = storage.files.get(job.meta.infoPath)!;
+
+    storage.files.set(job.meta.infoPath, new TextEncoder().encode('{'));
+    expect(await store.pendingNotices('session-a')).toEqual([]);
+    expect(storage.files.has(marker)).toBe(true);
+    storage.files.set(job.meta.infoPath, info);
+    expect((await store.pendingNotices('session-a')).map(item => item.meta.id)).toEqual([job.meta.id]);
+
+    for (const path of [...storage.files.keys()]) if (path.startsWith(job.meta.jobDir)) storage.files.delete(path);
+    expect(await store.pendingNotices('session-a')).toEqual([]);
+    expect(storage.files.has(marker)).toBe(false);
+  });
+
+  it('removes a job together with its notice marker', async () => {
+    const storage = new MemoryStorage();
+    const store = new BackgroundBashJobStore(runtime('/workspace/project'), storage);
+    const job = await store.createJob('true', 'detached', { foreground: 'process-a', noticeSession: 'session-a' });
+
+    await store.removeJob(job.meta.id);
+    expect([...storage.files.keys()]).toEqual([]);
+    await expect(store.readJob(job.meta.id)).resolves.toBeUndefined();
+    expect(await store.pendingNotices('session-a')).toEqual([]);
   });
 
   it('does not rewrite a terminal outcome or its timestamps on repeated observations', async () => {
@@ -325,7 +385,9 @@ class MemoryStorage implements AgentRuntimeStorage {
       : paths;
   }
   async mkdir(): Promise<void> {}
-  async remove(): Promise<void> {}
+  async remove(path: string): Promise<void> {
+    for (const file of [...this.files.keys()]) if (file === path || file.startsWith(`${path}${sep}`)) this.files.delete(file);
+  }
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {

@@ -19,6 +19,7 @@ import {
 } from '../src/index.js';
 import { withOwnedTerminals } from './owned-terminals.js';
 import { getBackgroundBashJobsDir } from '../src/job-store.js';
+import { BackgroundBashManager } from '../src/process-manager.js';
 import { PROCESS_LIST_RESULT_BYTES } from '../src/list-result.js';
 
 const TEST_TIMEOUT_MS = 45_000;
@@ -46,6 +47,8 @@ type LiveFixture = {
   runtime: AgentRuntime;
   owner: LiveClient;
   child: LiveClient;
+  /** Starts another extension instance on the same storage, as a new runtime or daemon does for a session. */
+  connect(sessionId: string): Promise<LiveClient>;
   abortController(): AbortController;
 };
 
@@ -58,29 +61,19 @@ describe('registered Background Bash tools with live host processes', () => {
       const result = await call(owner, 'bash', { command });
       expect(text(result)).toBe(`Exit: ${exitCode}\n\n${output}`);
       expect(result.details).toEqual({ background: false, exitCode, truncated: false });
-      expect(await runtime.storage('session').listFiles('', { recursive: true, includeDirectories: true })).toEqual([]);
+      expect(await runtime.storage('session').listFiles('', { recursive: true })).toEqual([]);
       expect(jobs(await call(owner, 'list_background_bash', {}))).toEqual([]);
       expect(owner.messages).toEqual([]);
     });
   }, TEST_TIMEOUT_MS);
 
   it('returns when the foreground shell exits without waiting for a background descendant or promoting it', async () => {
-    await withLiveTools(async ({ runtime, owner }) => {
-      const start = vi.spyOn(runtime.processes!, 'startShell');
-      try {
-        const result = await within(owner.call('bash', { command: '(sleep 3) & echo started', timeout: 1.5 }), 2_000, 'foreground shell exit');
-        expect(text(result)).toBe('Exit: 0\n\nstarted');
-        expect(result.details).toEqual({ background: false, exitCode: 0, truncated: false });
-        expect(jobs(await call(owner, 'list_background_bash', {}))).toEqual([]);
-        expect(owner.messages).toEqual([]);
-      } finally {
-        const launched = start.mock.results[0];
-        start.mockRestore();
-        if (launched?.type === 'return') {
-          const child = await launched.value;
-          if (child.pid) await runtime.shell(`kill -KILL -${child.pid} 2>/dev/null || true`, { shellFlavor: 'posix' });
-        }
-      }
+    await withLiveTools(async ({ owner }) => {
+      const result = await within(owner.call('bash', { command: '(sleep 3) & echo started', timeout: 1.5 }), 2_000, 'foreground shell exit');
+      expect(text(result)).toBe('Exit: 0\n\nstarted');
+      expect(result.details).toEqual({ background: false, exitCode: 0, truncated: false });
+      expect(jobs(await call(owner, 'list_background_bash', {}))).toEqual([]);
+      expect(owner.messages).toEqual([]);
     });
   }, TEST_TIMEOUT_MS);
 
@@ -92,7 +85,7 @@ describe('registered Background Bash tools with live host processes', () => {
     });
   }, TEST_TIMEOUT_MS);
 
-  it('returns the last 2000 foreground lines and spills all output without a job record', async () => {
+  it('returns the last 2000 foreground lines and keeps all output in an unlisted job log', async () => {
     await withLiveTools(async ({ runtime, owner }) => {
       const output = Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join('\n') + '\n';
       const result = await call(owner, 'bash', { command: nodeCommand("process.stdout.write(Array.from({ length: 3000 }, (_, index) => `line ${index + 1}`).join('\\n') + '\\n')") });
@@ -101,27 +94,25 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(text(result)).toBe(`Exit: 0\n\n${output.trimEnd().split('\n').slice(-2000).join('\n')}\n\n[Output truncated to the last 2000 lines / 50 KB. Full output: ${details.fullOutputPath}]`);
       const storage = runtime.storage('session');
       expect(decoder.decode(await storage.readFile(details.fullOutputPath))).toBe(output);
-      expect(await storage.listFiles('', { recursive: true })).toEqual([details.fullOutputPath.slice(storage.root.length + 1)]);
+      expect(details.fullOutputPath.startsWith(getBackgroundBashJobsDir(storage.root, runtime.cwd))).toBe(true);
       expect(jobs(await call(owner, 'list_background_bash', {}))).toEqual([]);
+      expect(owner.messages).toEqual([]);
     });
   }, TEST_TIMEOUT_MS);
 
-  it('promotes the same foreground process and delivers completion without polling tools', async () => {
+  it('promotes the same foreground process as a detached job and delivers completion without polling tools', async () => {
     await withLiveTools(async ({ runtime, owner, child }) => {
-      const start = vi.spyOn(runtime.processes!, 'startShell');
       const command = "printf 'before\\n'; printf '%s' \"$$\" > bash.pid; while [ ! -f continue ]; do sleep 0.02; done; printf 'after\\n'";
       const result = await call(owner, 'bash', { command, timeout: 0.05 });
       const details = result.details as BackgroundBashDetails;
       expect(details).toMatchObject({ background: true, command, pid: expect.any(Number) });
       expect(text(result)).toContain('Started background process.');
-      const pid = await eventually(async () => Number(decoder.decode(await runtime.readFile('bash.pid'))),
+      await eventually(async () => Number(decoder.decode(await runtime.readFile('bash.pid'))),
         value => Number.isSafeInteger(value) && value > 0, 'promoted process writes its PID');
-      expect(start).toHaveBeenCalledOnce();
-      expect(details.pid).toBe((await start.mock.results[0]!.value).pid);
-      // Git Bash's $$ is an MSYS PID, not the native Windows child PID.
-      if (process.platform !== 'win32') expect(details.pid).toBe(pid);
       const info = JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo;
-      expect(info).toMatchObject({ executionMode: 'attached', pid: details.pid, startedAt: details.startedAt, promotedAt: expect.any(Number) });
+      expect(info).toMatchObject({ executionMode: 'detached', pid: details.pid, startedAt: details.startedAt, promotedAt: expect.any(Number),
+        notice: 'pending', noticeSession: 'owner-session' });
+      expect(info.foreground).toBeUndefined();
       expect(listedJob(await call(child, 'list_background_bash', {}), details.id).status.status).toBe('running');
       await waitForOutput(child, details.id, 'before');
 
@@ -130,6 +121,8 @@ describe('registered Background Bash tools with live host processes', () => {
       expect(completion).toMatchObject({ details: { job: { id: details.id, status: 'completed', exitCode: 0 } } });
       expect(text(await call(child, 'read_background_bash', { id: details.id }))).toContain('before\nafter');
       expect(owner.messages).toHaveLength(1);
+      const delivered = JSON.parse(decoder.decode(await runtime.storage('session').readFile(details.infoPath))) as BackgroundBashInfo;
+      expect(delivered.notice).toBe('delivered');
     });
   }, TEST_TIMEOUT_MS);
 
@@ -163,7 +156,7 @@ describe('registered Background Bash tools with live host processes', () => {
     });
   }, TEST_TIMEOUT_MS);
 
-  it('cancels an in-process foreground command without persisting a job', async () => {
+  it('cancels a foreground command and removes the job it waited on', async () => {
     await withLiveTools(async ({ runtime, owner, abortController }) => {
       const controller = abortController();
       const foreground = observe(owner.call('bash', {
@@ -176,25 +169,62 @@ describe('registered Background Bash tools with live host processes', () => {
         .toMatchObject({ error: expect.objectContaining({ message: 'Command cancelled' }) });
       await eventually(() => runtime.shell(`kill -0 ${pid} 2>/dev/null`, { shellFlavor: 'posix' }),
         result => result.code !== 0, 'cancelled foreground process exits');
-      expect(await runtime.storage('session').listFiles('', { recursive: true, includeDirectories: true })).toEqual([]);
+      expect(await runtime.storage('session').listFiles('', { recursive: true })).toEqual([]);
       expect(owner.messages).toEqual([]);
     });
   }, TEST_TIMEOUT_MS);
 
-  it.each(['reload', 'shutdown'] as const)('stops attached jobs on %s and leaves detached jobs running', async reason => {
-    await withLiveTools(async ({ runtime, owner, child }) => {
-      const attached = (await call(owner, 'bash', { command: 'exec sleep 30', timeout: 0.05 })).details as BackgroundBashDetails;
-      const detached = (await call(owner, 'bash', { command: 'exec sleep 30', background: true })).details as BackgroundBashDetails;
-      try {
-        await owner.shutdown(reason);
-        const listed = await call(child, 'list_background_bash', {});
-        expect(listedJob(listed, attached.id).status).toMatchObject({ status: 'killed', signal: 'SIGTERM' });
-        expect(listedJob(listed, detached.id).status.status).toBe('running');
-        await eventually(() => runtime.shell(`kill -0 ${attached.pid} 2>/dev/null`, { shellFlavor: 'posix' }),
-          result => result.code !== 0, 'attached process exits during shutdown');
-      } finally {
-        await call(child, 'stop_background_bash', { id: detached.id });
-      }
+  it.each(['reload', 'shutdown'] as const)('keeps promoted and detached jobs running across %s and delivers their notices once to the next runtime', async reason => {
+    await withLiveTools(async ({ runtime, owner, child, connect }) => {
+      const promoted = (await call(owner, 'bash', { command: 'while [ ! -f promoted ]; do sleep 0.02; done', timeout: 0.05 })).details as BackgroundBashDetails;
+      const detached = (await call(owner, 'bash', { command: 'while [ ! -f detached ]; do sleep 0.02; done', background: true })).details as BackgroundBashDetails;
+      await owner.shutdown(reason);
+      const listed = await call(child, 'list_background_bash', {});
+      expect(listedJob(listed, promoted.id).status.status).toBe('running');
+      expect(listedJob(listed, detached.id).status.status).toBe('running');
+
+      // One job finishes while no runtime watches it; the other after the next runtime starts.
+      await runtime.writeFile('detached', new Uint8Array());
+      await eventually(async () => (await runtime.storage('session').readFile(join(detached.jobDir, 'completion.json')).catch(() => undefined)) !== undefined,
+        found => found, 'unwatched job finishes');
+      expect(child.messages).toEqual([]);
+      const next = await connect('owner-session');
+      await eventually(async () => next.messages.length, count => count === 1, 'missed notice is delivered');
+      expect(next.messages[0]).toMatchObject({ details: { job: { id: detached.id, status: 'completed' } } });
+
+      await runtime.writeFile('promoted', new Uint8Array());
+      await eventually(async () => next.messages.length, count => count === 2, 'watched notice is delivered');
+      expect(next.messages[1]).toMatchObject({ details: { job: { id: promoted.id, status: 'completed' } } });
+      const again = await connect('owner-session');
+      await delay(1_500);
+      expect(again.messages).toEqual([]);
+      expect(next.messages).toHaveLength(2);
+      expect(child.messages).toEqual([]);
+    });
+  }, TEST_TIMEOUT_MS);
+
+  it('promotes foreground jobs a restart cut off and delivers only the starting session\'s notice', async () => {
+    await withLiveTools(async ({ runtime, connect }) => {
+      const earlier = new BackgroundBashManager(runtime);
+      const command = (name: string) => `while [ ! -f ${name}.done ]; do sleep 0.02; done; echo ${name}`;
+      // Jobs left by a process whose foreground tool calls ended with it.
+      const own = await earlier.start(command('own'), { foreground: 'earlier-process', noticeSession: 'restored-session' });
+      const child = await earlier.start(command('child'), { foreground: 'earlier-process', noticeSession: 'gone-subagent' });
+      // Any session start promotes them, so the root can see and stop a gone subagent's job.
+      const observer = await connect('observer-session');
+      const promoted = await call(observer, 'list_background_bash', {});
+      expect(jobs(promoted).map(job => job.meta.id).sort()).toEqual([own.meta.id, child.meta.id].sort());
+
+      await runtime.writeFile('own.done', new Uint8Array());
+      await runtime.writeFile('child.done', new Uint8Array());
+      const restored = await connect('restored-session');
+      await eventually(async () => restored.messages.length, count => count === 1, 'restored session receives its notice');
+      expect(restored.messages[0]).toMatchObject({ details: { job: { id: own.meta.id, status: 'completed' } } });
+      const listed = await call(restored, 'list_background_bash', {});
+      expect(listedJob(listed, child.meta.id).status.status).toBe('completed');
+      await delay(1_000);
+      expect(restored.messages).toHaveLength(1);
+      expect(observer.messages).toEqual([]);
     });
   }, TEST_TIMEOUT_MS);
 
@@ -461,12 +491,17 @@ async function withLiveTools(run: (fixture: LiveFixture) => Promise<void>): Prom
     });
     owned = withOwnedTerminals(source);
     const runtime = owned.runtime;
-    const owner = await createClient(runtime, pending, controllers);
+    const owner = await createClient(runtime, pending, controllers, 'owner-session');
     clients.push(owner);
-    const child = await createClient(runtime, pending, controllers);
+    const child = await createClient(runtime, pending, controllers, 'child-session');
     clients.push(child);
     await run({
       runtime, owner, child,
+      async connect(sessionId) {
+        const client = await createClient(runtime, pending, controllers, sessionId);
+        clients.push(client);
+        return client;
+      },
       abortController() {
         const controller = new AbortController();
         controllers.add(controller);
@@ -506,13 +541,14 @@ async function createClient(
   runtime: AgentRuntime,
   pending: Set<Promise<unknown>>,
   controllers: Set<AbortController>,
+  sessionId: string,
 ): Promise<LiveClient> {
   const tools = new Map<string, ToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const messages: LiveClient['messages'] = [];
   let completed!: (message: LiveClient['messages'][number]) => void;
   const firstCompletion = new Promise<LiveClient['messages'][number]>(resolve => { completed = resolve; });
-  const ctx = { mode: 'print', cwd: runtime.cwd } as unknown as ExtensionContext;
+  const ctx = { mode: 'print', cwd: runtime.cwd, sessionManager: { getSessionId: () => sessionId } } as unknown as ExtensionContext;
   let activeTools: string[] = [];
   let callId = 0;
   let shutdown: Promise<void> | undefined;

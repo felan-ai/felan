@@ -23,6 +23,15 @@ async function inspectWindowsProcess(runtime: AgentRuntime, pid: number) {
   return runtime.exec(executable, ['-NoProfile', '-NonInteractive', '-Command', `[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $ErrorActionPreference = 'Stop'; Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}' | Select-Object -ExpandProperty CommandLine`]);
 }
 
+/** Matches the command line of `pid` to every identity value; undefined when the probe itself failed. */
+async function verifyCommand(runtime: AgentRuntime, pid: number | undefined, windowsHost: boolean, identity: readonly string[]): Promise<boolean | undefined> {
+  if (!pid || !Number.isSafeInteger(pid) || pid <= 0) return false;
+  const inspection = await (windowsHost ? inspectWindowsProcess(runtime, pid)
+    : runtime.exec('ps', ['-o', 'command=', '-p', String(pid)])).catch(() => null);
+  if (inspection === null) return undefined;
+  return inspection.code === 0 && identity.every(value => inspection.stdout.includes(value));
+}
+
 interface Scope { session: string; root: string }
 interface Lifetime { scope: Scope; runtime: AgentRuntime; draining: boolean; revoked: boolean }
 interface LiveProcess { raw: AgentRuntimeProcess; process: AgentRuntimeProcess; view: ProcessView; transport: boolean; settled: boolean; disposed: boolean; disposal?: Promise<void>; signal?: AgentRuntimeTerminationSignal }
@@ -410,13 +419,13 @@ export class RegistryProcesses {
           ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }) });
         continue;
       }
-      const pid = job.pid;
-      const inspection = pid && Number.isSafeInteger(pid) && pid > 0 ? await (process.platform === 'win32' && runtime.kind === 'host'
-        ? inspectWindowsProcess(runtime, pid)
-        : runtime.exec('ps', ['-o', 'command=', '-p', String(pid)])).catch(() => null) : undefined;
+      const windowsHost = process.platform === 'win32' && runtime.kind === 'host';
+      // Windows process inspection cannot see the process IDs of a POSIX layer such as Git Bash, so a Windows host takes
+      // the adapter's own identity check when the adapter reports one.
+      const verified = windowsHost && job.verified !== undefined ? job.verified
+        : await verifyCommand(runtime, job.pid, windowsHost, [...info.commandIdentity, row.startIdentity]);
       this.options.assertCurrent();
-      if (inspection === null) continue;
-      const verified = inspection?.code === 0 && info.commandIdentity.every(value => inspection.stdout.includes(value)) && inspection.stdout.includes(row.startIdentity);
+      if (verified === undefined) continue;
       this.update(row, verified ? 'running' : 'reconciling', {
         id: row.id, session: row.session, root, kind: 'detached', state: verified ? 'running' : 'interrupted',
         command: boundedText(info.command, 16384), startedAt: info.startedAt, controllable: verified, outputOffset: 0,
@@ -576,7 +585,7 @@ export class RegistryProcesses {
       id: info.id, session: row.session, root: row.root, kind: row.kind as ProcessView['kind'], state: info.status === 'running' ? 'running' : info.status === 'unknown' ? 'missing' : 'exited',
       command: boundedText(info.command, 16384), startedAt: info.startedAt, controllable: this.live.has(info.id), outputOffset: 0,
       ...(info.exitCode === undefined ? {} : { exitCode: info.exitCode }),
-    });
+    }, info.notice === 'pending');
   }
   private record(live: LiveProcess, row: ControlResource, snapshot: { running: boolean; nextOffset: number; exitCode?: number }, advance: boolean): void {
     if (this.live.get(row.id) !== live) return;
@@ -595,7 +604,8 @@ export class RegistryProcesses {
     this.record(live, row, snapshot, false);
   }
 
-  private update(row: ControlResource, state: ControlResource['state'], view?: ProcessView): void {
+  /** `notice` replaces the row's pending-notice flag; leaving it undefined keeps the stored flag. */
+  private update(row: ControlResource, state: ControlResource['state'], view?: ProcessView, notice?: boolean): void {
     this.options.assertCurrent();
     const old = this.options.store.resource(row.id);
     const previous = this.views.get(row.id) ?? resourceView(old ?? row);
@@ -605,6 +615,8 @@ export class RegistryProcesses {
       ...(view ? { command: next.command, startedAt: next.startedAt } : {}),
       ...(next.exitCode === undefined ? {} : { exitCode: next.exitCode }) };
     if (state !== 'exited') delete resource.exitCode;
+    if (notice === true) resource.notice = 'pending';
+    else if (notice === false) delete resource.notice;
     const resourceChanged = !old || !isDeepStrictEqual(old, resource);
     const viewChanged = !isDeepStrictEqual(previous, next);
     if (!resourceChanged && !viewChanged) return;

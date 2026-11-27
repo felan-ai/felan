@@ -45,6 +45,36 @@ describe.skipIf(!supported)('registry process ownership', () => {
     }
   });
 
+  // Ownership checks read process.platform too, so each case runs on the host whose branch it covers.
+  const windows = process.platform === 'win32';
+  it(windows ? 'takes the adapter identity check on a Windows host, which cannot see the runner PID'
+    : 'keeps its own ps identity check on a POSIX host and ignores the adapter verdict', async () => {
+    const f = await fixture(); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    let verified = true;
+    const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42, verified }));
+    const exec = vi.fn<AgentRuntime['exec']>(async () => ({ stdout: 'unrelated process', stderr: '', code: 0, killed: false }));
+    const adapter = { ...fakeProcessAdapter(), inspectDetached,
+      describeJob: (_runtime: AgentRuntime, path: string) => ({ id: 'job', kind: 'detached' as const,
+        status: 'running' as const, command: 'worker', startedAt: now - 100, startIdentity: 'launch', commandIdentity: ['worker'], outputPath: path }),
+    };
+    const processes = new RegistryProcesses({ store: f.store, processAdapter: adapter, assertCurrent: () => f.owner.assertCurrent(), changed() {} });
+    const runtime = await wrappedRuntime(f, b.sessionId, b.rootSessionId, raw => ({ exec, storage: () => ({ ...raw.storage(), readFile: async () => new Uint8Array() }) }), processes);
+    f.store.putResource({ id: 'job', session: b.sessionId, root: b.rootSessionId, kind: 'detached', state: 'reconciling',
+      reference: join(adapter.storageDirectory(runtime), 'job'), startIdentity: 'launch', updatedAt: now });
+    const refresh = () => processes.refresh(b.rootSessionId);
+    await refresh();
+    expect(inspectDetached).toHaveBeenCalledOnce();
+    if (windows) {
+      expect(exec).not.toHaveBeenCalled();
+      expect(f.store.resource('job')?.state).toBe('running');
+      expect(processes.list(b.rootSessionId)[0]?.controllable).toBe(true);
+      verified = false;
+      await refresh();
+    } else expect(exec).toHaveBeenCalledOnce();
+    expect(f.store.resource('job')?.state).toBe('reconciling');
+    expect(processes.list(b.rootSessionId)[0]?.controllable).toBe(false);
+  });
+
   it('does not probe terminal records or renew their timestamps', async () => {
     let time = now; const f = await fixture({ now: () => time }); const b = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     const inspectDetached = vi.fn(async () => ({ status: 'running' as const, pid: 42 }));
@@ -521,6 +551,34 @@ describe.skipIf(!supported)('registry process ownership', () => {
     await f.registry.close(b.sessionId);
     expect(shell).toHaveBeenCalledOnce();
     expect(f.store.snapshot().resources[0]!.state).toBe('running');
+  });
+
+  it('keeps a pending finish notice on the job row until the job reports it delivered', async () => {
+    const f = await fixture(); const root = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    const runtime = await wrappedRuntime(f, root, root, { shell: async () => ({ stdout: '', stderr: '', code: 0, killed: false }) });
+    const job = await new BackgroundBashManager(runtime).start('synthetic detached');
+    const write = (patch: Record<string, unknown>) => runtime.storage().writeFile(job.meta.infoPath, new TextEncoder().encode(JSON.stringify({ ...job.meta, ...patch })));
+    expect(f.store.resource(job.meta.id)).not.toHaveProperty('notice');
+    await write({ notice: 'pending' });
+    expect(f.store.resource(job.meta.id)).toMatchObject({ state: 'running', notice: 'pending' });
+    await write({ status: 'completed', exitCode: 0, notice: 'pending' });
+    expect(f.store.resource(job.meta.id)).toMatchObject({ state: 'exited', notice: 'pending' });
+    await write({ status: 'completed', exitCode: 0, notice: 'delivered' });
+    expect(f.store.resource(job.meta.id)).toMatchObject({ state: 'exited' });
+    expect(f.store.resource(job.meta.id)).not.toHaveProperty('notice');
+  });
+
+  it('restores the sessions recovery found owing background work without a prompt and skips ones that fail', async () => {
+    const f = await fixture();
+    const first = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    const second = (await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } })).sessionId;
+    expect((await f.registry.evictIdle()).sort()).toEqual([first, second].sort());
+    const opened = f.opened.length;
+    Object.assign(f.registry, { recovery: { changedSessions: new Set(), resumableContinuations: [], reconcileDetached: [], missingResources: [], restoreSessions: ['missing-session', first, second] } });
+    await f.registry.restoreRecovered();
+    expect(f.registry.binding(first)).toBeDefined(); expect(f.registry.binding(second)).toBeDefined();
+    expect(f.opened.slice(opened).map(request => request.target.kind)).toEqual(['resume', 'resume']);
+    expect(f.store.sessionMetadata(first).run.state).toBe('idle');
   });
 
   it('refuses control from persisted PID references without a verified live identity', async () => {
