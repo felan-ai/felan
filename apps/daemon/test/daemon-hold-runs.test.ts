@@ -59,6 +59,7 @@ async function fixture(options: { holdTimeoutMs?: number; extension?: (pi: Exten
     holdAdmission: () => { connector.beginDrain(); f.registry.holdAdmission(); },
     activity: () => server.activity(),
     holdRuns: signal => holdDaemonRuns(f.registry, server, signal),
+    restoring: () => f.registry.restoring,
     settle: (mode, signal) => settleDaemonWork(f.registry, broker, mode, signal), complete });
   server = new SessionServer({ registry: f.registry, models: f.root.runtime.session.modelRuntime, version: 'fixture', broker,
     configuration: new DaemonConfiguration({ definitions: [], assertCurrent: () => f.owner.assertCurrent() }),
@@ -322,3 +323,12 @@ it('starts a queued subagent once a hold ends without a restart', async () => {
   await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'), WAIT);
   await vi.waitFor(() => expect(f.started).toContain('queued'), WAIT);
 }, TEST_TIMEOUT_MS);
+
+it('answers busy without closing admission while the daemon still continues the runs its predecessor held', async () => {
+  const f = await fixture();
+  vi.spyOn(f.registry, 'restoring', 'get').mockReturnValue(true);
+  expect(await f.hold()).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
+  expect(f.lifecycle.state).toBe('ready');
+  expect(f.server.admissionClosed()).toBe(false); expect(f.connector.claiming).toBe(true);
+  expect(f.connector.beginDrain).not.toHaveBeenCalled();
+});

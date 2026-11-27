@@ -104,3 +104,23 @@ describe('continuing held runs after a restart', () => {
     expect(() => registry.assertRunAvailable(root.sessionId)).not.toThrow();
   });
 });
+
+describe('restoring after a restart', () => {
+  it('reports restoring until the held runs have been continued or interrupted', async () => {
+    const f = await fixture();
+    expect(f.registry.restoring).toBe(false);
+    const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
+    await root.runtime.session.prompt('start');
+    const record: ContinueRecord = { version: 1, session: root.sessionId, root: root.sessionId, run: { id: 'held-run' },
+      leaf: root.runtime.session.sessionManager.getLeafId()!, heldAt: 1, queue: [] };
+    await f.registry.shutdown();
+    f.store.updateSession(root.sessionId, { residency: 'evicted', run: { state: 'running', id: 'held-run' } });
+    f.store.putHeldRuns([record]);
+    f.store.close();
+    const store = new DaemonControlStore(f.owner);
+    const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
+    expect(registry.restoring).toBe(true);
+    await registry.restoreRecovered();
+    expect(registry.restoring).toBe(false);
+  });
+});

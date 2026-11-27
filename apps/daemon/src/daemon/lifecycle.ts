@@ -23,6 +23,11 @@ export interface HostLifecycleOptions {
    * a host with an active run answers `busy`.
    */
   holdRuns?(signal: AbortSignal): Promise<number>;
+  /**
+   * True while the daemon still continues the runs its predecessor held. Closing admission then would interrupt them, so a
+   * hold answers `busy` until it is false.
+   */
+  restoring?(): boolean;
   /** Reopens admission after a drain was abandoned; throws when the daemon can no longer resume. */
   endDrain(): void;
   /** Settlement must stop before releasing anything once `signal` aborts. */
@@ -127,6 +132,7 @@ export class HostLifecycle {
       return { response: accepted(request, this.managedResult()) };
     }
     if (this.current !== 'ready') throw commandError('busy', 'The daemon is already stopping or restarting.');
+    if (this.options.restoring?.()) throw commandError('busy', 'The daemon is still continuing the runs its previous run held.');
     const { holdAdmission, activity } = this.options;
     if (!holdAdmission || !activity) throw commandError('unavailable', 'This daemon cannot hold admission.');
     const pending: PendingAction = command.dispatch(() => {

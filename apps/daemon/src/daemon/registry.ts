@@ -130,6 +130,7 @@ export class SessionRegistry {
   private stepHold: StepHold | undefined;
   private readonly continuing = new Set<string>();
   private readonly heldWaiters = new Set<() => void>();
+  private restored = false;
 
   constructor(readonly options: RegistryOptions) {
     options.owner.assertCurrent();
@@ -484,6 +485,15 @@ export class SessionRegistry {
    * the notices without waiting for a prompt. A held run that cannot continue is interrupted, as an unheld run is at restart.
    */
   async restoreRecovered(): Promise<void> {
+    try { await this.restoreRecoveredSessions(); } finally { this.restored = true; }
+  }
+
+  /** True until `restoreRecovered` settles when startup recovery found runs to continue or sessions to restore. */
+  get restoring(): boolean {
+    return !this.restored && ((this.recovery?.continueRuns.length ?? 0) + (this.recovery?.restoreSessions.length ?? 0)) > 0;
+  }
+
+  private async restoreRecoveredSessions(): Promise<void> {
     for (const record of this.recovery?.continueRuns ?? []) {
       try {
         if (this.stopping || this.draining || this.failure) throw new Error('The daemon stopped before the held run continued.');

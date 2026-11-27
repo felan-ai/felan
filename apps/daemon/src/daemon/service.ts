@@ -120,6 +120,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
       holdAdmission: () => { connector?.beginDrain(); liveRegistry.holdAdmission(); },
       activity: (): Promise<HostActivity> => liveServer.activity(),
       holdRuns: (signal: AbortSignal): Promise<number> => holdDaemonRuns(liveRegistry, liveServer, signal),
+      restoring: () => liveRegistry.restoring,
       ...(options.holdTimeoutMs ? { holdTimeoutMs: options.holdTimeoutMs } : {}),
       endDrain: () => { liveRegistry.endDrain(); liveSetup.endDrain?.(); connector?.endDrain(); },
       canRetry: () => { owner.assertCurrent(); liveStore.assertCurrent(); return !liveRegistry.fenced; },
