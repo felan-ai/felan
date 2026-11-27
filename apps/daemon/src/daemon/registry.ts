@@ -246,7 +246,8 @@ export class SessionRegistry {
     const hold: StepHold = { held: false, changed: () => {} };
     this.stepHold = hold;
     try {
-      while (!this.runsQuiet() || await this.processes.interruptibleCount() || await otherWork()) {
+      // The synchronous check comes last, so no run can start between it and the record write.
+      while (await this.processes.interruptibleCount() || await otherWork() || !this.runsQuiet()) {
         signal.throwIfAborted();
         // Parks and settled runs wake the wait; the interval only re-reads process and provider work.
         await new Promise<void>(resolve => {

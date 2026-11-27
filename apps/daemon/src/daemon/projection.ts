@@ -121,9 +121,6 @@ export class SessionProjection {
         : message.content.map(part => part.type === 'text' ? { type: 'text' as const, text: part.text } : { type: 'image' as const, data: part.data, mimeType: part.mimeType }) } }]);
   }
 
-  /** Whether the next request would deliver queued user input. */
-  get hasQueuedUserInput(): boolean { return [...this.queued.values()].some(entry => entry.message.role === 'user'); }
-
   /** A continued run re-queued its saved input, so the restart notice about lost queued turns no longer applies. */
   clearInterruptedQueue(): void {
     if (this.presentation.has('interrupted-queue')) this.setPresentation({ id: 'interrupted-queue', remove: true });

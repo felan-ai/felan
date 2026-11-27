@@ -6,7 +6,7 @@ type Agent = AgentSession['agent'];
 type FinishTurn = NonNullable<Agent['finishTurn']>;
 type TurnDecision = { action: 'continue' } | { action: 'end' } | undefined;
 
-/** A queued user message as Pi keeps it: text and image parts with their original attachments. */
+/** A queued user message as Pi keeps it, with its text and image parts. */
 const QueuedUserMessageSchema = Type.Object({
   role: Type.Literal('user'),
   content: Type.Union([Type.String(), Type.Array(Type.Union([
@@ -32,7 +32,10 @@ const ContinueRecordSchema = Type.Object({
 });
 export type ContinueRecord = Static<typeof ContinueRecordSchema>;
 export type HeldInput = Static<typeof HeldInputSchema>;
-/** Larger queued input cannot be recorded, so its run is not held. */
+/**
+ * Larger queued input cannot be recorded. Before `held` the hold is cancelled; a run that parks after `held` gets no record
+ * and is interrupted at the stop.
+ */
 export const CONTINUE_RECORD_BYTES = 32 * 1024 * 1024;
 
 export function parseContinueRecord(value: unknown): ContinueRecord { return parseSchema(ContinueRecordSchema, value); }
