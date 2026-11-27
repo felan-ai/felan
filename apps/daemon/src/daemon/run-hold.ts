@@ -25,7 +25,6 @@ const ContinueRecordSchema = Type.Object({
   session: IdSchema, root: IdSchema, parent: Type.Optional(IdSchema),
   run: Type.Object({ id: IdSchema, origin: Type.Optional(OriginSchema), turnId: Type.Optional(IdSchema) }),
   leaf: IdSchema,
-  heldAt: CounterSchema,
   queue: Type.Array(HeldInputSchema, { maxItems: 256 }),
   /** Assistant turns a child execution completed before the hold, so its turn limit carries over. */
   turns: Type.Optional(CounterSchema),

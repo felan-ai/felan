@@ -83,7 +83,7 @@ describe('step hold', () => {
 });
 
 describe('continue record', () => {
-  const record = { version: 1, session: 's', root: 'r', run: { id: 'run', origin: { kind: 'tui', attachment: 'a' } }, leaf: 'leaf', heldAt: 1,
+  const record = { version: 1, session: 's', root: 'r', run: { id: 'run', origin: { kind: 'tui', attachment: 'a' } }, leaf: 'leaf',
     queue: [{ kind: 'follow_up', origin: { kind: 'tui', attachment: 'a' }, message: { role: 'user', content: [{ type: 'text', text: 'next' }], timestamp: 2 } }] };
 
   it('reads version 1 with its queued input', () => {

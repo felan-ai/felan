@@ -18,7 +18,7 @@ async function heldTree() {
     execution: { request, createdAt: new Date().toISOString(), startedAt: new Date().toISOString(), deliveryId: 'delivery', completionPending: false } });
   for (const [id, run] of [[root.sessionId, 'root-run'], [child.sessionId, 'child-run']] as const) f.store.updateSession(id, { run: { state: 'running', id: run } });
   const record = (session: string, run: string, parent?: string): ContinueRecord => ({ version: 1, session, root: root.sessionId, ...(parent ? { parent } : {}),
-    run: { id: run }, leaf: 'leaf', heldAt: 1, queue: [] });
+    run: { id: run }, leaf: 'leaf', queue: [] });
   return { f, root: root.sessionId, child: child.sessionId, records: [record(child.sessionId, 'child-run', root.sessionId), record(root.sessionId, 'root-run')] };
 }
 
@@ -87,7 +87,7 @@ describe('continuing held runs after a restart', () => {
     const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     await root.runtime.session.prompt('start');
     const manager = root.runtime.session.sessionManager;
-    const record: ContinueRecord = { version: 1, session: root.sessionId, root: root.sessionId, run: { id: 'held-run' }, leaf: manager.getLeafId()!, heldAt: 1, queue: [] };
+    const record: ContinueRecord = { version: 1, session: root.sessionId, root: root.sessionId, run: { id: 'held-run' }, leaf: manager.getLeafId()!, queue: [] };
     const path = manager.getSessionFile()!;
     await f.registry.shutdown();
     // What a held daemon's stop leaves behind: an evicted session whose run is still running, and its record.
@@ -111,7 +111,7 @@ describe('a held root run that fails to continue', () => {
     const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     await root.runtime.session.prompt('start');
     const record: ContinueRecord = { version: 1, session: root.sessionId, root: root.sessionId, run: { id: 'held-run' },
-      leaf: root.runtime.session.sessionManager.getLeafId()!, heldAt: 1, queue: [] };
+      leaf: root.runtime.session.sessionManager.getLeafId()!, queue: [] };
     await f.registry.shutdown();
     f.store.updateSession(root.sessionId, { residency: 'evicted', run: { state: 'running', id: 'held-run' } });
     f.store.putHeldRuns([record]);
@@ -135,7 +135,7 @@ describe('a held child that cannot continue', () => {
     await f.registry.shutdown();
     // What a held daemon's stop leaves behind; the record's leaf no longer matches the child's transcript.
     f.store.updateSession(child.sessionId, { residency: 'evicted', run: { state: 'running', id: 'child-run' }, execution });
-    f.store.putHeldRuns([{ version: 1, session: child.sessionId, root: root.sessionId, parent: root.sessionId, run: { id: 'child-run' }, leaf: 'gone', heldAt: 1, queue: [] }]);
+    f.store.putHeldRuns([{ version: 1, session: child.sessionId, root: root.sessionId, parent: root.sessionId, run: { id: 'child-run' }, leaf: 'gone', queue: [] }]);
     f.store.close();
     const store = new DaemonControlStore(f.owner);
     const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
@@ -157,7 +157,7 @@ describe('a held child whose next step fails', () => {
     const leaf = child.runtime.session.sessionManager.getLeafId()!;
     await f.registry.shutdown();
     f.store.updateSession(child.sessionId, { residency: 'evicted', run: { state: 'running', id: 'child-run' }, execution });
-    f.store.putHeldRuns([{ version: 1, session: child.sessionId, root: root.sessionId, parent: root.sessionId, run: { id: 'child-run' }, leaf, heldAt: 1, queue: [] }]);
+    f.store.putHeldRuns([{ version: 1, session: child.sessionId, root: root.sessionId, parent: root.sessionId, run: { id: 'child-run' }, leaf, queue: [] }]);
     f.store.close();
     const store = new DaemonControlStore(f.owner);
     const registry = f.createRegistry(store); f.replaceRegistry(registry, store);
@@ -176,7 +176,7 @@ describe('restoring after a restart', () => {
     const root = await f.registry.create({ cwd: f.cwd, target: { kind: 'new' } });
     await root.runtime.session.prompt('start');
     const record: ContinueRecord = { version: 1, session: root.sessionId, root: root.sessionId, run: { id: 'held-run' },
-      leaf: root.runtime.session.sessionManager.getLeafId()!, heldAt: 1, queue: [] };
+      leaf: root.runtime.session.sessionManager.getLeafId()!, queue: [] };
     await f.registry.shutdown();
     f.store.updateSession(root.sessionId, { residency: 'evicted', run: { state: 'running', id: 'held-run' } });
     f.store.putHeldRuns([record]);

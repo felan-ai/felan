@@ -359,7 +359,7 @@ export class SessionRegistry {
     const turns = stored.execution ? this.executionHost(id).heldTurns(id) : undefined;
     return { version: 1, session: id, root: stored.root, ...(stored.parent ? { parent: stored.parent } : {}),
       run: { id: stored.run.id, ...(stored.run.origin ? { origin: stored.run.origin } : {}), ...(stored.run.turnId ? { turnId: stored.run.turnId } : {}) },
-      leaf: step.leaf, heldAt: this.now(), queue, ...(turns === undefined ? {} : { turns }) };
+      leaf: step.leaf, queue, ...(turns === undefined ? {} : { turns }) };
   }
 
   /** Every resident session is idle or parked at a step end with nothing else in flight. */
