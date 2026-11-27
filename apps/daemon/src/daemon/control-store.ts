@@ -7,6 +7,7 @@ import { CONTROL_LIMITS, ControlResourceSchema, ControlSessionMetadataSchema, Co
 import { CONTROL_TABLES, ControlDatabase, sha256, type ControlRow, type ControlTable, type PersistenceBoundary, type RemoteDatabase, type StoredControl } from './persistence.js';
 import type { DaemonOwnership } from './ownership.js';
 import { recoverControlState, type RecoveryPlan } from './control-recovery.js';
+import { CONTINUE_RECORD_BYTES, parseContinueRecord, type ContinueRecord } from './run-hold.js';
 import { IdSchema, LIMITS, OPERATION_CATALOG, parseClientEnvelope, canonicalRequestPayload, parseInteraction, parseSchema, parseServerEnvelope, requestRetainUntil, validateInteractionAnswer, type Interaction, type InteractionAnswer, type Response, type Operation, type OperationParams } from '@felan-ai/session-protocol';
 
 export interface ControlStoreOptions {
@@ -158,6 +159,16 @@ export class DaemonControlStore {
     });
   }
 
+  /** Evicts a session whose run is held at a step end; the run stays running for the next daemon to continue. */
+  evictHeldSession(id: string): ControlCommit<ControlSession> {
+    return this.commit((state, touched) => {
+      const session = editSession(state, this.findSession(state, id));
+      if (session.deletedAt !== undefined) throw new ControlStoreError('not_found', 'Session was deleted.');
+      if (session.state !== 'open' || !['running', 'waiting'].includes(session.run.state)) throw new ControlStoreError('invalid_request', 'Only an open session with a held run is evicted with its run.');
+      if (session.residency !== 'evicted') { session.residency = 'evicted'; touched.add(id); }
+      return session;
+    });
+  }
   transitionSessionForSafety(id: string, transition: 'cancelling' | 'idle' | 'closed' | 'evicted'): ControlCommit<ControlSession> {
     if (!['cancelling', 'idle', 'closed', 'evicted'].includes(transition)) throw new ControlStoreError('invalid_request', 'Unknown safety transition.');
     return this.commit((state, touched) => {
@@ -372,11 +383,36 @@ export class DaemonControlStore {
       state.resources = state.resources.filter(item => item.id !== resource.id); state.resources.push(next); touched.add(resource.session); return next;
     });
   }
-  recover(): ControlCommit<RecoveryPlan> {
+  /** Continue records of runs held at a step end. An unreadable or unsupported record is skipped, so its run is interrupted. */
+  heldRuns(): ContinueRecord[] {
+    const records: ContinueRecord[] = [];
+    for (const row of this.file.heldRuns()) {
+      try {
+        const record = parseContinueRecord(JSON.parse(row.data));
+        if (record.session === row.session) records.push(record);
+      } catch { /* Only a record this daemon can read is continued. */ }
+    }
+    return records;
+  }
+  /** Writes continue records durably; a record larger than `CONTINUE_RECORD_BYTES` is refused. */
+  putHeldRuns(records: readonly ContinueRecord[]): void {
+    const rows = records.map(record => {
+      const data = JSON.stringify(parseContinueRecord(record));
+      if (Buffer.byteLength(data) > CONTINUE_RECORD_BYTES) throw new ControlStoreError('request_capacity', 'Held run input exceeds the continue record limit.');
+      return { session: record.session, data };
+    });
+    if (rows.length) this.file.writeHeldRuns(rows, []);
+  }
+  deleteHeldRuns(sessions: readonly string[]): void {
+    if (sessions.length) this.file.writeHeldRuns([], sessions);
+  }
+  /** Deletes every continue record, including ones this daemon could not read. */
+  clearHeldRuns(): void { this.deleteHeldRuns(this.file.heldRuns().map(row => row.session)); }
+  recover(held: readonly ContinueRecord[] = []): ControlCommit<RecoveryPlan> {
     if (!this.recoveryRequired) throw new ControlStoreError('invalid_request', 'Recovery is only valid immediately after reopening persisted state.');
     this.recoveryRequired = false;
     try { return this.commit((state, touched, now) => {
-      const plan = recoverControlState(state, now);
+      const plan = recoverControlState(state, now, held);
       for (const id of plan.changedSessions) touched.add(id);
       this.prune(state, now, touched); return plan;
     }, true); } catch (error) { this.recoveryRequired = true; throw error; }

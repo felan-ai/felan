@@ -100,9 +100,11 @@ function controlPragmas(): string {
 }
 /** SQLite primary result codes that describe the environment, not the file's contents. */
 const SQLITE_TRANSIENT = new Set([3 /* PERM */, 5 /* BUSY */, 6 /* LOCKED */, 7 /* NOMEM */, 8 /* READONLY */, 10 /* IOERR */, 13 /* FULL */, 14 /* CANTOPEN */]);
-const REMOTE_SCHEMA = `
+// Created on every open, so stores written before a table existed need no migration and older daemons ignore newer tables.
+const AUXILIARY_SCHEMA = `
   CREATE TABLE IF NOT EXISTS remote_records (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY (kind, id)) STRICT;
   CREATE TABLE IF NOT EXISTS remote_outbox (session TEXT NOT NULL, seq INTEGER NOT NULL, bytes INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY (session, seq)) STRICT;
+  CREATE TABLE IF NOT EXISTS held_runs (session TEXT PRIMARY KEY, data TEXT NOT NULL) STRICT;
 `;
 
 type Statements = Record<ControlTable, { upsert: StatementSync; remove: StatementSync; rows: StatementSync }> & {
@@ -110,6 +112,7 @@ type Statements = Record<ControlTable, { upsert: StatementSync; remove: Statemen
   record: StatementSync; records: StatementSync; putRecord: StatementSync; deleteRecord: StatementSync;
   outbox: StatementSync;
   insertOutbox: StatementSync; deleteOutbox: StatementSync;
+  heldRuns: StatementSync; putHeldRun: StatementSync; deleteHeldRun: StatementSync;
 };
 
 let sqlite: typeof import('node:sqlite') | undefined;
@@ -228,7 +231,7 @@ export class ControlDatabase implements RemoteDatabase {
       if (!meta.has('namespace') && CONTROL_TABLES.some(table => db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get() !== undefined)) throw new DatabaseIntegrityError();
       this.wasRebuilt = meta.get('remoteRebuilt') === 'true';
       this.pin = pathIdentity(this.path);
-      db.exec(`BEGIN IMMEDIATE; ${REMOTE_SCHEMA}`);
+      db.exec(`BEGIN IMMEDIATE; ${AUXILIARY_SCHEMA}`);
       this.assertCurrent(); db.exec('COMMIT'); this.assertCurrent();
       this.statements = prepareStatements(db);
     } catch (error) {
@@ -247,7 +250,7 @@ export class ControlDatabase implements RemoteDatabase {
     const db = this.db = new (loadSqlite().DatabaseSync)(this.path);
     db.exec(controlPragmas());
     db.exec(['BEGIN IMMEDIATE', 'CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT',
-      ...CONTROL_TABLES.map(table => `CREATE TABLE ${table} (id TEXT PRIMARY KEY, ord INTEGER NOT NULL, data TEXT NOT NULL) STRICT`), REMOTE_SCHEMA].join('; '));
+      ...CONTROL_TABLES.map(table => `CREATE TABLE ${table} (id TEXT PRIMARY KEY, ord INTEGER NOT NULL, data TEXT NOT NULL) STRICT`), AUXILIARY_SCHEMA].join('; '));
     this.statements = prepareStatements(db);
     this.statements.putMeta.run('format', FORMAT); this.statements.putMeta.run('storeId', this.storeId);
     if (this.wasRebuilt) this.statements.putMeta.run('remoteRebuilt', 'true');
@@ -315,6 +318,20 @@ export class ControlDatabase implements RemoteDatabase {
     this.assertTransaction();
     if (!Number.isSafeInteger(through) || through < 0) throw new ControlStoreError('invalid_request', 'Invalid outbox sequence.');
     this.statements!.deleteOutbox.run(session, through);
+  }
+  /** Continue records of runs held at a step end, keyed by session. */
+  heldRuns(): { session: string; data: string }[] {
+    this.assertCurrent();
+    const rows = this.statements!.heldRuns.all() as { session: string; data: string }[];
+    this.assertCurrent();
+    return rows;
+  }
+  /** Writes and deletes continue records in one transaction. */
+  writeHeldRuns(put: readonly { session: string; data: string }[], remove: readonly string[]): void {
+    this.transaction(() => {
+      for (const session of remove) this.statements!.deleteHeldRun.run(session);
+      for (const row of put) this.statements!.putHeldRun.run(row.session, row.data);
+    });
   }
   private assertTransaction(): void {
     this.assertCurrent();
@@ -410,6 +427,9 @@ function prepareStatements(db: DatabaseSync): Statements {
     outbox: db.prepare('SELECT seq, bytes, data FROM remote_outbox WHERE session = ? AND seq > ? ORDER BY seq LIMIT ?'),
     insertOutbox: db.prepare('INSERT INTO remote_outbox (session, seq, bytes, data) VALUES (?, ?, ?, ?)'),
     deleteOutbox: db.prepare('DELETE FROM remote_outbox WHERE session = ? AND seq <= ?'),
+    heldRuns: db.prepare('SELECT session, data FROM held_runs ORDER BY session'),
+    putHeldRun: db.prepare('INSERT INTO held_runs (session, data) VALUES (?, ?) ON CONFLICT(session) DO UPDATE SET data = excluded.data'),
+    deleteHeldRun: db.prepare('DELETE FROM held_runs WHERE session = ?'),
   };
 }
 

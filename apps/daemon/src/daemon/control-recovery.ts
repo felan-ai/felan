@@ -1,5 +1,6 @@
 import type { Interaction } from '@felan-ai/session-protocol';
 import type { ControlState } from './control-state.js';
+import type { ContinueRecord } from './run-hold.js';
 
 export interface RecoveryPlan {
   resumableContinuations: string[];
@@ -7,11 +8,23 @@ export interface RecoveryPlan {
   missingResources: string[];
   /** Open root sessions with a background job that may still run or still owes a finish notice. */
   restoreSessions: string[];
+  /** Runs a previous daemon held at a step end, parents before children; the registry continues them. */
+  continueRuns: ContinueRecord[];
   changedSessions: Set<string>;
 }
 
-export function recoverControlState(state: ControlState, now: number): RecoveryPlan {
-  const plan: RecoveryPlan = { resumableContinuations: [], reconcileDetached: [], missingResources: [], restoreSessions: [], changedSessions: new Set() };
+export function recoverControlState(state: ControlState, now: number, held: readonly ContinueRecord[] = []): RecoveryPlan {
+  const plan: RecoveryPlan = { resumableContinuations: [], reconcileDetached: [], missingResources: [], restoreSessions: [], continueRuns: [], changedSessions: new Set() };
+  const continuing = new Set<string>();
+  for (const record of held) {
+    const session = state.sessions.find(item => item.id === record.session);
+    if (!session || session.state !== 'open' || session.deletedAt !== undefined || session.root !== record.root
+      || session.run.id !== record.run.id || !['running', 'waiting'].includes(session.run.state)
+      || session.execution && (session.execution.completedAt || !session.execution.startedAt)) continue;
+    continuing.add(session.id); plan.continueRuns.push(record);
+  }
+  const depth = (id: string): number => { let count = 0; for (let row = state.sessions.find(item => item.id === id); row?.parent; row = state.sessions.find(item => item.id === row!.parent)) count++; return count; };
+  plan.continueRuns.sort((a, b) => depth(a.session) - depth(b.session));
   const owed = new Set(state.resources.filter(resource => resource.kind === 'detached'
     && (resource.state === 'running' || resource.state === 'reconciling' || resource.notice === 'pending')).map(resource => resource.session));
   // A child's notice would start a turn nobody waits for, so only roots are restored.
@@ -27,6 +40,10 @@ export function recoverControlState(state: ControlState, now: number): RecoveryP
     } };
   }
   for (const session of state.sessions) {
+    if (continuing.has(session.id)) {
+      if (session.residency !== 'evicted' || session.run.state !== 'running') { session.residency = 'evicted'; session.run.state = 'running'; plan.changedSessions.add(session.id); }
+      continue;
+    }
     if (session.execution && !session.execution.completedAt) {
       session.execution.completedAt = new Date(now).toISOString();
       session.execution.outcome = 'cancelled';

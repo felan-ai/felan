@@ -24,7 +24,7 @@ export interface ExecutionRecord {
   readonly model?: ModelReference; readonly usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; cacheWrite1h: number; cost: number };
 }
 type Result<T> = { ok: true; value: T } | { ok: false; error: { code: string; message: string } };
-interface Job { readonly id: string; readonly controller: AbortController; readonly promise: Promise<void>; cancelling?: Promise<void> }
+interface Job { readonly id: string; readonly controller: AbortController; readonly promise: Promise<void>; cancelling?: Promise<void>; turns: number }
 const synthesis = 'Stop using tools. Summarize the work completed, findings, and any remaining uncertainty in a concise final response.';
 
 export class ExecutionHost {
@@ -47,6 +47,8 @@ export class ExecutionHost {
   hasActiveJobs(): boolean { return this.manager.jobs(this.sessionId).length > 0; }
   hasExecutingJobs(): boolean { return this.hasActiveJobs(); }
   resumeQueued(): void { this.manager.drain(); }
+  resumeHeld(id: string, turns: number, trigger: () => Promise<void>): Promise<void> { return this.manager.resumeHeld(id, turns, trigger); }
+  executionTurns(id: string): number | undefined { return this.manager.turns(id); }
   settle(): Promise<void> { return this.manager.settle(this.sessionId); }
   shutdown(): Promise<void> { return this.manager.shutdown(this.sessionId); }
 }
@@ -193,7 +195,7 @@ export class RegistryExecutions {
   }
   private async cancelTree(id: string, message: string, code = 'cancelled_by_parent', outcome: 'cancelled' | 'timed_out' = 'cancelled'): Promise<void> {
     const ids = this.descendants(id);
-    for (const row of this.rows().filter(row => ids.has(row.id) && !row.execution!.completedAt)) {
+    for (const row of this.rows().filter(row => ids.has(row.id) && !row.execution!.completedAt && !this.registry.isHeld(row.id))) {
       this.finish(row.id, outcome, { code, message });
       const job = this.active.get(row.id);
       if (job) {
@@ -218,7 +220,7 @@ export class RegistryExecutions {
           this.update(row.id, { ...row.execution!, startedAt: new Date().toISOString() });
           const controller = new AbortController();
           const promise = Promise.resolve().then(() => this.run(row.id, controller.signal));
-          const job: Job = { id: row.id, controller, promise };
+          const job: Job = { id: row.id, controller, promise, turns: 0 };
           this.active.set(row.id, job);
           void promise.catch(error => this.failures.add(error)).finally(() => { this.active.delete(row.id); this.drain(); });
         }
@@ -226,22 +228,38 @@ export class RegistryExecutions {
       finally { this.draining = false; }
     });
   }
-  private async run(id: string, signal: AbortSignal): Promise<void> {
+  /**
+   * Runs a child execution that a previous daemon held, starting its next step with `trigger` instead of its prompt. The turns
+   * it took before the hold count toward its turn limit, and its timeout runs from its original start.
+   */
+  resumeHeld(id: string, turns: number, trigger: () => Promise<void>): Promise<void> {
+    if (this.active.has(id)) throw new Error('Execution is already running.');
+    const controller = new AbortController();
+    const promise = Promise.resolve().then(() => this.run(id, controller.signal, { turns, trigger }));
+    this.active.set(id, { id, controller, promise, turns });
+    void promise.catch(error => this.failures.add(error)).finally(() => { this.active.delete(id); this.drain(); });
+    return promise;
+  }
+  turns(id: string): number | undefined { return this.active.get(id)?.turns; }
+  private async run(id: string, signal: AbortSignal, resume?: { turns: number; trigger: () => Promise<void> }): Promise<void> {
     const row = this.registry.options.store.session(id); const execution = row.execution!;
     const session = this.registry.binding(id)!.runtime.session;
     const tools = session.getActiveToolNames();
     const start = session.sessionManager.getEntries().length;
     let timeout: ReturnType<typeof setTimeout> | undefined;
-    let turns = 0; let limit = false; let unsubscribe = () => {};
+    let turns = resume?.turns ?? 0; let limit = false; let unsubscribe = () => {};
     try {
       if (execution.request.timeoutMs) {
-        timeout = setTimeout(() => { void this.cancelTree(id, `Execution timed out after ${execution.request.timeoutMs} milliseconds`, 'timed_out', 'timed_out').catch(error => this.failures.add(error)); }, execution.request.timeoutMs);
+        const elapsed = resume && execution.startedAt ? Math.max(0, Date.now() - Date.parse(execution.startedAt)) : 0;
+        timeout = setTimeout(() => { void this.cancelTree(id, `Execution timed out after ${execution.request.timeoutMs} milliseconds`, 'timed_out', 'timed_out').catch(error => this.failures.add(error)); },
+          Math.max(1, execution.request.timeoutMs - elapsed));
         timeout.unref();
       }
       session.setActiveToolsByName(tools.filter(name => !execution.request.excludedTools?.includes(name)));
       unsubscribe = session.subscribe(event => {
         if (event.type !== 'turn_end') return;
         this.emit(); turns++;
+        const job = this.active.get(id); if (job) job.turns = turns;
         if (execution.request.maxTurns && event.message.role === 'assistant' && event.message.stopReason === 'toolUse') {
           if (turns >= execution.request.maxTurns) { limit = true; void session.abort().catch(error => this.failures.add(error)); }
           else if (turns === execution.request.maxTurns - 1) { session.setActiveToolsByName([]); void session.steer(synthesis).catch(error => this.failures.add(error)); }
@@ -252,9 +270,11 @@ export class RegistryExecutions {
       if (!signal.aborted) {
         this.registry.assertDispatch(id);
         this.registry.projection(id).setOrigin({ kind: 'automation', source: 'execution' });
-        await session.prompt(prompt);
+        if (resume) await resume.trigger(); else await session.prompt(prompt);
       }
       await this.active.get(id)?.cancelling;
+      // A held child stays unfinished; the next daemon continues it and delivers its completion then.
+      if (this.registry.isHeld(id)) return;
       if (!this.registry.options.store.session(id).execution!.completedAt) {
         const assistant = session.sessionManager.getEntries().slice(start).reverse().find(entry => entry.type === 'message' && entry.message.role === 'assistant');
         if (limit) this.finish(id, 'cancelled', { code: 'turn_limit_reached', message: `Execution reached its ${execution.request.maxTurns} turn limit` });
@@ -310,6 +330,8 @@ export class RegistryExecutions {
     const existing = this.deliveries.get(id); if (existing) return existing;
     const delivery = (async () => {
       try {
+        // A completion starts a parent run; while runs are held it waits, and a restart leaves it to the next daemon.
+        if (this.registry.holdingRuns) throw new Error('Runs are held.');
         this.registry.assertDispatch(row.parent!);
         const record = this.view(row);
         const outcome = await this.parents.get(row.parent!)!.deliverCompletion({ deliveryId: execution.deliveryId, executionId: id, parentSessionId: row.parent!, label: record.label,

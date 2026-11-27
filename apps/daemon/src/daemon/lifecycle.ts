@@ -17,6 +17,12 @@ export interface HostLifecycleOptions {
   holdAdmission?(): void;
   /** Active runs and interruptible work; a `hold` is accepted only when both are zero. Required for `hold`. */
   activity?(): Promise<HostActivity>;
+  /**
+   * Parks every active run at its next step end and records how to continue it; resolves with the number of held runs once
+   * nothing else runs. Rejecting, including when `signal` aborts, leaves no run parked and no record. Without it a hold on
+   * a host with an active run answers `busy`.
+   */
+  holdRuns?(signal: AbortSignal): Promise<number>;
   /** Reopens admission after a drain was abandoned; throws when the daemon can no longer resume. */
   endDrain(): void;
   /** Settlement must stop before releasing anything once `signal` aborts. */
@@ -32,6 +38,8 @@ export interface HostLifecycleOptions {
 
 /** Admission stays closed while activity is counted, so a slow count must not keep the daemon from serving. */
 const HOLD_CHECK_MS = 10_000;
+/** How long a hold waits for active runs to reach a step end when the request names no limit. */
+const STEP_TIMEOUT_MS = 180_000;
 
 interface PendingAction { id: string; action: HostAction; mode: HostMode; generation: number; abort: AbortController; held?: HostHeld }
 
@@ -53,6 +61,7 @@ export class HostLifecycle {
 
   get state(): HostState { return this.current; }
   get modes(): HostMode[] { return this.options.holdAdmission && this.options.activity ? ['drain', 'force', 'hold'] : ['drain', 'force']; }
+  get holdsRuns(): boolean { return this.modes.includes('hold') && this.options.holdRuns !== undefined; }
   get held(): HostHeld | undefined { return this.current === 'draining' && this.pending?.held ? { ...this.pending.held } : undefined; }
   get blocked(): HostBlocked | undefined { return this.current === 'blocked' && this.blockedRecord ? { ...this.blockedRecord } : undefined; }
 
@@ -89,6 +98,7 @@ export class HostLifecycle {
     if (this.current === 'blocked' && (request.params.mode !== 'force' || !this.blockedRecord?.recoverable)) throw this.blockedError();
     if (this.completing) throw commandError('busy');
     const action = request.op === 'host.stop' ? 'stop' : 'restart';
+    if (request.params.stepTimeoutMs !== undefined && request.params.mode !== 'hold') throw commandError('invalid_request', 'stepTimeoutMs applies only to mode hold.');
     if (request.params.mode === 'hold') return this.prepareHold(command, action);
     // A held daemon is idle with admission closed, so any drain or force request may replace the hold.
     if (this.current === 'draining' && this.pending && this.pending.mode !== 'hold'
@@ -132,6 +142,10 @@ export class HostLifecycle {
       })]);
     } catch (error) { failure = error; } finally { clearTimeout(timer); }
     if (pending.generation !== this.generation) return { response: rejection(request, 'busy', 'Another stop or restart replaced the hold.') };
+    if (observed?.runs && this.options.holdRuns) {
+      const limit = (request.params as { stepTimeoutMs?: number }).stepTimeoutMs ?? STEP_TIMEOUT_MS;
+      return { response: this.awaitRuns(request, pending, action, limit) };
+    }
     if (!observed || observed.runs || observed.work) {
       if (!this.reopen()) {
         this.block(new Error('Admission could not reopen after a refused hold.'), 'end-drain');
@@ -142,8 +156,31 @@ export class HostLifecycle {
     }
     try { this.options.beginDrain(); } catch (error) { this.block(error, 'begin-drain'); return { response: rejection(request, 'host_blocked', 'The daemon could not close admission.') }; }
     const since = Date.now();
-    pending.held = { action, since, until: since + this.holdTimeout };
+    pending.held = { action, since, until: since + this.holdTimeout, ...(this.options.holdRuns ? { runs: 0 } : {}) };
     return { response: accepted(request, this.managedResult()) };
+  }
+
+  /** Waits for every active run to hold at a step end; past `limit` the attempt is cancelled, the runs continue and admission reopens. */
+  private async awaitRuns(request: AdmittedCommand['request'], pending: PendingAction, action: HostAction, limit: number): Promise<Response> {
+    let expired = false;
+    const timer = setTimeout(() => { expired = true; pending.abort.abort(); }, limit);
+    try {
+      const runs = await this.options.holdRuns!(pending.abort.signal);
+      if (pending.generation !== this.generation) return rejection(request, 'busy', 'Another stop or restart replaced the hold.');
+      try { this.options.beginDrain(); } catch (error) { this.block(error, 'begin-drain'); return rejection(request, 'host_blocked', 'The daemon could not close admission.'); }
+      const since = Date.now();
+      pending.held = { action, since, until: since + this.holdTimeout, runs };
+      return accepted(request, this.managedResult());
+    } catch (error) {
+      if (pending.generation !== this.generation) return rejection(request, 'busy', 'Another stop or restart replaced the hold.');
+      if (!this.reopen()) {
+        this.block(new Error('Admission could not reopen after a cancelled hold.'), 'end-drain');
+        return rejection(request, 'host_blocked', 'Admission could not reopen after a cancelled hold.');
+      }
+      return rejection(request, 'hold_cancelled', expired
+        ? `A run did not reach the end of its step within ${limit} ms. The hold was cancelled, held runs continued and admission reopened.`
+        : `The hold was cancelled before every run held: ${error instanceof Error ? error.message : 'unknown failure'}`);
+    } finally { clearTimeout(timer); }
   }
 
   afterResponse(id: string, accepted = true): void {

@@ -26,6 +26,7 @@ import { shutdownStep } from './shutdown-error.js';
 import { HostWorkers } from './host-workers.js';
 import { assertStagedWorker } from './worker.js';
 import { syncOwnedDirectory } from './persistence.js';
+import { installStepHold, RUN_CONTINUED_MESSAGE_TYPE, RUN_CONTINUED_TEXT, type ContinueRecord, type ParkedStep } from './run-hold.js';
 
 /** @internal */
 export const PROJECTION_CLEANUP_LIMIT_MS = 30_000;
@@ -85,8 +86,11 @@ interface Entry {
   viewActions?: Set<AbortController>;
   viewCancellation?: { attempted: Set<string>; rounds: number };
   command?: { runId: string; views: Set<string> };
+  parked?: ParkedStep;
+  held?: ContinueRecord;
 }
 class RegistryOpeningCancelled extends Error {}
+interface StepHold { held: boolean; changed(): void }
 
 export class SessionRegistry {
   readonly processes: RegistryProcesses;
@@ -123,6 +127,8 @@ export class SessionRegistry {
   private readonly cancellationFailures = new Set<unknown>();
   private readonly lossUnsubscribe: () => void;
   private commandDispatcher: ((session: string, name: string) => boolean) | undefined;
+  private stepHold: StepHold | undefined;
+  private readonly continuing = new Set<string>();
 
   constructor(readonly options: RegistryOptions) {
     options.owner.assertCurrent();
@@ -130,7 +136,13 @@ export class SessionRegistry {
     this.now = options.now ?? Date.now;
     this.startedAt = this.now();
     this.legacy = new LegacySessionIndex(options.owner);
-    this.recovery = options.store.needsRecovery ? options.store.recover().value : undefined;
+    if (options.store.needsRecovery) {
+      const held = options.store.heldRuns();
+      this.recovery = options.store.recover(held).value;
+      // Records are consumed at startup, so a crash during a continued run interrupts it instead of continuing it twice.
+      options.store.clearHeldRuns();
+      for (const record of this.recovery.continueRuns) this.continuing.add(record.session);
+    }
     this.processes = new RegistryProcesses({ ...(options.processAdapter ? { processAdapter: options.processAdapter } : {}), store: options.store, now: this.now, assertCurrent: () => options.owner.assertCurrent(),
       changed: (id, process, rev) => this.publish({ v: 1, session: id, rev, change: { type: 'process.updated', process } }) });
     this.hostWorkers = new HostWorkers({ owner: options.owner, processes: this.processes, lifecycle: () => this.options.lifecycle,
@@ -218,7 +230,100 @@ export class SessionRegistry {
   /** Reopens admission after an abandoned drain; a registry that started shutting down cannot resume. */
   endDrain(): void {
     this.assertAdmission();
+    this.releaseHeld();
     this.draining = false;
+  }
+
+  /**
+   * Parks every active run at its next step end. Once every resident session is idle or parked and nothing else runs, writes
+   * one continue record per parked run and resolves with their number. A run that parks later, while the daemon stays held,
+   * gets its record when it parks. When `signal` aborts or a record cannot be written, the parked runs continue and no
+   * record remains.
+   */
+  async holdRuns(signal: AbortSignal, otherWork: () => Promise<boolean>): Promise<number> {
+    this.assertAdmission();
+    if (!this.draining || this.stepHold) throw new Error('Runs are held only once, after admission closed.');
+    const hold: StepHold = { held: false, changed: () => {} };
+    this.stepHold = hold;
+    try {
+      while (!this.runsQuiet() || await this.processes.interruptibleCount() || await otherWork()) {
+        signal.throwIfAborted();
+        // Parks and settled runs wake the wait; the interval only re-reads process and provider work.
+        await new Promise<void>(resolve => {
+          const done = () => { clearTimeout(timer); signal.removeEventListener('abort', done); hold.changed = () => {}; resolve(); };
+          const timer = setTimeout(done, 100);
+          hold.changed = done; signal.addEventListener('abort', done, { once: true });
+        });
+      }
+      signal.throwIfAborted();
+      const parked = [...this.entries].filter(([, entry]) => entry.parked);
+      const records = parked.map(([id, entry]) => this.continueRecord(id, entry, entry.parked!));
+      this.options.store.putHeldRuns(records);
+      parked.forEach(([, entry], index) => { entry.held = records[index]!; });
+      hold.held = true;
+      return records.length;
+    } catch (error) {
+      if (this.stepHold === hold) this.releaseHeld();
+      throw error;
+    }
+  }
+
+  /** True while a hold waits for or holds runs; subagent completions wait until it ends, so no new run starts meanwhile. */
+  get holdingRuns(): boolean { return this.stepHold !== undefined; }
+
+  isHeld(id: string): boolean { return this.entries.get(id)?.held !== undefined; }
+
+  /** Deletes every continue record before the parked runs take their next step, so a later crash cannot continue them twice. */
+  private releaseHeld(): void {
+    if (!this.stepHold) return;
+    this.stepHold = undefined;
+    this.options.store.deleteHeldRuns([...this.entries].filter(([, entry]) => entry.held).map(([id]) => id));
+    for (const entry of this.entries.values()) { delete entry.held; entry.parked?.release('continue'); }
+  }
+
+  /** Forgets one run's hold when the run is cancelled, closed or interrupted, so no later daemon continues it. */
+  private dropHeld(id: string): void {
+    const entry = this.entries.get(id);
+    if (!entry?.held) return;
+    this.options.store.deleteHeldRuns([id]);
+    delete entry.held;
+  }
+
+  private parked(id: string, entry: Entry, step: ParkedStep): void {
+    const hold = this.stepHold;
+    if (!hold || this.entries.get(id) !== entry) { step.release('continue'); return; }
+    entry.parked = step;
+    // A run an extension started after the hold was reported, such as for a background command's finish notice.
+    if (hold.held) {
+      try {
+        const record = this.continueRecord(id, entry, step);
+        this.options.store.putHeldRuns([record]);
+        entry.held = record;
+      } catch (error) { this.diagnostic({ scope: 'registry', session: id, error }); }
+    }
+    hold.changed();
+  }
+
+  private continueRecord(id: string, entry: Entry, step: ParkedStep): ContinueRecord {
+    const stored = this.options.store.sessionMetadata(id);
+    const queue = entry.projection.heldInput();
+    if (!stored.run.id || !queue || !step.leaf) throw new Error('The parked run cannot be recorded.');
+    const turns = stored.execution ? this.executionHost(id).executionTurns(id) : undefined;
+    return { version: 1, session: id, root: stored.root, ...(stored.parent ? { parent: stored.parent } : {}),
+      run: { id: stored.run.id, ...(stored.run.origin ? { origin: stored.run.origin } : {}), ...(stored.run.turnId ? { turnId: stored.run.turnId } : {}) },
+      leaf: step.leaf, heldAt: this.now(), queue, ...(turns === undefined ? {} : { turns }) };
+  }
+
+  /** Every resident session is idle or parked at a step end with nothing else in flight. */
+  private runsQuiet(): boolean {
+    if (this.opening.size || this.closes.size || this.lifecycleWriters.size || this.lateWriters.size) return false;
+    for (const entry of this.entries.values()) {
+      if (entry.cancelling || entry.disposing || entry.projectionFailed) return false;
+      // The run's own dispatch stays open while it is parked; anything else, such as a queued input still being admitted, must finish.
+      if (entry.parked) { if (entry.dispatches.size > 1 || !entry.projection.heldInput()) return false; continue; }
+      if (!entry.binding.runtime.session.isIdle || entry.dispatches.size || entry.writers.size || [...entry.services].some(service => service.busy())) return false;
+    }
+    return true;
   }
 
   async waitForDrain(signal?: AbortSignal): Promise<void> {
@@ -230,7 +335,8 @@ export class SessionRegistry {
       await this.join([...this.opening.values(), ...this.closes.values(), ...this.lifecycleWriters], undefined, true);
       await this.hostWorkers.settle();
       for (const entry of this.entries.values()) {
-        await entry.host?.settle();
+        if (entry.held) continue;
+        if (![...this.entries.values()].some(other => other.held && other.binding.rootSessionId === entry.binding.rootSessionId)) await entry.host?.settle();
         await entry.cancelling;
         await entry.projectionCancellation;
         if (!entry.binding.runtime.session.isIdle) await entry.binding.runtime.session.waitForIdle();
@@ -253,8 +359,9 @@ export class SessionRegistry {
   async activeWorkByKind(): Promise<{ sessions: number; processes: number }> {
     this.options.owner.assertCurrent();
     const processes = await this.processes.interruptibleCount();
-    const busy = [...this.entries].filter(([id, entry]) => this.lateWriters.has(id) || !entry.binding.runtime.session.isIdle || entry.dispatches.size || entry.writers.size
-      || entry.host?.hasPendingWork() || entry.host?.hasActiveJobs() || [...entry.services].some(service => service.busy())).length;
+    const held = new Set([...this.entries.values()].filter(entry => entry.held).map(entry => entry.binding.rootSessionId));
+    const busy = [...this.entries].filter(([id, entry]) => !entry.held && (this.lateWriters.has(id) || !entry.binding.runtime.session.isIdle || entry.dispatches.size || entry.writers.size
+      || !held.has(entry.binding.rootSessionId) && (entry.host?.hasPendingWork() || entry.host?.hasActiveJobs()) || [...entry.services].some(service => service.busy()))).length;
     return { sessions: busy + [...this.lateWriters.keys()].filter(id => !this.entries.has(id)).length, processes };
   }
 
@@ -332,16 +439,83 @@ export class SessionRegistry {
   }
 
   /**
-   * Restores the sessions startup recovery found with a background job that may still run or still owes a finish notice,
-   * so their extensions watch the jobs and deliver the notices without waiting for a prompt.
+   * Continues the runs a previous daemon held, parents before children, then restores the sessions startup recovery found
+   * with a background job that may still run or still owes a finish notice, so their extensions watch the jobs and deliver
+   * the notices without waiting for a prompt. A held run that cannot continue is interrupted, as an unheld run is at restart.
    */
   async restoreRecovered(): Promise<void> {
+    for (const record of this.recovery?.continueRuns ?? []) {
+      try {
+        if (this.stopping || this.draining || this.failure) throw new Error('The daemon stopped before the held run continued.');
+        // A continued subagent delivers its completion to its parent, so the parent chain must be resident.
+        for (const ancestor of this.ancestors(record.session)) await this.restore(ancestor);
+        const execution = this.options.store.sessionMetadata(record.session).execution;
+        await this.restore(record.session, execution ? { systemPromptAppend: execution.request.appendSystemPrompt ?? '' } : {});
+        const entry = this.require(record.session);
+        if (entry.binding.runtime.session.sessionManager.getLeafId() !== record.leaf) throw new Error('The transcript changed after the run was held.');
+        const work = execution ? this.executionHost(record.session).resumeHeld(record.session, record.turns ?? 0, () => this.continueFrom(entry, record))
+          : this.continueRoot(record.session, entry, record);
+        void work.catch(error => this.diagnostic({ scope: 'registry', session: record.session, error }));
+      } catch (error) {
+        this.continuing.delete(record.session);
+        this.diagnostic({ scope: 'registry', session: record.session, error });
+        try {
+          if (this.entries.has(record.session)) this.interruptRun(record.session);
+          else if (this.options.store.findSessionMetadata(record.session)) this.options.store.interruptSessionRun(record.session, record.run.id);
+        } catch (cleanup) { this.diagnostic({ scope: 'registry', session: record.session, error: cleanup }); }
+      }
+    }
     for (const id of this.recovery?.restoreSessions ?? []) {
       if (this.stopping || this.draining || this.failure) return;
       try { await this.restore(id); } catch (error) {
         try { this.options.onDiagnostic?.({ scope: 'registry', session: id, error }); } catch { /* Diagnostics cannot block recovery. */ }
       }
     }
+  }
+
+  /** The session's ancestors, root first. */
+  private ancestors(id: string): string[] {
+    const chain: string[] = [];
+    for (let parent = this.options.store.sessionMetadata(id).parent; parent; parent = this.options.store.sessionMetadata(parent).parent) chain.unshift(parent);
+    return chain;
+  }
+
+  /** Continues a held root run as a daemon run under its original run ID. */
+  private async continueRoot(id: string, entry: Entry, record: ContinueRecord): Promise<void> {
+    const origin: Origin = record.run.origin ?? { kind: 'automation', source: 'restart' };
+    const key = `hold:${record.run.id}`;
+    let finish!: () => void;
+    const writer = new Promise<void>(resolve => { finish = resolve; });
+    entry.writers.add(writer); entry.dispatches.add(key); entry.projection.setOrigin(origin);
+    this.continuing.delete(id);
+    try {
+      entry.projection.syncCursor();
+      await this.executeRun(id, entry, () => this.continueFrom(entry, record)).catch((error: unknown) => {
+        if (!(error instanceof Error && error.name === 'AbortError')) throw error;
+      });
+    } finally {
+      try {
+        entry.dispatches.delete(key);
+        if (!this.failure && !entry.projectionFailed) {
+          if (!entry.cancelling && !entry.held) entry.projection.settleRun(record.run.id);
+          entry.projection.refresh();
+        }
+      } catch (error) { this.projectionFailed(id, error); throw error; }
+      finally { entry.writers.delete(writer); finish(); }
+    }
+  }
+
+  /** Re-queues the held run's user input, then starts the next step through Pi's normal run start. */
+  private async continueFrom(entry: Entry, record: ContinueRecord): Promise<void> {
+    this.continuing.delete(entry.binding.sessionId);
+    const session = entry.binding.runtime.session;
+    for (const item of record.queue) {
+      await entry.projection.withQueueOrigin(item.origin, async () => {
+        if (item.kind === 'steer') session.agent.steer(item.message); else session.agent.followUp(item.message);
+      });
+    }
+    entry.projection.clearInterruptedQueue();
+    await session.sendCustomMessage({ customType: RUN_CONTINUED_MESSAGE_TYPE, content: RUN_CONTINUED_TEXT, display: false }, { triggerTurn: true });
   }
 
   restore(id: string, context: Pick<RegistryOpenRequest, 'systemPromptAppend' | 'providerContext'> = {}): Promise<SessionBinding> {
@@ -535,7 +709,7 @@ export class SessionRegistry {
   }
   assertRunAvailable(id: string): void {
     const stored = this.options.store.sessionMetadata(id);
-    if (stored.state !== 'open' || stored.execution && !stored.execution.completedAt || this.closing.has(id) || this.copyClaims.has(stored.piPath) || this.running(id)) throw registryError('busy', 'Wait for the current run to finish.');
+    if (stored.state !== 'open' || stored.execution && !stored.execution.completedAt || this.closing.has(id) || this.copyClaims.has(stored.piPath) || this.running(id) || this.continuing.has(id)) throw registryError('busy', 'Wait for the current run to finish.');
   }
 
   async runAdmitted<T>(requestId: string, id: string, origin: Origin, effect: (session: AgentSession) => Promise<T>): Promise<T> {
@@ -562,7 +736,7 @@ export class SessionRegistry {
         entry.dispatches.delete(requestId);
         if (entry.command?.runId === run.id) delete entry.command;
         if (!this.failure && !entry.projectionFailed) {
-          if (!entry.cancelling) entry.projection.settleRun(run.id);
+          if (!entry.cancelling && !entry.held) entry.projection.settleRun(run.id);
           entry.projection.refresh();
         }
       } catch (error) { this.projectionFailed(id, error); throw error; }
@@ -595,7 +769,7 @@ export class SessionRegistry {
       try {
         entry.dispatches.delete(continuationId);
         if (!this.failure && !entry.projectionFailed) {
-          if (!entry.cancelling) entry.projection.settleRun(run.id);
+          if (!entry.cancelling && !entry.held) entry.projection.settleRun(run.id);
           entry.projection.refresh();
         }
       } catch (error) { this.projectionFailed(id, error); throw error; }
@@ -861,6 +1035,7 @@ export class SessionRegistry {
     if (entry.projectionFailed) return entry.projectionCancellation;
     if (entry.cancelling) return entry.cancelling;
     if (['idle', 'interrupted'].includes(stored.run.state) && entry.binding.runtime.session.isIdle) return;
+    this.dropHeld(id);
     entry.runAbort?.abort();
     const operation = Promise.resolve().then(async () => {
       if (!entry.projectionFailed) entry.projection.transitionForSafety('cancelling', stored.run.id);
@@ -971,6 +1146,7 @@ export class SessionRegistry {
     const descendants = this.list().filter(item => item.parent === id && item.state === 'open');
     // Host shutdown cancels its full descendant tree and waits beyond terminal status records.
     const entry = this.entries.get(id);
+    this.dropHeld(id);
     this.settleInteractions(id, 'close');
     if (entry && !entry.projectionFailed) await this.cancelViews(id);
     if (!entry?.projectionFailed) await entry?.host?.shutdown();
@@ -995,9 +1171,11 @@ export class SessionRegistry {
   async shutdown(options: { interrupt?: boolean } = {}): Promise<void> {
     this.options.onShutdown?.();
     if (options.interrupt) for (const row of this.list()) {
-      if (row.state === 'open' && ['running', 'waiting', 'cancelling'].includes(row.run.state) && row.run.id) this.shutdownInterruptions.set(row.id, row.run.id);
+      if (row.state === 'open' && ['running', 'waiting', 'cancelling'].includes(row.run.state) && row.run.id && !this.isHeld(row.id)) this.shutdownInterruptions.set(row.id, row.run.id);
     }
     this.stopping = true;
+    // Held runs end before anything waits on them: their continue records already describe how the next daemon resumes them.
+    await this.join([...this.entries.values()].filter(entry => entry.held).map(entry => shutdownStep('session-abort', () => entry.binding.runtime.session.abort(), entry.binding.sessionId)));
     if (this.failure) {
       await shutdownStep('registry-fenced', async () => { await this.failureSettlement; throw new Error('Registry is fenced; verify settlement before releasing ownership.'); });
     }
@@ -1047,7 +1225,7 @@ export class SessionRegistry {
         }
         await shutdownStep('session-writers', async () => { await entry.cancelling; await this.join([...entry.writers]); }, id);
       }
-      if (!entry.projectionFailed) await shutdownStep('session-run', () => entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id), id);
+      if (!entry.projectionFailed && !entry.held) await shutdownStep('session-run', () => entry.projection.settleRun(this.options.store.sessionMetadata(id).run.id), id);
       await shutdownStep('session-dispose', () => this.disposeEntry(id, false), id);
     }
     // A failed reload leaves its kept PTYs without a resident root.
@@ -1203,7 +1381,7 @@ export class SessionRegistry {
       const projection = new SessionProjection({ binding, store: this.options.store, extras: () => this.extras(binding!.sessionId), publish: event => this.publish(event), onError: error => { this.projectionFailed(binding!.sessionId, error); },
         commandAvailable: name => this.options.commandAvailable?.(binding!.sessionId, name) === false ? false
           : this.commandDispatcher?.(binding!.sessionId, name) ?? this.options.commandAvailable?.(binding!.sessionId, name) ?? false,
-        canSettle: () => { const current = this.entries.get(binding!.sessionId); return !current?.dispatches.size && !current?.cancelling && !current?.projectionFailed; },
+        canSettle: () => { const current = this.entries.get(binding!.sessionId); return !current?.dispatches.size && !current?.cancelling && !current?.projectionFailed && !current?.held; },
         onRefresh: () => {
           const current = this.entries.get(binding!.sessionId);
           if (current) this.updateCommandState(current);
@@ -1211,6 +1389,11 @@ export class SessionRegistry {
       });
       const entry: Entry = { binding, projection, attachments: new Map(), dispatches: new Set(), writers: new Set(), services: this.retainedServices.get(binding.sessionId) ?? new Set(), lastDetached: this.now() };
       this.retainedServices.delete(binding.sessionId); this.entries.set(binding.sessionId, entry);
+      installStepHold(binding.runtime.session, {
+        active: () => this.stepHold !== undefined,
+        parked: step => this.parked(binding!.sessionId, entry, step),
+        released: step => { if (entry.parked === step) delete entry.parked; this.stepHold?.changed(); },
+      });
       const host = this.executionHost(binding.sessionId);
       host.activate();
       entry.host = host;
@@ -1397,7 +1580,11 @@ export class SessionRegistry {
         if (commit.revisions[id] !== undefined) this.publish({ v: 1, session: id, rev: commit.value.revision,
           change: { type: 'metadata.updated', title: commit.value.title, state: commit.value.state, residency: commit.value.residency } });
       }
-      else entry.projection.transitionForSafety(closed ? 'closed' : 'evicted');
+      else if (entry.held && !closed) {
+        const commit = this.options.store.evictHeldSession(id);
+        if (commit.revisions[id] !== undefined) this.publish({ v: 1, session: id, rev: commit.value.revision,
+          change: { type: 'metadata.updated', title: commit.value.title, state: commit.value.state, residency: commit.value.residency } });
+      } else entry.projection.transitionForSafety(closed ? 'closed' : 'evicted');
       entry.projection.dispose(); this.entries.delete(id); if (!preserveView) this.listeners.delete(id);
       if (!this.lateWriters.has(id)) this.pathClaims.delete(stored.piPath);
       if (!close && entry.services.size) this.retainedServices.set(id, entry.services);
@@ -1405,6 +1592,7 @@ export class SessionRegistry {
     try { await entry.disposing; } catch (error) { delete entry.disposing; this.fence(error); throw error; }
   }
   private interruptRun(id: string): void {
+    this.dropHeld(id);
     const run = this.options.store.sessionMetadata(id).run;
     if (!run.id || !['running', 'waiting', 'cancelling'].includes(run.state)) return;
     const commit = this.options.store.interruptSessionRun(id, run.id);

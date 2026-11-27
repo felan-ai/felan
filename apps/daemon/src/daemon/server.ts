@@ -455,7 +455,8 @@ export class SessionServer {
    */
   async activity(): Promise<{ runs: number; work: number; workByKind: { sessions: number; processes: number; interactions: number; providers: number } }> {
     const { registry } = this.options;
-    const runs = registry.listed().filter(row => ['running', 'waiting', 'cancelling'].includes(row.run.state)).length;
+    // A draft gets listed only once its first message is projected, but a run in it is already active.
+    const runs = registry.list().filter(row => ['running', 'waiting', 'cancelling'].includes(row.run.state)).length;
     const interactions = (this.options.broker?.pending?.() ?? registry.options.store.interactions())
       .filter(item => item.state === 'waiting' && item.scope.kind === 'host').length;
     const { sessions, processes } = await registry.activeWorkByKind();
@@ -466,10 +467,10 @@ export class SessionServer {
   /** True once a stop, restart or hold closed admission; remote commands rejected then are retried by the next claim. */
   admissionClosed(): boolean { return this.stopped || this.sealed || this.stopping(); }
 
-  private lifecycleDetail(): { blocked?: HostBlocked; held?: HostHeld; stopModes?: HostMode[] } {
+  private lifecycleDetail(): { blocked?: HostBlocked; held?: HostHeld; stopModes?: HostMode[]; holdsRuns?: true } {
     const lifecycle = this.options.management?.lifecycle;
     return { ...(lifecycle?.blocked ? { blocked: lifecycle.blocked } : {}), ...(lifecycle?.held ? { held: lifecycle.held } : {}),
-      ...(lifecycle ? { stopModes: lifecycle.modes } : {}) };
+      ...(lifecycle ? { stopModes: lifecycle.modes } : {}), ...(lifecycle?.holdsRuns ? { holdsRuns: true as const } : {}) };
   }
 
   private async currentComposition(): Promise<HostCompositionInfo | undefined> {

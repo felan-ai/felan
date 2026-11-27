@@ -119,6 +119,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
       beginDrain: () => { connector?.beginDrain(); liveSetup.beginDrain(); liveRegistry.beginDrain(); },
       holdAdmission: () => { connector?.beginDrain(); liveRegistry.holdAdmission(); },
       activity: (): Promise<HostActivity> => liveServer.activity(),
+      holdRuns: (signal: AbortSignal): Promise<number> => holdDaemonRuns(liveRegistry, liveServer, signal),
       ...(options.holdTimeoutMs ? { holdTimeoutMs: options.holdTimeoutMs } : {}),
       endDrain: () => { liveRegistry.endDrain(); liveSetup.endDrain?.(); connector?.endDrain(); },
       canRetry: () => { owner.assertCurrent(); liveStore.assertCurrent(); return !liveRegistry.fenced; },
@@ -221,6 +222,14 @@ export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown
   } else {
     await draining; await shutdownStep('drain-wait', () => registry.waitForDrain(signal)); signal?.throwIfAborted(); await registry.shutdown();
   }
+}
+
+/** @internal Holds every active run at a step end; unanswered host questions and busy providers keep the hold waiting too. */
+export function holdDaemonRuns(registry: Pick<SessionRegistry, 'holdRuns'>, server: Pick<SessionServer, 'activity'>, signal: AbortSignal): Promise<number> {
+  return registry.holdRuns(signal, async () => {
+    const { workByKind } = await server.activity();
+    return workByKind.interactions + workByKind.providers > 0;
+  });
 }
 
 async function acquireForLaunch(target: DaemonTarget, replacing?: DaemonIdentity) {
