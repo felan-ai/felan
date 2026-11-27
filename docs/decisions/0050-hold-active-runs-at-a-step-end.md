@@ -24,23 +24,52 @@ the next model request. A step without tool calls, a batch whose tool calls end
 the run, and a failed or aborted response keep their normal course. When every
 resident session is idle or waiting this way and no other work runs, the daemon
 writes one versioned continue record per waiting run. The record holds the run
-ID, the transcript leaf and the queued user messages, and goes to its own
-`held_runs` table in the control store. Then the daemon answers `held`.
+ID, the transcript leaf, the queued user messages and, for a subagent, the turns
+it has taken including the held step. It goes to its own `held_runs` table in
+the control store. Then the daemon answers `held`.
 
+- A hold refuses at once with `busy` when a question waits for a person or a
+  live process runs. Neither ends by itself, so waiting for them would keep
+  admission closed until `stepTimeoutMs`. A question that appears during the
+  wait, or a live process left once every run waits, cancels the attempt at
+  once.
+- A hold answers `busy` while the daemon still continues the runs its
+  predecessor held, because closing admission then would interrupt them.
 - A cancelled or expired hold deletes the records and releases each waiting
   step with its original decision, so the run continues in place as if it had
-  only paused.
-- A stop after `held` aborts the waiting runs. An abort releases the hook with
-  `{ action: 'end' }`, so the run ends without another request and without an
-  aborted message. Their runs stay `running` and their child executions stay
-  unfinished.
+  only paused. The steps are released even if the delete fails. Subagents that
+  were queued while admission was closed start then.
+- While runs are held, a subagent completion reaches its parent only when the
+  parent is resident and idle. It starts a run there, which the hold waits for
+  or holds like any other. A busy parent gets the completion once the hold ends
+  or from the next daemon, because a run that a restart ends would drop a
+  queued notice.
+- A stop after `held` does not wait for held runs. A run that starts after
+  `held`, such as for a background command's finish notice, gets its record
+  when it reaches a step end, including during the stop's drain. If that
+  record cannot be written, the run takes its next step instead. The stop then
+  aborts the waiting runs. An abort releases the hook with `{ action: 'end' }`,
+  so the run ends without another request and without an aborted message.
+  Their runs stay `running` and their child executions stay unfinished.
+- Ending the run makes Pi append what it kept for the step's end, such as
+  context-only custom messages. When only such context or metadata follows the
+  recorded leaf, the record moves to the final leaf as the session is evicted.
 - The next daemon consumes the records at startup. It restores each session
-  whose run and transcript leaf still match, re-queues the saved messages, and
-  starts the next step through Pi's normal run start with a hidden custom
-  message.
+  whose run and transcript leaf still match, with its parent sessions, and
+  re-queues the saved messages. It starts the next step through Pi's normal
+  run start with a hidden custom message of type `felan-daemon-run-continued`.
+  Its text is: "Notice from the session host, not from the user: the host
+  restarted after the tool results above were saved. Continue the task from
+  where you stopped." When a subagent's next step is its last, its tools are
+  removed and the summary instruction is queued after the saved messages, as
+  the held step's `turn_end` would have done.
+- A record that does not match, or a continued run whose next step fails,
+  leaves the run `interrupted`. A subagent whose run cannot continue finishes
+  as `cancelled` with `host_shutdown`, and its parent is told.
 
 An extension can refuse a hold for its session through `RUN_HOLD_EVENT` on its
-`pi.events` bus. ext-prewalk refuses while it is active.
+`pi.events` bus. ext-prewalk refuses while it is active, and ext-codex refuses
+while it owes the run a deferred compaction.
 
 ## Alternatives considered
 
@@ -58,27 +87,38 @@ An extension can refuse a hold for its session through `RUN_HOLD_EVENT` on its
   otherwise stop. The record re-queues each message with its kind and origin.
 - Cut the model response that is still streaming. Rejected by the issue's first
   decision; it pays for that response twice.
+- Defer every subagent completion while runs are held and let the next daemon
+  deliver it. Rejected because the next daemon delivers a completion only when
+  its parent is restored, and an idle parent root is restored only when a
+  client opens it.
+- Refuse to hold a step while Pi still has context-only messages to append.
+  Rejected because a message can also arrive while the step waits; moving the
+  leaf after the stop covers both.
 
 ## Consequences
 
 - A normal step pays one call that returns `false` in the wrapped `finishTurn`,
   and one comparison per tool call in the wrapped `afterToolCall`. It adds no
   runtime call, no storage write and no model request.
-- A continued run gets one hidden message (`felan-daemon-run-continued`) in its
-  transcript and model context.
+- A continued run gets one hidden message in its transcript and model context.
+  The model reads it as a user turn, so it names its sender.
 - Only user messages are carried across. Custom notices queued by extensions
   are delivered again by their owners: subagent completions from the daemon's
   execution records, background-bash notices from the job store.
 - A run that keeps answering without tool calls never waits at a step end, so a
   hold during it waits until the run ends or `stepTimeoutMs` cancels it.
-- A run waiting for a person's answer never reaches its step end during the
-  hold, so the attempt is cancelled after `stepTimeoutMs`. Deferring such
-  questions at hold time is not done.
-- ext-context clears its loaded nested instructions at `session_start`, so a
-  continued run lacks them until it reads a file in that directory again, as an
-  idle session does after a restore.
-- A run that an extension starts while the daemon is held, such as for a
-  background command's finish notice, gets its record when it reaches a step
-  end. If the stop arrives before that, the run is interrupted, as before.
-- Queued but unstarted subagents are still cancelled with `host_shutdown` at
-  restart.
+- A run started after `held` that has not reached a step end when a force stop
+  arrives is interrupted. A drain stop waits for it to reach one.
+- Subagents that are queued but not started cannot start while a hold keeps
+  admission closed. A restart cancels them with `host_shutdown`.
+- A continued run starts from a custom message, so state that extensions build
+  only when a run starts from a user message, or keep only in memory, is lost:
+  - ext-subagents adds its routing guidance only to a run that starts from a
+    user message, so the remaining steps of a continued run go without it.
+  - Dynamic thinking does not classify the continued step and reports no
+    savings for a held run.
+  - ext-context clears its loaded nested instructions at `session_start`, so a
+    continued run lacks them until it reads a file in that directory again, as
+    an idle session does after a restore.
+  - ext-prewalk and ext-codex keep their state in memory too, which is why they
+    refuse holds while that state matters.
