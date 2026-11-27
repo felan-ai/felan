@@ -50,6 +50,10 @@ export interface RegistryProcessOutput {
   exitCode?: number;
 }
 
+class RuntimeClosedError extends Error {
+  constructor() { super('Session runtime is closed to new work.'); }
+}
+
 export class RegistryProcesses {
   private readonly live = new Map<string, LiveProcess>();
   private readonly views = new Map<string, ProcessView>();
@@ -139,7 +143,7 @@ export class RegistryProcesses {
   private assertLifetime(lifetime: Lifetime, starting = false): void {
     this.options.assertCurrent();
     if (!lifetime.scope.session) throw new Error('Session runtime is not bound yet.');
-    if (lifetime.revoked || lifetime.draining && (starting || !this.cleanup.getStore()?.has(lifetime.scope.session))) throw new Error('Session runtime is closed to new work.');
+    if (lifetime.revoked || lifetime.draining && (starting || !this.cleanup.getStore()?.has(lifetime.scope.session))) throw new RuntimeClosedError();
   }
 
   private runtime(session: string, root: string): AgentRuntime | undefined {
@@ -460,9 +464,10 @@ export class RegistryProcesses {
     const settles = (item: LiveProcess) => owns(item.view) && !item.disposed && !item.disposal && !(keepTerminals && item.view.kind === 'pty');
     for (const lifetime of this.lifetimes) if (owns(lifetime.scope)) lifetime.draining = true;
     const failures: unknown[] = [];
+    // An operation the drain itself refused left nothing behind, for example a read of a detached job's output that was in flight.
     const join = async (operations: Promise<unknown>[]) => {
       const results = await Promise.allSettled(operations);
-      for (const result of results) if (result.status === 'rejected') failures.push(result.reason);
+      for (const result of results) if (result.status === 'rejected' && !(result.reason instanceof RuntimeClosedError)) failures.push(result.reason);
     };
     for (;;) {
       // Terminate first: a pending foreground read may need process exit to unblock.

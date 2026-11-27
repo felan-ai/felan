@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntime, AgentRuntimeProcess } from '@felan-ai/agent-core';
 import { LIMITS, canonicalRequestPayload, type OperationParams } from '@felan-ai/session-protocol';
 import type { DaemonControlStore } from '../src/daemon/control-store.js';
+import type { ProcessAdapter } from '../src/daemon/process-adapter.js';
 import { RegistryProcesses } from '../src/daemon/processes.js';
 import { OrderedAdmission } from '../src/daemon/admission.js';
 import { forkSession } from '../src/daemon/commands.js';
@@ -409,5 +410,37 @@ describe('registry-backed command dispatch', () => {
       await expect(tracker.startForeground(id, 'root', params)).rejects.toThrow('committed shell dispatch');
     }
     expect(start).toHaveBeenCalledTimes(3);
+  });
+
+  it('settles a root while a client reads the output of a detached job that outlives the daemon', async () => {
+    const session = { id: 'root', root: 'root', state: 'open', revision: 0 };
+    const reference = '/fixture/background-bash/job/info.json';
+    const resource = { id: 'job', session: 'root', root: 'root', kind: 'detached', state: 'running', reference, startIdentity: 'launch' };
+    const store = { session: () => session, sessionMetadata: () => session, sessionMetadatas: () => [session],
+      resource: (id: string) => id === 'job' ? resource : undefined, resources: () => [resource] } as unknown as DaemonControlStore;
+    const processAdapter = { storageDirectory: () => '/fixture/background-bash', describeJob: () => undefined } as unknown as ProcessAdapter;
+    const tracker = new RegistryProcesses({ store, processAdapter, assertCurrent() {}, changed() {} });
+    let finishRead = () => {};
+    const readFile = () => new Promise<Uint8Array>(resolve => { finishRead = () => resolve(new Uint8Array()); });
+    tracker.wrap({ kind: 'host', cwd: '/fixture', storage: () => ({ root: '/fixture', readFile }) } as unknown as AgentRuntime, { session: 'root', root: 'root' });
+    const read = tracker.read('root', 'job', 0, 1).catch((error: unknown) => error);
+    const settled = tracker.settle('root');
+    finishRead();
+    expect(await read).toMatchObject({ message: 'Session runtime is closed to new work.' });
+    await expect(settled).resolves.toBeUndefined();
+  });
+
+  it('still fails to settle a root whose pending operation fails for another reason', async () => {
+    const session = { id: 'root', root: 'root', state: 'open', revision: 0 };
+    const store = { session: () => session, sessionMetadata: () => session, sessionMetadatas: () => [session], resource: () => undefined, resources: () => [] } as unknown as DaemonControlStore;
+    const tracker = new RegistryProcesses({ store, assertCurrent() {}, changed() {} });
+    let failRead = () => {};
+    const readFile = () => new Promise<Uint8Array>((_resolve, reject) => { failRead = () => reject(new Error('synthetic read failure')); });
+    const runtime = tracker.wrap({ kind: 'host', cwd: '/fixture', storage: () => ({ root: '/fixture', readFile }) } as unknown as AgentRuntime, { session: 'root', root: 'root' });
+    const read = runtime.storage('session').readFile('/fixture/file').catch((error: unknown) => error);
+    const settled = tracker.settle('root');
+    failRead();
+    expect(await read).toEqual(new Error('synthetic read failure'));
+    await expect(settled).rejects.toThrow('Owned processes did not settle.');
   });
 });
