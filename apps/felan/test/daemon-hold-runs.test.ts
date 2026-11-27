@@ -1,5 +1,6 @@
 import type { Context } from '@felan-ai/agent-core';
 import { afterEach, expect, it, vi } from 'vitest';
+import { RUN_CONTINUED_TEXT } from '../../daemon/src/daemon/run-hold.js';
 import { cleanups, harness, session, text, TEST_TIMEOUT_MS } from './fixtures/hold-runs.js';
 
 const WAIT_MS = 30_000;
@@ -62,6 +63,9 @@ it('holds two runs and a subagent at their step ends, restarts, and continues ea
   expect(bCalls.map(call => call.turn)).toEqual([0, 1, 2]);
   const said = (index: number, value: string) => bCalls[index]!.context.messages.filter(message => text(message).includes(value)).length;
   expect([said(1, 'STEER-B'), said(1, 'FOLLOW-B'), said(2, 'STEER-B'), said(2, 'FOLLOW-B')]).toEqual([1, 0, 1, 1]);
+  // The continued step starts with the host's notice, once, as the only message the restart added.
+  expect(bCalls[1]!.context.messages.filter(message => text(message) === RUN_CONTINUED_TEXT)).toHaveLength(1);
+  expect(bCalls[2]!.context.messages.filter(message => text(message) === RUN_CONTINUED_TEXT)).toHaveLength(1);
   // The subagent kept its instructions and the task created before the hold survived the restore.
   const childCalls = h.model.calls.filter(call => call.who === 'child-a');
   expect(childCalls.map(call => call.turn)).toEqual([0, 1]);

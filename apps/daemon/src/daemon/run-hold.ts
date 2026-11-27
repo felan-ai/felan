@@ -40,7 +40,8 @@ export const CONTINUE_RECORD_BYTES = 32 * 1024 * 1024;
 export function parseContinueRecord(value: unknown): ContinueRecord { return parseSchema(ContinueRecordSchema, value); }
 
 export const RUN_CONTINUED_MESSAGE_TYPE = 'felan-daemon-run-continued';
-export const RUN_CONTINUED_TEXT = 'The session host restarted between two steps of this run. The results of every tool call you made are above. Continue the task from where you stopped; do not repeat tool calls that already have results.';
+/** Reaches the model as a user turn, so it says who sent it and asks only to continue. */
+export const RUN_CONTINUED_TEXT = 'Notice from the session host, not from the user: the host restarted after the tool results above were saved. Continue the task from where you stopped.';
 
 export interface ParkedStep {
   readonly leaf: string;
