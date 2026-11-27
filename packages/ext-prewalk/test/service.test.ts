@@ -237,6 +237,7 @@ function harness(request = vi.fn<ExtensionUi['request']>().mockResolvedValue(ans
     ui: { request, notify: vi.fn(), status: vi.fn(), removeStatus: vi.fn(), present: vi.fn() },
     runtime: {}, getThinkingLevel: () => 'high', getActiveTools: () => ['read', 'write', 'enter_prewalk', 'exit_plan_mode'], setActiveTools,
     setThinkingLevel, setModel, registerCapability: vi.fn(), registerCommand: vi.fn(),
+    events: { on: () => () => {}, emit: () => {} },
     registerTool: (tool: ToolDefinition) => tools.set(tool.name, tool),
     on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => handlers.set(name, [...handlers.get(name) ?? [], handler]),
   } as unknown as FelanExtensionAPI);
