@@ -12,7 +12,7 @@ import { DaemonAgentLogs } from './agent-logs.js';
 import { createRegistryInteractionBroker, type InteractionBroker } from './broker.js';
 import { DaemonControlStore } from './control-store.js';
 import { createDaemonExecutionServices } from './execution-services.js';
-import { HostLifecycle, type HostAction, type HostMode } from './lifecycle.js';
+import { HostLifecycle, type HostAction, type HostActivity, type HostMode, type SettleMode } from './lifecycle.js';
 import type { SessionLifecycle } from './session-lifecycle-contracts.js';
 import { SESSION_RUNTIME_SERVICE } from './session-runtime.js';
 import type { HostSetup } from './host-services.js';
@@ -35,6 +35,7 @@ import { ShutdownError, shutdownStack, shutdownStep } from './shutdown-error.js'
 export async function startDaemonService(target: DaemonTarget, options: {
   createModelRuntime?: (agentDir: string) => Promise<ModelRuntime>;
   drainTimeoutMs?: number;
+  holdTimeoutMs?: number;
   replacing?: DaemonIdentity;
   hostConfigPath?: string;
   manager?: HostManager;
@@ -116,6 +117,9 @@ export async function startDaemonService(target: DaemonTarget, options: {
     const lifecycle = new HostLifecycle({ target: owner.target, identity: owner.identity,
       ...(options.drainTimeoutMs ? { timeoutMs: options.drainTimeoutMs } : {}),
       beginDrain: () => { connector?.beginDrain(); liveSetup.beginDrain(); liveRegistry.beginDrain(); },
+      holdAdmission: () => { connector?.beginDrain(); liveRegistry.holdAdmission(); },
+      activity: (): Promise<HostActivity> => liveServer.activity(),
+      ...(options.holdTimeoutMs ? { holdTimeoutMs: options.holdTimeoutMs } : {}),
       endDrain: () => { liveRegistry.endDrain(); liveSetup.endDrain?.(); connector?.endDrain(); },
       canRetry: () => { owner.assertCurrent(); liveStore.assertCurrent(); return !liveRegistry.fenced; },
       onBlocked: (blocked, error) => {
@@ -207,7 +211,7 @@ export async function startDaemonService(target: DaemonTarget, options: {
 }
 
 /** @internal */
-export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown' | 'waitForDrain'>, broker: Pick<InteractionBroker, 'drain'>, mode: HostMode, signal?: AbortSignal): Promise<void> {
+export async function settleDaemonWork(registry: Pick<SessionRegistry, 'shutdown' | 'waitForDrain'>, broker: Pick<InteractionBroker, 'drain'>, mode: SettleMode, signal?: AbortSignal): Promise<void> {
   const draining = shutdownStep('broker-drain', () => broker.drain());
   if (mode === 'force') {
     const results = await Promise.allSettled([draining, registry.shutdown({ interrupt: true })]);

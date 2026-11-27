@@ -11,6 +11,8 @@ const messages = {
   drain_blocked: 'Daemon shutdown is blocked; ownership remains held.',
   drain_cancelled: 'Daemon drain did not finish because work is still active; the daemon keeps running. Use force to interrupt it.',
   releasing: 'Owned work settled; releasing daemon ownership.',
+  hold_started: 'Daemon is idle and holds admission closed until a stop or restart arrives.',
+  hold_expired: 'No stop or restart arrived while the daemon held admission; admission reopened.',
   ownership_lost: 'Daemon ownership was lost; admission is fenced.',
   startup_failed: 'Daemon startup could not complete.',
   legacy_warmup_failed: 'Pre-daemon session titles could not be read in the background; listings read them on request.',

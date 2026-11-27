@@ -8,20 +8,24 @@ import { LIMITS } from './limits.js';
 import { RemoteConfigureParamsSchema, RemoteStatusSchema } from './remote.js';
 import { UiActionRequestSchema, UiCapabilitySchema } from './ui.js';
 import { SetupCatalogSchema, SetupJobSchema, SetupStartSchema } from './setup.js';
-import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, HostBlockedSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
+import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, HostBlockedSchema, HostHeldSchema, HostModeSchema, IdSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
 
 const empty = Type.Object({});
 const identity = { expected: DaemonIdentitySchema };
 const resource = { root: IdSchema, resourceId: IdSchema };
 const lifecycle = Type.Object({ state: enumOf(['starting', 'ready', 'draining', 'stopped', 'blocked'] as const) });
+const managed = Type.Object({ ...lifecycle.properties, held: Type.Optional(HostHeldSchema) });
 export const HostCompositionSchema = Type.Object({
   managerPackage: text(256, 1), managerVersion: text(128, 1), providerDigest: Type.String({ pattern: '^[a-f0-9]{64}$' }),
   configDigest: Type.String({ pattern: '^[a-f0-9]{64}$' }), restartRequired: Type.Optional(Type.Boolean()),
 });
 export const HostStatusSchema = Type.Object({
   ...lifecycle.properties, identity: DaemonIdentitySchema, daemonVersion: text(128, 1), protocol: Type.Literal(1),
-  composition: Type.Optional(HostCompositionSchema), blocked: Type.Optional(HostBlockedSchema),
-  active: Type.Object({ sessions: CounterSchema, runs: CounterSchema, work: CounterSchema, attachments: CounterSchema }),
+  composition: Type.Optional(HostCompositionSchema), blocked: Type.Optional(HostBlockedSchema), held: Type.Optional(HostHeldSchema),
+  /** Modes this daemon accepts for `host.stop` and `host.restart`; absent from daemons that accept only `drain` and `force`. */
+  stopModes: Type.Optional(Type.Array(HostModeSchema, { maxItems: 8, uniqueItems: true })),
+  active: Type.Object({ sessions: CounterSchema, runs: CounterSchema, work: CounterSchema, attachments: CounterSchema,
+    workByKind: Type.Optional(Type.Object({ sessions: CounterSchema, processes: CounterSchema, interactions: CounterSchema, providers: CounterSchema })) }),
   setupNeeds: Type.Array(Type.Object({ code: IdSchema, message: DiagnosticTextSchema, provisioningId: Type.Optional(IdSchema) })),
 });
 export const Base64Schema = Type.String({ pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$' });
@@ -86,8 +90,8 @@ export const OperationSchemas = {
   'executions.read': Type.Object({ executionId: IdSchema }),
   'executions.steer': Type.Object({ executionId: IdSchema, message: unboundedText(1) }),
   'executions.cancel': Type.Object({ executionId: IdSchema, reason: Type.Optional(unboundedText()) }),
-  'host.stop': Type.Object({ ...identity, mode: enumOf(['drain', 'force'] as const) }),
-  'host.restart': Type.Object({ ...identity, mode: enumOf(['drain', 'force'] as const) }),
+  'host.stop': Type.Object({ ...identity, mode: HostModeSchema }),
+  'host.restart': Type.Object({ ...identity, mode: HostModeSchema }),
   'host.logs': PageRequestSchema,
 } as const;
 export type Operation = keyof typeof OperationSchemas;
@@ -158,7 +162,7 @@ export const ResultSchemas = {
     state: enumOf(['running', 'exited', 'missing', 'interrupted'] as const), exitCode: Type.Optional(Type.Integer()) }),
   'processes.write': Type.Object({ writtenBytes: Type.Integer({ minimum: 0, maximum: LIMITS.processWriteBytes }) }), 'processes.stop': emptyResult,
   'executions.list': ExecutionsPageSchema, 'executions.read': ExecutionSchema, 'executions.steer': ExecutionSchema, 'executions.cancel': ExecutionSchema,
-  'host.stop': lifecycle, 'host.restart': lifecycle, 'host.logs': Type.Object({ entries: Type.Array(Type.Object({ timestamp: CounterSchema,
+  'host.stop': managed, 'host.restart': managed, 'host.logs': Type.Object({ entries: Type.Array(Type.Object({ timestamp: CounterSchema,
     level: enumOf(['info', 'warning', 'error'] as const), message: DiagnosticTextSchema })), cursor: Type.Optional(unboundedText(1)) }),
 } as const satisfies Record<Operation, TSchema>;
 

@@ -1048,3 +1048,61 @@ the CI-triggered npm release workflow:
 | `@felan-ai/agent-core` | 0.16.1 | 0.16.2 |
 | `@felan-ai/daemon` | 0.8.1 | 0.8.2 |
 | `@felan-ai/felan` | 0.40.4 | 0.40.5 |
+
+## Idle hold for host restarts
+
+`host.stop` and `host.restart` accept `mode: 'hold'` next to `drain` and
+`force`, both as v1 operations and as authenticated control requests
+(`{ control: 1, op: 'host.restart', params: { expected, mode: 'hold' } }`).
+`host.status` and every control response list the accepted modes in
+`stopModes`, for example `['drain', 'force', 'hold']`. A daemon that omits
+`stopModes` accepts only `drain` and `force` and rejects `hold` with
+`invalid_request`, so a caller checks `stopModes` before sending `hold`.
+The daemon closes admission and stops claiming remote commands first, then
+counts active runs and interruptible work. Nothing can start between that
+count and the decision.
+
+- When both counts are zero, the request is accepted. The response, the
+  control response and `host.status` keep `state: 'draining'` and add
+  `held: { action: 'stop' | 'restart', since, until }`, with millisecond
+  timestamps. `until` is 60 seconds after `since`.
+- When a run or interruptible work is active, the request is rejected with
+  `busy` and admission reopens. `held` is absent.
+- A held daemon accepts `drain` or `force` for either action, and SIGTERM, which
+  requests a `drain` stop. It settles and exits in seconds because nothing is
+  running. Repeating the same `hold` returns the same `held` value. A `hold` for
+  the other action returns `busy`.
+- If no stop or restart arrives before `until`, the daemon reopens admission and
+  claims remote commands again.
+
+A remote command that the daemon refuses with `busy` because admission closed
+during its submission is no longer completed. It stays `claimed`, and the daemon
+forgets the undispatched control request. Its journal entry is marked
+`deferred` so that the next claim, by this daemon after the hold expires or by
+the next daemon, submits it once. A deferred command whose `expiresAt` passed
+before that claim completes as `expired`, as a fresh command would. If the
+daemon crashes between forgetting the request and writing the journal mark, the
+next claim completes the command as `indeterminate` instead of running it.
+
+`host.status` adds `active.workByKind: { sessions, processes, interactions,
+providers }`. `work` is their sum. `sessions` counts busy resident sessions,
+including child executions. `processes` counts in-flight runtime operations and
+live non-detached processes, such as a shell command promoted to the background.
+`interactions` counts unanswered host questions. `providers` is 1 while a
+service provider reports itself busy. Clients that predate these optional
+fields ignore them.
+
+The protocol schema and daemon implementation are not yet released. The
+following are proposed versions, pending a human-reviewed merge to `main` and
+the CI-triggered npm release workflow:
+
+| Package | Current | Proposed |
+| --- | --- | --- |
+| `@felan-ai/session-protocol` | 0.4.7 | 0.4.8 |
+| `@felan-ai/ext-ask-user` | 0.13.2 | 0.13.3 |
+| `@felan-ai/ext-background-bash` | 0.16.2 | 0.16.3 |
+| `@felan-ai/ext-fusion` | 0.5.2 | 0.5.3 |
+| `@felan-ai/ext-prompt-history` | 0.10.2 | 0.10.3 |
+| `@felan-ai/agent-core` | 0.16.3 | 0.16.4 |
+| `@felan-ai/daemon` | 0.8.4 | 0.8.5 |
+| `@felan-ai/felan` | 0.40.7 | 0.40.8 |

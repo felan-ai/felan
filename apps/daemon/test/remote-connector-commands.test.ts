@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import type { RemoteCommandOutcome, Response } from '@felan-ai/session-protocol';
 import { RemoteConnector, type ConnectorPlatform, type ConnectorTokenSource, type RemoteConnectorOptions } from '../src/remote/connector.js';
 import { RemoteCommandJournal } from '../src/remote/command-journal.js';
+import { deferredResponse } from '../src/daemon/admission.js';
 import { PlatformError, parsePlatformError, type ClaimedCommand } from '../src/remote/platform.js';
 import { HostTokenExchangeError, type HostTokenInfo } from '../src/remote/token.js';
 import type { RemoteClock, TimerHandle } from '../src/remote/backoff.js';
@@ -233,4 +234,36 @@ it('holds unrecorded commands after a rebuild until an empty claim and preserves
   const restarted = f.row(); f.setRows([restarted]); await f.restart();
   expect(f.server.submitRemote).toHaveBeenCalledTimes(2);
   expect(f.platform.complete).toHaveBeenCalledWith(restarted.id, expect.objectContaining({ outcome: 'accepted' }));
+});
+
+it('leaves a command claimed when admission closes during its submission, and the next daemon runs it once', async () => {
+  const f = await fixture(); f.connector.setShared(f.root.sessionId, true); await f.clock.tick();
+  const row = f.row(); f.setRows([row]);
+  f.server.submitRemote.mockImplementationOnce(async request => {
+    // The hold closes admission while this submission is in flight; the server refuses it without admitting it.
+    f.connector.beginDrain(); f.server.hasRemoteRequest.mockReturnValue(false);
+    return deferredResponse({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'busy', message: 'Daemon is draining.', retryable: false } });
+  });
+  f.notify(); await f.clock.tick();
+  expect(f.server.submitRemote).toHaveBeenCalledOnce();
+  expect(f.platform.complete).not.toHaveBeenCalled();
+  expect(f.journal.get(row.id)).toMatchObject({ state: 'dispatching', deferred: true });
+
+  f.server.hasRemoteRequest.mockReturnValue(true);
+  await f.restart();
+  await vi.waitFor(() => expect(f.platform.complete).toHaveBeenCalledOnce());
+  expect(f.platform.complete).toHaveBeenCalledWith(row.id, expect.objectContaining({ outcome: 'accepted' }));
+  expect(f.server.submitRemote).toHaveBeenCalledTimes(2);
+  expect(f.server.submitRemote.mock.calls[1]![1]).not.toHaveProperty('requireRetained');
+  f.notify(); await f.clock.tick();
+  expect(f.server.submitRemote).toHaveBeenCalledTimes(2); expect(f.platform.complete).toHaveBeenCalledOnce();
+});
+
+it('completes a busy rejection that the server did not mark as deferred', async () => {
+  const f = await fixture(); f.connector.setShared(f.root.sessionId, true); await f.clock.tick();
+  const row = f.row(); f.setRows([row]);
+  f.server.hasRemoteRequest.mockReturnValue(false);
+  f.server.submitRemote.mockImplementationOnce(async request => ({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'busy', message: 'Session is busy.', retryable: false } }));
+  f.notify(); await f.clock.tick();
+  expect(f.platform.complete).toHaveBeenCalledWith(row.id, expect.objectContaining({ outcome: 'rejected', error: expect.objectContaining({ code: 'busy' }) }));
 });

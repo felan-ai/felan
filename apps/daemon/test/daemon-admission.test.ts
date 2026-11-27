@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LIMITS, type ClientEnvelope, type Response } from '@felan-ai/session-protocol';
-import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand } from '../src/daemon/admission.js';
+import { AdmissionWithdrawn, OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand } from '../src/daemon/admission.js';
 import { ControlStoreError } from '../src/daemon/control-state.js';
 import { DaemonControlStore, type ControlStoreOptions } from '../src/daemon/control-store.js';
 import type { DaemonOwnership } from '../src/daemon/ownership.js';
@@ -58,6 +58,42 @@ async function fixture(options: ControlStoreOptions = {}) {
 }
 
 describe('ordered durable admission', () => {
+  it('forgets a withdrawn undispatched request on disk so the same ID is admitted fresh', async () => {
+    const f = await fixture(); const admission = new OrderedAdmission(f.store); const request = prompt();
+    const busy = Object.assign(new Error('Daemon is draining.'), { code: 'busy' });
+    expect(await admission.submit(request, 'owner', () => { throw new AdmissionWithdrawn(busy); }))
+      .toEqual({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'busy', message: 'Daemon is draining.', retryable: false } });
+    expect(f.store.request(request.id)).toBeUndefined();
+    expect(f.disk().requests.some(row => row.id === request.id)).toBe(false);
+    const handler = vi.fn((command: AdmittedCommand) => command.dispatch(() => ({ response: accepted(request.id) })));
+    expect(await admission.submit(request, 'owner', handler)).toEqual(accepted(request.id));
+    expect(handler).toHaveBeenCalledOnce();
+    expect(await admission.submit(request, 'owner', handler)).toEqual(accepted(request.id));
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a resubmission that arrives before the withdrawn submission settles', async () => {
+    const f = await fixture(); const admission = new OrderedAdmission(f.store); const request = prompt();
+    const release = deferred<void>(); let second: Promise<Response> | undefined;
+    const handler = vi.fn(async (command: AdmittedCommand) => { await release.promise; return command.dispatch(() => ({ response: accepted(request.id) })); });
+    const withdraw = f.store.withdrawRequest.bind(f.store);
+    vi.spyOn(f.store, 'withdrawRequest').mockImplementationOnce(id => { withdraw(id); second = admission.submit(request, 'owner', handler); });
+    expect(await admission.submit(request, 'owner', () => { throw new AdmissionWithdrawn(Object.assign(new Error('closed'), { code: 'busy' })); }))
+      .toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
+    const duplicate = admission.submit(request, 'owner', handler);
+    release.resolve();
+    expect(await second).toEqual(accepted(request.id));
+    expect(await duplicate).toEqual(accepted(request.id));
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('keeps an indeterminate outcome when withdrawal comes after dispatch intent', async () => {
+    const f = await fixture(); const admission = new OrderedAdmission(f.store); const request = prompt();
+    const response = await admission.submit(request, 'owner', command => command.dispatch(() => { throw new AdmissionWithdrawn(new Error('late')); }));
+    expect(response).toMatchObject({ outcome: 'indeterminate' });
+    expect(f.store.request(request.id)?.phase).toBe('terminal');
+  });
+
   it('routes admission maintenance to its submitter once without replacing dispatch publication', async () => {
     let time = now; const f = await fixture({ now: () => time });
     f.store.putResource({ id: 'expired', session: 's', root: 's', kind: 'detached', state: 'exited', updatedAt: 0 });

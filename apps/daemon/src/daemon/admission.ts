@@ -21,7 +21,20 @@ export interface AdmittedCommand {
 }
 
 // Returning the response promise separately releases admission without waiting for the turn.
-export interface AdmissionOutcome { response: Response | Promise<Response> }
+export interface AdmissionOutcome { response: Response | Promise<Response>; withdrawn?: true }
+
+/**
+ * Thrown by a handler to forget an undispatched request instead of recording its rejection, so a later submission with
+ * the same ID is admitted fresh. A request that already committed dispatch intent keeps its normal outcome.
+ */
+export class AdmissionWithdrawn extends Error {
+  constructor(readonly reason: unknown) { super(reason instanceof Error ? reason.message : 'Admission was withdrawn.'); this.name = 'AdmissionWithdrawn'; }
+}
+
+const deferredResponses = new WeakSet<Response>();
+/** Marks a rejection issued because admission closed before the request was admitted, so its sender may submit it again later. */
+export function deferredResponse(response: Response): Response { deferredResponses.add(response); return response; }
+export function isDeferredResponse(response: Response): boolean { return deferredResponses.has(response); }
 export type AdmissionHandler = (command: AdmittedCommand) => AdmissionOutcome | Promise<AdmissionOutcome>;
 
 const safetyOperations = new Set(['cancel', 'executions.cancel', 'interaction.answer', 'processes.stop', 'host.stop', 'host.restart', 'close']);
@@ -80,8 +93,10 @@ export class OrderedAdmission {
     this.lanes.set(lane, tail);
     void tail.then(() => { if (this.lanes.get(lane) === tail) this.lanes.delete(lane); });
 
-    const result = prepared.then(outcome => this.finish(request, outcome)).finally(() => {
-      this.pending.delete(request.id); this.bytes -= bytes;
+    const result: Promise<Response> = prepared.then(outcome => this.finish(request, outcome)).finally(() => {
+      // A withdrawn request can be resubmitted under the same ID before this settles; keep the newer entry.
+      if (this.pending.get(request.id) === result) this.pending.delete(request.id);
+      this.bytes -= bytes;
     });
     this.pending.set(request.id, result); this.bytes += bytes;
     return structuredClone(await result);
@@ -127,11 +142,19 @@ export class OrderedAdmission {
       this.store.owner.assertCurrent();
       return outcome;
     } catch (error) {
+      if (error instanceof AdmissionWithdrawn) {
+        if (this.store.request(request.id)?.phase === 'intent') {
+          this.store.withdrawRequest(request.id);
+          return { response: failure(request.id, codeOf(error.reason), diagnosticMessage(error.reason)), withdrawn: true };
+        }
+        return { response: this.failedResponse(request.id, error.reason) };
+      }
       return { response: this.failedResponse(request.id, error) };
     } finally { dispatchAllowed = false; }
   }
 
   private async finish(request: ClientEnvelope, outcome: AdmissionOutcome): Promise<Response> {
+    if (outcome.withdrawn) return outcome.response;
     let response: Response;
     try {
       const parsed = parseServerEnvelope(await outcome.response, request.op);
@@ -152,11 +175,14 @@ export class OrderedAdmission {
     const record = this.record(id);
     if (record.phase === 'terminal') return this.savedResponse(record);
     if (record.phase === 'dispatch_intent') return indeterminate(id);
-    const candidate: unknown = error !== null && typeof error === 'object' ? Object.getOwnPropertyDescriptor(error, 'code')?.value : undefined;
-    const code = error instanceof ProtocolValidationError || error instanceof ControlStoreError ? error.code
-      : typeof candidate === 'string' && (candidate === 'host_blocked' || (ERROR_CODES as readonly string[]).includes(candidate)) ? candidate : 'unavailable';
-    return failure(id, code, diagnosticMessage(error));
+    return failure(id, codeOf(error), diagnosticMessage(error));
   }
+}
+
+function codeOf(error: unknown): string {
+  const candidate: unknown = error !== null && typeof error === 'object' ? Object.getOwnPropertyDescriptor(error, 'code')?.value : undefined;
+  return error instanceof ProtocolValidationError || error instanceof ControlStoreError ? error.code
+    : typeof candidate === 'string' && (candidate === 'host_blocked' || (ERROR_CODES as readonly string[]).includes(candidate)) ? candidate : 'unavailable';
 }
 
 /** Wire-safe text of an error; diagnostics are single-line, bounded by the protocol and never quote credentials or parsed file content. */

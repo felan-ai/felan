@@ -4,7 +4,8 @@ import { parseClientEnvelope, parseRemoteCommandOutcome, requestTimestamp, type 
 import { commandError } from '../daemon/commands.js';
 
 export type RemoteCommandJournalEntry =
-  | { id: string; identity: string; state: 'dispatching'; request: ClientEnvelope; createdSession?: string }
+  /** `deferred` marks a request the daemon refused while admission was closing; it never ran, so the next claim submits it fresh. */
+  | { id: string; identity: string; state: 'dispatching'; request: ClientEnvelope; createdSession?: string; deferred?: true }
   | { id: string; identity: string; state: 'completed'; outcome: RemoteCommandOutcome };
 
 export interface CommandJournal {
@@ -63,7 +64,9 @@ export class RemoteCommandJournal implements CommandJournal {
       const request = parseClientEnvelope(value.request);
       const createdSession = 'createdSession' in value ? value.createdSession : undefined;
       if (createdSession !== undefined && typeof createdSession !== 'string') throw commandError('storage_failure');
-      return { id, identity: value.identity, state: 'dispatching', request, ...(createdSession ? { createdSession } : {}) };
+      const deferred = 'deferred' in value ? value.deferred : undefined;
+      if (deferred !== undefined && deferred !== true) throw commandError('storage_failure');
+      return { id, identity: value.identity, state: 'dispatching', request, ...(createdSession ? { createdSession } : {}), ...(deferred ? { deferred } : {}) };
     }
     throw commandError('storage_failure');
   }

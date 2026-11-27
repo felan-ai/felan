@@ -982,7 +982,7 @@ export class RemoteConnector {
             if (this.platform !== platform || this.stopped || this.draining) return;
             if (!row.id) continue;
             const outcome = await this.executor.execute(row, { startedAt, receivedAt });
-            if (this.platform !== platform || this.stopped) return;
+            if (this.platform !== platform || this.stopped || !outcome) return;
             try { await this.bounded(platform.complete(row.id, outcome)); }
             catch (error) {
               if (!(error instanceof PlatformError)) throw error;

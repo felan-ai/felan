@@ -22,7 +22,7 @@ async function fixture() {
   expect(listed.every(session => session.state === 'closed' && session.residency === 'evicted')).toBe(true);
   expect(listed.every(session => f.service.registry.binding(session.id) === undefined)).toBe(true);
   expect(await f.service.registry.activeWork()).toBe(0);
-  expect(await f.service.server['activeWork']()).toBe(1);
+  expect((await f.service.server.activity()).work).toBe(1);
   const active = (await f.store.readControl()).activeAttempt!;
   expect(active.runId).toBeTypeOf('string');
   expect(f.service.registry.options.store.findSessionMetadata(active.runId)).toBeUndefined();

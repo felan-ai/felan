@@ -1,7 +1,7 @@
 import { redact } from '../logger.js';
 
 export type ShutdownStep = 'setup-drain' | 'broker-drain' | 'drain-wait' | 'server-commands' | 'providers-settle' | 'release'
-  | 'ownership-lost' | 'idle-eviction' | 'settlement' | 'settlement-deadline' | 'begin-drain' | 'management-response'
+  | 'ownership-lost' | 'idle-eviction' | 'settlement' | 'settlement-deadline' | 'begin-drain' | 'end-drain' | 'management-response'
   | 'session-cancel-views' | 'session-interactions' | 'session-host-shutdown' | 'session-abort' | 'session-cancel-foreground'
   | 'session-writers' | 'session-processes' | 'session-services' | 'session-runtime' | 'session-run' | 'session-dispose' | 'session-close'
   | 'registry-pending' | 'registry-fenced' | 'live-roots' | 'retained-services';

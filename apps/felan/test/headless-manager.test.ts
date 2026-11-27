@@ -139,7 +139,8 @@ function launch(script: string, root: string) {
   return { child, exited, output: () => output, finished: () => finished };
 }
 
-it('runs the public custom-manager bootstrap without a TTY or keyring, then drains and releases ownership', async () => {
+/** Starts the public custom-manager bootstrap in a child process with a cloud-like manager and waits until it is ready. */
+async function startHeadlessManager() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'hm-')));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const target = clientDaemonTarget({ daemonRuntime: root });
@@ -201,6 +202,11 @@ it('runs the public custom-manager bootstrap without a TTY or keyring, then drai
     expect(worker.output()).toContain('Felan daemon');
     expect(worker.output()).toContain(': ready');
   }, { timeout: 10_000 });
+  return { root, target, worker, providerPaths };
+}
+
+it('runs the public custom-manager bootstrap without a TTY or keyring, then drains and releases ownership', async () => {
+  const { root, target, worker, providerPaths } = await startHeadlessManager();
   const client = new SessionClient({ target, clientVersion: 'headless-manager-fixture', kind: 'headless', reconnectAttempts: 0 });
   cleanups.push(async () => { client.close(); });
   await client.connect();
@@ -239,6 +245,25 @@ it('runs the public custom-manager bootstrap without a TTY or keyring, then drai
   await expect(stat(join(root, 'runtime', 'ipc.sock'))).rejects.toMatchObject({ code: 'ENOENT' });
   const owner = await acquireDaemonOwnership(target);
   await owner.release();
+}, 30_000);
+
+it.each(['SIGTERM', 'host.stop'] as const)('exits a daemon that holds an idle restart within seconds on %s', async signal => {
+  const { root, target, worker } = await startHeadlessManager();
+  const client = new SessionClient({ target, clientVersion: 'headless-manager-fixture', kind: 'headless', reconnectAttempts: 0 });
+  cleanups.push(async () => { client.close(); });
+  await client.connect();
+  const held = await client.control('host.restart', 'hold');
+  expect(held, JSON.stringify(held)).toMatchObject({ outcome: 'accepted', state: 'draining', held: { action: 'restart' } });
+  expect(await client.control('host.status')).toMatchObject({ state: 'draining', held: held.held });
+  const started = performance.now();
+  if (signal === 'host.stop' || process.platform === 'win32') expect((await client.control('host.stop', 'drain')).outcome).toBe('accepted');
+  else expect(worker.child.kill('SIGTERM')).toBe(true);
+  client.close();
+  expect(await deadline(worker.exited, 'held shutdown'), worker.output()).toEqual({ code: 0, signal: null });
+  expect(performance.now() - started, worker.output()).toBeLessThan(10_000);
+  const events = (await readFile(join(root, 'events.jsonl'), 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  expect(events).toContainEqual({ event: 'runtime-settle', mode: 'drain' });
+  expect(events.at(-1)).toEqual({ event: 'process-stopped' });
 }, 30_000);
 
 it('routes the CLI foreground entry with its explicit runtime and host configuration', async () => {

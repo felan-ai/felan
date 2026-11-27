@@ -275,6 +275,14 @@ export class DaemonControlStore {
       return this.findSession(state, session.id);
     });
   }
+  /** Forgets a request that never committed dispatch intent, so its ID can be admitted again. */
+  withdrawRequest(id: string): void {
+    this.commit(state => {
+      const record = this.findRequest(state, id);
+      if (record.phase !== 'intent') throw new ControlStoreError('already_resolved', 'Only an undispatched request can be withdrawn.');
+      state.requests = state.requests.filter(item => item !== record);
+    });
+  }
   finishRequest(id: string, response: unknown): ControlCommit<Response> {
     response = structuredClone(response);
     return this.commit(state => {

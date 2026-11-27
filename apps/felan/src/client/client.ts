@@ -664,7 +664,7 @@ export class SessionClient {
     for (const record of this.records.values()) if (!record.response) this.finish(record, failure(record.envelope.id, record.attempts ? 'indeterminate' : 'rejected', 'indeterminate', message));
   }
 
-  async control(op: ControlRequest['op'], mode?: 'drain' | 'force'): Promise<ControlResponse> {
+  async control(op: ControlRequest['op'], mode?: Extract<ControlRequest, { op: 'host.stop' | 'host.restart' }>['params']['mode']): Promise<ControlResponse> {
     if (this.closed) throw new Error('Client is closed');
     if (!this.pinned) throw new Error('Control requires a verified daemon identity');
     const id = op === 'host.status' ? randomUUID() : newRequestId();

@@ -3,15 +3,15 @@ import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { ModelRuntime } from '@felan-ai/agent-core';
 import { BootstrapHelloSchema, OriginSchema, ERROR_CODES, IdSchema, JsonLineDecoder, LIMITS, OPERATION_CATALOG, PresentationEventSchema, UI_CAPABILITIES, canonicalRequestPayload, parseClientEnvelope, parseControlRequest, parseControlResponse, parseRemoteCommand,
-  parseSchema, type ClientEnvelope, type Interaction, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
-import { OrderedAdmission, SAFETY_BYTES, diagnosticMessage, type AdmittedCommand, type AdmissionHandler, type AdmissionOutcome } from './admission.js';
+  parseSchema, type ClientEnvelope, type HostBlocked, type HostHeld, type Interaction, type Operation, type OperationParams, type OperationResult, type Origin, type Response } from '@felan-ai/session-protocol';
+import { AdmissionWithdrawn, OrderedAdmission, SAFETY_BYTES, deferredResponse, diagnosticMessage, type AdmittedCommand, type AdmissionHandler, type AdmissionOutcome } from './admission.js';
 import { accepted, commandError, SessionCommands, type RemoteControl, type RootPreparation } from './commands.js';
 import { SessionFanout } from './fanout.js';
 import { listenLocalIpc, type LocalIpcListener } from './ipc.js';
 import type { SessionRegistry } from './registry.js';
 import { assertTargetIdentity, protocolTarget } from './target.js';
 import type { BrokerClient } from './broker.js';
-import type { HostLifecycle } from './lifecycle.js';
+import type { HostLifecycle, HostMode } from './lifecycle.js';
 import type { HostCompositionInfo } from './host-config.js';
 import { headlessJsonEvent } from './headless-json.js';
 
@@ -145,7 +145,7 @@ export class SessionServer {
   }
 
   private async receiveRemote(value: ClientEnvelope, remote: RemoteSubmission): Promise<Response> {
-    let admissionAttempt = false;
+    let admissionAttempt = false; let refused = false;
     let preparing: RootPreparationWork | undefined; let ownsPreparation = false;
     try {
       const request = parseClientEnvelope(value);
@@ -160,7 +160,7 @@ export class SessionServer {
       }
       const retained = this.hasRemoteRequest(request.id);
       if (remote.requireRetained && !retained) throw commandError('indeterminate');
-      if ((this.stopped || this.sealed || this.stopping()) && !retained) throw commandError('busy');
+      if (this.admissionClosed() && !retained) { refused = true; throw commandError('busy'); }
       if (request.op === 'sessions.create' && request.params.extensions !== undefined) throw commandError('forbidden');
       if (request.session && !retained) {
         if (this.options.registry.options.store.findSessionMetadata(request.session)?.deletedAt !== undefined) throw commandError('not_found');
@@ -174,20 +174,30 @@ export class SessionServer {
       if (remote.requireRetained && !this.hasRemoteRequest(request.id)) throw commandError('indeterminate');
       admissionAttempt = true;
       // Retries retain their identity across reconnects and token rotation, unlike a connection or host token.
-      return await this.admission.submit(value, user ? `web:${user}` : `remote:${commandId}`, admitted => {
-        if (this.stopped || this.sealed || this.stopping()) throw commandError('busy');
-        if (request.op === 'interaction.answer') {
-          if (!this.options.broker?.dispatchRemote) throw commandError('unavailable');
-          return this.options.broker.dispatchRemote(admitted, { ...(user ? { user } : {}), command: commandId, interactionKinds: remote.interactionKinds ?? [] });
+      const response = await this.admission.submit(value, user ? `web:${user}` : `remote:${commandId}`, async admitted => {
+        try {
+          if (this.admissionClosed()) throw commandError('busy');
+          if (request.op === 'interaction.answer') {
+            if (!this.options.broker?.dispatchRemote) throw commandError('unavailable');
+            return await this.options.broker.dispatchRemote(admitted, { ...(user ? { user } : {}), command: commandId, interactionKinds: remote.interactionKinds ?? [] });
+          }
+          return await this.commands.prepare(admitted, { origin, remote: { ...(remote.sessionId ? { sessionId: remote.sessionId } : {}) }, ...(rootPreparation ? { rootPreparation } : {}) });
+        } catch (error) {
+          // The remote command stays claimed, so the request must not keep a final outcome that a later claim would replay.
+          if (this.admissionClosed() && error !== null && typeof error === 'object' && 'code' in error && error.code === 'busy') {
+            refused = true; throw new AdmissionWithdrawn(error);
+          }
+          throw error;
         }
-        return this.commands.prepare(admitted, { origin, remote: { ...(remote.sessionId ? { sessionId: remote.sessionId } : {}) }, ...(rootPreparation ? { rootPreparation } : {}) });
       });
+      return refused && response.outcome === 'rejected' && !this.hasRemoteRequest(request.id) ? deferredResponse(response) : response;
     } catch (error) {
       const dispatched = admissionAttempt && this.options.registry.options.store.request(value.id)?.phase === 'dispatch_intent';
       if (error && typeof error === 'object' && 'code' in error && error.code === 'indeterminate') {
         return { v: 1, re: value.id, outcome: 'indeterminate', error: { code: 'indeterminate', message: 'The retained remote request is unavailable. Inspect the session before retrying.', retryable: false } };
       }
-      return rejected(value.id, error, dispatched);
+      const response = rejected(value.id, error, dispatched);
+      return refused && response.outcome === 'rejected' ? deferredResponse(response) : response;
     } finally {
       if (ownsPreparation && this.rootPreparations.get(value.id) === preparing) this.rootPreparations.delete(value.id);
     }
@@ -303,7 +313,7 @@ export class SessionServer {
         }
         const response = { control: 1, re: id, identity: this.options.registry.options.owner.identity, daemonVersion: this.options.version, supportedProtocol: 1,
           state: this.options.management?.lifecycle.state ?? 'ready',
-          ...(this.options.management?.lifecycle.blocked ? { blocked: this.options.management.lifecycle.blocked } : {}),
+          ...this.lifecycleDetail(),
           ...(request.op === 'host.status' || result?.outcome === 'accepted' ? { outcome: 'accepted' }
             : { outcome: 'rejected', error: result ? result.error : { code: 'unavailable', message: 'Host management is unavailable.', retryable: false } }) };
         connection.out.send(parseControlResponse(response), () => { invalidateAfterSend(); this.options.management?.lifecycle.afterResponse(request.id, result?.outcome === 'accepted'); }); return;
@@ -430,19 +440,36 @@ export class SessionServer {
   private async status(request: ClientEnvelope): Promise<Response> {
     const rows = this.options.registry.listed();
     const composition = await this.currentComposition();
+    const activity = await this.activity();
     return accepted(request, { state: this.options.management?.lifecycle.state ?? 'ready', identity: this.options.registry.options.owner.identity, daemonVersion: this.options.version, protocol: 1,
-      ...(this.options.management?.lifecycle.blocked ? { blocked: this.options.management.lifecycle.blocked } : {}),
+      ...this.lifecycleDetail(),
       ...(composition ? { composition } : {}),
-      active: { sessions: rows.filter(row => row.state === 'open').length, runs: rows.filter(row => ['running', 'waiting', 'cancelling'].includes(row.run.state)).length,
-        work: await this.activeWork(), attachments: [...this.connections].reduce((sum, connection) => sum + connection.attachments.size, 0) }, setupNeeds: await this.options.setupNeeds?.() ?? [] });
+      active: { sessions: rows.filter(row => row.state === 'open').length, runs: activity.runs, work: activity.work,
+        attachments: [...this.connections].reduce((sum, connection) => sum + connection.attachments.size, 0), workByKind: activity.workByKind },
+      setupNeeds: await this.options.setupNeeds?.() ?? [] });
   }
 
-  /** Everything a restart would interrupt: busy sessions and providers, child executions, processes and unanswered host questions. */
-  private async activeWork(): Promise<number> {
+  /**
+   * Runs plus everything a restart would interrupt: busy sessions (including child executions), in-flight runtime operations and
+   * live processes, unanswered host questions and busy providers.
+   */
+  async activity(): Promise<{ runs: number; work: number; workByKind: { sessions: number; processes: number; interactions: number; providers: number } }> {
     const { registry } = this.options;
+    const runs = registry.listed().filter(row => ['running', 'waiting', 'cancelling'].includes(row.run.state)).length;
     const interactions = (this.options.broker?.pending?.() ?? registry.options.store.interactions())
       .filter(item => item.state === 'waiting' && item.scope.kind === 'host').length;
-    return await registry.activeWork() + interactions + Number(this.options.providersBusy?.() ?? false);
+    const { sessions, processes } = await registry.activeWorkByKind();
+    const providers = Number(this.options.providersBusy?.() ?? false);
+    return { runs, work: sessions + processes + interactions + providers, workByKind: { sessions, processes, interactions, providers } };
+  }
+
+  /** True once a stop, restart or hold closed admission; remote commands rejected then are retried by the next claim. */
+  admissionClosed(): boolean { return this.stopped || this.sealed || this.stopping(); }
+
+  private lifecycleDetail(): { blocked?: HostBlocked; held?: HostHeld; stopModes?: HostMode[] } {
+    const lifecycle = this.options.management?.lifecycle;
+    return { ...(lifecycle?.blocked ? { blocked: lifecycle.blocked } : {}), ...(lifecycle?.held ? { held: lifecycle.held } : {}),
+      ...(lifecycle ? { stopModes: lifecycle.modes } : {}) };
   }
 
   private async currentComposition(): Promise<HostCompositionInfo | undefined> {

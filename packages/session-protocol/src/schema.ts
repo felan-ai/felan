@@ -40,9 +40,16 @@ export const HostBlockedSchema = Type.Object({
   recoverable: Type.Boolean(), since: CounterSchema, message: DiagnosticTextSchema,
   step: Type.Optional(NameSchema), session: Type.Optional(IdSchema), pid: Type.Optional(Type.Integer({ minimum: 1, maximum: 2 ** 31 - 1 })),
 });
+/**
+ * A daemon that accepted a `hold` stop or restart while idle. Admission stays closed until a `drain` or `force` stop or
+ * restart arrives, or until `until`, when the daemon reopens admission by itself.
+ */
+export const HostHeldSchema = Type.Object({ action: enumOf(['stop', 'restart'] as const), since: CounterSchema, until: CounterSchema });
+export const HostModeSchema = enumOf(['drain', 'force', 'hold'] as const);
 export type DaemonTarget = Static<typeof DaemonTargetSchema>;
 export type DaemonIdentity = Static<typeof DaemonIdentitySchema>;
 export type HostBlocked = Static<typeof HostBlockedSchema>;
+export type HostHeld = Static<typeof HostHeldSchema>;
 
 export function assertJson(value: unknown, maxBytes?: number): asserts value is JsonValue {
   const ancestors = new Set<object>();

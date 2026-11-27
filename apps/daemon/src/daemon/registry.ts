@@ -210,6 +210,11 @@ export class SessionRegistry {
     this.hostWorkers.interrupt();
   }
 
+  /** Refuses new work like a drain but leaves host workers running, so a hold can count activity before it commits. */
+  holdAdmission(): void {
+    this.assertAdmission(); this.draining = true;
+  }
+
   /** Reopens admission after an abandoned drain; a registry that started shutting down cannot resume. */
   endDrain(): void {
     this.assertAdmission();
@@ -240,11 +245,17 @@ export class SessionRegistry {
 
   /** Units of work a drain waits for and a forced stop interrupts: busy resident sessions (including child executions) and live processes. Detached jobs survive a restart and are excluded. */
   async activeWork(): Promise<number> {
+    const work = await this.activeWorkByKind();
+    return work.sessions + work.processes;
+  }
+
+  /** The same units split into busy sessions and in-flight runtime operations plus live processes. */
+  async activeWorkByKind(): Promise<{ sessions: number; processes: number }> {
     this.options.owner.assertCurrent();
-    const interruptible = await this.processes.interruptibleCount();
+    const processes = await this.processes.interruptibleCount();
     const busy = [...this.entries].filter(([id, entry]) => this.lateWriters.has(id) || !entry.binding.runtime.session.isIdle || entry.dispatches.size || entry.writers.size
       || entry.host?.hasPendingWork() || entry.host?.hasActiveJobs() || [...entry.services].some(service => service.busy())).length;
-    return busy + [...this.lateWriters.keys()].filter(id => !this.entries.has(id)).length + interruptible;
+    return { sessions: busy + [...this.lateWriters.keys()].filter(id => !this.entries.has(id)).length, processes };
   }
 
   create(request: RegistryOpenRequest): Promise<SessionBinding> {

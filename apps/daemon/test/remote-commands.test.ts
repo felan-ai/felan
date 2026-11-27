@@ -7,7 +7,8 @@ import { parseClientEnvelope, parseOperationResult, parseRemoteCommandOutcome, r
 import { RemoteCommandExecutor, remotePromptRequestId, type RemoteCommandDependencies } from '../src/remote/commands.js';
 import { RemoteCommandJournal, type RemoteCommandJournalEntry } from '../src/remote/command-journal.js';
 import { SessionServer, type SessionServerOptions } from '../src/daemon/server.js';
-import { OrderedAdmission } from '../src/daemon/admission.js';
+import { OrderedAdmission, deferredResponse } from '../src/daemon/admission.js';
+import { HostLifecycle } from '../src/daemon/lifecycle.js';
 import { TestHostConfiguration } from './fixtures/host-services.js';
 import { gate, serverFixture } from './fixtures/server.js';
 import { offlineModel } from './fixtures/registry.js';
@@ -643,4 +644,98 @@ it.each([
   const row = { id: id(), requester, claimedAt, expiresAt, command: { op: 'cancel', session, params: {} } as RemoteCommand };
   expect(await f.executor.execute(row, batch)).toMatchObject({ outcome: expected });
   expect(f.submit).toHaveBeenCalledTimes(expected === 'accepted' ? 1 : 0);
+});
+
+/** A real server whose lifecycle can hold admission, like the daemon service wires it. */
+async function managedServer(holdTimeoutMs: number, prepareRoot?: SessionServerOptions['prepareRoot']) {
+  const f = await serverFixture({ now: Date.now });
+  let server!: SessionServer;
+  const lifecycle = new HostLifecycle({ target: f.owner.target, identity: f.owner.identity, holdTimeoutMs,
+    beginDrain: () => f.registry.beginDrain(), endDrain: () => f.registry.endDrain(), holdAdmission: () => f.registry.holdAdmission(),
+    activity: () => server.activity(), settle: async () => {}, complete: async () => {} });
+  server = new SessionServer({ registry: f.registry, configuration: new TestHostConfiguration({ definitions: [], assertCurrent: () => f.registry.assertAdmission() }),
+    models: f.root.runtime.session.modelRuntime, version: 'test', management: { lifecycle, logs: () => ({ entries: [] }) }, ...(prepareRoot ? { prepareRoot } : {}) });
+  cleanups.push(async () => { server.close(); await f.dispose(); });
+  return { ...f, server, lifecycle };
+}
+
+it.each(['prompt', 'sessions.create'] as const)('defers a remote %s refused while a hold closes admission, and runs it once on the next claim', async op => {
+  let beforeAdmission = async () => {};
+  const f = await managedServer(200, async request => { await beforeAdmission(); return { cwd: request.cwd, extensionPaths: [] }; });
+  const { database, reopen } = await openRemoteDatabase();
+  const dependencies = (journal: RemoteCommandJournal): RemoteCommandDependencies => ({
+    submit: (request, remote) => f.server.submitRemote(request, remote), lookup: request => f.server.hasRemoteRequest(request),
+    hostIdentity: () => ({ kind: 'personal', userId: requester }),
+    projects: () => [{ id: 'open', name: 'Open project', path: f.cwd }], isShared: () => true, markWebCreated: vi.fn(),
+    capabilities: structuredClone(capabilities), journal });
+  const submit = vi.spyOn(f.server, 'submitRemote');
+  const commandId = id();
+  const command: RemoteCommand = op === 'prompt' ? { op: 'prompt', session: f.root.sessionId, params: { text: 'Run once' } }
+    : { op: 'sessions.create', params: { project: 'open' } };
+  const row = { id: commandId, requester, expiresAt, command };
+  // The hold lands after the server's first admission check and before the request is admitted.
+  const restore = f.registry.restore.bind(f.registry);
+  let holding: Promise<Response> | undefined;
+  const hold = () => { holding ??= f.server.requestManagement({ v: 1, id: id(), op: 'host.restart', params: { expected: f.owner.identity, mode: 'hold' } }); return holding; };
+  if (op === 'prompt') vi.spyOn(f.registry, 'restore').mockImplementationOnce(async session => { await hold(); return restore(session); });
+  else beforeAdmission = async () => { beforeAdmission = async () => {}; await hold(); };
+  const prompt = vi.spyOn(f.root.runtime.session, 'prompt');
+  const created = f.store.snapshot().sessions.length;
+
+  expect(await new RemoteCommandExecutor(dependencies(new RemoteCommandJournal(database))).execute(row)).toBeUndefined();
+  expect(await holding).toMatchObject({ outcome: 'accepted', result: { held: { action: 'restart' } } });
+  expect(f.store.request(commandId)).toBeUndefined();
+  expect(new RemoteCommandJournal(database).get(commandId)).toMatchObject({ state: 'dispatching', deferred: true });
+  expect(prompt).not.toHaveBeenCalled(); expect(f.store.snapshot().sessions).toHaveLength(created);
+
+  // The hold expires without a stop; a new executor over the persisted journal stands in for the next daemon.
+  await vi.waitFor(() => expect(f.lifecycle.state).toBe('ready'));
+  const next = new RemoteCommandExecutor(dependencies(new RemoteCommandJournal(reopen())));
+  const outcome = await next.execute(row);
+  expect(outcome).toMatchObject({ re: commandId, outcome: 'accepted' });
+  expect(await next.execute(row)).toEqual(outcome);
+  expect(submit).toHaveBeenCalledTimes(2);
+  if (op === 'prompt') expect(prompt).toHaveBeenCalledOnce();
+  else expect(f.store.snapshot().sessions).toHaveLength(created + 1);
+});
+
+it('keeps a refused remote command deferred when the hold that closed admission is itself refused and reopens', async () => {
+  const f = await managedServer(60_000); const { database } = await openRemoteDatabase();
+  const journal = new RemoteCommandJournal(database);
+  const checking = gate(); let hold: Promise<Response> | undefined;
+  // The executor sees the refusal only after the busy hold has reopened admission.
+  const executor = new RemoteCommandExecutor({ submit: async (request, remote) => { const response = await f.server.submitRemote(request, remote); await hold; return response; },
+    lookup: request => f.server.hasRemoteRequest(request), hostIdentity: () => ({ kind: 'personal', userId: requester }), projects: () => [], isShared: () => true,
+    markWebCreated: vi.fn(), capabilities: structuredClone(capabilities), journal });
+  vi.spyOn(f.server, 'activity').mockImplementationOnce(async () => {
+    await checking.promise; return { runs: 0, work: 1, workByKind: { sessions: 0, processes: 1, interactions: 0, providers: 0 } };
+  });
+  const withdraw = f.store.withdrawRequest.bind(f.store);
+  vi.spyOn(f.store, 'withdrawRequest').mockImplementationOnce(request => { withdraw(request); checking.resolve(); });
+  const restore = f.registry.restore.bind(f.registry);
+  vi.spyOn(f.registry, 'restore').mockImplementationOnce(async session => {
+    hold = f.server.requestManagement({ v: 1, id: id(), op: 'host.restart', params: { expected: f.owner.identity, mode: 'hold' } });
+    await vi.waitFor(() => expect(f.server.admissionClosed()).toBe(true));
+    return restore(session);
+  });
+  const prompt = vi.spyOn(f.root.runtime.session, 'prompt');
+  const row = { id: id(), requester, expiresAt, command: { op: 'prompt', session: f.root.sessionId, params: { text: 'Run once' } } satisfies RemoteCommand };
+  expect(await executor.execute(row)).toBeUndefined();
+  expect(await hold).toMatchObject({ outcome: 'rejected', error: { code: 'busy' } });
+  expect(f.server.admissionClosed()).toBe(false);
+  expect(journal.get(row.id)).toMatchObject({ state: 'dispatching', deferred: true });
+  expect(prompt).not.toHaveBeenCalled();
+  expect(await executor.execute(row)).toMatchObject({ outcome: 'accepted' });
+  expect(prompt).toHaveBeenCalledOnce();
+});
+
+it('expires a deferred remote command like a fresh one', async () => {
+  const f = await fixture(); const commandId = id();
+  f.submit.mockImplementationOnce(async request => deferredResponse({ v: 1, re: request.id, outcome: 'rejected', error: { code: 'busy', message: 'Daemon is draining.', retryable: false } }));
+  vi.mocked(f.options.lookup).mockReturnValue(false);
+  const row = { id: commandId, requester, expiresAt: 10_000, claimedAt: 1_000, command: { op: 'prompt', session, params: { text: 'Late' } } satisfies RemoteCommand };
+  expect(await f.executor.execute(row, { startedAt: 2_000, receivedAt: 2_000 })).toBeUndefined();
+  expect(await f.executor.execute(row, { startedAt: 60_000, receivedAt: 60_000 })).toMatchObject({ outcome: 'rejected', error: { code: 'expired' } });
+  expect(f.submit).toHaveBeenCalledOnce();
+  expect(f.journal.get(commandId)).toMatchObject({ state: 'completed' });
 });

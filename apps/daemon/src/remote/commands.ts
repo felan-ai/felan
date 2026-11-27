@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { ERROR_CODES, parseClientEnvelope, parseRemoteCommand, parseRemoteCommandOutcome, requestTimestamp,
   type ClientEnvelope, type HostCapabilities, type HostProject, type RemoteCommand, type RemoteCommandOutcome, type Response } from '@felan-ai/session-protocol';
 import { commandError } from '../daemon/commands.js';
+import { isDeferredResponse } from '../daemon/admission.js';
 import type { CommandJournal, RemoteCommandJournalEntry } from './command-journal.js';
 import { systemClock, type RemoteClock } from './backoff.js';
 import type { RemoteSubmission } from '../daemon/server.js';
@@ -25,10 +26,11 @@ export interface RemoteCommandDependencies {
 }
 
 export class RemoteCommandExecutor {
-  private readonly pending = new Map<string, Promise<RemoteCommandOutcome>>();
+  private readonly pending = new Map<string, Promise<RemoteCommandOutcome | undefined>>();
   constructor(private readonly options: RemoteCommandDependencies) {}
 
-  execute(row: ClaimedRemoteCommand, batch?: CommandClaimBatch): Promise<RemoteCommandOutcome> {
+  /** Resolves `undefined` when the command did not run because admission closed; it stays claimed for the next claim. */
+  execute(row: ClaimedRemoteCommand, batch?: CommandClaimBatch): Promise<RemoteCommandOutcome | undefined> {
     const now = batch?.receivedAt ?? (this.options.clock ?? systemClock).now();
     const claim = batch ?? { startedAt: now, receivedAt: now };
     // Serialize duplicate claims without letting a conflicting payload inherit the first caller's outcome.
@@ -42,7 +44,7 @@ export class RemoteCommandExecutor {
 
   forget(id: string): void { this.options.journal.forget(id); }
 
-  private async run(row: ClaimedRemoteCommand, batch: CommandClaimBatch): Promise<RemoteCommandOutcome> {
+  private async run(row: ClaimedRemoteCommand, batch: CommandClaimBatch): Promise<RemoteCommandOutcome | undefined> {
     requestTimestamp(row.id);
     const host = this.options.hostIdentity();
     if (!host) throw commandError('unavailable', 'Host identity is unavailable.');
@@ -71,16 +73,17 @@ export class RemoteCommandExecutor {
       if (entry?.state === 'completed') return entry.outcome;
       // A fresh server claim already won the expiry race; batch processing time must not undo it.
       const previouslyClaimed = row.claimedAt === undefined || row.claimedAt < batch.startedAt - 5_000;
-      if (!entry && previouslyClaimed && row.expiresAt <= batch.receivedAt - 5_000) {
+      // A deferred command never ran, so it expires like a fresh one unless its session was already created.
+      if ((!entry || entry.deferred && !entry.createdSession) && previouslyClaimed && row.expiresAt <= batch.receivedAt - 5_000) {
         return this.complete(id, identity, failure(id, 'expired', 'Remote command expired before admission.'));
       }
-      const replay = entry !== undefined;
+      const replay = entry !== undefined && !entry.deferred;
       if (!this.options.capabilities.operations.includes(command.op)) throw commandError('forbidden', 'Remote operation is not advertised by this host.');
       if (command.op === 'sessions.create' && command.params.prompt && !this.options.capabilities.operations.includes('prompt')) throw commandError('forbidden');
       if (command.op !== 'sessions.create' && !this.options.isShared(command.session)) throw commandError('forbidden', 'Session is not shared.');
-      if (!entry) {
-        const request = this.map(id, command);
-        const dispatching: RemoteCommandJournalEntry = { id, identity, state: 'dispatching', request };
+      if (!entry || entry.deferred) {
+        const request = entry?.request ?? this.map(id, command);
+        const dispatching: RemoteCommandJournalEntry = { id, identity, state: 'dispatching', request, ...(entry?.createdSession ? { createdSession: entry.createdSession } : {}) };
         this.options.journal.write(dispatching);
         entry = dispatching;
       }
@@ -89,6 +92,7 @@ export class RemoteCommandExecutor {
         ...(command.op === 'sessions.create' && command.params.sessionId ? { sessionId: command.params.sessionId } : {}),
         interactionKinds: this.options.capabilities.interactionKinds };
       let response = await this.submit(entry, remote, replay);
+      if (this.defer(entry, response)) return undefined;
       if (response.outcome === 'accepted' && command.op === 'sessions.create') {
         const session = entry.createdSession ?? ('sessionId' in response.result ? response.result.sessionId : undefined);
         if (typeof session !== 'string') throw commandError('indeterminate');
@@ -100,6 +104,7 @@ export class RemoteCommandExecutor {
           entry = dispatching;
           const { sessionId: _, ...promptRemote } = remote;
           response = await this.options.submit(prompt, promptRemote);
+          if (this.defer(dispatching, response)) return undefined;
         }
         if (response.outcome === 'accepted') return this.complete(id, identity, { v: 1, re: id, outcome: 'accepted', result: { sessionId: session } } as RemoteCommandOutcome);
       }
@@ -112,6 +117,13 @@ export class RemoteCommandExecutor {
       if (entry?.state === 'dispatching') return this.complete(id, identity, failure(id, 'indeterminate', 'Remote command outcome is unknown. Inspect the session before retrying.'));
       return this.complete(id, identity, failure(id, code, 'Remote command was rejected.'));
     }
+  }
+
+  /** The server refused this submission because admission closed before admitting it; the journal keeps it for one fresh submission. */
+  private defer(entry: Extract<RemoteCommandJournalEntry, { state: 'dispatching' }>, response: Response): boolean {
+    if (!isDeferredResponse(response) || response.outcome !== 'rejected' || this.options.lookup(entry.request.id)) return false;
+    this.options.journal.write({ ...entry, deferred: true });
+    return true;
   }
 
   private async submit(entry: Extract<RemoteCommandJournalEntry, { state: 'dispatching' }>, remote: RemoteSubmission, replay: boolean): Promise<Response> {
