@@ -453,6 +453,25 @@ describe('registry-backed command dispatch', () => {
     expect(settled).toBe(true);
   });
 
+  it('settles a root whose passive operation fails while the stop waits for it', async () => {
+    const session = { id: 'root', root: 'root', state: 'open', revision: 0 };
+    const store = { session: () => session, sessionMetadata: () => session, sessionMetadatas: () => [session], resource: () => undefined, resources: () => [] } as unknown as DaemonControlStore;
+    const tracker = new RegistryProcesses({ store, assertCurrent() {}, changed() {} });
+    let fail!: (error: Error) => void;
+    const readFile = () => new Promise<Uint8Array>((_, reject) => { fail = reject; });
+    const runtime = tracker.wrap({ kind: 'host', cwd: '/fixture', storage: () => ({ root: '/fixture' }), readFile } as unknown as AgentRuntime, { session: 'root', root: 'root' });
+    const poll = runtime.passive!(() => runtime.readFile('completion.json')).catch((error: unknown) => error);
+    await Promise.resolve();
+    let settled = false;
+    const settling = tracker.settle('root').then(() => { settled = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    expect(settled).toBe(false);
+    fail(Object.assign(new Error('ENOENT: no such file or directory'), { code: 'ENOENT' }));
+    expect(await poll).toMatchObject({ code: 'ENOENT' });
+    await settling;
+    expect(settled).toBe(true);
+  });
+
   it('still fails to settle a root whose pending operation fails for another reason', async () => {
     const session = { id: 'root', root: 'root', state: 'open', revision: 0 };
     const store = { session: () => session, sessionMetadata: () => session, sessionMetadatas: () => [session], resource: () => undefined, resources: () => [] } as unknown as DaemonControlStore;

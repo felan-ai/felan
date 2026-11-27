@@ -1231,7 +1231,8 @@ the CI-triggered npm release workflow:
 `AgentRuntime` has an optional `passive(operation)`. The daemon's runtime
 implements it: runtime calls made inside the operation are not counted in
 `host.status` `active.work` or `workByKind.processes`, and they do not block
-session eviction. A stop still waits for them to end. A runtime without the
+session eviction. A stop still waits for them to end, and from daemon 0.8.9 a
+passive operation that fails does not fail the stop. A runtime without the
 method runs the operation as usual, so a caller falls back to calling it
 directly.
 
@@ -1248,5 +1249,5 @@ CI-triggered npm release workflow:
 | --- | --- | --- |
 | `@felan-ai/agent-core` | 0.16.5 | 0.16.6 |
 | `@felan-ai/ext-background-bash` | 0.17.1 | 0.17.2 |
-| `@felan-ai/daemon` | 0.8.7 | 0.8.8 |
-| `@felan-ai/felan` | 0.40.10 | 0.40.11 |
+| `@felan-ai/daemon` | 0.8.7 | 0.8.9 |
+| `@felan-ai/felan` | 0.40.10 | 0.40.12 |

@@ -477,8 +477,9 @@ export class RegistryProcesses {
       await join(handles.map(async item => {
         if (!item.settled) await item.raw.terminate('SIGTERM');
       }));
-      const pending = [...this.operations].filter(([, { scope }]) => owns(scope)).map(([operation]) => operation);
-      await join(pending);
+      const pending = [...this.operations].filter(([, { scope }]) => owns(scope));
+      // A passive operation only observes state, so its own failure leaves nothing to settle; the stop still waits for it to end.
+      await join(pending.map(([operation, { passive }]) => passive ? operation.catch(() => {}) : operation));
       await join(handles.map(async item => {
         if (item.disposal) await item.disposal.catch(() => {});
         if (item.disposed) return;
