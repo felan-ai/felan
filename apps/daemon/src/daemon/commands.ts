@@ -1,4 +1,4 @@
-import type { HostConfiguration, HostSetup } from './host-services.js';
+import type { HostConfiguration, HostSetup, HostSubscriptions } from './host-services.js';
 import { registrySessionExecutions } from './session-services.js';
 import { SessionsServiceError, type AgentSession, type ModelRuntime } from '@felan-ai/agent-core';
 import { truncateTail } from '@earendil-works/pi-coding-agent';
@@ -37,6 +37,7 @@ export interface CommandOptions {
   configuration: HostConfiguration;
   models: Pick<ModelRuntime, 'getAvailable'>;
   setup?: HostSetup;
+  subscriptions?: HostSubscriptions;
   prepareOpenInteraction?(id: string, client: string, signal: AbortSignal): () => Promise<void>;
   invalidated(revisions: Readonly<Record<string, number>>): void;
 }
@@ -51,6 +52,7 @@ export class SessionCommands {
   constructor(private readonly options: CommandOptions) {
     if (options.setup) for (const op of ['host.setup.catalog', 'host.setup.start', 'host.setup.read', 'host.setup.answer', 'host.setup.cancel', 'host.setup.open_link'] as const) this.operations.add(op);
     if (options.prepareOpenInteraction) this.operations.add('host.open_interaction');
+    if (options.subscriptions) this.operations.add('host.subscriptions');
   }
 
   async read(request: ClientEnvelope, client?: string): Promise<Response> {
@@ -67,6 +69,10 @@ export class SessionCommands {
       case 'host.setup.catalog': {
         if (!this.options.setup) throw commandError('unavailable');
         return accepted(request, await this.options.setup.catalog());
+      }
+      case 'host.subscriptions': {
+        if (!this.options.subscriptions) throw commandError('unavailable');
+        return accepted(request, await this.options.subscriptions.read());
       }
       case 'host.setup.read': {
         if (!this.options.setup || !client) throw commandError('unavailable');

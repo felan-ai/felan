@@ -1,4 +1,4 @@
-import type { HostConfiguration, HostSetup } from './host-services.js';
+import type { HostConfiguration, HostSetup, HostSubscriptions } from './host-services.js';
 import { randomUUID } from 'node:crypto';
 import type { Socket } from 'node:net';
 import type { ModelRuntime } from '@felan-ai/agent-core';
@@ -43,6 +43,7 @@ export interface SessionServerOptions {
   version: string;
   composition?: HostCompositionInfo;
   setup?: HostSetup;
+  subscriptions?: HostSubscriptions;
   prepareOpenInteraction?(id: string, client: string, signal: AbortSignal): () => Promise<void>;
   broker?: BrokerDispatchPort;
   management?: { lifecycle: HostLifecycle; logs(params: OperationParams<'host.logs'>): OperationResult<'host.logs'> };

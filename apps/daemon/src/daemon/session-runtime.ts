@@ -5,7 +5,7 @@ import type { ProviderSecretStorage } from './provider.js';
 import type { ProcessAdapter } from './process-adapter.js';
 import type { SessionExecutionPort, SessionExtensionBindings, SessionExtensionContext } from './session-execution.js';
 export type { SetupDependency } from '../setup/dependencies.js';
-export type { HostConfiguration, HostSetup, HostServices, HostServicesRequest } from './host-services.js';
+export type { HostConfiguration, HostSetup, HostServices, HostServicesRequest, HostSubscriptions } from './host-services.js';
 
 export interface SessionEnvironment {
   readonly cwd: string;
