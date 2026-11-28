@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
     configField: { type: 'boolean', description: 'Fast execution' } }]),
   parseValue: vi.fn((_option: unknown, value: string | boolean) => value),
   update: vi.fn(async () => 7),
+  updateCheck: vi.fn(async () => 5),
 }));
 
 vi.mock('../src/cli-config.js', () => {
@@ -15,7 +16,7 @@ vi.mock('../src/cli-config.js', () => {
 });
 vi.mock('../src/update.js', () => {
   state.updateImports += 1;
-  return { runFelanUpdate: state.update };
+  return { runFelanUpdate: state.update, runFelanUpdateCheck: state.updateCheck };
 });
 
 beforeEach(() => {
@@ -75,4 +76,22 @@ it('imports the updater only for an uninjected update command', async () => {
   expect(await runCli(['update'], {})).toBe(7);
   expect(state.updateImports).toBe(1); expect(state.update).toHaveBeenCalledOnce();
   expect(state.configImports).toBe(0);
+});
+
+it.each([
+  [['--check'], false], [['--check', '--json'], true], [['--json', '--check'], true],
+] as const)('routes update %j to the release check without installing', async (options, json) => {
+  const { runCli } = await import('../src/cli-main.js');
+  const update = vi.fn(async () => 3); const writeOutput = vi.fn(); const writeError = vi.fn();
+  expect(await runCli(['update', ...options], { update, writeOutput, writeError })).toBe(5);
+  expect(state.updateCheck).toHaveBeenCalledExactlyOnceWith({ json, writeOutput, writeError });
+  expect(update).not.toHaveBeenCalled(); expect(state.update).not.toHaveBeenCalled();
+});
+
+it.each([['--json'], ['--check', '--check'], ['--check', '--yes'], ['now']])('rejects update %j with usage', async (...options) => {
+  const { runCli } = await import('../src/cli-main.js');
+  const writeError = vi.fn();
+  expect(await runCli(['update', ...options], { update: async () => 3, writeError })).toBe(1);
+  expect(writeError).toHaveBeenCalledExactlyOnceWith('Usage: felan update [--check [--json]]');
+  expect(state.update).not.toHaveBeenCalled(); expect(state.updateCheck).not.toHaveBeenCalled();
 });

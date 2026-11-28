@@ -33,6 +33,7 @@ Options:
   --daemon-runtime <dir> Explicit isolated runtime directory (tests/CI only)
   --diagnostics      Print local runtime versions and configuration mode
   update             Update a global npm installation of Felan Code
+  update --check [--json]  Check for a newer release without installing it
   savings            Show persisted estimated API-equivalent savings
   acp [login]        Serve Agent Client Protocol v1 or authenticate in a terminal
   daemon [command]   Start, inspect, stop or restart the local daemon
@@ -56,9 +57,15 @@ export async function runCli(args: readonly string[], dependencies: CliDependenc
     return runDaemonCommand(args.slice(1), { writeOutput, writeError });
   }
   if (args[0] === 'update') {
-    if (args.length !== 1) {
-      writeError('Usage: felan update');
+    const options = args.slice(1);
+    const check = options.includes('--check'); const json = options.includes('--json');
+    if (options.some(option => option !== '--check' && option !== '--json') || new Set(options).size !== options.length || (json && !check)) {
+      writeError('Usage: felan update [--check [--json]]');
       return 1;
+    }
+    if (check) {
+      const { runFelanUpdateCheck } = await import('./update.js');
+      return runFelanUpdateCheck({ json, writeOutput, writeError });
     }
     if (dependencies.update) return dependencies.update();
     const { runFelanUpdate } = await import('./update.js');

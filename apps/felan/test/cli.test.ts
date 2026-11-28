@@ -188,7 +188,7 @@ describe('felan CLI', () => {
     });
 
     expect(exitCode).toBe(1);
-    expect(errors).toEqual(['Usage: felan update']);
+    expect(errors).toEqual(['Usage: felan update [--check [--json]]']);
     expect(updated).toBe(false);
     expect(launched).toBe(false);
   });

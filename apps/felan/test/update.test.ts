@@ -4,10 +4,12 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { prepareDaemonForUpdate, type DaemonUpdatePreparation } from '../src/update-daemon.js';
 import {
+  checkFelanRelease,
   checkForFelanUpdate,
   detectFelanInstallation,
   felanUpdateCommand,
   runFelanUpdate,
+  runFelanUpdateCheck,
   type FelanInstallation,
   type NpmResult,
 } from '../src/update.js';
@@ -130,6 +132,65 @@ describe('Felan Code update availability check', () => {
       expect(requested).toBe(false);
     },
   );
+});
+
+describe('Felan Code update --check', () => {
+  const npm: FelanInstallation = { kind: 'npm-prefix', packageDirectory: '/npm/lib/node_modules/@felan-ai/felan', prefix: '/npm' };
+  const pnpm: FelanInstallation = { kind: 'pnpm', packageDirectory: '/pnpm/global/5/node_modules/@felan-ai/felan' };
+  const linked: FelanInstallation = { kind: 'linked', packageDirectory: '/src/felan/apps/felan' };
+  const run = async (options: Parameters<typeof runFelanUpdateCheck>[0]) => {
+    const writeOutput = vi.fn(); const writeError = vi.fn();
+    const code = await runFelanUpdateCheck({ currentVersion: '0.40.9', writeOutput, writeError, ...options });
+    return { code, output: writeOutput.mock.calls.map(([line]) => line), errors: writeError.mock.calls.map(([line]) => line) };
+  };
+
+  it.each([
+    [npm, 'Felan Code 0.41.0 is available (installed 0.40.9). Update with: felan update'],
+    [pnpm, 'Felan Code 0.41.0 is available (installed 0.40.9). Update with: pnpm add --global @felan-ai/felan@latest'],
+    [linked, 'Felan Code 0.41.0 is available (installed 0.40.9). Update it with the package manager that installed Felan Code.'],
+  ] as const)('reports an available release with the update command for %j', async (installation, line) => {
+    expect(await run({ installation, fetch: async () => jsonResponse({ version: '0.41.0' }) })).toEqual({ code: 0, output: [line], errors: [] });
+  });
+
+  it('reports the installed release as current', async () => {
+    expect(await run({ installation: npm, fetch: async () => jsonResponse({ version: '0.40.9' }) }))
+      .toEqual({ code: 0, output: ['Felan Code 0.40.9 is up to date.'], errors: [] });
+  });
+
+  it('prints one JSON object for available and current releases', async () => {
+    expect(await run({ json: true, installation: npm, fetch: async () => jsonResponse({ version: '0.41.0' }) })).toEqual({ code: 0, errors: [],
+      output: [JSON.stringify({ current: '0.40.9', latest: '0.41.0', updateAvailable: true, command: 'felan update' })] });
+    expect(await run({ json: true, installation: linked, fetch: async () => jsonResponse({ version: '0.40.8' }) })).toEqual({ code: 0, errors: [],
+      output: [JSON.stringify({ current: '0.40.9', latest: '0.40.8', updateAvailable: false, command: null })] });
+  });
+
+  it.each([
+    ['a network failure', async () => { throw new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } }); }, 'fetch failed (ENOTFOUND)'],
+    ['an HTTP failure', async () => new Response('', { status: 503 }), 'npm answered HTTP 503'],
+    ['a malformed response', async () => new Response('{', { status: 200 }), 'npm returned an invalid stable version'],
+    ['a prerelease', async () => jsonResponse({ version: '0.41.0-next.1' }), 'npm returned an invalid stable version'],
+  ] as const)('fails with exit 1 on %s', async (_name, fetch, reason) => {
+    const message = `Could not check for a newer Felan Code release: ${reason}`;
+    expect(await run({ installation: npm, fetch })).toEqual({ code: 1, output: [], errors: [message] });
+    expect(await run({ json: true, installation: npm, fetch })).toEqual({ code: 1, output: [JSON.stringify({ error: message })], errors: [] });
+  });
+
+  it('reports a timeout without waiting for the registry', async () => {
+    await expect(checkFelanRelease({ currentVersion: '0.40.9', installation: npm, timeoutMs: 5,
+      fetch: async (_input, init) => new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal!.reason), { once: true });
+      }) })).rejects.toThrow('Could not check for a newer Felan Code release: npm did not answer in time');
+  });
+
+  it.each(['PI_OFFLINE', 'FELAN_SKIP_VERSION_CHECK'] as const)('reports no latest release without a request when %s is set', async (environmentVariable) => {
+    process.env[environmentVariable] = '1';
+    const fetch = vi.fn(async () => jsonResponse({ version: '0.41.0' }));
+    expect(await run({ json: true, installation: npm, fetch })).toEqual({ code: 0, errors: [],
+      output: [JSON.stringify({ current: '0.40.9', latest: null, updateAvailable: false, command: 'felan update' })] });
+    expect((await run({ installation: npm, fetch })).output)
+      .toEqual(['Felan Code 0.40.9 is installed. FELAN_SKIP_VERSION_CHECK or PI_OFFLINE disables the release check.']);
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });
 
 describe('Felan Code installation detection', () => {

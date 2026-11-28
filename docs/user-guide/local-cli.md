@@ -259,6 +259,16 @@ before the drain deadline, the command fails and the daemon keeps running; add
 `--force` to interrupt the work instead. Restart launches the replacement with the requesting shell
 environment; no per-session environment is transported or persisted.
 
+`felan daemon status --json` prints one JSON object line for status bars and
+scripts and never starts the daemon. A running daemon reports `running: true`,
+the IPC `endpoint`, `clientVersion`, `daemonVersion`, `state`, `compatible`,
+the `sessions`, `runs`, `activeTasks` and `attachments` counts, `restartRequired`
+when a different build is running, and `setupNeeds` messages. A daemon from an
+incompatible installation reports only `compatible: false`, its version and
+state. Without a daemon it prints `{"running":false,"endpoint":...,"clientVersion":...}`
+and exits 0; other failures print `{"error":...}` and exit 1. `--json` applies
+only to `status`.
+
 If cleanup fails after shutdown begins, the daemon enters `blocked` and refuses
 new work. `status` reports the failed cleanup step, session when known, error,
 and recovery command; `logs` includes the detailed shutdown error. A normal stop
@@ -349,6 +359,14 @@ the global installation is current, it reports that no update is needed. If a
 newer release is available, it verifies the installation and installs that exact
 `@felan-ai/felan` version. Registry, installation, and verification failures return
 a non-zero exit status and do not claim success.
+
+`felan update --check` checks npm's stable release without installing it and
+prints `Felan Code X is up to date.` or
+`Felan Code Y is available (installed X). Update with: <command>`. With `--json`
+it prints `{"current":...,"latest":...,"updateAvailable":...,"command":...}`;
+`command` is `null` for linked and unrecognized installations. A registry
+failure exits 1 (as `{"error":...}` with `--json`). `FELAN_SKIP_VERSION_CHECK`
+or `PI_OFFLINE` skips the request and reports `latest: null`.
 
 Self-update is limited to the verified global npm installation that provides
 the running `felan` command. A global npm installation is verified when npm's
