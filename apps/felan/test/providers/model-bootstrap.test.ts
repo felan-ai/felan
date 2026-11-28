@@ -91,3 +91,14 @@ it('propagates lost ownership while reading DiscreteStack host settings', async 
     })).rejects.toThrow('ownership lost');
   } finally { await rm(agentDir, { recursive: true, force: true }); }
 });
+
+it('serves host subscription usage with Claude Code usage restored from host agent storage', async () => {
+  const agentDir = await mkdtemp(join(tmpdir(), 'felan-model-bootstrap-'));
+  try {
+    await writeFile(join(agentDir, 'claude-code-usage.json'), JSON.stringify({ version: 1, providers: { anthropic: { rateLimitedCount: 0,
+      snapshot: { windows: [{ label: 'Extra [on]', usedPercent: 3 }], lastSuccessAt: 5 } } } }));
+    const { host } = await createDiscreteStackHost(agentDir);
+    expect(await host.subscriptions!.read()).toEqual({ subscriptions: [{ provider: 'anthropic', modelProvider: 'claude-code', label: 'Claude Plan',
+      windows: [{ label: 'Extra [on]', usedPercent: 3 }], updatedAt: 5 }] });
+  } finally { await rm(agentDir, { recursive: true, force: true }); }
+});

@@ -2,7 +2,7 @@ import { HOST_MAINTENANCE_SERVICE, HOST_MODELS_SERVICE, type Classifier, type Mo
 import { defineServiceProvider } from '@felan-ai/daemon/provider';
 import { createLocalClassifier } from './classifier.js';
 import { createLocalModelsService } from './models.js';
-import { createSubscriptionUsageCache } from './models-subscription.js';
+import { sharedSubscriptionUsage } from './models-subscription.js';
 import { createLocalSettingsManager, getClassifierModelSetting } from './settings.js';
 
 export default defineServiceProvider({
@@ -13,7 +13,6 @@ export default defineServiceProvider({
     const lifetime = new AbortController();
     const signal = AbortSignal.any([context.signal, lifetime.signal]);
     const active = new Set<Promise<unknown>>();
-    const subscriptionUsage = createSubscriptionUsageCache();
     let service: ModelsService | undefined;
     let activated = false;
     let closed = false;
@@ -67,7 +66,7 @@ export default defineServiceProvider({
         if (closed) throw new Error('Host models are closed.');
         service = createLocalModelsService({ modelRuntime, sessionId: 'host-maintenance', signal,
           isActive: () => activated,
-          getSubscriptionUsage: model => subscriptionUsage(modelRuntime, model),
+          getSubscriptionUsage: model => sharedSubscriptionUsage(modelRuntime, model),
           ...(selected.classifier ? { classifier: selected.classifier } : {}) });
         activated = true;
       },

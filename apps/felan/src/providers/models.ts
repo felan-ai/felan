@@ -20,9 +20,7 @@ import {
   type TextModelInfo,
 } from '@felan-ai/agent-core';
 import { defineServiceProvider } from '@felan-ai/daemon/provider';
-import { createSubscriptionUsageCache } from './models-subscription.js';
-
-const subscriptionUsage = createSubscriptionUsageCache();
+import { sharedSubscriptionUsage } from './models-subscription.js';
 
 export type LocalModelsRuntime = Pick<ModelRuntime,
   'getAvailable' | 'getAvailableOfType' | 'completeSimple' | 'streamSimple' | 'generateImages'>;
@@ -352,7 +350,7 @@ export default defineServiceProvider({
     const subscriptionRequests = new Set<Promise<unknown>>();
     const service = createLocalModelsService({ modelRuntime: context.modelRuntime, sessionId: context.sessionId,
       async getSubscriptionUsage(model) {
-        const pending = subscriptionUsage(context.modelRuntime, model);
+        const pending = sharedSubscriptionUsage(context.modelRuntime, model);
         subscriptionRequests.add(pending);
         try { return await pending; }
         finally { subscriptionRequests.delete(pending); }

@@ -364,3 +364,20 @@ it('shares rate-limit backoff across sessions', async () => {
   await query(models, model);
   expect(fetchUsage).toHaveBeenCalledTimes(2);
 });
+
+it('keeps the last successful payload and its fetch time through later failures until credentials are missing', async () => {
+  let time = 1_000;
+  const fetchUsage = vi.fn()
+    .mockResolvedValueOnce(new Response('{"five_hour":{"utilization":25}}'))
+    .mockResolvedValueOnce(new Response('{}', { status: 500 }));
+  const cache = createSubscriptionUsageCache(fetchUsage, () => time);
+  const model = { provider: 'anthropic', id: '' };
+  expect(await cache.read(runtime({ provider: 'anthropic', token: 'a' }), model)).toEqual({
+    result: { ok: true, data: { five_hour: { utilization: 25 } } }, success: { data: { five_hour: { utilization: 25 } }, at: 1_000 } });
+  time = 61_001;
+  expect(await cache.read(runtime({ provider: 'anthropic', token: 'a' }), model)).toEqual({
+    result: { ok: false, error: { code: 'HTTP_ERROR', httpStatus: 500 } }, success: { data: { five_hour: { utilization: 25 } }, at: 1_000 } });
+  time = 200_000;
+  expect(await cache.read(runtime({ provider: 'other', token: 'a' }), model)).toEqual({ result: { ok: false, error: { code: 'NO_CREDENTIALS' } } });
+  expect(fetchUsage).toHaveBeenCalledTimes(2);
+});
