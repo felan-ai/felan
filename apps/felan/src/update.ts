@@ -93,33 +93,99 @@ export interface CheckForFelanUpdateOptions {
 export async function checkForFelanUpdate(
   options: CheckForFelanUpdateOptions = {},
 ): Promise<string | undefined> {
-  if (process.env.FELAN_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
-
   const currentVersion = options.currentVersion ?? FELAN_VERSION;
   if (!isStableVersion(currentVersion)) return undefined;
-
   try {
-    const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS);
-    const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
-    const response = await (options.fetch ?? globalThis.fetch)(LATEST_RELEASE_URL, {
-      headers: {
-        accept: 'application/json',
-        'User-Agent': `felan/${currentVersion} (${process.platform}; node/${process.versions.node}; ${process.arch})`,
-      },
-      signal,
-    });
-    if (!response.ok) return undefined;
-
-    const data: unknown = await response.json();
-    if (!isRecord(data) || typeof data.version !== 'string') return undefined;
-    const latestVersion = data.version.trim();
-    if (!isStableVersion(latestVersion) || compareVersions(latestVersion, currentVersion) <= 0) {
-      return undefined;
-    }
-    return latestVersion;
+    const latestVersion = await fetchLatestFelanVersion(currentVersion, options);
+    return latestVersion && compareVersions(latestVersion, currentVersion) > 0 ? latestVersion : undefined;
   } catch {
     return undefined;
   }
+}
+
+export interface FelanReleaseCheck {
+  readonly current: string;
+  /** `null` when `FELAN_SKIP_VERSION_CHECK` or `PI_OFFLINE` disables the request. */
+  readonly latest: string | null;
+  readonly updateAvailable: boolean;
+  /** How to update this installation; `null` for linked and unrecognized installations. */
+  readonly command: string | null;
+}
+
+export interface CheckFelanReleaseOptions extends CheckForFelanUpdateOptions {
+  readonly installation?: FelanInstallation;
+}
+
+/** Checks npm's stable release without installing it; throws when npm cannot answer. */
+export async function checkFelanRelease(options: CheckFelanReleaseOptions = {}): Promise<FelanReleaseCheck> {
+  const current = options.currentVersion ?? FELAN_VERSION;
+  let latest: string | undefined;
+  try {
+    latest = await fetchLatestFelanVersion(current, options);
+  } catch (error) {
+    throw new Error(`Could not check for a newer Felan Code release: ${describeFailure(error)}`);
+  }
+  return {
+    current,
+    latest: latest ?? null,
+    updateAvailable: latest !== undefined && isStableVersion(current) && compareVersions(latest, current) > 0,
+    command: felanUpdateCommand(options.installation ?? detectFelanInstallation()) ?? null,
+  };
+}
+
+export interface RunFelanUpdateCheckOptions extends CheckFelanReleaseOptions {
+  readonly json?: boolean;
+  readonly writeOutput?: (line: string) => void;
+  readonly writeError?: (line: string) => void;
+}
+
+export async function runFelanUpdateCheck(options: RunFelanUpdateCheckOptions = {}): Promise<number> {
+  const writeOutput = options.writeOutput ?? ((line) => console.log(line));
+  const writeError = options.writeError ?? ((line) => console.error(line));
+  let check: FelanReleaseCheck;
+  try {
+    check = await checkFelanRelease(options);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not check for a newer Felan Code release.';
+    if (options.json) writeOutput(JSON.stringify({ error: message }));
+    else writeError(message);
+    return 1;
+  }
+  if (options.json) writeOutput(JSON.stringify(check));
+  else if (check.latest === null) {
+    writeOutput(`Felan Code ${check.current} is installed. FELAN_SKIP_VERSION_CHECK or PI_OFFLINE disables the release check.`);
+  } else if (!check.updateAvailable) writeOutput(`Felan Code ${check.current} is up to date.`);
+  else {
+    writeOutput(`Felan Code ${check.latest} is available (installed ${check.current}). `
+      + (check.command ? `Update with: ${check.command}` : 'Update it with the package manager that installed Felan Code.'));
+  }
+  return 0;
+}
+
+/** npm's latest stable release, or `undefined` when version checks are disabled. */
+async function fetchLatestFelanVersion(currentVersion: string, options: CheckForFelanUpdateOptions): Promise<string | undefined> {
+  if (process.env.FELAN_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
+  const timeoutSignal = AbortSignal.timeout(options.timeoutMs ?? DEFAULT_VERSION_CHECK_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal;
+  const response = await (options.fetch ?? globalThis.fetch)(LATEST_RELEASE_URL, {
+    headers: {
+      accept: 'application/json',
+      'User-Agent': `felan/${currentVersion} (${process.platform}; node/${process.versions.node}; ${process.arch})`,
+    },
+    signal,
+  });
+  if (!response.ok) throw new Error(`npm answered HTTP ${response.status}`);
+  const data: unknown = await response.json().catch(() => undefined);
+  const latestVersion = isRecord(data) && typeof data.version === 'string' ? data.version.trim() : '';
+  if (!isStableVersion(latestVersion)) throw new Error('npm returned an invalid stable version');
+  return latestVersion;
+}
+
+function describeFailure(error: unknown): string {
+  if (error instanceof Error && error.name === 'TimeoutError') return 'npm did not answer in time';
+  if (error instanceof Error && error.name === 'AbortError') return 'the request was cancelled';
+  const cause = error instanceof Error && isRecord(error.cause) && typeof error.cause.code === 'string' ? ` (${error.cause.code})` : '';
+  return `${error instanceof Error ? error.message : 'the request failed'}${cause}`;
 }
 
 export async function runFelanUpdate(options: RunFelanUpdateOptions = {}): Promise<number> {

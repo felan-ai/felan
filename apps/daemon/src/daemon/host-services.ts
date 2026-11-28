@@ -1,5 +1,5 @@
 import type { AgentRuntime, ExtensionConfigDefinition, ExtensionConfigOverride, ModelRuntime, RuntimeDependencyInstallResult } from '@felan-ai/agent-core';
-import type { JsonValue, OperationParams, OperationResult, SetupCatalog, SetupJob, SetupStart } from '@felan-ai/session-protocol';
+import type { HostSubscriptions as HostSubscriptionsResult, JsonValue, OperationParams, OperationResult, SetupCatalog, SetupJob, SetupStart } from '@felan-ai/session-protocol';
 import type { InteractionBroker } from './broker.js';
 
 export interface HostConfiguration {
@@ -28,9 +28,16 @@ export interface HostSetup {
   drain(): Promise<void>;
 }
 
+/** Plan usage of the host's signed-in subscriptions, served as `host.subscriptions`. */
+export interface HostSubscriptions {
+  /** Answers from a shared, rate-limited cache; providers that are not signed in are omitted. */
+  read(): Promise<HostSubscriptionsResult>;
+}
+
 export interface HostServices {
   readonly configuration: HostConfiguration;
   readonly setup: HostSetup;
+  readonly subscriptions?: HostSubscriptions;
   prepareRoot?(request: { cwd: string; extensions?: readonly string[] }, caller: {
     recipient?: string; signal: AbortSignal;
   }): Promise<{ cwd: string; extensionPaths: readonly string[] }>;

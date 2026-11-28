@@ -18,16 +18,27 @@ const XAI_USAGE_URL = 'https://cli-chat-proxy.grok.com/v1/billing?format=credits
 
 interface SubscriptionCacheEntry {
   result?: ModelSubscriptionUsageResult;
+  success?: { data: unknown; at: number };
   pending?: Promise<ModelSubscriptionUsageResult>;
   refreshAt: number;
   rateLimits: number;
 }
 
-export function createSubscriptionUsageCache(fetchImplementation?: typeof fetch, now: () => number = Date.now) {
+export interface SubscriptionUsageCache {
+  (runtime: ModelRuntime, model: ModelReference): Promise<ModelSubscriptionUsageResult>;
+  /** The current result plus the latest successful payload and its fetch time, kept through later failures until credentials are missing. */
+  read(runtime: ModelRuntime, model: ModelReference): Promise<{
+    readonly result: ModelSubscriptionUsageResult;
+    readonly success?: { readonly data: unknown; readonly at: number };
+  }>;
+}
+
+/** @internal */
+export function createSubscriptionUsageCache(fetchImplementation?: typeof fetch, now: () => number = Date.now): SubscriptionUsageCache {
   const entries = new Map<string, SubscriptionCacheEntry>();
-  return async (runtime: ModelRuntime, model: ModelReference): Promise<ModelSubscriptionUsageResult> => {
+  const read: SubscriptionUsageCache['read'] = async (runtime, model) => {
     const provider = model.provider === 'openai-codex' ? 'codex' : model.provider;
-    if (provider !== 'codex' && provider !== 'openai' && provider !== 'anthropic' && provider !== 'xai') return failure('NO_CREDENTIALS');
+    if (provider !== 'codex' && provider !== 'openai' && provider !== 'anthropic' && provider !== 'xai') return { result: failure('NO_CREDENTIALS') };
     const key = provider === 'openai' ? `${provider}/${model.id}` : provider;
     let entry = entries.get(key);
     if (!entry) { entry = { refreshAt: 0, rateLimits: 0 }; entries.set(key, entry); }
@@ -41,12 +52,19 @@ export function createSubscriptionUsageCache(fetchImplementation?: typeof fetch,
         const backoff = limited ? Math.min(30 * 60_000, 60_000 * 2 ** (current.rateLimits - 1)) : 60_000;
         current.refreshAt = now() + Math.max(backoff, !result.ok ? result.error.retryAfterMs ?? 0 : 0);
         current.result = result;
+        if (result.ok) current.success = { data: result.data, at: now() };
+        else if (result.error.code === 'NO_CREDENTIALS') delete current.success;
         return result;
       }).finally(() => { delete current.pending; });
     }
-    return structuredClone(await (entry.pending ?? entry.result!));
+    const result = await (entry.pending ?? entry.result!);
+    return structuredClone({ result, ...(entry.success ? { success: entry.success } : {}) });
   };
+  return Object.assign(async (runtime: ModelRuntime, model: ModelReference) => (await read(runtime, model)).result, { read });
 }
+
+/** One cache per daemon process, so sessions, host maintenance and `host.subscriptions` share upstream requests and backoff. */
+export const sharedSubscriptionUsage = createSubscriptionUsageCache();
 
 /** @internal */
 export function createLocalSubscriptionUsage(

@@ -83,7 +83,9 @@ union: `invalid_request`, `unsupported_operation`, `protocol_mismatch`,
 wire string so clients can handle future codes with a generic fallback.
 
 - Host: `hello`, `host.status`, `sessions.list`,
-  `sessions.create`, `session.import`, `host.stop`, `host.restart`, `host.logs`.
+  `sessions.create`, `session.import`, `host.stop`, `host.restart`, `host.logs`,
+  `host.subscriptions` (plan usage of signed-in subscriptions; offered only when
+  the host provides it).
 - Session binding/lifetime: `attach`, `detach`, `close`.
 - Execution: `prompt`, `steer`, `follow_up`, `cancel`, `set_model`,
   `set_thinking`, `compact`, `fork`, `command.invoke`, `interaction.answer`,

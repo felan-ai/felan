@@ -8,6 +8,7 @@ import { LIMITS } from './limits.js';
 import { RemoteConfigureParamsSchema, RemoteStatusSchema } from './remote.js';
 import { UiActionRequestSchema, UiCapabilitySchema } from './ui.js';
 import { SetupCatalogSchema, SetupJobSchema, SetupStartSchema } from './setup.js';
+import { HostSubscriptionsSchema } from './subscriptions.js';
 import { AbsolutePathSchema, ClientKindSchema, CounterSchema, DaemonIdentitySchema, DaemonTargetSchema, DiagnosticTextSchema, HostBlockedSchema, HostHeldSchema, HostModeSchema, IdSchema, StepTimeoutSchema, ModelSchema, NameSchema, PageRequestSchema, ThinkingSchema, enumOf, text, unboundedText } from './schema.js';
 
 const empty = Type.Object({});
@@ -83,6 +84,7 @@ export const OperationSchemas = {
   'host.setup.cancel': Type.Object({ jobId: IdSchema }),
   'host.setup.open_link': Type.Object({ jobId: IdSchema, index: Type.Integer({ minimum: 0, maximum: 15 }) }),
   'host.open_interaction': Type.Object({ interactionId: IdSchema }),
+  'host.subscriptions': empty,
   'session.reload': empty,
   'processes.list': Type.Object({ ...PageRequestSchema.properties, root: IdSchema }),
   'processes.read': Type.Object({ ...resource, offset: CounterSchema, limit: Type.Integer({ minimum: 1, maximum: LIMITS.processReadBytes }) }),
@@ -119,7 +121,7 @@ export const OPERATION_CATALOG = Object.freeze({
   'host.setup.catalog': definition('host', false, 'none'), 'host.setup.start': definition('host'),
   'host.setup.read': definition('host', false, 'none'), 'host.setup.answer': definition('host', true, 'connection'),
   'host.setup.cancel': definition('host', true, 'connection'), 'host.open_interaction': definition('host'),
-  'host.setup.open_link': definition('host'),
+  'host.setup.open_link': definition('host'), 'host.subscriptions': definition('host', false, 'none'),
   'processes.list': definition('session', false, 'none'), 'processes.read': definition('session', false, 'none'),
   'processes.write': definition('session'), 'processes.stop': definition('session'), 'host.stop': definition('host'),
   'executions.list': definition('session', false, 'none'), 'executions.read': definition('session', false, 'none'),
@@ -159,7 +161,7 @@ export const ResultSchemas = {
   'config.set': emptyResult, 'session.reload': emptyResult, 'processes.list': ProcessPageSchema,
   'host.setup.catalog': SetupCatalogSchema, 'host.setup.start': SetupJobSchema, 'host.setup.read': SetupJobSchema,
   'host.setup.answer': emptyResult, 'host.setup.cancel': emptyResult, 'host.open_interaction': emptyResult,
-  'host.setup.open_link': emptyResult,
+  'host.setup.open_link': emptyResult, 'host.subscriptions': HostSubscriptionsSchema,
   'processes.read': Type.Object({ resourceId: IdSchema, offset: CounterSchema, nextOffset: CounterSchema, data: bytes(LIMITS.processReadBytes),
     state: enumOf(['running', 'exited', 'missing', 'interrupted'] as const), exitCode: Type.Optional(Type.Integer()) }),
   'processes.write': Type.Object({ writtenBytes: Type.Integer({ minimum: 0, maximum: LIMITS.processWriteBytes }) }), 'processes.stop': emptyResult,

@@ -24,7 +24,7 @@ afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) awai
 const configDefinition = defineExtensionConfig({ id: 'codex', title: 'Synthetic config', fields: { fast: configField.boolean({ default: false, description: 'Synthetic value' }) } });
 
 async function fixture(options: { processAdapter?: ProcessAdapter; onStream?: () => Promise<void>; release?: () => void; broker?: BrokerDispatchPort; now?: () => number; extension?: (pi: ExtensionAPI) => void;
-  prepareRoot?: SessionServerOptions['prepareRoot'];
+  prepareRoot?: SessionServerOptions['prepareRoot']; subscriptions?: SessionServerOptions['subscriptions'];
   compaction?: { reserveTokens: number; keepRecentTokens: number }; skill?: boolean; storeOwnership?: boolean;
   composition?: { managerPackage: string; managerVersion: string; providerDigest: string; configDigest: string };
   currentComposition?: () => Promise<{ managerPackage: string; managerVersion: string; providerDigest: string; configDigest: string }> } = {}) {
@@ -35,7 +35,7 @@ async function fixture(options: { processAdapter?: ProcessAdapter; onStream?: ()
   const configuration = new DaemonConfiguration({ definitions: [configDefinition], assertCurrent: () => f.registry.assertAdmission() });
   const server = new SessionServer({ registry: f.registry, configuration, models: f.root.runtime.session.modelRuntime, version: 'fixture',
     ...(options.composition ? { composition: options.composition } : {}), ...(options.currentComposition ? { currentComposition: options.currentComposition } : {}),
-    ...(options.prepareRoot ? { prepareRoot: options.prepareRoot } : {}),
+    ...(options.prepareRoot ? { prepareRoot: options.prepareRoot } : {}), ...(options.subscriptions ? { subscriptions: options.subscriptions } : {}),
     ...(options.broker ? { broker: options.broker } : {}), ...(options.now ? { now: options.now } : {}) });
   cleanups.push(async () => { options.release?.(); for (const client of clients) client.close(); for (const socket of sockets) socket.destroy(); server.close(); await storeOwner?.release(); await f.dispose(); });
   if (options.storeOwnership) {
@@ -242,6 +242,27 @@ it('negotiates the same operations for equally capable local TUI and ACP clients
   expect(acp.capabilities?.operations).toEqual(tui.capabilities?.operations);
   expect(acp.capabilities?.operations).toEqual(expect.arrayContaining(['set_model', 'session.rename', 'processes.list', 'executions.read']));
   expect(acp.capabilities?.operations).not.toContain('ui.action');
+});
+
+it('advertises and serves host subscription usage only when the host provides it', async () => {
+  const hello = (f: Awaited<ReturnType<typeof fixture>>) => ({ v: 1, id: newRequestId(), op: 'hello', params: { clientVersion: 'fixture', protocol: 1, kind: 'headless',
+    interactionKinds: [], target: protocolTarget(f.owner.target) } });
+  const poll = { v: 1, id: 'poll', op: 'host.subscriptions', params: {} };
+  const plain = await fixture(); const unsupported = await plain.raw();
+  expect((await unsupported.exchange(hello(plain))).result).toMatchObject({ operations: expect.not.arrayContaining(['host.subscriptions']) });
+  expect(await unsupported.exchange(poll)).toMatchObject({ outcome: 'rejected', error: { code: 'unavailable' } });
+
+  const usage = { subscriptions: [{ provider: 'codex', modelProvider: 'openai-codex', label: 'Codex Plan',
+    windows: [{ label: '5h', usedPercent: 40, resetAt: '2026-01-01T00:00:00.000Z' }], updatedAt: 1_700_000_000_000 },
+  { provider: 'anthropic', modelProvider: 'anthropic', label: 'Claude Plan', windows: [], error: { code: 'HTTP_ERROR', httpStatus: 429 } }] };
+  const read = vi.fn(async () => structuredClone(usage) as Awaited<ReturnType<NonNullable<SessionServerOptions['subscriptions']>['read']>>);
+  const f = await fixture({ subscriptions: { read } }); const peer = await f.raw();
+  expect((await peer.exchange(hello(f))).result).toMatchObject({ operations: expect.arrayContaining(['host.subscriptions']) });
+  expect(await peer.exchange(poll)).toEqual({ v: 1, re: 'poll', outcome: 'accepted', result: usage });
+  expect(read).toHaveBeenCalledOnce();
+  read.mockResolvedValueOnce({ subscriptions: [{ ...usage.subscriptions[0]!, token: 'secret' } as never] });
+  const leaked = await peer.exchange({ ...poll, id: 'leak' });
+  expect(leaked).toMatchObject({ outcome: 'rejected' }); expect(JSON.stringify(leaked)).not.toContain('secret');
 });
 
 function supportedRequests(f: Awaited<ReturnType<typeof fixture>>): Array<{ op: Operation; session?: string; params: Record<string, unknown> }> {

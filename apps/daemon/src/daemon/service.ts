@@ -158,7 +158,8 @@ export async function startDaemonService(target: DaemonTarget, options: {
         return { managerPackage: current.managerPackage, managerVersion: current.managerVersion,
           providerDigest: current.providerDigest, configDigest: current.configDigest };
       },
-      setup: liveSetup, prepareOpenInteraction: (id, client, signal) => prepareHostInteraction({ broker,
+      setup: liveSetup, ...(host.subscriptions ? { subscriptions: host.subscriptions } : {}),
+      prepareOpenInteraction: (id, client, signal) => prepareHostInteraction({ broker,
         assertCurrent: () => owner.assertCurrent(), prepareOpen: (request, signal) => {
           if (!sessionRuntime.prepareOpenInteraction) throw new Error('Opening this interaction is unsupported.');
           return sessionRuntime.prepareOpenInteraction(setupRuntime, request, path => owner.assertOwnsPath(path), signal);

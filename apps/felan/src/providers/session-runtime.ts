@@ -33,13 +33,17 @@ import { openHostUrl, prepareLocalInteractionOpen } from './setup-open.js';
 import { isBuiltinExtensionEnabled, parsePiExtensionSettings, readDaemonGlobalSettings } from './global-settings.js';
 import { createLocalModelRuntime } from './local-model-runtime.js';
 import { parseApprovalExemptTools } from './tool-policy.js';
+import { createClaudeCodeUsageExtension, createClaudeCodeUsageRecorder, createHostSubscriptions, type ClaudeCodeUsageRecorder } from './host-subscriptions.js';
 
 export function createLocalSessionRuntime(options: {
   readonly runtimeService: HostRuntimeService;
   readonly runtimeFactory?: RuntimeFactory;
   readonly approvalExemptTools?: readonly string[];
   readonly initializeProcess?: typeof initializeLocalDaemonProcess;
+  readonly claudeCodeUsage?: ClaudeCodeUsageRecorder;
 }): SessionRuntime {
+  const claudeCodeUsage = options.claudeCodeUsage ?? createClaudeCodeUsageRecorder();
+  const claudeCodeUsageExtension = createClaudeCodeUsageExtension(claudeCodeUsage);
   let processAgentDir: string | undefined;
   let processConfiguration: Promise<DaemonProcessConfiguration> | undefined;
   const initializeProcess = (agentDir: string) => {
@@ -66,7 +70,9 @@ export function createLocalSessionRuntime(options: {
       if (isBuiltinExtensionEnabled(settings, 'discretestack')) {
         models.registerNativeProvider(createDiscreteStackProvider());
       }
+      await claudeCodeUsage.restore(runtime.storage('agent'));
       return {
+        subscriptions: createHostSubscriptions({ models, claudeCode: claudeCodeUsage }),
         configuration: new DaemonConfiguration({ agentDir, definitions: request.definitions, assertCurrent }),
         prepareRoot: createRootPreparation({ agentDir, homeDir, broker: request.interactions, assertCurrent }),
         setup: new HostSetupManager({ agentDir, runtime, models, assertCurrent, dependencies: setupDependencies,
@@ -167,7 +173,7 @@ export function createLocalSessionRuntime(options: {
         options: { runtime, modelRuntime: models, settingsManager: settings, extensionPackages: packages,
           importExtension: importLocalExtension, extensionConfigOverrides: overrides,
           ...(paths.length ? { extensionPaths: paths } : {}),
-          inlineExtensions: codemode ? [codemode] : [], skillPaths: skills, themePaths: [],
+          inlineExtensions: [...(codemode ? [codemode] : []), claudeCodeUsageExtension], skillPaths: skills, themePaths: [],
           ...(append ? { appendSystemPrompt: [append] } : {}),
           ...(modelScope.scopedModels.length ? { scopedModels: modelScope.scopedModels } : {}),
           ...(request.model ? { model: request.model } : {}),
@@ -185,8 +191,9 @@ export default defineServiceProvider({
   provides: [SESSION_RUNTIME_SERVICE], requires: [HOST_RUNTIME_SERVICE],
   optionsSchema: Type.Object({ approvalExemptTools: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 128 }), { maxItems: 256 })) }, { additionalProperties: false }),
   async create(context) {
+    const claudeCodeUsage = createClaudeCodeUsageRecorder();
     const runtime = createLocalSessionRuntime({ runtimeService: context.services.get(HOST_RUNTIME_SERVICE)!,
-      approvalExemptTools: parseApprovalExemptTools(context.options) });
-    return { implementations: [{ contract: SESSION_RUNTIME_SERVICE, value: runtime }], async dispose() {} };
+      approvalExemptTools: parseApprovalExemptTools(context.options), claudeCodeUsage });
+    return { implementations: [{ contract: SESSION_RUNTIME_SERVICE, value: runtime }], async dispose() { await claudeCodeUsage.settle(); } };
   },
 });

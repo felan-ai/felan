@@ -10,8 +10,9 @@ import { waitForDaemonStop } from './client/daemon-stop.js';
 import { formatHostBlocked, hostBlockedRejection, type DaemonRecovery } from './client/daemon-blocked.js';
 import { DAEMON_COMMANDS, suggestCommand } from './cli-command-suggestions.js';
 import { formatDaemonBuildMismatch } from './client/build-mismatch.js';
+import { resolveDaemonTarget } from '@felan-ai/daemon/client';
 
-const usage = 'Usage: felan daemon [status|start|foreground|stop|restart|logs] [--daemon-runtime <dir>] [--host-config <path>] [--force]';
+const usage = 'Usage: felan daemon [status|start|foreground|stop|restart|logs] [--daemon-runtime <dir>] [--host-config <path>] [--force] [--json]';
 const absent = (error: unknown) => ['ENOENT', 'stale_endpoint', 'unavailable'].includes((error as { code?: string }).code ?? '');
 
 export async function runDaemonCommand(args: readonly string[], io: { writeOutput(line: string): void; writeError(line: string): void }, dependencies: {
@@ -19,7 +20,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
   foreground?: (target: ReturnType<typeof clientDaemonTarget>) => Promise<number>;
 } = {}): Promise<number> {
   const action = args[0] && !args[0].startsWith('-') ? args[0] : 'status';
-  let force = false; let daemonRuntime: string | undefined; let hostConfigPath: string | undefined;
+  let force = false; let json = false; let daemonRuntime: string | undefined; let hostConfigPath: string | undefined;
   try {
     if (!DAEMON_COMMANDS.includes(action as typeof DAEMON_COMMANDS[number])) {
       const suggestion = suggestCommand(action, DAEMON_COMMANDS);
@@ -29,6 +30,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     for (let i = action === args[0] ? 1 : 0; i < args.length; i++) {
       const arg = args[i];
       if (arg === '--force') force = true;
+      else if (arg === '--json') json = true;
       else if (arg === '--daemon-runtime' || arg === '--host-config') {
         const value = args[++i]; if (!value || value.startsWith('-')) throw new Error(usage);
         if (arg === '--daemon-runtime') daemonRuntime = resolve(value);
@@ -36,11 +38,15 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
       } else throw new Error(usage);
     }
     if (force && !['stop', 'restart'].includes(action)) throw new Error('--force applies only to stop/restart.');
+    if (json && action !== 'status') throw new Error('--json applies only to status.');
   } catch (error) { io.writeError((error as Error).message); return 1; }
   const quote = (value: string) => /^[\w\-./~:@]+$/u.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
   const restartCommand = ['felan', 'daemon', 'restart', ...(daemonRuntime ? ['--daemon-runtime', quote(daemonRuntime)] : []),
     ...(hostConfigPath ? ['--host-config', quote(hostConfigPath)] : [])].join(' ');
   const target = clientDaemonTarget(daemonRuntime ? { daemonRuntime } : {});
+  // One JSON object line on stdout, for status bars and scripts.
+  const report = (running: boolean, fields: Record<string, unknown> = {}) => io.writeOutput(JSON.stringify({ running,
+    endpoint: resolveDaemonTarget(target).endpoint, clientVersion: FELAN_VERSION, ...fields }));
   if (action === 'foreground') return (dependencies.foreground ?? foreground)(target, hostConfigPath);
   const makeClient = dependencies.createClient ?? (options => new SessionClient(options));
   let client: SessionClient | undefined;
@@ -62,6 +68,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     catch (error) {
       if (!absent(error)) throw error;
       if (action === 'restart') { await connect(true); io.writeOutput(`Daemon started (${client!.identity!.instanceId}).`); return 0; }
+      else if (json) { report(false); return 0; }
       else { io.writeOutput('Daemon is not running.'); return action === 'status' || action === 'stop' ? 0 : 1; }
     }
     const active = client!;
@@ -81,6 +88,7 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     }
     if (active.status === 'incompatible') {
       const status = await active.control('host.status');
+      if (json) { report(true, { compatible: false, daemonVersion: status.daemonVersion, state: status.state }); return 0; }
       io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}. Its protocol or provider configuration is incompatible with this installation; run ${restartCommand}.`);
       if (status.state === 'blocked') io.writeOutput(formatHostBlocked(status.blocked, { client: 'cli', ...(daemonRuntime ? { daemonRuntime } : {}) }));
       return action === 'status' ? 0 : 1;
@@ -98,12 +106,22 @@ export async function runDaemonCommand(args: readonly string[], io: { writeOutpu
     const response = await active.request('host.status', {});
     if (response.outcome !== 'accepted') throw new Error('Daemon status is unavailable.');
     const status = response.result;
+    if (json) {
+      report(true, { compatible: true, daemonVersion: status.daemonVersion, state: status.state, sessions: status.active.sessions, runs: status.active.runs,
+        activeTasks: status.active.work, attachments: status.active.attachments, restartRequired: active.buildMismatch !== undefined,
+        setupNeeds: status.setupNeeds.map(need => need.message) });
+      return 0;
+    }
     io.writeOutput(`Daemon ${status.daemonVersion}: ${status.state}\nSessions: ${status.active.sessions}; runs: ${status.active.runs}; active tasks: ${status.active.work}; attachments: ${status.active.attachments}`);
     if (active.buildMismatch) io.writeOutput(formatDaemonBuildMismatch(active.buildMismatch, `Run ${restartCommand} to apply the new build.`));
     if (status.state === 'blocked') io.writeOutput(formatHostBlocked(status.blocked, { client: 'cli', ...(daemonRuntime ? { daemonRuntime } : {}) }));
     for (const need of status.setupNeeds) io.writeOutput(need.message);
     return 0;
-  } catch (error) { io.writeError(error instanceof Error ? error.message : 'Daemon operation failed.'); return 1; }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Daemon operation failed.';
+    if (json) io.writeOutput(JSON.stringify({ error: message })); else io.writeError(message);
+    return 1;
+  }
   finally { client?.close(); process.off('SIGINT', interrupt); process.off('SIGTERM', interrupt); }
 }
 

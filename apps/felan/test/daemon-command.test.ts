@@ -5,8 +5,9 @@ import childProcess, { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { afterEach, expect, it, vi } from 'vitest';
-import { windowsProcessElevated } from '@felan-ai/daemon/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveDaemonTarget, windowsProcessElevated } from '@felan-ai/daemon/client';
+import { FELAN_VERSION } from '../src/version.js';
 import { acquireDaemonOwnership } from '../../daemon/src/daemon/ownership.js';
 import { builtinExtensionPackages } from '../src/providers/extensions.js';
 import { clientDaemonTarget } from '../src/client-application.js';
@@ -28,6 +29,58 @@ it('rejects --force outside stop/restart before constructing a client', async ()
   expect(await runDaemonCommand(['status', '--force'], io, { createClient })).toBe(1);
   expect(await runDaemonCommand(['stop', '--yes'], io, { createClient })).toBe(1);
   expect(createClient).not.toHaveBeenCalled();
+});
+
+it.each(['start', 'stop', 'restart', 'logs', 'foreground'])('rejects --json for daemon %s before constructing a client', async action => {
+  const io = output(); const createClient = vi.fn(); const foreground = vi.fn();
+  expect(await runDaemonCommand([action, '--json'], io, { createClient, foreground })).toBe(1);
+  expect(io.writeError).toHaveBeenCalledExactlyOnceWith('--json applies only to status.');
+  expect(createClient).not.toHaveBeenCalled(); expect(foreground).not.toHaveBeenCalled(); expect(io.writeOutput).not.toHaveBeenCalled();
+});
+
+describe('daemon status --json', () => {
+  const status = { daemonVersion: '0.8.6', state: 'ready', active: { sessions: 3, runs: 1, work: 2, attachments: 4 },
+    setupNeeds: [{ code: 'provider', message: 'Configure a local model provider.' }] };
+  async function runStatus(client: Record<string, unknown>) {
+    const directory = await mkdtemp(join(tmpdir(), 'status-json-')); cleanup.push(() => rm(directory, { recursive: true, force: true }));
+    const io = output();
+    const code = await runDaemonCommand(['status', '--json', '--daemon-runtime', directory], io,
+      { createClient: () => ({ close() {}, connect: async () => {}, status: 'ready', ...client }) as unknown as SessionClient });
+    const endpoint = resolveDaemonTarget(clientDaemonTarget({ daemonRuntime: directory })).endpoint;
+    expect(io.writeError).not.toHaveBeenCalled(); expect(io.writeOutput).toHaveBeenCalledOnce();
+    return { code, endpoint, value: JSON.parse(io.writeOutput.mock.calls[0]![0] as string) as Record<string, unknown> };
+  }
+
+  it('prints one object with the daemon state and active counts', async () => {
+    const { code, endpoint, value } = await runStatus({ request: async () => ({ outcome: 'accepted', result: status }) });
+    expect(code).toBe(0);
+    expect(value).toEqual({ running: true, endpoint, clientVersion: FELAN_VERSION, compatible: true, daemonVersion: '0.8.6', state: 'ready',
+      sessions: 3, runs: 1, activeTasks: 2, attachments: 4, restartRequired: false, setupNeeds: ['Configure a local model provider.'] });
+  });
+
+  it('reports a different daemon build as requiring a restart', async () => {
+    const { value } = await runStatus({ request: async () => ({ outcome: 'accepted', result: status }), buildMismatch: { daemonVersion: '0.8.6', expectedDaemonVersion: '0.8.7' } });
+    expect(value).toMatchObject({ running: true, restartRequired: true });
+  });
+
+  it('reports an absent daemon as not running with exit 0', async () => {
+    const { code, endpoint, value } = await runStatus({ connect: async () => { throw Object.assign(new Error('missing'), { code: 'ENOENT' }); } });
+    expect(code).toBe(0);
+    expect(value).toEqual({ running: false, endpoint, clientVersion: FELAN_VERSION });
+  });
+
+  it('reports an incompatible daemon without its counts', async () => {
+    const { code, endpoint, value } = await runStatus({ status: 'incompatible', identity: { instanceId: 'other' },
+      control: async () => ({ daemonVersion: '0.7.0', state: 'ready' }) });
+    expect(code).toBe(0);
+    expect(value).toEqual({ running: true, endpoint, clientVersion: FELAN_VERSION, compatible: false, daemonVersion: '0.7.0', state: 'ready' });
+  });
+
+  it('prints a failure as a JSON error object with exit 1', async () => {
+    const { code, value } = await runStatus({ connect: async () => { throw Object.assign(new Error('The running daemon is elevated.'), { code: 'elevation_mismatch' }); } });
+    expect(code).toBe(1);
+    expect(value).toEqual({ error: 'The running daemon is elevated.' });
+  });
 });
 
 it('routes daemon arguments separately from prompts and preserves the explicit isolated target', async () => {

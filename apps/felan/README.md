@@ -137,6 +137,14 @@ you to restart after a successful update. `npx`, local/source, and other
 package-manager installations are not changed; update those with the command
 that installed them.
 
+`felan update --check` checks npm's stable release without installing it and
+prints `Felan Code X is up to date.` or
+`Felan Code Y is available (installed X). Update with: <command>`. With `--json`
+it prints `{"current":...,"latest":...,"updateAvailable":...,"command":...}`;
+`command` is `null` for linked and unrecognized installations. A registry
+failure exits 1 (as `{"error":...}` with `--json`). `FELAN_SKIP_VERSION_CHECK`
+or `PI_OFFLINE` skips the request and reports `latest: null`.
+
 Interactive startup also checks npm once, asynchronously, for a newer stable
 release. If one is available, Felan Code tells you to exit all Felan Code sessions and
 run `felan update` for a global npm installation, or use the package manager
@@ -178,6 +186,16 @@ would be interrupted, they ask once with the count and then stop or restart
 immediately. A daemon from another Felan version is replaced automatically only
 when it has no active work; otherwise the TUI shows how many active tasks a
 restart would interrupt and asks first.
+
+`felan daemon status --json` prints one JSON object line for status bars and
+scripts and never starts the daemon. A running daemon reports `running: true`,
+the IPC `endpoint`, `clientVersion`, `daemonVersion`, `state`, `compatible`,
+the `sessions`, `runs`, `activeTasks` and `attachments` counts, `restartRequired`
+when a different build is running, and `setupNeeds` messages. A daemon from an
+incompatible installation reports only `compatible: false`, its version and
+state. Without a daemon it prints `{"running":false,"endpoint":...,"clientVersion":...}`
+and exits 0; other failures print `{"error":...}` and exit 1. `--json` applies
+only to `status`.
 
 `/exit` (or Ctrl+D on an empty editor) detaches. Escape interrupts the current
 run. `/close` disposes of the selected session. These actions do not
