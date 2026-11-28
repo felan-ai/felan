@@ -1251,3 +1251,36 @@ CI-triggered npm release workflow:
 | `@felan-ai/ext-background-bash` | 0.17.1 | 0.17.2 |
 | `@felan-ai/daemon` | 0.8.7 | 0.8.9 |
 | `@felan-ai/felan` | 0.40.10 | 0.40.12 |
+
+## Desktop status bar reads
+
+A desktop status bar polls the daemon over its local socket as a headless
+client. Three additions serve it:
+
+- `host.subscriptions` is a read-only host operation that returns the plan
+  usage of each subscription the host is signed in to (Anthropic, Codex and
+  xAI OAuth credentials), plus the latest Claude Code usage that sessions
+  reported in `claude-code` provider responses. The daemon advertises it only
+  when the host provider supplies it. The Felan provider answers from the
+  daemon-wide usage cache that sessions already use, so polling cannot multiply
+  upstream requests or bypass the rate-limit backoff. A failed fetch keeps the
+  windows of the last successful one. Claude Code usage persists in host agent
+  storage, written only when its windows change and at most every 30 seconds.
+- `felan daemon status --json` prints one JSON object with the endpoint,
+  versions, state and active counts.
+- `felan update --check [--json]` reports the latest stable release and the
+  update command without installing it.
+
+The following are proposed versions, pending a merge to `main` and the
+CI-triggered npm release workflow:
+
+| Package | Current | Proposed |
+| --- | --- | --- |
+| `@felan-ai/session-protocol` | 0.4.9 | 0.4.10 |
+| `@felan-ai/agent-core` | 0.16.6 | 0.16.7 |
+| `@felan-ai/ext-ask-user` | 0.13.4 | 0.13.5 |
+| `@felan-ai/ext-background-bash` | 0.17.2 | 0.17.3 |
+| `@felan-ai/ext-fusion` | 0.5.4 | 0.5.5 |
+| `@felan-ai/ext-prompt-history` | 0.10.4 | 0.10.5 |
+| `@felan-ai/daemon` | 0.8.9 | 0.8.10 |
+| `@felan-ai/felan` | 0.40.12 | 0.40.13 |
